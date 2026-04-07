@@ -267,14 +267,62 @@ pub fn artifact_boundary_crossing(graph: &AuthorityGraph) -> Vec<Finding> {
     findings
 }
 
-/// Run all MVP rules against a graph.
+/// Stretch Rule 9: Secret name matches known long-lived/static credential pattern.
+///
+/// Heuristic: secrets named like AWS keys, API keys, passwords, or private keys
+/// are likely static credentials that should be replaced with OIDC federation.
+pub fn long_lived_credential(graph: &AuthorityGraph) -> Vec<Finding> {
+    const STATIC_PATTERNS: &[&str] = &[
+        "AWS_ACCESS_KEY",
+        "AWS_SECRET_ACCESS_KEY",
+        "_API_KEY",
+        "_APIKEY",
+        "_PASSWORD",
+        "_PASSWD",
+        "_PRIVATE_KEY",
+        "_SECRET_KEY",
+        "_SERVICE_ACCOUNT",
+        "_SIGNING_KEY",
+    ];
+
+    let mut findings = Vec::new();
+
+    for secret in graph.nodes_of_kind(NodeKind::Secret) {
+        let upper = secret.name.to_uppercase();
+        let is_static = STATIC_PATTERNS.iter().any(|p| upper.contains(p));
+
+        if is_static {
+            findings.push(Finding {
+                severity: Severity::Low,
+                category: FindingCategory::LongLivedCredential,
+                path: None,
+                nodes_involved: vec![secret.id],
+                message: format!(
+                    "'{}' looks like a long-lived static credential",
+                    secret.name
+                ),
+                recommendation: Recommendation::FederateIdentity {
+                    static_secret: secret.name.clone(),
+                    oidc_provider: "GitHub Actions OIDC (id-token: write)".into(),
+                },
+            });
+        }
+    }
+
+    findings
+}
+
+/// Run all rules against a graph.
 pub fn run_all_rules(graph: &AuthorityGraph, max_hops: usize) -> Vec<Finding> {
     let mut findings = Vec::new();
+    // MVP rules
     findings.extend(authority_propagation(graph, max_hops));
     findings.extend(over_privileged_identity(graph));
     findings.extend(unpinned_action(graph));
     findings.extend(untrusted_with_authority(graph));
     findings.extend(artifact_boundary_crossing(graph));
+    // Stretch rules
+    findings.extend(long_lived_credential(graph));
 
     findings.sort_by_key(|f| f.severity);
 
@@ -401,6 +449,22 @@ mod tests {
             .collect();
         assert!(!image_findings.is_empty());
         assert_eq!(image_findings[0].severity, Severity::Critical);
+    }
+
+    #[test]
+    fn long_lived_credential_detected() {
+        let mut g = AuthorityGraph::new(source("ci.yml"));
+        g.add_node(NodeKind::Secret, "AWS_ACCESS_KEY_ID", TrustZone::FirstParty);
+        g.add_node(NodeKind::Secret, "NPM_TOKEN", TrustZone::FirstParty);
+        g.add_node(NodeKind::Secret, "DEPLOY_API_KEY", TrustZone::FirstParty);
+        // Non-matching names
+        g.add_node(NodeKind::Secret, "CACHE_TTL", TrustZone::FirstParty);
+
+        let findings = long_lived_credential(&g);
+        assert_eq!(findings.len(), 2); // AWS_ACCESS_KEY_ID + DEPLOY_API_KEY
+        assert!(findings
+            .iter()
+            .all(|f| f.category == FindingCategory::LongLivedCredential));
     }
 
     #[test]
