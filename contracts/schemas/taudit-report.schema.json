@@ -1,0 +1,210 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://taudit.dev/schemas/taudit-report.schema.json",
+  "title": "taudit Report",
+  "description": "JSON output from `taudit scan --format json`. Contains the authority graph, all findings, and a summary.",
+  "type": "object",
+  "required": ["graph", "findings", "summary"],
+  "additionalProperties": false,
+  "properties": {
+    "graph": { "$ref": "#/$defs/AuthorityGraph" },
+    "findings": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/Finding" }
+    },
+    "summary": { "$ref": "#/$defs/Summary" }
+  },
+  "$defs": {
+    "AuthorityGraph": {
+      "type": "object",
+      "required": ["source", "nodes", "edges"],
+      "additionalProperties": false,
+      "properties": {
+        "source": { "$ref": "#/$defs/PipelineSource" },
+        "nodes": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/Node" }
+        },
+        "edges": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/Edge" }
+        }
+      }
+    },
+    "PipelineSource": {
+      "type": "object",
+      "required": ["file"],
+      "additionalProperties": false,
+      "properties": {
+        "file": { "type": "string" },
+        "repo": { "type": "string" },
+        "git_ref": { "type": "string" }
+      }
+    },
+    "Node": {
+      "type": "object",
+      "required": ["id", "kind", "name", "trust_zone", "metadata"],
+      "additionalProperties": false,
+      "properties": {
+        "id": { "type": "integer", "minimum": 0 },
+        "kind": {
+          "type": "string",
+          "enum": ["step", "secret", "artifact", "identity", "image"]
+        },
+        "name": { "type": "string" },
+        "trust_zone": {
+          "type": "string",
+          "enum": ["first_party", "third_party", "untrusted"]
+        },
+        "metadata": {
+          "type": "object",
+          "additionalProperties": { "type": "string" }
+        }
+      }
+    },
+    "Edge": {
+      "type": "object",
+      "required": ["id", "from", "to", "kind"],
+      "additionalProperties": false,
+      "properties": {
+        "id": { "type": "integer", "minimum": 0 },
+        "from": { "type": "integer", "minimum": 0 },
+        "to": { "type": "integer", "minimum": 0 },
+        "kind": {
+          "type": "string",
+          "enum": ["has_access_to", "produces", "consumes", "uses_image", "delegates_to"]
+        }
+      }
+    },
+    "Finding": {
+      "type": "object",
+      "required": ["severity", "category", "nodes_involved", "message", "recommendation"],
+      "additionalProperties": false,
+      "properties": {
+        "severity": {
+          "type": "string",
+          "enum": ["critical", "high", "medium", "low", "info"]
+        },
+        "category": {
+          "type": "string",
+          "enum": [
+            "authority_propagation",
+            "over_privileged_identity",
+            "unpinned_action",
+            "untrusted_with_authority",
+            "artifact_boundary_crossing",
+            "egress_blindspot",
+            "missing_audit_trail",
+            "floating_image",
+            "long_lived_credential"
+          ]
+        },
+        "path": {
+          "oneOf": [
+            { "$ref": "#/$defs/PropagationPath" },
+            { "type": "null" }
+          ]
+        },
+        "nodes_involved": {
+          "type": "array",
+          "items": { "type": "integer", "minimum": 0 }
+        },
+        "message": { "type": "string" },
+        "recommendation": { "$ref": "#/$defs/Recommendation" }
+      }
+    },
+    "PropagationPath": {
+      "type": "object",
+      "required": ["source", "sink", "edges", "crossed_boundary"],
+      "additionalProperties": false,
+      "properties": {
+        "source": { "type": "integer", "minimum": 0 },
+        "sink": { "type": "integer", "minimum": 0 },
+        "edges": {
+          "type": "array",
+          "items": { "type": "integer", "minimum": 0 }
+        },
+        "crossed_boundary": { "type": "boolean" },
+        "boundary_crossing": {
+          "type": "array",
+          "prefixItems": [
+            { "type": "string", "enum": ["first_party", "third_party", "untrusted"] },
+            { "type": "string", "enum": ["first_party", "third_party", "untrusted"] }
+          ],
+          "items": false,
+          "minItems": 2,
+          "maxItems": 2
+        }
+      }
+    },
+    "Recommendation": {
+      "description": "Internally-tagged union. The 'type' field selects the variant; remaining fields are variant-specific.",
+      "type": "object",
+      "required": ["type"],
+      "oneOf": [
+        {
+          "properties": {
+            "type": { "const": "tsafe_remediation" },
+            "command": { "type": "string" },
+            "explanation": { "type": "string" }
+          },
+          "required": ["type", "command", "explanation"]
+        },
+        {
+          "properties": {
+            "type": { "const": "cellos_remediation" },
+            "reason": { "type": "string" },
+            "spec_hint": { "type": "string" }
+          },
+          "required": ["type", "reason", "spec_hint"]
+        },
+        {
+          "properties": {
+            "type": { "const": "pin_action" },
+            "current": { "type": "string" },
+            "pinned": { "type": "string" }
+          },
+          "required": ["type", "current", "pinned"]
+        },
+        {
+          "properties": {
+            "type": { "const": "reduce_permissions" },
+            "current": { "type": "string" },
+            "minimum": { "type": "string" }
+          },
+          "required": ["type", "current", "minimum"]
+        },
+        {
+          "properties": {
+            "type": { "const": "federate_identity" },
+            "static_secret": { "type": "string" },
+            "oidc_provider": { "type": "string" }
+          },
+          "required": ["type", "static_secret", "oidc_provider"]
+        },
+        {
+          "properties": {
+            "type": { "const": "manual" },
+            "action": { "type": "string" }
+          },
+          "required": ["type", "action"]
+        }
+      ]
+    },
+    "Summary": {
+      "type": "object",
+      "required": ["total_findings", "critical", "high", "medium", "low", "info", "total_nodes", "total_edges"],
+      "additionalProperties": false,
+      "properties": {
+        "total_findings": { "type": "integer", "minimum": 0 },
+        "critical": { "type": "integer", "minimum": 0 },
+        "high": { "type": "integer", "minimum": 0 },
+        "medium": { "type": "integer", "minimum": 0 },
+        "low": { "type": "integer", "minimum": 0 },
+        "info": { "type": "integer", "minimum": 0 },
+        "total_nodes": { "type": "integer", "minimum": 0 },
+        "total_edges": { "type": "integer", "minimum": 0 }
+      }
+    }
+  }
+}

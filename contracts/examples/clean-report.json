@@ -1,0 +1,99 @@
+{
+  "graph": {
+    "source": {
+      "file": "tests/fixtures/clean.yml"
+    },
+    "nodes": [
+      {
+        "id": 0,
+        "kind": "identity",
+        "name": "GITHUB_TOKEN",
+        "trust_zone": "first_party",
+        "metadata": {
+          "permissions": "{ contents: read }"
+        }
+      },
+      {
+        "id": 1,
+        "kind": "image",
+        "name": "actions/checkout@a5ac7e51b41094c92402da3b24376905380afc29",
+        "trust_zone": "third_party",
+        "metadata": {
+          "digest": "a5ac7e51b41094c92402da3b24376905380afc29"
+        }
+      },
+      {
+        "id": 2,
+        "kind": "step",
+        "name": "test[0]",
+        "trust_zone": "third_party",
+        "metadata": {}
+      },
+      {
+        "id": 3,
+        "kind": "step",
+        "name": "Run tests",
+        "trust_zone": "first_party",
+        "metadata": {}
+      }
+    ],
+    "edges": [
+      {
+        "id": 0,
+        "from": 2,
+        "to": 1,
+        "kind": "uses_image"
+      },
+      {
+        "id": 1,
+        "from": 2,
+        "to": 0,
+        "kind": "has_access_to"
+      },
+      {
+        "id": 2,
+        "from": 3,
+        "to": 0,
+        "kind": "has_access_to"
+      }
+    ]
+  },
+  "findings": [
+    {
+      "severity": "high",
+      "category": "authority_propagation",
+      "path": {
+        "source": 0,
+        "sink": 1,
+        "edges": [
+          0
+        ],
+        "crossed_boundary": true,
+        "boundary_crossing": [
+          "first_party",
+          "third_party"
+        ]
+      },
+      "nodes_involved": [
+        0,
+        1
+      ],
+      "message": "GITHUB_TOKEN propagated to actions/checkout@a5ac7e51b41094c92402da3b24376905380afc29 across trust boundary",
+      "recommendation": {
+        "type": "tsafe_remediation",
+        "command": "tsafe exec --ns <scoped-namespace> -- <command>",
+        "explanation": "Scope GITHUB_TOKEN to only the steps that need it"
+      }
+    }
+  ],
+  "summary": {
+    "total_findings": 1,
+    "critical": 0,
+    "high": 1,
+    "medium": 0,
+    "low": 0,
+    "info": 0,
+    "total_nodes": 4,
+    "total_edges": 3
+  }
+}

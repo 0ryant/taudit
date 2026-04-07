@@ -1,0 +1,33 @@
+# Local tasks — mirror CI: `just check`
+
+set shell := ["bash", "-eu", "-o", "pipefail", "-c"]
+
+default:
+    @just --list
+
+check: fmt clippy test deny
+    @echo "just check: OK"
+
+fmt:
+    cargo fmt --all -- --check
+
+clippy:
+    cargo clippy --workspace --all-targets -- -D warnings
+
+test:
+    cargo test --workspace
+
+deny:
+    cargo deny check licenses bans sources
+
+audit:
+    @if command -v cargo-audit >/dev/null 2>&1; then cargo audit; else echo "cargo-audit not found — cargo install cargo-audit --locked"; exit 1; fi
+
+fix:
+    cargo fmt --all
+    cargo clippy --workspace --all-targets --fix --allow-dirty --allow-staged
+
+# Run taudit against its own sister projects (self-test)
+self-test:
+    cargo run -p taudit-cli -- scan .refs/cellos/.github/workflows/
+    cargo run -p taudit-cli -- scan .refs/tsafe/.github/workflows/

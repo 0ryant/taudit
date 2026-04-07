@@ -1,0 +1,28 @@
+# Dependabot — keeps SHA-pinned actions and Cargo deps current.
+#
+# SHA-pinned actions: Dependabot understands "uses: action@SHA # tag" and will
+# open PRs bumping the SHA when a new release is tagged upstream.
+
+version: 2
+
+updates:
+  # GitHub Actions (quality.yml)
+  - package-ecosystem: "github-actions"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+    labels: ["dependencies", "ci"]
+    commit-message:
+      prefix: "ci"
+
+  # Cargo workspace dependencies (Cargo.toml / Cargo.lock)
+  - package-ecosystem: "cargo"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+      day: "tuesday"
+    labels: ["dependencies", "rust"]
+    commit-message:
+      prefix: "deps"
+    open-pull-requests-limit: 10

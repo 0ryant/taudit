@@ -1,0 +1,311 @@
+{
+  "graph": {
+    "source": {
+      "file": "tests/fixtures/over-privileged.yml"
+    },
+    "nodes": [
+      {
+        "id": 0,
+        "kind": "identity",
+        "name": "GITHUB_TOKEN",
+        "trust_zone": "first_party",
+        "metadata": {
+          "permissions": "write-all"
+        }
+      },
+      {
+        "id": 1,
+        "kind": "image",
+        "name": "some-org/deploy-action@main",
+        "trust_zone": "untrusted",
+        "metadata": {}
+      },
+      {
+        "id": 2,
+        "kind": "step",
+        "name": "deploy[0]",
+        "trust_zone": "untrusted",
+        "metadata": {}
+      },
+      {
+        "id": 3,
+        "kind": "secret",
+        "name": "DEPLOY_TOKEN",
+        "trust_zone": "first_party",
+        "metadata": {}
+      },
+      {
+        "id": 4,
+        "kind": "image",
+        "name": "actions/checkout@v4",
+        "trust_zone": "untrusted",
+        "metadata": {}
+      },
+      {
+        "id": 5,
+        "kind": "step",
+        "name": "build[0]",
+        "trust_zone": "untrusted",
+        "metadata": {}
+      },
+      {
+        "id": 6,
+        "kind": "step",
+        "name": "Build",
+        "trust_zone": "first_party",
+        "metadata": {}
+      },
+      {
+        "id": 7,
+        "kind": "secret",
+        "name": "AWS_ACCESS_KEY_ID",
+        "trust_zone": "first_party",
+        "metadata": {}
+      },
+      {
+        "id": 8,
+        "kind": "secret",
+        "name": "AWS_SECRET_ACCESS_KEY",
+        "trust_zone": "first_party",
+        "metadata": {}
+      },
+      {
+        "id": 9,
+        "kind": "secret",
+        "name": "UNUSED_SECRET",
+        "trust_zone": "first_party",
+        "metadata": {}
+      }
+    ],
+    "edges": [
+      {
+        "id": 0,
+        "from": 2,
+        "to": 1,
+        "kind": "uses_image"
+      },
+      {
+        "id": 1,
+        "from": 2,
+        "to": 0,
+        "kind": "has_access_to"
+      },
+      {
+        "id": 2,
+        "from": 2,
+        "to": 3,
+        "kind": "has_access_to"
+      },
+      {
+        "id": 3,
+        "from": 5,
+        "to": 4,
+        "kind": "uses_image"
+      },
+      {
+        "id": 4,
+        "from": 5,
+        "to": 0,
+        "kind": "has_access_to"
+      },
+      {
+        "id": 5,
+        "from": 6,
+        "to": 0,
+        "kind": "has_access_to"
+      },
+      {
+        "id": 6,
+        "from": 6,
+        "to": 7,
+        "kind": "has_access_to"
+      },
+      {
+        "id": 7,
+        "from": 6,
+        "to": 8,
+        "kind": "has_access_to"
+      },
+      {
+        "id": 8,
+        "from": 6,
+        "to": 9,
+        "kind": "has_access_to"
+      }
+    ]
+  },
+  "findings": [
+    {
+      "severity": "critical",
+      "category": "authority_propagation",
+      "path": {
+        "source": 0,
+        "sink": 1,
+        "edges": [
+          0
+        ],
+        "crossed_boundary": true,
+        "boundary_crossing": [
+          "first_party",
+          "untrusted"
+        ]
+      },
+      "nodes_involved": [
+        0,
+        1
+      ],
+      "message": "GITHUB_TOKEN propagated to some-org/deploy-action@main across trust boundary",
+      "recommendation": {
+        "type": "tsafe_remediation",
+        "command": "tsafe exec --ns <scoped-namespace> -- <command>",
+        "explanation": "Scope GITHUB_TOKEN to only the steps that need it"
+      }
+    },
+    {
+      "severity": "critical",
+      "category": "authority_propagation",
+      "path": {
+        "source": 0,
+        "sink": 4,
+        "edges": [
+          3
+        ],
+        "crossed_boundary": true,
+        "boundary_crossing": [
+          "first_party",
+          "untrusted"
+        ]
+      },
+      "nodes_involved": [
+        0,
+        4
+      ],
+      "message": "GITHUB_TOKEN propagated to actions/checkout@v4 across trust boundary",
+      "recommendation": {
+        "type": "tsafe_remediation",
+        "command": "tsafe exec --ns <scoped-namespace> -- <command>",
+        "explanation": "Scope GITHUB_TOKEN to only the steps that need it"
+      }
+    },
+    {
+      "severity": "critical",
+      "category": "authority_propagation",
+      "path": {
+        "source": 3,
+        "sink": 1,
+        "edges": [
+          0
+        ],
+        "crossed_boundary": true,
+        "boundary_crossing": [
+          "first_party",
+          "untrusted"
+        ]
+      },
+      "nodes_involved": [
+        3,
+        1
+      ],
+      "message": "DEPLOY_TOKEN propagated to some-org/deploy-action@main across trust boundary",
+      "recommendation": {
+        "type": "tsafe_remediation",
+        "command": "tsafe exec --ns <scoped-namespace> -- <command>",
+        "explanation": "Scope DEPLOY_TOKEN to only the steps that need it"
+      }
+    },
+    {
+      "severity": "critical",
+      "category": "untrusted_with_authority",
+      "nodes_involved": [
+        2,
+        0
+      ],
+      "message": "Untrusted step 'deploy[0]' has direct access to identity 'GITHUB_TOKEN'",
+      "recommendation": {
+        "type": "reduce_permissions",
+        "current": "write-all",
+        "minimum": "minimal required scope"
+      }
+    },
+    {
+      "severity": "critical",
+      "category": "untrusted_with_authority",
+      "nodes_involved": [
+        2,
+        3
+      ],
+      "message": "Untrusted step 'deploy[0]' has direct access to secret 'DEPLOY_TOKEN'",
+      "recommendation": {
+        "type": "cellos_remediation",
+        "reason": "Untrusted step 'deploy[0]' has direct access to secret 'DEPLOY_TOKEN'",
+        "spec_hint": "cellos run --network deny-all --broker env:DEPLOY_TOKEN"
+      }
+    },
+    {
+      "severity": "critical",
+      "category": "untrusted_with_authority",
+      "nodes_involved": [
+        5,
+        0
+      ],
+      "message": "Untrusted step 'build[0]' has direct access to identity 'GITHUB_TOKEN'",
+      "recommendation": {
+        "type": "reduce_permissions",
+        "current": "write-all",
+        "minimum": "minimal required scope"
+      }
+    },
+    {
+      "severity": "high",
+      "category": "over_privileged_identity",
+      "nodes_involved": [
+        0,
+        2,
+        5,
+        6
+      ],
+      "message": "GITHUB_TOKEN has permissions 'write-all' — likely broader than needed",
+      "recommendation": {
+        "type": "reduce_permissions",
+        "current": "write-all",
+        "minimum": "{ contents: read }"
+      }
+    },
+    {
+      "severity": "medium",
+      "category": "unpinned_action",
+      "nodes_involved": [
+        1
+      ],
+      "message": "some-org/deploy-action@main is not pinned to a SHA digest",
+      "recommendation": {
+        "type": "pin_action",
+        "current": "some-org/deploy-action@main",
+        "pinned": "some-org/deploy-action@<sha256-digest>"
+      }
+    },
+    {
+      "severity": "medium",
+      "category": "unpinned_action",
+      "nodes_involved": [
+        4
+      ],
+      "message": "actions/checkout@v4 is not pinned to a SHA digest",
+      "recommendation": {
+        "type": "pin_action",
+        "current": "actions/checkout@v4",
+        "pinned": "actions/checkout@<sha256-digest>"
+      }
+    }
+  ],
+  "summary": {
+    "total_findings": 9,
+    "critical": 6,
+    "high": 1,
+    "medium": 2,
+    "low": 0,
+    "info": 0,
+    "total_nodes": 10,
+    "total_edges": 9
+  }
+}

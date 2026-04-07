@@ -1,0 +1,33 @@
+# Propagation-leaky workflow — secret crosses trust boundary via artifact
+name: Release
+on:
+  push:
+    tags: ['v*']
+
+permissions: write-all
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@a5ac7e51b41094c92402da3b24376905380afc29
+      - name: Build with secrets
+        run: make release
+        env:
+          SIGNING_KEY: "${{ secrets.SIGNING_KEY }}"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: release-bundle
+          path: dist/
+
+  publish:
+    runs-on: ubuntu-latest
+    needs: build
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: release-bundle
+      - uses: untrusted-org/publish-action@main
+        with:
+          artifact-path: dist/
+          api-key: "${{ secrets.PUBLISH_API_KEY }}"
