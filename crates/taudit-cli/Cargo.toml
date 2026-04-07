@@ -18,3 +18,6 @@ taudit-report-terminal = { path = "../taudit-report-terminal" }
 taudit-report-json = { path = "../taudit-report-json" }
 clap = { workspace = true }
 anyhow = { workspace = true }
+
+[dev-dependencies]
+serde_json = { workspace = true }

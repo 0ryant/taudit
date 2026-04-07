@@ -275,6 +275,7 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "clap",
+ "serde_json",
  "taudit-core",
  "taudit-parse-gha",
  "taudit-report-json",
