@@ -12,6 +12,8 @@ pub type EdgeId = usize;
 
 pub const META_DIGEST: &str = "digest";
 pub const META_PERMISSIONS: &str = "permissions";
+pub const META_IDENTITY_SCOPE: &str = "identity_scope";
+pub const META_INFERRED: &str = "inferred";
 
 // ── Shared helpers ─────────────────────────────────────
 
@@ -25,6 +27,56 @@ pub fn is_sha_pinned(ref_str: &str) -> bool {
             .next_back()
             .map(|s| s.len() >= 40 && s.chars().all(|c| c.is_ascii_hexdigit()))
             .unwrap_or(false)
+}
+
+// ── Graph-level precision markers ───────────────────────
+
+/// How complete is this authority graph? Parsers set this based on whether
+/// they could fully resolve all authority relationships in the pipeline YAML.
+///
+/// A `Partial` graph is still useful — it just tells the consumer that some
+/// authority paths may be missing. This is better than silent incompleteness.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum AuthorityCompleteness {
+    /// Parser resolved all authority relationships.
+    Complete,
+    /// Parser found constructs it couldn't fully resolve (e.g. secrets in
+    /// shell strings, composite actions, reusable workflows). The graph
+    /// captures what it can, but edges may be missing.
+    Partial,
+    /// Parser couldn't determine completeness.
+    Unknown,
+}
+
+/// How broad is an identity's scope? Classifies the risk surface of tokens,
+/// service principals, and OIDC identities.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum IdentityScope {
+    /// Wide permissions: write-all, admin, or unscoped tokens.
+    Broad,
+    /// Narrow permissions: contents:read, specific scopes.
+    Constrained,
+    /// Scope couldn't be determined — treat as risky.
+    Unknown,
+}
+
+impl IdentityScope {
+    /// Classify an identity scope from a permissions string.
+    pub fn from_permissions(perms: &str) -> Self {
+        let p = perms.to_lowercase();
+        if p.contains("write-all") || p.contains("admin") || p == "{}" || p.is_empty() {
+            IdentityScope::Broad
+        } else if p.contains("write") {
+            // Any write permission = broad (conservative)
+            IdentityScope::Broad
+        } else if p.contains("read") {
+            IdentityScope::Constrained
+        } else {
+            IdentityScope::Unknown
+        }
+    }
 }
 
 // ── Node types ──────────────────────────────────────────
@@ -127,6 +179,11 @@ pub struct AuthorityGraph {
     pub source: PipelineSource,
     pub nodes: Vec<Node>,
     pub edges: Vec<Edge>,
+    /// How complete is this graph? Set by the parser based on what it could resolve.
+    pub completeness: AuthorityCompleteness,
+    /// Human-readable reasons why the graph is Partial (if applicable).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub completeness_gaps: Vec<String>,
 }
 
 impl AuthorityGraph {
@@ -135,7 +192,15 @@ impl AuthorityGraph {
             source,
             nodes: Vec::new(),
             edges: Vec::new(),
+            completeness: AuthorityCompleteness::Complete,
+            completeness_gaps: Vec::new(),
         }
+    }
+
+    /// Mark the graph as partially complete with a reason.
+    pub fn mark_partial(&mut self, reason: impl Into<String>) {
+        self.completeness = AuthorityCompleteness::Partial;
+        self.completeness_gaps.push(reason.into());
     }
 
     /// Add a node, returns its ID.
@@ -247,6 +312,57 @@ mod tests {
         assert_eq!(g.authority_sources().count(), 1);
         assert_eq!(g.edges_from(step_build).count(), 2);
         assert_eq!(g.edges_from(artifact).count(), 1); // Consumes flows artifact -> step
+    }
+
+    #[test]
+    fn completeness_default_is_complete() {
+        let g = AuthorityGraph::new(PipelineSource {
+            file: "test.yml".into(),
+            repo: None,
+            git_ref: None,
+        });
+        assert_eq!(g.completeness, AuthorityCompleteness::Complete);
+        assert!(g.completeness_gaps.is_empty());
+    }
+
+    #[test]
+    fn mark_partial_records_reason() {
+        let mut g = AuthorityGraph::new(PipelineSource {
+            file: "test.yml".into(),
+            repo: None,
+            git_ref: None,
+        });
+        g.mark_partial("secrets in run: block inferred, not precisely mapped");
+        assert_eq!(g.completeness, AuthorityCompleteness::Partial);
+        assert_eq!(g.completeness_gaps.len(), 1);
+    }
+
+    #[test]
+    fn identity_scope_from_permissions() {
+        assert_eq!(
+            IdentityScope::from_permissions("write-all"),
+            IdentityScope::Broad
+        );
+        assert_eq!(
+            IdentityScope::from_permissions("{ contents: write }"),
+            IdentityScope::Broad
+        );
+        assert_eq!(
+            IdentityScope::from_permissions("{ contents: read }"),
+            IdentityScope::Constrained
+        );
+        assert_eq!(
+            IdentityScope::from_permissions("{ id-token: write }"),
+            IdentityScope::Broad
+        );
+        assert_eq!(
+            IdentityScope::from_permissions(""),
+            IdentityScope::Broad
+        );
+        assert_eq!(
+            IdentityScope::from_permissions("custom-scope"),
+            IdentityScope::Unknown
+        );
     }
 
     #[test]

@@ -25,6 +25,10 @@ pub struct CloudEventV1 {
     pub time: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub data: Option<serde_json::Value>,
+    // Extension attributes — CloudEvents 1.0 allows arbitrary top-level keys.
+    /// Authority graph completeness: "complete", "partial", or "unknown".
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub tauditcompleteness: Option<String>,
 }
 
 /// Event source identifier for taudit.
@@ -47,19 +51,26 @@ fn event_type(category: FindingCategory) -> String {
 }
 
 /// Build a CloudEvents 1.0 envelope for a single finding.
-fn finding_to_event(finding: &Finding, source_file: &str) -> CloudEventV1 {
+fn finding_to_event(finding: &Finding, graph: &AuthorityGraph) -> CloudEventV1 {
     let data = serde_json::to_value(finding)
         .unwrap_or_else(|_| serde_json::Value::String(finding.message.clone()));
+
+    let completeness_str = match graph.completeness {
+        taudit_core::graph::AuthorityCompleteness::Complete => "complete",
+        taudit_core::graph::AuthorityCompleteness::Partial => "partial",
+        taudit_core::graph::AuthorityCompleteness::Unknown => "unknown",
+    };
 
     CloudEventV1 {
         specversion: "1.0".into(),
         id: uuid::Uuid::new_v4().to_string(),
         source: EVENT_SOURCE.into(),
         ty: event_type(finding.category),
-        subject: Some(source_file.to_string()),
+        subject: Some(graph.source.file.clone()),
         datacontenttype: Some("application/json".into()),
         time: Some(chrono::Utc::now().to_rfc3339()),
         data: Some(data),
+        tauditcompleteness: Some(completeness_str.into()),
     }
 }
 
@@ -76,10 +87,8 @@ impl<W: std::io::Write> ReportSink<W> for CloudEventsJsonlSink {
         graph: &AuthorityGraph,
         findings: &[Finding],
     ) -> Result<(), TauditError> {
-        let source_file = &graph.source.file;
-
         for finding in findings {
-            let event = finding_to_event(finding, source_file);
+            let event = finding_to_event(finding, graph);
             serde_json::to_writer(&mut *w, &event)
                 .map_err(|e| TauditError::Report(format!("CloudEvents serialization: {e}")))?;
             writeln!(w).map_err(|e| TauditError::Report(e.to_string()))?;
@@ -163,6 +172,28 @@ mod tests {
         assert!(event["id"].is_string());
         assert!(event["time"].is_string());
         assert!(event["data"].is_object());
+        assert_eq!(event["tauditcompleteness"], "complete");
+    }
+
+    #[test]
+    fn partial_graph_sets_completeness_extension() {
+        let mut graph = AuthorityGraph::new(test_source());
+        graph.mark_partial("inferred secret in run: block");
+        let findings = vec![test_finding(
+            FindingCategory::AuthorityPropagation,
+            Severity::Critical,
+        )];
+
+        let mut buf = Vec::new();
+        CloudEventsJsonlSink
+            .emit(&mut buf, &graph, &findings)
+            .unwrap();
+
+        let output = String::from_utf8(buf).unwrap();
+        let event: serde_json::Value =
+            serde_json::from_str(output.lines().next().unwrap()).unwrap();
+
+        assert_eq!(event["tauditcompleteness"], "partial");
     }
 
     #[test]

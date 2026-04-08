@@ -1,7 +1,7 @@
 use colored::Colorize;
 use taudit_core::error::TauditError;
 use taudit_core::finding::{Finding, Recommendation, Severity};
-use taudit_core::graph::{AuthorityGraph, NodeKind};
+use taudit_core::graph::{AuthorityCompleteness, AuthorityGraph, NodeKind};
 use taudit_core::ports::ReportSink;
 
 /// Reduces `write!(w, ...).map_err(...)` boilerplate.
@@ -49,6 +49,32 @@ impl<W: std::io::Write> ReportSink<W> for TerminalReport {
             images,
             identities
         )?;
+
+        // Completeness warning — the credibility layer
+        match graph.completeness {
+            AuthorityCompleteness::Partial => {
+                wln!(w)?;
+                wln!(
+                    w,
+                    "{}",
+                    "  Warning: Authority graph is PARTIAL — some relationships could not be fully resolved."
+                        .yellow()
+                )?;
+                for gap in &graph.completeness_gaps {
+                    wln!(w, "    {}", format!("- {gap}").yellow())?;
+                }
+            }
+            AuthorityCompleteness::Unknown => {
+                wln!(w)?;
+                wln!(
+                    w,
+                    "{}",
+                    "  Warning: Authority graph completeness is UNKNOWN — treat as incomplete."
+                        .yellow()
+                )?;
+            }
+            AuthorityCompleteness::Complete => {}
+        }
 
         if findings.is_empty() {
             wln!(w, "\n{}", "No findings.".green().bold())?;

@@ -5,6 +5,9 @@ use taudit_core::error::TauditError;
 use taudit_core::graph::*;
 use taudit_core::ports::PipelineParser;
 
+/// Metadata key for marking inferred (not precisely mapped) secret references.
+const META_INFERRED_VAL: &str = "true";
+
 /// GitHub Actions workflow parser.
 pub struct GhaParser;
 
@@ -23,8 +26,10 @@ impl PipelineParser for GhaParser {
         // Workflow-level permissions -> GITHUB_TOKEN identity node
         let token_id = if let Some(ref perms) = workflow.permissions {
             let perm_string = perms.to_string();
+            let scope = IdentityScope::from_permissions(&perm_string);
             let mut meta = HashMap::new();
             meta.insert(META_PERMISSIONS.into(), perm_string);
+            meta.insert(META_IDENTITY_SCOPE.into(), format!("{scope:?}").to_lowercase());
             Some(graph.add_node_with_metadata(
                 NodeKind::Identity,
                 "GITHUB_TOKEN",
@@ -39,8 +44,10 @@ impl PipelineParser for GhaParser {
             // Job-level permissions override workflow-level
             let job_token_id = if let Some(ref perms) = job.permissions {
                 let perm_string = perms.to_string();
+                let scope = IdentityScope::from_permissions(&perm_string);
                 let mut meta = HashMap::new();
                 meta.insert(META_PERMISSIONS.into(), perm_string);
+                meta.insert(META_IDENTITY_SCOPE.into(), format!("{scope:?}").to_lowercase());
                 Some(graph.add_node_with_metadata(
                     NodeKind::Identity,
                     format!("GITHUB_TOKEN ({})", job_name),
@@ -76,12 +83,23 @@ impl PipelineParser for GhaParser {
                     graph.add_edge(step_id, tok_id, EdgeKind::HasAccessTo);
                 }
 
-                // Process secrets from `env:` block
+                // Process secrets from job-level `env:` (inherited by all steps)
+                if let Some(ref env) = job.env {
+                    for env_val in env.values() {
+                        if is_secret_reference(env_val) {
+                            let secret_name = extract_secret_name(env_val);
+                            let secret_id =
+                                find_or_create_secret(&mut graph, &mut secret_ids, &secret_name);
+                            graph.add_edge(step_id, secret_id, EdgeKind::HasAccessTo);
+                        }
+                    }
+                }
+
+                // Process secrets from step-level `env:` block
                 if let Some(ref env) = step.env {
                     for env_val in env.values() {
                         if is_secret_reference(env_val) {
                             let secret_name = extract_secret_name(env_val);
-                            // Check if secret node already exists
                             let secret_id =
                                 find_or_create_secret(&mut graph, &mut secret_ids, &secret_name);
                             graph.add_edge(step_id, secret_id, EdgeKind::HasAccessTo);
@@ -97,6 +115,40 @@ impl PipelineParser for GhaParser {
                             let secret_id =
                                 find_or_create_secret(&mut graph, &mut secret_ids, &secret_name);
                             graph.add_edge(step_id, secret_id, EdgeKind::HasAccessTo);
+                        }
+                    }
+                }
+
+                // Detect inferred secrets in `run:` script blocks
+                if let Some(ref run) = step.run {
+                    if run.contains("${{ secrets.") {
+                        // Extract secret names from the shell script
+                        let mut pos = 0;
+                        while let Some(start) = run[pos..].find("secrets.") {
+                            let abs_start = pos + start + 8;
+                            let remaining = &run[abs_start..];
+                            let end = remaining
+                                .find(|c: char| !c.is_alphanumeric() && c != '_')
+                                .unwrap_or(remaining.len());
+                            let secret_name = &remaining[..end];
+                            if !secret_name.is_empty() {
+                                let secret_id = find_or_create_secret(
+                                    &mut graph,
+                                    &mut secret_ids,
+                                    secret_name,
+                                );
+                                // Mark as inferred — not precisely mapped
+                                if let Some(node) = graph.nodes.get_mut(secret_id) {
+                                    node.metadata
+                                        .insert(META_INFERRED.into(), META_INFERRED_VAL.into());
+                                }
+                                graph.add_edge(step_id, secret_id, EdgeKind::HasAccessTo);
+                                graph.mark_partial(format!(
+                                    "secret '{}' referenced in run: script — inferred, not precisely mapped",
+                                    secret_name
+                                ));
+                            }
+                            pos = abs_start + end;
                         }
                     }
                 }
@@ -195,6 +247,8 @@ pub struct GhaWorkflow {
 pub struct GhaJob {
     #[serde(default)]
     pub permissions: Option<Permissions>,
+    #[serde(default)]
+    pub env: Option<HashMap<String, String>>,
     #[serde(default)]
     pub steps: Vec<GhaStep>,
 }
@@ -314,6 +368,91 @@ jobs:
         let secrets: Vec<_> = graph.nodes_of_kind(NodeKind::Secret).collect();
         assert_eq!(secrets.len(), 1);
         assert_eq!(secrets[0].name, "NPM_TOKEN");
+    }
+
+    #[test]
+    fn inferred_secret_in_run_block_detected() {
+        let yaml = r#"
+jobs:
+  deploy:
+    steps:
+      - name: Deploy
+        run: |
+          curl -H "Authorization: ${{ secrets.API_TOKEN }}" https://api.example.com
+"#;
+        let graph = parse(yaml);
+        let secrets: Vec<_> = graph.nodes_of_kind(NodeKind::Secret).collect();
+        assert_eq!(secrets.len(), 1);
+        assert_eq!(secrets[0].name, "API_TOKEN");
+        assert_eq!(
+            secrets[0].metadata.get(META_INFERRED),
+            Some(&"true".to_string())
+        );
+        assert_eq!(graph.completeness, AuthorityCompleteness::Partial);
+        assert!(!graph.completeness_gaps.is_empty());
+    }
+
+    #[test]
+    fn job_level_env_inherited_by_steps() {
+        let yaml = r#"
+jobs:
+  build:
+    env:
+      DB_PASSWORD: "${{ secrets.DB_PASSWORD }}"
+    steps:
+      - name: Step A
+        run: echo "a"
+      - name: Step B
+        run: echo "b"
+"#;
+        let graph = parse(yaml);
+        let secrets: Vec<_> = graph.nodes_of_kind(NodeKind::Secret).collect();
+        assert_eq!(secrets.len(), 1, "one secret node (deduplicated)");
+
+        // Both steps should have access to the secret
+        let secret_id = secrets[0].id;
+        let accessing_steps = graph
+            .edges_to(secret_id)
+            .filter(|e| e.kind == EdgeKind::HasAccessTo)
+            .count();
+        assert_eq!(accessing_steps, 2, "both steps inherit job-level env");
+    }
+
+    #[test]
+    fn identity_scope_set_on_token() {
+        let yaml = r#"
+permissions: write-all
+jobs:
+  ci:
+    steps:
+      - run: echo hi
+"#;
+        let graph = parse(yaml);
+        let identities: Vec<_> = graph.nodes_of_kind(NodeKind::Identity).collect();
+        assert_eq!(identities.len(), 1);
+        assert_eq!(
+            identities[0].metadata.get(META_IDENTITY_SCOPE),
+            Some(&"broad".to_string())
+        );
+    }
+
+    #[test]
+    fn constrained_identity_scope() {
+        let yaml = r#"
+permissions:
+  contents: read
+jobs:
+  ci:
+    steps:
+      - run: echo hi
+"#;
+        let graph = parse(yaml);
+        let identities: Vec<_> = graph.nodes_of_kind(NodeKind::Identity).collect();
+        assert_eq!(identities.len(), 1);
+        assert_eq!(
+            identities[0].metadata.get(META_IDENTITY_SCOPE),
+            Some(&"constrained".to_string())
+        );
     }
 
     #[test]

@@ -1,6 +1,7 @@
 use crate::finding::{Finding, FindingCategory, Recommendation, Severity};
 use crate::graph::{
-    is_sha_pinned, AuthorityGraph, EdgeKind, NodeKind, TrustZone, META_DIGEST, META_PERMISSIONS,
+    is_sha_pinned, AuthorityGraph, EdgeKind, IdentityScope, NodeKind, TrustZone, META_DIGEST,
+    META_IDENTITY_SCOPE, META_PERMISSIONS,
 };
 use crate::propagation;
 
@@ -51,6 +52,10 @@ pub fn authority_propagation(graph: &AuthorityGraph, max_hops: usize) -> Vec<Fin
 }
 
 /// MVP Rule 2: Identity scope broader than actual usage.
+///
+/// Uses `IdentityScope` classification from the precision layer. Broad and
+/// Unknown scopes are flagged — Unknown is treated as risky because if we
+/// can't determine the scope, we shouldn't assume it's safe.
 pub fn over_privileged_identity(graph: &AuthorityGraph) -> Vec<Finding> {
     let mut findings = Vec::new();
 
@@ -61,34 +66,58 @@ pub fn over_privileged_identity(graph: &AuthorityGraph) -> Vec<Finding> {
             .cloned()
             .unwrap_or_default();
 
-        // If the identity has write-all or broad permissions
-        if granted_scope.contains("write-all") || granted_scope.contains("write") {
-            // Check if any step actually needs write
-            let accessor_steps: Vec<_> = graph
-                .edges_to(identity.id)
-                .filter(|e| e.kind == EdgeKind::HasAccessTo)
-                .filter_map(|e| graph.node(e.from))
-                .collect();
+        // Use IdentityScope from metadata if set by parser, otherwise classify from permissions
+        let scope = identity
+            .metadata
+            .get(META_IDENTITY_SCOPE)
+            .and_then(|s| match s.as_str() {
+                "broad" => Some(IdentityScope::Broad),
+                "constrained" => Some(IdentityScope::Constrained),
+                "unknown" => Some(IdentityScope::Unknown),
+                _ => None,
+            })
+            .unwrap_or_else(|| IdentityScope::from_permissions(&granted_scope));
 
-            // If identity has broad scope, flag it
-            if !accessor_steps.is_empty() {
-                findings.push(Finding {
-                    severity: Severity::High,
-                    category: FindingCategory::OverPrivilegedIdentity,
-                    path: None,
-                    nodes_involved: std::iter::once(identity.id)
-                        .chain(accessor_steps.iter().map(|n| n.id))
-                        .collect(),
-                    message: format!(
-                        "{} has permissions '{}' — likely broader than needed",
-                        identity.name, granted_scope
-                    ),
-                    recommendation: Recommendation::ReducePermissions {
-                        current: granted_scope.clone(),
-                        minimum: "{ contents: read }".into(),
-                    },
-                });
-            }
+        // Broad or Unknown scope — flag it. Unknown is treated as risky.
+        let (should_flag, severity) = match scope {
+            IdentityScope::Broad => (true, Severity::High),
+            IdentityScope::Unknown => (true, Severity::Medium),
+            IdentityScope::Constrained => (false, Severity::Info),
+        };
+
+        if !should_flag {
+            continue;
+        }
+
+        let accessor_steps: Vec<_> = graph
+            .edges_to(identity.id)
+            .filter(|e| e.kind == EdgeKind::HasAccessTo)
+            .filter_map(|e| graph.node(e.from))
+            .collect();
+
+        if !accessor_steps.is_empty() {
+            let scope_label = match scope {
+                IdentityScope::Broad => "broad",
+                IdentityScope::Unknown => "unknown (treat as risky)",
+                IdentityScope::Constrained => "constrained",
+            };
+
+            findings.push(Finding {
+                severity,
+                category: FindingCategory::OverPrivilegedIdentity,
+                path: None,
+                nodes_involved: std::iter::once(identity.id)
+                    .chain(accessor_steps.iter().map(|n| n.id))
+                    .collect(),
+                message: format!(
+                    "{} has {} scope (permissions: '{}') — likely broader than needed",
+                    identity.name, scope_label, granted_scope
+                ),
+                recommendation: Recommendation::ReducePermissions {
+                    current: granted_scope.clone(),
+                    minimum: "{ contents: read }".into(),
+                },
+            });
         }
     }
 
@@ -482,5 +511,54 @@ mod tests {
         let findings = unpinned_action(&g);
         // Should get 2 findings (checkout + setup-node), not 3
         assert_eq!(findings.len(), 2);
+    }
+
+    #[test]
+    fn broad_identity_scope_flagged_as_high() {
+        let mut g = AuthorityGraph::new(source("ci.yml"));
+        let mut meta = std::collections::HashMap::new();
+        meta.insert(META_PERMISSIONS.into(), "write-all".into());
+        meta.insert(META_IDENTITY_SCOPE.into(), "broad".into());
+        let identity =
+            g.add_node_with_metadata(NodeKind::Identity, "GITHUB_TOKEN", TrustZone::FirstParty, meta);
+        let step = g.add_node(NodeKind::Step, "build", TrustZone::FirstParty);
+        g.add_edge(step, identity, EdgeKind::HasAccessTo);
+
+        let findings = over_privileged_identity(&g);
+        assert_eq!(findings.len(), 1);
+        assert_eq!(findings[0].severity, Severity::High);
+        assert!(findings[0].message.contains("broad"));
+    }
+
+    #[test]
+    fn unknown_identity_scope_flagged_as_medium() {
+        let mut g = AuthorityGraph::new(source("ci.yml"));
+        let mut meta = std::collections::HashMap::new();
+        meta.insert(META_PERMISSIONS.into(), "custom-scope".into());
+        meta.insert(META_IDENTITY_SCOPE.into(), "unknown".into());
+        let identity =
+            g.add_node_with_metadata(NodeKind::Identity, "GITHUB_TOKEN", TrustZone::FirstParty, meta);
+        let step = g.add_node(NodeKind::Step, "build", TrustZone::FirstParty);
+        g.add_edge(step, identity, EdgeKind::HasAccessTo);
+
+        let findings = over_privileged_identity(&g);
+        assert_eq!(findings.len(), 1);
+        assert_eq!(findings[0].severity, Severity::Medium);
+        assert!(findings[0].message.contains("unknown"));
+    }
+
+    #[test]
+    fn constrained_identity_scope_not_flagged() {
+        let mut g = AuthorityGraph::new(source("ci.yml"));
+        let mut meta = std::collections::HashMap::new();
+        meta.insert(META_PERMISSIONS.into(), "{ contents: read }".into());
+        meta.insert(META_IDENTITY_SCOPE.into(), "constrained".into());
+        let identity =
+            g.add_node_with_metadata(NodeKind::Identity, "GITHUB_TOKEN", TrustZone::FirstParty, meta);
+        let step = g.add_node(NodeKind::Step, "build", TrustZone::FirstParty);
+        g.add_edge(step, identity, EdgeKind::HasAccessTo);
+
+        let findings = over_privileged_identity(&g);
+        assert!(findings.is_empty(), "constrained scope should not be flagged");
     }
 }

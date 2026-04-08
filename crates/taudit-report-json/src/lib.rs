@@ -1,6 +1,6 @@
 use taudit_core::error::TauditError;
 use taudit_core::finding::Finding;
-use taudit_core::graph::AuthorityGraph;
+use taudit_core::graph::{AuthorityCompleteness, AuthorityGraph};
 use taudit_core::ports::ReportSink;
 
 use serde::Serialize;
@@ -23,6 +23,9 @@ pub struct Summary {
     pub info: usize,
     pub total_nodes: usize,
     pub total_edges: usize,
+    pub completeness: AuthorityCompleteness,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub completeness_gaps: Vec<String>,
 }
 
 pub struct JsonReportSink;
@@ -63,6 +66,8 @@ impl<W: std::io::Write> ReportSink<W> for JsonReportSink {
                     .count(),
                 total_nodes: graph.nodes.len(),
                 total_edges: graph.edges.len(),
+                completeness: graph.completeness,
+                completeness_gaps: graph.completeness_gaps.clone(),
             },
         };
 
