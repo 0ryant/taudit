@@ -31,9 +31,9 @@ Every feature classified by current state, what MVP means, and the path to produ
 
 | | Status |
 |---|---|
-| **Current** | SOLID. 5 MVP rules implemented: AuthorityPropagation (severity-graduated), OverPrivilegedIdentity, UnpinnedAction (deduplicated), UntrustedWithAuthority, ArtifactBoundaryCrossing. Sorted by severity. 4 unit tests. |
+| **Current** | SOLID. 5 MVP rules + 1 stretch rule (LongLivedCredential). AuthorityPropagation (severity-graduated), OverPrivilegedIdentity, UnpinnedAction (deduplicated), UntrustedWithAuthority, ArtifactBoundaryCrossing. Sorted by severity. 6 unit tests. |
 | **MVP** | Ship as-is. |
-| **AAA** | 4 stretch rules: EgressBlindspot, MissingAuditTrail, FloatingImage, LongLivedCredential. Custom rule loading. Policy-as-code (YAML rule definitions). |
+| **AAA** | 3 remaining stretch rules: EgressBlindspot, MissingAuditTrail, FloatingImage. Custom rule loading. Policy-as-code (YAML rule definitions). |
 
 ### Finding & Recommendation Model
 
@@ -95,9 +95,9 @@ Every feature classified by current state, what MVP means, and the path to produ
 
 | | Status |
 |---|---|
-| **Current** | Not implemented. Stretch target. |
-| **MVP** | Findings as CloudEvents JSONL to stdout or file. |
-| **AAA** | Direct JetStream/Kafka publish. Correlation with CellOS execution events. |
+| **Current** | SOLID. Hand-rolled CloudEventV1 envelope (matches CellOS pattern). One JSONL line per finding. Type prefix `io.taudit.finding.{category}`. JSON Schema contract. 6 unit tests. |
+| **MVP** | Ship as-is. |
+| **AAA** | Direct JetStream/Kafka publish. Correlation with CellOS execution events. Governance correlation ID extension attribute. |
 
 ---
 
@@ -107,16 +107,16 @@ Every feature classified by current state, what MVP means, and the path to produ
 
 | | Status |
 |---|---|
-| **Current** | SOLID. Clap CLI. Directory walking for .yml/.yaml. Terminal and JSON output formats. Configurable --max-hops. Exit code 1 on findings. |
+| **Current** | SOLID. Clap CLI. Directory walking for .yml/.yaml. Terminal, JSON, and CloudEvents output formats. Configurable --max-hops. Exit code 1 on findings. |
 | **MVP** | Ship as-is. |
 | **AAA** | `--exclude` glob patterns. `--severity-threshold` (exit 1 only for critical). `--baseline` file (suppress known findings). Watch mode. |
 
-### `taudit map` (stretch)
+### `taudit map`
 
 | | Status |
 |---|---|
-| **Current** | Not implemented. |
-| **MVP** | Authority map table: who gets what (step x secret/identity matrix). |
+| **Current** | SOLID. Authority map table: step x authority matrix with trust zone annotations. 2 unit tests. |
+| **MVP** | Ship as-is. |
 | **AAA** | Interactive TUI. Graphviz DOT export. |
 
 ### `taudit diff` (stretch)
@@ -162,7 +162,10 @@ Every feature classified by current state, what MVP means, and the path to produ
 7. JSON report with schema
 8. CLI with scan command, format selection, exit codes
 9. CI pipeline, deny.toml, Dependabot
-10. Test fixtures + 17 unit tests
+10. CloudEvents JSONL sink with JSON Schema contract
+11. Authority map command
+12. LongLivedCredential stretch rule
+13. Test fixtures + 36 tests (23 unit + 7 integration + 6 sink)
 
 ### Next (high-impact stretch)
 
@@ -173,6 +176,6 @@ Every feature classified by current state, what MVP means, and the path to produ
 | 3 | Reusable workflow / composite action parsing | Real-world GHA coverage |
 | 4 | Azure DevOps parser | Second platform |
 | 5 | SARIF output | GitHub code scanning integration |
-| 6 | Stretch rules (egress, audit trail, floating image, long-lived cred) | Deeper analysis |
+| 6 | Stretch rules (egress, audit trail, floating image) | Deeper analysis |
 | 7 | `taudit diff` | PR-time authority change detection |
-| 8 | CloudEvents sink | CellOS observability integration |
+| 8 | Governance correlation schema | Cross-tool event linking (taudit/tsafe/CellOS) |
