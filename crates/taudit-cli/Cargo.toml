@@ -1,11 +1,15 @@
 [package]
-name = "taudit-cli"
-description = "taudit CLI — composition root"
+name = "taudit"
+description = "Pipeline authority scanner — models how secrets and permissions move through CI/CD pipelines"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
 authors.workspace = true
+repository.workspace = true
+keywords.workspace = true
+categories.workspace = true
+readme = "../../README.md"
 
 [[bin]]
 name = "taudit"

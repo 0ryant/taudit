@@ -15,6 +15,9 @@ edition = "2021"
 rust-version = "1.85"
 license = "MIT OR Apache-2.0"
 authors = ["Keith Tilcock"]
+repository = "https://github.com/ktilcock/taudit"
+keywords = ["security", "ci-cd", "pipeline", "audit", "supply-chain"]
+categories = ["command-line-utilities", "development-tools"]
 
 [workspace.dependencies]
 serde = { version = "1", features = ["derive"] }
