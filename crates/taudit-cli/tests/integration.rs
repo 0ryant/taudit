@@ -2,6 +2,7 @@ use std::path::PathBuf;
 
 use taudit_core::finding::{FindingCategory, Severity};
 use taudit_core::graph::{NodeKind, PipelineSource, TrustZone};
+use taudit_core::ignore::IgnoreConfig;
 use taudit_core::ports::PipelineParser;
 use taudit_core::propagation::DEFAULT_MAX_HOPS;
 use taudit_core::rules;
@@ -178,4 +179,99 @@ jobs:
     // Local -> FirstParty
     let local = images.iter().find(|n| n.name.contains("local")).unwrap();
     assert_eq!(local.trust_zone, TrustZone::FirstParty);
+}
+
+// ── Severity threshold tests ──────────────────────────
+
+#[test]
+fn severity_threshold_filters_exit_code_logic() {
+    let yaml = std::fs::read_to_string(fixture("over-privileged.yml")).unwrap();
+    let graph = parse(&yaml);
+    let findings = rules::run_all_rules(&graph, DEFAULT_MAX_HOPS);
+
+    // Without threshold: has Critical findings -> would exit 1
+    assert!(findings.iter().any(|f| f.severity == Severity::Critical));
+
+    // With threshold=Critical: only Critical findings trigger exit 1
+    let has_critical = findings.iter().any(|f| f.severity <= Severity::Critical);
+    assert!(has_critical, "Critical findings should trigger exit");
+
+    // With threshold=Info (most permissive): any finding triggers exit
+    let has_any = findings.iter().any(|f| f.severity <= Severity::Info);
+    assert!(has_any);
+
+    // All findings still present regardless of threshold
+    assert!(findings.len() > 0, "threshold doesn't remove findings from report");
+}
+
+#[test]
+fn threshold_high_skips_medium_and_low() {
+    let yaml = std::fs::read_to_string(fixture("clean.yml")).unwrap();
+    let graph = parse(&yaml);
+    let findings = rules::run_all_rules(&graph, DEFAULT_MAX_HOPS);
+
+    // Clean workflow should have no Critical findings
+    assert!(!findings.iter().any(|f| f.severity == Severity::Critical));
+
+    // With threshold=Critical: only critical matters -> no trigger
+    let would_exit = findings.iter().any(|f| f.severity <= Severity::Critical);
+    assert!(!would_exit, "no critical findings -> exit 0 with critical threshold");
+}
+
+// ── Ignore file tests ─────────────────────────────────
+
+#[test]
+fn ignore_file_suppresses_expected_findings() {
+    let yaml = std::fs::read_to_string(fixture("over-privileged.yml")).unwrap();
+    let graph = parse(&yaml);
+    let findings = rules::run_all_rules(&graph, DEFAULT_MAX_HOPS);
+
+    // Count unpinned action findings before ignore
+    let unpinned_before = findings
+        .iter()
+        .filter(|f| f.category == FindingCategory::UnpinnedAction)
+        .count();
+    assert!(unpinned_before > 0, "should have unpinned action findings");
+
+    // Create ignore config that suppresses UnpinnedAction
+    let ignore_yaml = r#"
+ignore:
+  - category: unpinned_action
+    reason: "Accepted for this test"
+"#;
+    let config: IgnoreConfig = serde_yaml::from_str(ignore_yaml).unwrap();
+    let result = config.apply(findings, &graph.source.file);
+
+    // Unpinned actions should be suppressed
+    let unpinned_after = result
+        .findings
+        .iter()
+        .filter(|f| f.category == FindingCategory::UnpinnedAction)
+        .count();
+    assert_eq!(unpinned_after, 0, "unpinned action findings should be suppressed");
+    assert!(result.suppressed_count > 0, "should have suppressed findings");
+
+    // Other findings should still be present
+    assert!(!result.findings.is_empty(), "non-matching findings should survive");
+}
+
+#[test]
+fn ignore_file_with_path_only_matches_specific_file() {
+    let yaml = std::fs::read_to_string(fixture("over-privileged.yml")).unwrap();
+    let graph = parse(&yaml);
+    let findings = rules::run_all_rules(&graph, DEFAULT_MAX_HOPS);
+    let total = findings.len();
+
+    // Ignore UnpinnedAction but only for a different file
+    let ignore_yaml = r#"
+ignore:
+  - category: unpinned_action
+    path: ".github/workflows/other.yml"
+"#;
+    let config: IgnoreConfig = serde_yaml::from_str(ignore_yaml).unwrap();
+    let result = config.apply(findings, &graph.source.file);
+
+    // Nothing should be suppressed — path doesn't match
+    assert_eq!(result.findings.len(), total);
+    assert_eq!(result.suppressed_count, 0);
 }

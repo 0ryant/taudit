@@ -19,6 +19,8 @@ taudit-report-json = { path = "../taudit-report-json" }
 taudit-sink-cloudevents = { path = "../taudit-sink-cloudevents" }
 clap = { workspace = true }
 anyhow = { workspace = true }
+serde_yaml = { workspace = true }
 
 [dev-dependencies]
 serde_json = { workspace = true }
+serde_yaml = { workspace = true }

@@ -482,6 +482,7 @@ dependencies = [
  "anyhow",
  "clap",
  "serde_json",
+ "serde_yaml",
  "taudit-core",
  "taudit-parse-gha",
  "taudit-report-json",
