@@ -7,8 +7,11 @@ use crate::propagation;
 
 /// MVP Rule 1: Authority (secret/identity) propagated across a trust boundary.
 ///
-/// Severity graduation: if the sink is a SHA-pinned ThirdParty image, the risk
-/// is lower (immutable code), so we emit High instead of Critical.
+/// Severity graduation (tuned from real-world signal on 10 production workflows):
+/// - Untrusted sink: Critical (real risk — unpinned code with authority)
+/// - SHA-pinned ThirdParty sink: High (immutable code, but still cross-boundary)
+/// - SHA-pinned sink + constrained identity: Medium (lowest-risk form — read-only
+///   token to immutable third-party code, e.g. `contents:read` → `actions/checkout@sha`)
 pub fn authority_propagation(graph: &AuthorityGraph, max_hops: usize) -> Vec<Finding> {
     let paths = propagation::propagation_analysis(graph, max_hops);
 
@@ -25,15 +28,26 @@ pub fn authority_propagation(graph: &AuthorityGraph, max_hops: usize) -> Vec<Fin
                 .map(|n| n.name.as_str())
                 .unwrap_or("?");
 
-            // Graduate severity: SHA-pinned third-party sinks are less risky
-            let severity = match graph.node(path.sink) {
-                Some(sink)
-                    if sink.trust_zone == TrustZone::ThirdParty
-                        && sink.metadata.contains_key(META_DIGEST) =>
-                {
-                    Severity::High
-                }
-                _ => Severity::Critical,
+            // Graduate severity based on sink trust + source scope
+            let sink_is_pinned = graph
+                .node(path.sink)
+                .map(|n| {
+                    n.trust_zone == TrustZone::ThirdParty && n.metadata.contains_key(META_DIGEST)
+                })
+                .unwrap_or(false);
+
+            let source_is_constrained = graph
+                .node(path.source)
+                .and_then(|n| n.metadata.get(META_IDENTITY_SCOPE))
+                .map(|s| s == "constrained")
+                .unwrap_or(false);
+
+            let severity = if sink_is_pinned && source_is_constrained {
+                Severity::Medium
+            } else if sink_is_pinned {
+                Severity::High
+            } else {
+                Severity::Critical
             };
 
             Finding {
