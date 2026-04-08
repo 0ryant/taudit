@@ -1,0 +1,79 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://taudit.dev/schemas/cloudevent-finding-v1.json",
+  "title": "taudit CloudEvent Finding v1",
+  "description": "CloudEvents 1.0 envelope wrapping a single taudit finding. One event per JSONL line.",
+  "type": "object",
+  "required": ["specversion", "id", "source", "type"],
+  "properties": {
+    "specversion": {
+      "type": "string",
+      "const": "1.0"
+    },
+    "id": {
+      "type": "string",
+      "description": "UUID v4 unique per event"
+    },
+    "source": {
+      "type": "string",
+      "description": "Always 'taudit'"
+    },
+    "type": {
+      "type": "string",
+      "description": "io.taudit.finding.{category}",
+      "pattern": "^io\\.taudit\\.finding\\.[a-z_]+$"
+    },
+    "subject": {
+      "type": "string",
+      "description": "Pipeline file path that was scanned"
+    },
+    "datacontenttype": {
+      "type": "string",
+      "const": "application/json"
+    },
+    "time": {
+      "type": "string",
+      "format": "date-time",
+      "description": "RFC 3339 timestamp"
+    },
+    "data": {
+      "type": "object",
+      "description": "The full Finding object",
+      "required": ["severity", "category", "message", "recommendation"],
+      "properties": {
+        "severity": {
+          "type": "string",
+          "enum": ["critical", "high", "medium", "low", "info"]
+        },
+        "category": {
+          "type": "string",
+          "enum": [
+            "authority_propagation",
+            "over_privileged_identity",
+            "unpinned_action",
+            "untrusted_with_authority",
+            "artifact_boundary_crossing",
+            "egress_blindspot",
+            "missing_audit_trail",
+            "floating_image",
+            "long_lived_credential"
+          ]
+        },
+        "path": {
+          "description": "Propagation path evidence, if applicable"
+        },
+        "nodes_involved": {
+          "type": "array",
+          "items": { "type": "integer" }
+        },
+        "message": {
+          "type": "string"
+        },
+        "recommendation": {
+          "type": "object",
+          "description": "Typed recommendation with routing info"
+        }
+      }
+    }
+  }
+}

@@ -6,6 +6,7 @@ members = [
     "crates/taudit-parse-gha",
     "crates/taudit-report-terminal",
     "crates/taudit-report-json",
+    "crates/taudit-sink-cloudevents",
 ]
 
 [workspace.package]
@@ -23,6 +24,8 @@ thiserror = "2"
 anyhow = "1"
 clap = { version = "4", features = ["derive"] }
 colored = "2"
+uuid = { version = "1", features = ["v4"] }
+chrono = { version = "0.4", features = ["serde"] }
 
 [profile.release]
 lto = true

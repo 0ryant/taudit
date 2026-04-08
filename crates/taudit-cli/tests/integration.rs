@@ -80,7 +80,10 @@ fn propagation_leaky_detects_boundary_crossings() {
         .iter()
         .filter(|f| f.category == FindingCategory::AuthorityPropagation)
     {
-        assert!(f.path.is_some(), "propagation finding missing path evidence");
+        assert!(
+            f.path.is_some(),
+            "propagation finding missing path evidence"
+        );
     }
 }
 

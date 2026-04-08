@@ -16,6 +16,7 @@ taudit-core = { path = "../taudit-core" }
 taudit-parse-gha = { path = "../taudit-parse-gha" }
 taudit-report-terminal = { path = "../taudit-report-terminal" }
 taudit-report-json = { path = "../taudit-report-json" }
+taudit-sink-cloudevents = { path = "../taudit-sink-cloudevents" }
 clap = { workspace = true }
 anyhow = { workspace = true }
 

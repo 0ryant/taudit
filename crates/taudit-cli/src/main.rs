@@ -10,6 +10,7 @@ use taudit_core::rules;
 use taudit_parse_gha::GhaParser;
 use taudit_report_json::JsonReportSink;
 use taudit_report_terminal::TerminalReport;
+use taudit_sink_cloudevents::CloudEventsJsonlSink;
 
 #[derive(Parser)]
 #[command(
@@ -45,6 +46,7 @@ enum Cli {
 enum OutputFormat {
     Terminal,
     Json,
+    Cloudevents,
 }
 
 fn main() -> Result<()> {
@@ -83,6 +85,11 @@ fn cmd_scan(paths: Vec<PathBuf>, format: OutputFormat, max_hops: usize) -> Resul
                 JsonReportSink
                     .emit(&mut stdout, &graph, &findings)
                     .with_context(|| "Failed to write JSON report")?;
+            }
+            OutputFormat::Cloudevents => {
+                CloudEventsJsonlSink
+                    .emit(&mut stdout, &graph, &findings)
+                    .with_context(|| "Failed to write CloudEvents JSONL")?;
             }
         }
     }
