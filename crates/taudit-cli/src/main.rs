@@ -97,6 +97,33 @@ enum Cli {
     /// Print taudit product version.
     Version,
 
+    /// Emit a CellOS execution-cell spec that runs taudit scan.
+    EmitSpec {
+        /// Pipeline path to scan inside the cell (file or directory)
+        #[arg(required = true)]
+        target: PathBuf,
+
+        /// Execution cell id in the generated spec
+        #[arg(long, default_value = "taudit-cellos-scan")]
+        id: String,
+
+        /// Cell lifetime in seconds
+        #[arg(long, default_value_t = 300)]
+        ttl_seconds: u64,
+
+        /// Minimum severity to fail the scan in-cell
+        #[arg(long)]
+        severity_threshold: Option<SeverityLevel>,
+
+        /// Use summary-only scan output in-cell
+        #[arg(long, default_value_t = false)]
+        quiet: bool,
+
+        /// Path for writing the generated spec (stdout if omitted)
+        #[arg(long)]
+        output: Option<PathBuf>,
+    },
+
     /// Diff findings between two pipeline versions
     Diff {
         /// Path to the "before" pipeline YAML file
@@ -149,6 +176,16 @@ impl SeverityLevel {
             SeverityLevel::Medium => Severity::Medium,
             SeverityLevel::Low => Severity::Low,
             SeverityLevel::Info => Severity::Info,
+        }
+    }
+
+    fn to_arg(&self) -> &'static str {
+        match self {
+            SeverityLevel::Critical => "critical",
+            SeverityLevel::High => "high",
+            SeverityLevel::Medium => "medium",
+            SeverityLevel::Low => "low",
+            SeverityLevel::Info => "info",
         }
     }
 }
@@ -206,6 +243,14 @@ fn main() -> Result<()> {
             Ok(())
         }
         Cli::Version => cmd_version(),
+        Cli::EmitSpec {
+            target,
+            id,
+            ttl_seconds,
+            severity_threshold,
+            quiet,
+            output,
+        } => cmd_emit_spec(target, id, ttl_seconds, severity_threshold, quiet, output),
         Cli::Map { paths } => cmd_map(paths),
         Cli::Diff {
             before,
@@ -687,6 +732,79 @@ fn cmd_version() -> Result<()> {
     Ok(())
 }
 
+fn cmd_emit_spec(
+    target: PathBuf,
+    id: String,
+    ttl_seconds: u64,
+    severity_threshold: Option<SeverityLevel>,
+    quiet: bool,
+    output: Option<PathBuf>,
+) -> Result<()> {
+    let working_dir = std::env::current_dir().context("Failed to resolve current directory")?;
+    let spec = build_cellos_spec(
+        &id,
+        ttl_seconds,
+        working_dir.to_string_lossy().as_ref(),
+        target.to_string_lossy().as_ref(),
+        severity_threshold.as_ref(),
+        quiet,
+    );
+    let rendered = serde_json::to_string_pretty(&spec).context("Failed to render spec JSON")?;
+
+    if let Some(path) = output {
+        std::fs::write(&path, rendered)
+            .with_context(|| format!("Failed to write spec to {}", path.display()))?;
+        eprintln!("Wrote CellOS spec to {}", path.display());
+    } else {
+        println!("{rendered}");
+    }
+
+    Ok(())
+}
+
+fn build_cellos_spec(
+    id: &str,
+    ttl_seconds: u64,
+    working_directory: &str,
+    target: &str,
+    severity_threshold: Option<&SeverityLevel>,
+    quiet: bool,
+) -> serde_json::Value {
+    let mut argv = vec![
+        "taudit".to_string(),
+        "scan".to_string(),
+        target.to_string(),
+        "--format".to_string(),
+        "json".to_string(),
+        "--no-color".to_string(),
+    ];
+
+    if let Some(level) = severity_threshold {
+        argv.push("--severity-threshold".to_string());
+        argv.push(level.to_arg().to_string());
+    }
+    if quiet {
+        argv.push("--quiet".to_string());
+    }
+
+    serde_json::json!({
+      "apiVersion": "cellos.io/v1",
+      "kind": "ExecutionCell",
+      "spec": {
+        "id": id,
+        "authority": {
+          "secretRefs": [],
+          "egressRules": []
+        },
+        "lifetime": { "ttlSeconds": ttl_seconds },
+        "run": {
+          "argv": argv,
+          "workingDirectory": working_directory
+        }
+      }
+    })
+}
+
 fn parse_content(
     parser: &GhaParser,
     content: String,
@@ -832,5 +950,31 @@ mod tests {
         let report = version_report();
         assert!(report.starts_with("taudit "));
         assert!(report.contains(env!("CARGO_PKG_VERSION")));
+    }
+
+    #[test]
+    fn build_cellos_spec_contains_required_shape() {
+        let spec = build_cellos_spec(
+            "taudit-cellos-scan",
+            120,
+            "/workspace",
+            "tests/fixtures/clean.yml",
+            Some(&SeverityLevel::Critical),
+            true,
+        );
+
+        assert_eq!(spec["apiVersion"], "cellos.io/v1");
+        assert_eq!(spec["kind"], "ExecutionCell");
+        assert_eq!(spec["spec"]["id"], "taudit-cellos-scan");
+        assert_eq!(spec["spec"]["lifetime"]["ttlSeconds"], 120);
+        assert_eq!(spec["spec"]["run"]["workingDirectory"], "/workspace");
+
+        let argv = spec["spec"]["run"]["argv"].as_array().unwrap();
+        assert!(argv.iter().any(|v| v == "taudit"));
+        assert!(argv.iter().any(|v| v == "scan"));
+        assert!(argv.iter().any(|v| v == "--severity-threshold"));
+        assert!(argv.iter().any(|v| v == "critical"));
+        assert!(argv.iter().any(|v| v == "--quiet"));
+        assert!(argv.iter().any(|v| v == "--no-color"));
     }
 }

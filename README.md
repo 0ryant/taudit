@@ -135,6 +135,24 @@ Notes:
 - You can override with `CELLOS_REPO=/path/to/CellOS just cellos-smoke`.
 - The smoke uses `tests/fixtures/clean.yml` and runs with `CELL_OS_USE_NOOP_SINK=1`.
 
+### Emit CellOS spec
+
+Generate an execution-cell JSON spec that runs `taudit scan` inside CellOS:
+
+```bash
+# Print spec JSON to stdout
+taudit emit-spec .github/workflows/ci.yml --severity-threshold high --quiet
+
+# Write spec to a file
+taudit emit-spec .github/workflows/ci.yml --output /tmp/taudit-cell.json
+```
+
+Then run it with CellOS:
+
+```bash
+CELL_OS_USE_NOOP_SINK=1 cargo run -p cellos-supervisor -- /tmp/taudit-cell.json
+```
+
 ### Version
 
 ```bash
