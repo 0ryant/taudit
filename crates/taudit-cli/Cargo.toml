@@ -16,13 +16,14 @@ name = "taudit"
 path = "src/main.rs"
 
 [dependencies]
-taudit-core = { path = "../taudit-core" }
-taudit-parse-gha = { path = "../taudit-parse-gha" }
-taudit-report-terminal = { path = "../taudit-report-terminal" }
-taudit-report-json = { path = "../taudit-report-json" }
-taudit-report-sarif = { path = "../taudit-report-sarif" }
-taudit-sink-cloudevents = { path = "../taudit-sink-cloudevents" }
+taudit-core = { version = "0.1.0", path = "../taudit-core" }
+taudit-parse-gha = { version = "0.1.0", path = "../taudit-parse-gha" }
+taudit-report-terminal = { version = "0.1.0", path = "../taudit-report-terminal" }
+taudit-report-json = { version = "0.1.0", path = "../taudit-report-json" }
+taudit-report-sarif = { version = "0.1.0", path = "../taudit-report-sarif" }
+taudit-sink-cloudevents = { version = "0.1.0", path = "../taudit-sink-cloudevents" }
 clap = { workspace = true }
+clap_complete = { workspace = true }
 anyhow = { workspace = true }
 serde_yaml = { workspace = true }
 serde_json = { workspace = true }

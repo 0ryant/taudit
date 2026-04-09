@@ -36,8 +36,10 @@ impl PipelineParser for GhaParser {
             let mut meta = HashMap::new();
             meta.insert(META_PERMISSIONS.into(), perm_string.clone());
             meta.insert(META_IDENTITY_SCOPE.into(), format!("{scope:?}").to_lowercase());
-            // OIDC: id-token: write → token is OIDC-capable (federated scope)
-            if perm_string.contains("id-token") && perm_string.contains("write") {
+            // OIDC: id-token: write → token is OIDC-capable (federated scope).
+            // Check the formatted substring directly — Permissions::Map fmt produces
+            // "id-token: write" so this won't false-positive on "contents: write".
+            if perm_string.contains("id-token: write") {
                 meta.insert(META_OIDC.into(), "true".into());
             }
             Some(graph.add_node_with_metadata(
@@ -58,7 +60,7 @@ impl PipelineParser for GhaParser {
                 let mut meta = HashMap::new();
                 meta.insert(META_PERMISSIONS.into(), perm_string.clone());
                 meta.insert(META_IDENTITY_SCOPE.into(), format!("{scope:?}").to_lowercase());
-                if perm_string.contains("id-token") && perm_string.contains("write") {
+                if perm_string.contains("id-token: write") {
                     meta.insert(META_OIDC.into(), "true".into());
                 }
                 Some(graph.add_node_with_metadata(
@@ -94,17 +96,31 @@ impl PipelineParser for GhaParser {
                 continue;
             }
 
+            // Matrix strategy: authority shape may differ per matrix entry — mark Partial
+            if job
+                .strategy
+                .as_ref()
+                .and_then(|s| s.get("matrix"))
+                .is_some()
+            {
+                graph.mark_partial(format!(
+                    "job '{}' uses matrix strategy — authority shape may differ per matrix entry",
+                    job_name
+                ));
+            }
+
             // Container: job-level container image — add as Image node
             if let Some(ref container) = job.container {
                 let image_str = container.image();
-                let trust_zone = if is_docker_digest_pinned(image_str) {
+                let pinned = is_docker_digest_pinned(image_str);
+                let trust_zone = if pinned {
                     TrustZone::ThirdParty
                 } else {
                     TrustZone::Untrusted
                 };
                 let mut meta = HashMap::new();
                 meta.insert(META_CONTAINER.into(), "true".into());
-                if is_docker_digest_pinned(image_str) {
+                if pinned {
                     if let Some(digest) = image_str.split("@sha256:").nth(1) {
                         meta.insert(META_DIGEST.into(), format!("sha256:{}", digest));
                     }
@@ -138,6 +154,18 @@ impl PipelineParser for GhaParser {
                 // Link step to GITHUB_TOKEN if it exists
                 if let Some(tok_id) = job_token_id {
                     graph.add_edge(step_id, tok_id, EdgeKind::HasAccessTo);
+                }
+
+                // Process secrets from workflow-level `env:` (inherited by all jobs/steps)
+                if let Some(ref env) = workflow.env {
+                    for env_val in env.values() {
+                        if is_secret_reference(env_val) {
+                            let secret_name = extract_secret_name(env_val);
+                            let secret_id =
+                                find_or_create_secret(&mut graph, &mut secret_ids, &secret_name);
+                            graph.add_edge(step_id, secret_id, EdgeKind::HasAccessTo);
+                        }
+                    }
                 }
 
                 // Process secrets from job-level `env:` (inherited by all steps)
@@ -315,6 +343,9 @@ pub struct GhaWorkflow {
     pub triggers: Option<serde_yaml::Value>,
     #[serde(default)]
     pub permissions: Option<Permissions>,
+    /// Workflow-level env vars, inherited by all jobs and steps.
+    #[serde(default)]
+    pub env: Option<HashMap<String, String>>,
     #[serde(default)]
     pub jobs: HashMap<String, GhaJob>,
 }
@@ -350,6 +381,10 @@ pub struct GhaJob {
     /// Job container image.
     #[serde(default)]
     pub container: Option<ContainerConfig>,
+    /// Matrix/strategy configuration. When a matrix is present, the authority
+    /// shape may differ per matrix entry — graph is marked Partial.
+    #[serde(default)]
+    pub strategy: Option<serde_yaml::Value>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -632,6 +667,68 @@ jobs:
     }
 
     #[test]
+    fn workflow_level_env_inherited_by_all_steps() {
+        let yaml = r#"
+env:
+  DB_URL: "${{ secrets.DATABASE_URL }}"
+jobs:
+  build:
+    steps:
+      - name: Step A
+        run: echo "a"
+  test:
+    steps:
+      - name: Step B
+        run: echo "b"
+"#;
+        let graph = parse(yaml);
+        let secrets: Vec<_> = graph.nodes_of_kind(NodeKind::Secret).collect();
+        assert_eq!(secrets.len(), 1, "one secret node (deduplicated)");
+
+        // Both steps in both jobs should inherit the workflow-level secret
+        let secret_id = secrets[0].id;
+        let accessing_steps = graph
+            .edges_to(secret_id)
+            .filter(|e| e.kind == EdgeKind::HasAccessTo)
+            .count();
+        assert_eq!(accessing_steps, 2, "both steps inherit workflow-level env");
+    }
+
+    #[test]
+    fn matrix_strategy_marks_graph_partial() {
+        let yaml = r#"
+jobs:
+  test:
+    strategy:
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
+    steps:
+      - run: echo hi
+"#;
+        let graph = parse(yaml);
+        assert_eq!(graph.completeness, AuthorityCompleteness::Partial);
+        assert!(
+            graph
+                .completeness_gaps
+                .iter()
+                .any(|g| g.contains("matrix")),
+            "matrix strategy should be recorded as a completeness gap"
+        );
+    }
+
+    #[test]
+    fn job_without_matrix_does_not_mark_partial() {
+        let yaml = r#"
+jobs:
+  build:
+    steps:
+      - run: cargo build
+"#;
+        let graph = parse(yaml);
+        assert_eq!(graph.completeness, AuthorityCompleteness::Complete);
+    }
+
+    #[test]
     fn reusable_workflow_creates_image_and_marks_partial() {
         let yaml = r#"
 jobs:
@@ -748,6 +845,27 @@ jobs:
         assert!(
             identities[0].metadata.get(META_OIDC).is_none(),
             "contents:read should not tag as OIDC"
+        );
+    }
+
+    #[test]
+    fn contents_write_without_id_token_does_not_tag_oidc() {
+        // Regression: "contents: write" contains "write" but not "id-token: write".
+        // Should NOT be tagged as OIDC-capable.
+        let yaml = r#"
+permissions:
+  contents: write
+jobs:
+  ci:
+    steps:
+      - run: echo hi
+"#;
+        let graph = parse(yaml);
+        let identities: Vec<_> = graph.nodes_of_kind(NodeKind::Identity).collect();
+        assert_eq!(identities.len(), 1);
+        assert!(
+            identities[0].metadata.get(META_OIDC).is_none(),
+            "contents:write without id-token must not be tagged OIDC"
         );
     }
 

@@ -151,6 +151,12 @@ pub fn unpinned_action(graph: &AuthorityGraph) -> Vec<Finding> {
             continue;
         }
 
+        // Container images are handled by floating_image — skip here to avoid
+        // double-flagging the same node as both UnpinnedAction and FloatingImage.
+        if image.metadata.get(META_CONTAINER).map(|v| v == "true").unwrap_or(false) {
+            continue;
+        }
+
         // Deduplicate: same action reference flagged once
         if !seen.insert(&image.name) {
             continue;
@@ -637,6 +643,22 @@ mod tests {
 
         let findings = floating_image(&g);
         assert!(findings.is_empty(), "digest-pinned container should not be flagged");
+    }
+
+    #[test]
+    fn unpinned_action_does_not_flag_container_images() {
+        // Regression: container Image nodes are handled by floating_image, not unpinned_action.
+        // The same node must not generate findings from both rules.
+        let mut g = AuthorityGraph::new(source("ci.yml"));
+        let mut meta = std::collections::HashMap::new();
+        meta.insert(META_CONTAINER.into(), "true".into());
+        g.add_node_with_metadata(NodeKind::Image, "ubuntu:22.04", TrustZone::Untrusted, meta);
+
+        let findings = unpinned_action(&g);
+        assert!(
+            findings.is_empty(),
+            "unpinned_action must skip container images to avoid double-flagging"
+        );
     }
 
     #[test]

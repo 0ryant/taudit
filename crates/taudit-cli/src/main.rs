@@ -1,5 +1,5 @@
 use anyhow::{Context, Result};
-use clap::Parser;
+use clap::{CommandFactory, Parser};
 use std::collections::HashSet;
 use std::path::PathBuf;
 
@@ -81,6 +81,17 @@ enum Cli {
         /// Path to pipeline YAML file(s) or directory
         #[arg(required = true)]
         paths: Vec<PathBuf>,
+    },
+
+    /// Generate shell completions and print them to stdout.
+    /// Source or eval the output in your shell config to enable tab completion.
+    ///
+    /// Example (bash): eval "$(taudit completions bash)"
+    /// Example (zsh):  eval "$(taudit completions zsh)"
+    /// Example (fish): taudit completions fish | source
+    Completions {
+        /// Shell to generate completions for
+        shell: clap_complete::Shell,
     },
 
     /// Diff findings between two pipeline versions
@@ -184,6 +195,12 @@ fn main() -> Result<()> {
                 verbose,
                 baseline,
             })
+        }
+        Cli::Completions { shell } => {
+            let mut cmd = Cli::command();
+            let name = cmd.get_name().to_string();
+            clap_complete::generate(shell, &mut cmd, name, &mut std::io::stdout());
+            Ok(())
         }
         Cli::Map { paths } => cmd_map(paths),
         Cli::Diff {

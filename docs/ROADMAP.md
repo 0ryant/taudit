@@ -2,7 +2,7 @@
 
 Three horizons. Each is a superset of the previous.
 
-**Current state:** 7 crates, 86 tests, ~4,800 LOC, 7 analysis rules, 1 parser (GitHub Actions), 4 output formats (terminal, JSON, CloudEvents JSONL, SARIF), 3 commands (scan, map, diff). MVP complete. AAA Tier 1+2 (partial) + Tier 3+4 (partial) + Tier 6 (partial) + Tier 7 quick wins shipped.
+**Current state:** 7 crates, 91 tests, ~5,300 LOC, 7 analysis rules, 1 parser (GitHub Actions), 4 output formats (terminal, JSON, CloudEvents JSONL, SARIF), 4 commands (scan, map, diff, completions). MVP complete. Deep into AAA: Tier 1 done, Tier 2 partial, Tier 3 mostly done, Tier 4 partial, Tier 6 partial, Tier 7 partial.
 
 **Effort key:** S = hours, M = days, L = week+
 
@@ -20,7 +20,7 @@ Three horizons. Each is a superset of the previous.
 |---|------|--------|
 | 1 | Authority graph with typed nodes, edges, trust zones | Done |
 | 2 | BFS propagation engine with configurable depth | Done |
-| 3 | 6 analysis rules with severity graduation and deduplication | Done |
+| 3 | 7 analysis rules with severity graduation and deduplication | Done |
 | 4 | Finding model with path evidence and remediation routing | Done |
 | 5 | GitHub Actions parser with trust zone classification | Done |
 | 6 | Terminal report with propagation path visualization | Done |
@@ -28,38 +28,36 @@ Three horizons. Each is a superset of the previous.
 | 8 | CloudEvents JSONL sink with schema | Done |
 | 9 | Authority map command | Done |
 | 10 | CI pipeline (fmt, clippy, test, deny, dependabot) | Done |
-| 11 | 36 tests (unit + integration + sink) | Done |
+| 11 | 91 tests (unit + integration + sink) | Done |
 
 ### Precision (do first — the credibility layer)
 
-The graph is only as good as the parser. If taudit can't parse something, it must say so — not silently produce an incomplete graph.
+| # | Item | Effort | Status |
+|---|------|--------|--------|
+| **12** | `AuthorityCompleteness` enum on `AuthorityGraph` | S | Done |
+| **13** | `IdentityScope` classification on Identity nodes | S | Done |
+| **14** | Inferred secret detection in `run:` blocks | S | Done |
+| **15** | `env:` inheritance (workflow → job → step) | S | Done |
+
+### Noise reduction
 
 | # | Item | Effort | Status |
 |---|------|--------|--------|
-| **12** | `AuthorityCompleteness` enum on `AuthorityGraph` | S | Done (af548b7) |
-| **13** | `IdentityScope` classification on Identity nodes | S | Done (af548b7) |
-| **14** | Inferred secret detection in `run:` blocks | S | Done (af548b7) |
-| **15** | `env:` inheritance (job-level to step-level) | S | Done (af548b7) |
+| **16** | `.tauditignore` | M | Done |
+| **17** | `--severity-threshold` flag | S | Done |
 
-### Noise reduction (do second — the adoption layer)
+### Real-world validation
 
 | # | Item | Effort | Status |
 |---|------|--------|--------|
-| **16** | `.tauditignore` | M | Done (9aef6c1) |
-| **17** | `--severity-threshold` flag | S | Done (9aef6c1) |
+| **18** | Run on production workflows | M | Done — 10 workflows across taudit/tsafe/CellOS |
+| **19** | Tune findings from real-world signal | S | Done — constrained+pinned graduated to Medium |
 
-### Real-world validation (do third — the truth layer)
-
-| # | Item | Effort | Status |
-|---|------|--------|--------|
-| **18** | Run on production workflows | M | Done (9e41359) — 10 workflows across taudit/tsafe/CellOS |
-| **19** | Tune findings from real-world signal | S | Done (9e41359) — constrained+pinned graduated to Medium |
-
-### Packaging (do last — the distribution layer)
+### Packaging
 
 | # | Item | Effort | Status |
 |---|------|--------|--------|
-| **20** | README with install + quickstart + example output | S | Done (c354f01) |
+| **20** | README with install + quickstart + example output | S | Done |
 | **21** | `cargo install taudit` (publish to crates.io) | S | Ready — metadata set, `cargo publish` when ready |
 
 ### MVP ship gate
@@ -67,7 +65,7 @@ The graph is only as good as the parser. If taudit can't parse something, it mus
 - [x] `AuthorityCompleteness` marks graphs as Complete/Partial — no silent incompleteness
 - [x] `IdentityScope` classifies identity breadth — Unknown treated as risky
 - [x] Inferred secrets in `run:` blocks detected and marked
-- [x] Job-level `env:` inheritance parsed
+- [x] Workflow/job-level `env:` inheritance parsed
 - [x] Zero false positives on production workflows (10 workflows, 3 projects)
 - [x] `.tauditignore` suppresses known-accepted risks
 - [x] `--severity-threshold` lets CI pass on medium/low
@@ -84,12 +82,10 @@ The graph is only as good as the parser. If taudit can't parse something, it mus
 
 Organized by impact tier. Each tier unlocks a class of adoption.
 
-### Tier 1: Noise Elimination (S each)
+### Tier 1: Noise Elimination ✅ Complete
 
-These determine whether teams keep using taudit past day 1.
-
-- [x] `.tauditignore` with glob + category matching (from MVP)
-- [x] `--severity-threshold` flag (from MVP)
+- [x] `.tauditignore` with glob + category matching
+- [x] `--severity-threshold` flag
 - [x] `--exclude` glob patterns for generated/vendored workflows
 - [x] `--baseline` file (suppress findings from a known-good scan)
 - [x] `--quiet` mode (summary counts only, for CI logs)
@@ -100,56 +96,57 @@ Put findings where engineers already look.
 
 - [x] **SARIF output adapter** — findings appear in GitHub code scanning tab
 - [x] **`taudit diff`** — before/after authority graph diff between pipeline versions
+- [x] **Stdin pipe support** — `cat workflow.yml | taudit scan -`
 - [ ] **PR comment bot** — `taudit diff base..head` posts authority changes to PR
 - [ ] **GitHub Action** — `uses: taudit-dev/taudit-action@sha` with configurable severity gate
 
 ### Tier 3: Parser Precision (M-L each, real-world correctness)
 
-Real GHA workflows use features the current parser doesn't handle. Priority order by likelihood of encountering in real repos.
+Real GHA workflows use features that affect the completeness of the authority graph.
 
-- [x] **Reusable workflow support** (`workflow_call` — job.uses detected, graph marked Partial, DelegatesTo edge created)
-- [ ] **Composite action parsing** (action.yml with `using: composite`)
-- [x] **Trigger-based trust classification** (pull_request_target = untrusted source)
-- [ ] **Expression evaluation** (`${{ github.event_name }}` in conditionals)
-- [ ] **Matrix strategy awareness** (trust zones may differ per matrix entry)
-- [ ] **`AuthorityCompleteness::Partial` propagation** for unsupported YAML constructs — flag what the parser skipped, not just what it found
+- [x] **Reusable workflow detection** — `job.uses` creates DelegatesTo edge, marks graph Partial
+- [x] **Trigger-based trust classification** — `pull_request_target` marks `run:` steps Untrusted
+- [x] **Matrix strategy** — jobs with `strategy.matrix` mark graph Partial
+- [x] **Workflow-level `env:` inheritance** — secrets defined at workflow root visible to all steps
+- [x] **Job container images** — `job.container` parsed, `FloatingImage` rule applies
+- [ ] **Composite action parsing** — action.yml with `using: composite` (steps hidden from graph)
+- [ ] **Expression evaluation** — `${{ github.event_name }}` in conditionals not resolved
 
 ### Tier 4: Identity Depth (M each, the dangerous gap)
 
 Identity modelling is the biggest long-term risk. Modern pipelines use OIDC tokens, service principals, and cloud identities with massive over-scope by default.
 
-- [x] **OIDC token detection** — `permissions: id-token: write` → identity tagged with `META_OIDC: "true"`
-- [ ] **Cloud identity inference** — AWS role assumption, Azure federated credentials detected from action inputs
-- [ ] **Scope propagation** — if an identity is `Broad` and propagates to an `Untrusted` step, escalate severity
-- [ ] **Identity recommendation refinement** — `FederateIdentity` recommendations carry specific OIDC provider suggestions
+- [x] **OIDC token detection** — `id-token: write` tags identity as OIDC-capable (`META_OIDC`)
+- [ ] **Cloud identity inference** — detect `aws-actions/configure-aws-credentials`, `google-github-actions/auth`, `azure/login` from step `uses:` + `with:` inputs; create Identity or Secret nodes
+- [ ] **Scope propagation escalation** — Broad identity → Untrusted step should escalate to Critical regardless of sink pinning
+- [ ] **Container authority modeling** — steps running inside a floating container should inherit its trust zone; currently a modeling gap (container Image node is disconnected from its steps)
+- [ ] **FederateIdentity recommendation refinement** — OIDC-tagged identities suggest specific provider (`actions/oidc-federation` vs. cloud-native)
 
 ### Tier 5: Second Platform (L, unlocks enterprise)
 
-Don't rush this. Depth + correctness on GHA first. ADO only when GHA is fully proven.
+Don't rush this. Depth + correctness on GHA first.
 
 - [ ] **Azure DevOps parser** (`taudit-parse-ado`) — stages, jobs, steps, service connections, variable groups
 - [ ] Environment approvals as isolation boundaries
 
 ### Tier 6: Rule Depth (S-M each, deeper analysis)
 
-Don't over-expand rules before identity depth. Authority propagation is the core narrative — keep it sharp.
-
+- [x] **FloatingImage** — container images without digest pinning (Medium severity)
 - [ ] **EgressBlindspot** — steps with secrets + network access + no egress constraint
 - [ ] **MissingAuditTrail** — authority-bearing steps with no logging
-- [x] **FloatingImage** — container images without digest pinning
-- [ ] **Confidence scoring** — severity modulated by context + `AuthorityCompleteness`
+- [ ] **Confidence scoring** — severity modulated by `AuthorityCompleteness` (Partial graph → cap max severity)
 - [ ] **Custom rule loading** — user-defined rules via YAML policy files
 
 ### Tier 7: Enterprise Polish (M each)
 
 - [x] `--no-color` flag + automatic tty detection
 - [x] `--verbose` mode (full node metadata in terminal report)
+- [x] Shell completions (bash, zsh, fish) — `taudit completions <shell>`
+- [x] Release workflow — 5-platform binaries (linux-x64, linux-arm64, macos-x64, macos-arm64, windows-x64)
 - [ ] Stable schema versioning (v1/v2 contract evolution)
 - [ ] JSON Schema CI validation in quality.yml
-- [ ] Release workflow with multi-platform binaries (linux-x64, linux-arm64, darwin-x64, darwin-arm64)
 - [ ] `cargo-audit` in CI
 - [ ] Homebrew formula / nix package
-- [ ] Shell completions (bash, zsh, fish)
 
 ### Tier 8: Graph Power (M-L each, differentiation)
 
@@ -161,17 +158,17 @@ Don't over-expand rules before identity depth. Authority propagation is the core
 ### AAA completion gate
 
 - [ ] Two CI platforms supported (GHA + ADO)
-- [ ] `AuthorityCompleteness` propagated through all outputs
+- [x] `AuthorityCompleteness` propagated — parser marks Partial for reusable workflows, matrix, inferred secrets
 - [ ] Identity scope modelled with OIDC/cloud identity awareness
 - [x] Findings appear in GitHub code scanning (SARIF)
 - [ ] PR bot posts authority changes
-- [ ] `.tauditignore` + `--baseline` eliminate all noise
-- [ ] Reusable workflows and composite actions parsed correctly
-- [ ] All 9 finding categories implemented
+- [x] `.tauditignore` + `--baseline` eliminate known noise
+- [ ] Composite actions parsed correctly
+- [ ] All 9 finding categories implemented (7/9 done)
 - [ ] Available via Homebrew + cargo install + GitHub Action
-- [ ] Release binaries for 4 targets
+- [x] Release binaries for 5 targets (linux-x64, linux-arm64, macos-x64, macos-arm64, windows-x64)
 
-**Estimated effort: 6-10 weeks solo.** Tier 1-3 are the highest leverage. Tier 4 (identity depth) is the long-term credibility play.
+**Estimated effort: 4-7 weeks remaining to full AAA.** Tier 4 cloud identity inference and Tier 2 PR bot are the highest remaining leverage.
 
 ---
 
@@ -211,7 +208,7 @@ Don't over-expand rules before identity depth. Authority propagation is the core
 
 **Complete output coverage:**
 
-- [ ] Terminal, JSON, CloudEvents JSONL, SARIF — all four formats
+- [x] Terminal, JSON, CloudEvents JSONL, SARIF — all four formats done
 - [ ] **JetStream publish adapter** — optional direct NATS publish for CellOS-integrated deployments
 - [ ] **Governance correlation ID** in CloudEvents extension attributes
 
@@ -235,7 +232,7 @@ Don't over-expand rules before identity depth. Authority propagation is the core
 - [ ] Governance loop has correlation IDs across taudit/tsafe/CellOS
 - [ ] taudit scans all three sister projects with zero findings
 - [ ] Policy-as-code supports user-defined rules
-- [ ] Four output formats (terminal, JSON, CloudEvents, SARIF)
+- [x] Four output formats (terminal, JSON, CloudEvents, SARIF)
 - [ ] Fuzzed, property-tested, benchmarked
 - [ ] Signed releases with SBOM
 
@@ -262,63 +259,68 @@ Per doctrine anti-goals — these are out of scope permanently:
 
 ---
 
-## Pressure Points (from external review)
+## Known Modeling Gaps
 
-Two structural weak points that gate credibility:
+Documented incompleteness — not bugs, but places where the graph underapproximates reality.
+
+| Gap | Impact | Fix direction |
+|-----|--------|---------------|
+| Container → step authority | Steps inside a floating container inherit its supply chain risk, but no `UsesImage` edge connects them. `FloatingImage` flags the image; propagation doesn't escalate steps running in it. | Add `UsesImage` edge from each step to its job's container Image node in the parser |
+| Composite actions | `uses: ./.github/actions/foo` with `using: composite` hides sub-steps from the graph entirely | Parse `action.yml` and inline steps; mark Partial if action.yml is unavailable |
+| Expression conditionals | `if: ${{ github.event_name == 'push' }}` — steps with conditionals are modelled as always-executing | Mark steps with `if:` as Partial-contributing (low priority — this is conservative, not dangerous) |
+| Reusable workflow authority | `job.uses` marks the graph Partial but doesn't model what secrets/identities the called workflow uses | Would require fetching and parsing the called workflow's YAML |
+
+---
+
+## Pressure Points
 
 ### 1. Parser Fidelity → Authority Truth
 
-The graph is only as good as the parser. GitHub Actions is not declarative in the way the model assumes.
+**Resolved:**
+- ✅ Inferred secrets in `run:` blocks
+- ✅ Workflow/job-level `env:` inheritance
+- ✅ Reusable workflow detection (`job.uses`)
+- ✅ Matrix strategy marking graph Partial
+- ✅ `pull_request_target` trust zone classification
+- ✅ Job container images
 
-**Not yet handled:**
-- `${{ secrets.X }}` inside `run:` shell scripts (inferred, not precise)
-- Composite actions hiding steps
-- Reusable workflows (`workflow_call`)
-- Matrix expansions changing authority shape
-- `env:` inheritance (job → step)
-
-**Fix direction:** Don't try to evaluate everything. Mark unknown authority with `AuthorityCompleteness::Partial` and propagate it. False confidence in incomplete graphs is worse than being noisy.
+**Still open:**
+- Composite actions (steps hidden behind `action.yml`)
+- Expression evaluation in conditionals
 
 ### 2. Identity Modelling Depth
 
-Identity nodes capture `write-all` / `contents:read` permission strings. But the real risk is *what the identity can actually do* — OIDC tokens, service principals, and cloud identities carry massive implicit scope.
+**Resolved:**
+- ✅ `IdentityScope` classification (Broad/Constrained/Unknown)
+- ✅ OIDC-capable identity tagged (`META_OIDC`)
 
-**Fix direction:** Add `IdentityScope` classification (`Broad` / `Constrained` / `Unknown`). Treat `Unknown` as risky. Don't try to resolve full IAM — classify the breadth.
-
-### What NOT to do yet (even though it's tempting)
-
-| Skip | Why |
-|---|---|
-| Rush ADO parser | Don't need platform breadth to prove the thesis. Need depth + correctness on GHA first. |
-| Over-expand rules | 6 rules clustered around authority misuse / trust boundaries / supply chain risk. That's the correct bias. Adding network modelling or audit trail gaps too early dilutes the core narrative. |
-| Build dashboards | The propagation path in output is the strongest feature. Don't dilute it with summary-heavy views. |
-| Automate the governance loop | Manual `tsafe exec` from recommendation text is the right UX at 1 customer. |
+**Still open:**
+- Cloud identity inference (AWS/GCP/Azure action detection)
+- Scope propagation escalation (Broad → Untrusted = always Critical)
+- Container trust zone not propagated to steps running inside it
 
 ---
 
 ## Visual Summary
 
 ```
-                         YOU ARE HERE
+MVP ═══════════════════════════════════════════════════════════ ✅ SHIPPED
+  AuthorityCompleteness · IdentityScope · inferred secrets
+  env inheritance · .tauditignore · --threshold
+  real-world validation · README
+
+                              ↓
+AAA ══════════════════════════╪══════════════════════ YOU ARE HERE
+  T1: noise elimination    ✅ DONE
+  T2: platform integration ◑ SARIF+diff+stdin done; PR bot+GHA pending
+  T3: parser precision     ◑ reusable/matrix/container/PRT done; composite pending
+  T4: identity depth       ◑ OIDC tagging done; cloud inference pending
+  T5: Azure DevOps         ○ not started
+  T6: rule depth           ◑ FloatingImage done; Egress/Audit pending
+  T7: enterprise polish    ◑ completions+release+color+verbose done
+  T8: graph power          ○ not started
                               |
-                              v
-MVP ═══════════════════[precision]═══[noise]═══[validate]═══[package]══ ship gate
-  AuthorityCompleteness    .tauditignore    real repos       README
-  IdentityScope            --threshold      tune findings    crates.io
-  inferred secrets
-  env inheritance
-                              |
-AAA ══════════════════════════╪═════════════════════════════════════ competitive
-  T1: noise elimination       |
-  T2: SARIF + PR bot          |
-  T3: parser precision        |
-  T4: identity depth          |
-  T5: Azure DevOps            |
-  T6: all 9 rules             |
-  T7: enterprise polish       |
-  T8: graph power             |
-                              |
-DONE ═════════════════════════╪═════════════════════════════════════════ complete
+DONE ═════════════════════════╪═════════════════════════════════ future
   GitLab parser               |
   governance correlation      |
   self-hosting                |

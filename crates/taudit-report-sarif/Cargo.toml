@@ -9,6 +9,6 @@ authors.workspace = true
 repository.workspace = true
 
 [dependencies]
-taudit-core = { path = "../taudit-core" }
+taudit-core = { version = "0.1.0", path = "../taudit-core" }
 serde = { workspace = true }
 serde_json = { workspace = true }
