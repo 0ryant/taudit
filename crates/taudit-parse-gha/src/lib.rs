@@ -109,8 +109,9 @@ impl PipelineParser for GhaParser {
                 ));
             }
 
-            // Container: job-level container image — add as Image node
-            if let Some(ref container) = job.container {
+            // Container: job-level container image — add as Image node and capture ID
+            // so each step in this job can be linked to it via UsesImage.
+            let container_image_id: Option<NodeId> = if let Some(ref container) = job.container {
                 let image_str = container.image();
                 let pinned = is_docker_digest_pinned(image_str);
                 let trust_zone = if pinned {
@@ -125,8 +126,10 @@ impl PipelineParser for GhaParser {
                         meta.insert(META_DIGEST.into(), format!("sha256:{}", digest));
                     }
                 }
-                graph.add_node_with_metadata(NodeKind::Image, image_str, trust_zone, meta);
-            }
+                Some(graph.add_node_with_metadata(NodeKind::Image, image_str, trust_zone, meta))
+            } else {
+                None
+            };
 
             for (step_idx, step) in job.steps.iter().enumerate() {
                 let default_name = format!("{}[{}]", job_name, step_idx);
@@ -151,9 +154,25 @@ impl PipelineParser for GhaParser {
                     graph.add_edge(step_id, img_id, EdgeKind::UsesImage);
                 }
 
+                // Link step to job container — steps run inside the container's execution
+                // environment, so a floating container is a supply chain risk for every step.
+                if let Some(img_id) = container_image_id {
+                    graph.add_edge(step_id, img_id, EdgeKind::UsesImage);
+                }
+
                 // Link step to GITHUB_TOKEN if it exists
                 if let Some(tok_id) = job_token_id {
                     graph.add_edge(step_id, tok_id, EdgeKind::HasAccessTo);
+                }
+
+                // Cloud identity inference: detect known OIDC cloud auth actions and
+                // create an Identity node representing the assumed cloud identity.
+                if let Some(ref uses) = step.uses {
+                    if let Some(cloud_id) =
+                        classify_cloud_auth(uses, step.with.as_ref(), &mut graph)
+                    {
+                        graph.add_edge(step_id, cloud_id, EdgeKind::HasAccessTo);
+                    }
                 }
 
                 // Process secrets from workflow-level `env:` (inherited by all jobs/steps)
@@ -312,6 +331,79 @@ fn find_or_create_secret(
     let id = graph.add_node(NodeKind::Secret, name, TrustZone::FirstParty);
     cache.insert(name.to_string(), id);
     id
+}
+
+/// Detect known OIDC cloud authentication actions and create an Identity node
+/// representing the cloud identity that will be assumed.
+///
+/// Only handles the OIDC/federated path — static credential inputs (e.g.
+/// `aws-secret-access-key: ${{ secrets.X }}`) are already captured by the
+/// regular `with:` secret scanning and don't need a separate Identity node.
+///
+/// Returns `Some(NodeId)` of the created Identity, or `None` if not recognized.
+fn classify_cloud_auth(
+    uses: &str,
+    with: Option<&HashMap<String, String>>,
+    graph: &mut AuthorityGraph,
+) -> Option<NodeId> {
+    // Strip `@version` — match any version of the action
+    let action = uses.split('@').next().unwrap_or(uses);
+
+    match action {
+        "aws-actions/configure-aws-credentials" => {
+            // OIDC path: role-to-assume present (no static access key needed)
+            let w = with?;
+            let role = w.get("role-to-assume")?;
+            // Use the role name (last segment of the ARN) for readability
+            let short = role.split(':').next_back().unwrap_or(role.as_str());
+            let mut meta = HashMap::new();
+            meta.insert(META_OIDC.into(), "true".into());
+            meta.insert(META_IDENTITY_SCOPE.into(), "broad".into());
+            meta.insert(META_PERMISSIONS.into(), "AWS role assumption (OIDC)".into());
+            Some(graph.add_node_with_metadata(
+                NodeKind::Identity,
+                format!("AWS/{short}"),
+                TrustZone::FirstParty,
+                meta,
+            ))
+        }
+        "google-github-actions/auth" => {
+            // OIDC path: workload_identity_provider present
+            let w = with?;
+            let provider = w.get("workload_identity_provider")?;
+            let short = provider.split('/').next_back().unwrap_or(provider.as_str());
+            let mut meta = HashMap::new();
+            meta.insert(META_OIDC.into(), "true".into());
+            meta.insert(META_IDENTITY_SCOPE.into(), "broad".into());
+            meta.insert(META_PERMISSIONS.into(), "GCP workload identity federation".into());
+            Some(graph.add_node_with_metadata(
+                NodeKind::Identity,
+                format!("GCP/{short}"),
+                TrustZone::FirstParty,
+                meta,
+            ))
+        }
+        "azure/login" => {
+            // OIDC path: client-id present without client-secret
+            let w = with?;
+            let client_id = w.get("client-id")?;
+            // Only treat as OIDC if no static client-secret is provided
+            if w.contains_key("client-secret") {
+                return None; // static SP creds captured by with: secret scanning
+            }
+            let mut meta = HashMap::new();
+            meta.insert(META_OIDC.into(), "true".into());
+            meta.insert(META_IDENTITY_SCOPE.into(), "broad".into());
+            meta.insert(META_PERMISSIONS.into(), "Azure federated credential (OIDC)".into());
+            Some(graph.add_node_with_metadata(
+                NodeKind::Identity,
+                format!("Azure/{client_id}"),
+                TrustZone::FirstParty,
+                meta,
+            ))
+        }
+        _ => None,
+    }
 }
 
 // ── Serde models for GHA YAML ──────────────────────────
@@ -867,6 +959,178 @@ jobs:
             identities[0].metadata.get(META_OIDC).is_none(),
             "contents:write without id-token must not be tagged OIDC"
         );
+    }
+
+    #[test]
+    fn container_steps_linked_to_container_image() {
+        let yaml = r#"
+jobs:
+  build:
+    container: ubuntu:22.04
+    steps:
+      - name: Step A
+        run: echo "a"
+      - name: Step B
+        run: echo "b"
+"#;
+        let graph = parse(yaml);
+        let images: Vec<_> = graph.nodes_of_kind(NodeKind::Image).collect();
+        assert_eq!(images.len(), 1);
+        let container_id = images[0].id;
+
+        // Both steps must have UsesImage edges to the container
+        let steps: Vec<_> = graph.nodes_of_kind(NodeKind::Step).collect();
+        assert_eq!(steps.len(), 2);
+        for step in &steps {
+            let links: Vec<_> = graph
+                .edges_from(step.id)
+                .filter(|e| e.kind == EdgeKind::UsesImage && e.to == container_id)
+                .collect();
+            assert_eq!(links.len(), 1, "step '{}' must link to container", step.name);
+        }
+    }
+
+    #[test]
+    fn container_authority_propagates_to_floating_image() {
+        // Integration: authority from a step running in a floating container should
+        // propagate to the container Image node (Untrusted), generating a finding.
+        let yaml = r#"
+permissions: write-all
+jobs:
+  build:
+    container: ubuntu:22.04
+    steps:
+      - run: echo hi
+"#;
+        use taudit_core::rules;
+        use taudit_core::propagation::DEFAULT_MAX_HOPS;
+        let graph = parse(yaml);
+        let findings = rules::run_all_rules(&graph, DEFAULT_MAX_HOPS);
+        // Should detect: GITHUB_TOKEN (broad) propagates to ubuntu:22.04 (Untrusted) via step
+        assert!(
+            findings.iter().any(|f| f.category == taudit_core::finding::FindingCategory::AuthorityPropagation),
+            "authority should propagate from step to floating container"
+        );
+    }
+
+    #[test]
+    fn aws_oidc_creates_identity_node() {
+        let yaml = r#"
+jobs:
+  deploy:
+    steps:
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: arn:aws:iam::123456789012:role/my-deploy-role
+          aws-region: us-east-1
+"#;
+        let graph = parse(yaml);
+        let identities: Vec<_> = graph.nodes_of_kind(NodeKind::Identity).collect();
+        assert_eq!(identities.len(), 1);
+        assert!(identities[0].name.starts_with("AWS/"));
+        assert_eq!(
+            identities[0].metadata.get(META_OIDC),
+            Some(&"true".to_string())
+        );
+        assert_eq!(
+            identities[0].metadata.get(META_IDENTITY_SCOPE),
+            Some(&"broad".to_string())
+        );
+    }
+
+    #[test]
+    fn gcp_oidc_creates_identity_node() {
+        let yaml = r#"
+jobs:
+  deploy:
+    steps:
+      - name: Authenticate to GCP
+        uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: projects/123/locations/global/workloadIdentityPools/my-pool/providers/my-provider
+          service_account: my-sa@my-project.iam.gserviceaccount.com
+"#;
+        let graph = parse(yaml);
+        let identities: Vec<_> = graph.nodes_of_kind(NodeKind::Identity).collect();
+        assert_eq!(identities.len(), 1);
+        assert!(identities[0].name.starts_with("GCP/"));
+        assert_eq!(
+            identities[0].metadata.get(META_OIDC),
+            Some(&"true".to_string())
+        );
+    }
+
+    #[test]
+    fn azure_oidc_creates_identity_node() {
+        let yaml = r#"
+jobs:
+  deploy:
+    steps:
+      - name: Azure login
+        uses: azure/login@v2
+        with:
+          client-id: ${{ vars.AZURE_CLIENT_ID }}
+          tenant-id: ${{ vars.AZURE_TENANT_ID }}
+          subscription-id: ${{ vars.AZURE_SUBSCRIPTION_ID }}
+"#;
+        let graph = parse(yaml);
+        let identities: Vec<_> = graph.nodes_of_kind(NodeKind::Identity).collect();
+        assert_eq!(identities.len(), 1);
+        assert!(identities[0].name.starts_with("Azure/"));
+        assert_eq!(
+            identities[0].metadata.get(META_OIDC),
+            Some(&"true".to_string())
+        );
+    }
+
+    #[test]
+    fn azure_static_sp_does_not_create_identity_node() {
+        // When client-secret is present, it's a static service principal — not OIDC.
+        // The secret scanning in with: handles this; classify_cloud_auth returns None.
+        let yaml = r#"
+jobs:
+  deploy:
+    steps:
+      - name: Azure login
+        uses: azure/login@v2
+        with:
+          client-id: my-client-id
+          client-secret: ${{ secrets.AZURE_CLIENT_SECRET }}
+          tenant-id: my-tenant
+"#;
+        let graph = parse(yaml);
+        // Identity node should NOT be created by cloud auth inference
+        let identities: Vec<_> = graph.nodes_of_kind(NodeKind::Identity).collect();
+        assert!(
+            identities.is_empty(),
+            "static SP should not create an OIDC Identity node"
+        );
+        // But the secret SHOULD be captured by existing with: scanning
+        let secrets: Vec<_> = graph.nodes_of_kind(NodeKind::Secret).collect();
+        assert_eq!(secrets.len(), 1);
+        assert_eq!(secrets[0].name, "AZURE_CLIENT_SECRET");
+    }
+
+    #[test]
+    fn aws_static_creds_do_not_create_identity_node() {
+        // Static access key path — no role-to-assume, so classify_cloud_auth returns None.
+        // The access key secret is captured by with: scanning.
+        let yaml = r#"
+jobs:
+  deploy:
+    steps:
+      - uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: us-east-1
+"#;
+        let graph = parse(yaml);
+        let identities: Vec<_> = graph.nodes_of_kind(NodeKind::Identity).collect();
+        assert!(identities.is_empty(), "static AWS creds must not create Identity node");
+        let secrets: Vec<_> = graph.nodes_of_kind(NodeKind::Secret).collect();
+        assert_eq!(secrets.len(), 2, "both static secrets captured");
     }
 
     #[test]
