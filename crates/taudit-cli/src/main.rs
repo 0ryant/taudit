@@ -94,6 +94,9 @@ enum Cli {
         shell: clap_complete::Shell,
     },
 
+    /// Print taudit product version.
+    Version,
+
     /// Diff findings between two pipeline versions
     Diff {
         /// Path to the "before" pipeline YAML file
@@ -202,6 +205,7 @@ fn main() -> Result<()> {
             clap_complete::generate(shell, &mut cmd, name, &mut std::io::stdout());
             Ok(())
         }
+        Cli::Version => cmd_version(),
         Cli::Map { paths } => cmd_map(paths),
         Cli::Diff {
             before,
@@ -674,6 +678,15 @@ fn cmd_map(paths: Vec<PathBuf>) -> Result<()> {
     Ok(())
 }
 
+fn version_report() -> String {
+    format!("taudit {}", env!("CARGO_PKG_VERSION"))
+}
+
+fn cmd_version() -> Result<()> {
+    println!("{}", version_report());
+    Ok(())
+}
+
 fn parse_content(
     parser: &GhaParser,
     content: String,
@@ -812,5 +825,12 @@ mod tests {
         assert_eq!(removed.len(), 1);
         assert_eq!(added[0].severity, Severity::High);
         assert_eq!(removed[0].severity, Severity::Medium);
+    }
+
+    #[test]
+    fn version_report_includes_package_version() {
+        let report = version_report();
+        assert!(report.starts_with("taudit "));
+        assert!(report.contains(env!("CARGO_PKG_VERSION")));
     }
 }

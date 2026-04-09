@@ -120,6 +120,16 @@ taudit diff before.yml after.yml
 taudit diff before.yml after.yml --format json
 ```
 
+### Version
+
+```bash
+# Product version shown to customers and operators
+taudit version
+
+# Also available via clap's built-in flag
+taudit --version
+```
+
 ### Suppress known-accepted findings
 
 Create `.tauditignore` in your repo root:
@@ -162,7 +172,7 @@ taudit-sink-cloudevents findings → CloudEvents JSONL event stream
 taudit-cli           composition root (clap, file I/O, wiring)
 ```
 
-7 crates, 86 tests, ~5,000 LOC. Ports and adapters — core has zero I/O dependencies.
+7 crates, 98 tests, ~5,800 LOC. Ports and adapters — core has zero I/O dependencies.
 
 ## CI Integration
 
@@ -175,6 +185,13 @@ taudit-cli           composition root (clap, file I/O, wiring)
 ```
 
 Exit codes: `0` = no findings above threshold, `1` = findings above threshold.
+
+## Versioning model
+
+- Crates are versioned independently (no shared workspace version).
+- Bump only crates changed by a feature/fix.
+- The `taudit` CLI crate version is the product/app version customers see.
+- Use `just versions` to print current crate versions.
 
 ## Output formats
 
