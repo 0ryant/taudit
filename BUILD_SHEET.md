@@ -17,7 +17,7 @@ taudit is one layer in a closed governance loop: **taudit** (detect over-authori
 - Rust workspace, single developer, 10-20 hour build budget
 - Day-1 value without requiring tsafe or CellOS installed
 - Must not reinvent gitleaks (secret scanning), trivy (CVE scanning), or checkov (IaC policy)
-- Output: authority graph (JSON) + human-readable report + optional CloudEvents audit stream
+- Output: authority graph (JSON) + human-readable report + SARIF + optional CloudEvents audit stream
 - Start with GitHub Actions only. ADO/GitLab are stretch crates, not MVP.
 - YAML parsing: use `serde_yaml` (mature, serde-native). GHA YAML is polymorphic (`on:` can be string/list/map, `env:` at workflow/job/step level) — use `serde_yaml::Value` for flexible parsing, then map to typed structs where possible.
 - Error handling: `thiserror` for `taudit-core` error enum (typed, no I/O), `anyhow` in `taudit-cli` (composition root, string context ok).
@@ -33,6 +33,7 @@ Ports/adapters pattern (see CellOS `EXTENSIBILITY.md` and `cellos-core/src/ports
 | `taudit-parse-gha` | Parser Adapter | MVP | GitHub Actions YAML --> authority graph |
 | `taudit-report-terminal` | Report Adapter | MVP | Coloured terminal report with propagation paths |
 | `taudit-report-json` | Report Adapter | MVP | Structured JSON output |
+| `taudit-report-sarif` | Report Adapter | AAA | SARIF 2.1.0 output for code scanning platforms |
 | `taudit-parse-ado` | Parser Adapter | Stretch | Azure Pipelines YAML --> authority graph |
 | `taudit-sink-cloudevents` | Event Adapter | Stretch | Findings --> CloudEvents JSONL |
 
@@ -137,14 +138,14 @@ That path is the product.
 | 4 | **UntrustedWithAuthority** | Step in Untrusted zone has direct HasAccessTo edge to Secret or Identity | Critical |
 | 5 | **ArtifactBoundaryCrossing** | Artifact Produced by privileged step, Consumed across trust boundary | High |
 
-**Stretch rules (6-9):** require heuristics or metadata enrichment beyond YAML. Implement after MVP proves value.
+**Stretch rules (6-9):** partially shipped. `FloatingImage` and `LongLivedCredential` are implemented; `EgressBlindspot` and `MissingAuditTrail` still require heuristics or metadata enrichment beyond YAML.
 
 | # | Rule | Why Stretch |
 |---|------|------------|
 | 6 | **EgressBlindspot** | GHA YAML doesn't declare network policy; needs convention-based heuristic |
 | 7 | **MissingAuditTrail** | "Has audit" not parseable from YAML; needs metadata enrichment source |
-| 8 | **FloatingImage** | Straightforward but lower priority than graph-based rules |
-| 9 | **LongLivedCredential** | "Is this static?" requires naming heuristic (e.g. `AWS_ACCESS_KEY_ID`) |
+| 8 | **FloatingImage** | Implemented; lower priority than graph-based rules |
+| 9 | **LongLivedCredential** | Implemented via naming heuristic (e.g. `AWS_ACCESS_KEY_ID`) |
 
 ```rust
 pub enum FindingCategory {
@@ -208,10 +209,12 @@ taudit scan <path>              # Scan pipeline file(s), print terminal report
 taudit scan --format json       # Structured JSON authority graph + findings
 taudit scan --max-hops 5        # Override propagation depth (default: 4)
 
-# Stretch
+# Implemented
 taudit scan --format sarif      # SARIF for GitHub code scanning
 taudit map <path>               # Authority map table (who gets what)
 taudit diff <before> <after>    # Authority diff between pipeline versions
+
+# Stretch
 taudit policy check <path>      # Check against policy file
 ```
 

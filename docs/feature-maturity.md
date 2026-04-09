@@ -15,7 +15,7 @@ Every feature classified by current state, what MVP means, and the path to produ
 
 | | Status |
 |---|---|
-| **Current** | SOLID. Typed nodes (Step, Secret, Artifact, Identity, Image), typed edges (HasAccessTo, Produces, Consumes, UsesImage, DelegatesTo), TrustZone annotations (FirstParty, ThirdParty, Untrusted). Metadata on nodes. Full serialization via serde. 2 unit tests. |
+| **Current** | SOLID. Typed nodes (Step, Secret, Artifact, Identity, Image), typed edges (HasAccessTo, Produces, Consumes, UsesImage, DelegatesTo), TrustZone annotations (FirstParty, ThirdParty, Untrusted). Metadata on nodes. Full serialization via serde. 5 unit tests. |
 | **MVP** | Ship as-is. |
 | **AAA** | Adjacency index for large graphs (currently linear scan -- fine for pipeline scale). Graph diffing between pipeline versions. Subgraph extraction per job. |
 
@@ -31,17 +31,17 @@ Every feature classified by current state, what MVP means, and the path to produ
 
 | | Status |
 |---|---|
-| **Current** | SOLID. 5 MVP rules + 1 stretch rule (LongLivedCredential). AuthorityPropagation (severity-graduated), OverPrivilegedIdentity, UnpinnedAction (deduplicated), UntrustedWithAuthority, ArtifactBoundaryCrossing. Sorted by severity. 6 unit tests. |
+| **Current** | SOLID. 5 MVP rules + 2 stretch rules (`LongLivedCredential`, `FloatingImage`). AuthorityPropagation (severity-graduated), OverPrivilegedIdentity, UnpinnedAction (deduplicated), UntrustedWithAuthority, ArtifactBoundaryCrossing. Sorted by severity. 14 unit tests. |
 | **MVP** | Ship as-is. |
-| **AAA** | 3 remaining stretch rules: EgressBlindspot, MissingAuditTrail, FloatingImage. Custom rule loading. Policy-as-code (YAML rule definitions). |
+| **AAA** | 2 remaining stretch rules: EgressBlindspot and MissingAuditTrail. Custom rule loading. Policy-as-code (YAML rule definitions). |
 
 ### Finding & Recommendation Model
 
 | | Status |
 |---|---|
-| **Current** | SOLID. 5 severity levels. 9 finding categories (5 MVP + 4 stretch). 6 recommendation variants routing to tsafe, CellOS, or manual action. PropagationPath as first-class path evidence. |
+| **Current** | SOLID. 5 severity levels. 9 finding categories (5 MVP + 4 stretch). 6 recommendation variants routing to tsafe, CellOS, or manual action. PropagationPath as first-class path evidence. Ignore and baseline suppression are implemented at the CLI layer. |
 | **MVP** | Ship as-is. |
-| **AAA** | SARIF output for GitHub code scanning integration. Confidence scoring. Finding suppression (`.tauditignore`). |
+| **AAA** | Confidence scoring. Richer suppression management beyond `.tauditignore` and baseline reports. |
 
 ---
 
@@ -51,9 +51,9 @@ Every feature classified by current state, what MVP means, and the path to produ
 
 | | Status |
 |---|---|
-| **Current** | SOLID. Parses workflow/job-level permissions, step `uses:`/`run:`, secret references in `env:` and `with:` blocks. Trust zone classification (local = FirstParty, SHA-pinned = ThirdParty, tag-pinned = Untrusted). 7 unit tests. |
+| **Current** | SOLID. Parses workflow/job-level permissions, step `uses:`/`run:`, secret references in `env:` and `with:` blocks. Trust zone classification (local = FirstParty, SHA-pinned = ThirdParty, tag-pinned = Untrusted) plus trigger-based `pull_request_target` handling for `run:` steps. |
 | **MVP** | Ship as-is. |
-| **AAA** | Reusable workflow support (`workflow_call`). Composite action parsing. Matrix strategy awareness. Expression evaluation (`${{ github.event_name }}`). Trigger-based trust classification (pull_request_target = untrusted). |
+| **AAA** | Reusable workflow support (`workflow_call`). Composite action parsing. Matrix strategy awareness. Expression evaluation (`${{ github.event_name }}`). Deeper trigger-aware modelling beyond basic `pull_request_target` support. |
 
 ### Azure DevOps (taudit-parse-ado)
 
@@ -79,9 +79,9 @@ Every feature classified by current state, what MVP means, and the path to produ
 
 | | Status |
 |---|---|
-| **Current** | SOLID. Coloured severity labels, graph summary header, propagation path visualization with arrows, green fix recommendations. |
+| **Current** | SOLID. Coloured severity labels, graph summary header, propagation path visualization with arrows, green fix recommendations, `--verbose` node metadata output, and `--no-color` support with automatic tty detection. |
 | **MVP** | Ship as-is. |
-| **AAA** | `--quiet` mode (summary only). `--verbose` mode (full node metadata). `--no-color` flag. |
+| **AAA** | Further presentation polish for large reports and richer terminal summarisation. |
 
 ### JSON Report (taudit-report-json)
 
@@ -89,13 +89,21 @@ Every feature classified by current state, what MVP means, and the path to produ
 |---|---|
 | **Current** | SOLID. Full authority graph + findings + summary. Pretty-printed. JSON Schema in contracts/schemas/. |
 | **MVP** | Ship as-is. |
-| **AAA** | JSON Schema CI validation. Stable schema versioning. SARIF output adapter. |
+| **AAA** | JSON Schema CI validation. Stable schema versioning. |
+
+### SARIF Report (taudit-report-sarif)
+
+| | Status |
+|---|---|
+| **Current** | SOLID. Emits SARIF 2.1.0 logs with rule catalogue, severity mapping, and source-file locations for code scanning ingestion. |
+| **MVP** | Ready for repo-level validation in GitHub code scanning. |
+| **AAA** | Schema validation in CI. Rule help pages linked to stable public docs. |
 
 ### CloudEvents Sink (taudit-sink-cloudevents)
 
 | | Status |
 |---|---|
-| **Current** | SOLID. Hand-rolled CloudEventV1 envelope (matches CellOS pattern). One JSONL line per finding. Type prefix `io.taudit.finding.{category}`. JSON Schema contract. 6 unit tests. |
+| **Current** | SOLID. Hand-rolled CloudEventV1 envelope (matches CellOS pattern). One JSONL line per finding. Type prefix `io.taudit.finding.{category}`. JSON Schema contract. 7 unit tests. |
 | **MVP** | Ship as-is. |
 | **AAA** | Direct JetStream/Kafka publish. Correlation with CellOS execution events. Governance correlation ID extension attribute. |
 
@@ -107,9 +115,9 @@ Every feature classified by current state, what MVP means, and the path to produ
 
 | | Status |
 |---|---|
-| **Current** | SOLID. Clap CLI. Directory walking for .yml/.yaml. Terminal, JSON, and CloudEvents output formats. Configurable --max-hops. Exit code 1 on findings. |
+| **Current** | SOLID. Clap CLI. Directory walking for .yml/.yaml. Terminal, JSON, SARIF, and CloudEvents output formats. Configurable `--max-hops`, `--severity-threshold`, `--exclude`, `--baseline`, `--quiet`, `--verbose`, and `--no-color`. Exit code 1 on actionable findings. |
 | **MVP** | Ship as-is. |
-| **AAA** | `--exclude` glob patterns. `--severity-threshold` (exit 1 only for critical). `--baseline` file (suppress known findings). Watch mode. |
+| **AAA** | Watch mode. Additional output shaping for larger monorepos. |
 
 ### `taudit map`
 
@@ -119,12 +127,12 @@ Every feature classified by current state, what MVP means, and the path to produ
 | **MVP** | Ship as-is. |
 | **AAA** | Interactive TUI. Graphviz DOT export. |
 
-### `taudit diff` (stretch)
+### `taudit diff`
 
 | | Status |
 |---|---|
-| **Current** | Not implemented. |
-| **MVP** | Before/after authority graph diff between pipeline versions. |
+| **Current** | SOLID. Before/after authority graph diff between two workflow files with terminal and JSON output. |
+| **MVP** | Ship as-is. |
 | **AAA** | Git integration (diff between commits). PR comment bot. |
 
 ---
@@ -164,18 +172,18 @@ Every feature classified by current state, what MVP means, and the path to produ
 9. CI pipeline, deny.toml, Dependabot
 10. CloudEvents JSONL sink with JSON Schema contract
 11. Authority map command
-12. LongLivedCredential stretch rule
-13. Test fixtures + 36 tests (23 unit + 7 integration + 6 sink)
+12. SARIF output adapter for code scanning ingestion
+13. Finding suppression via `.tauditignore`, baseline, and severity threshold
+14. `taudit diff` command with terminal and JSON output
+15. LongLivedCredential and FloatingImage stretch rules
+16. Test fixtures + 86 tests across workspace crates
 
 ### Next (high-impact stretch)
 
 | Priority | Feature | Impact |
 |----------|---------|--------|
-| 1 | Finding suppression (`.tauditignore`) | Reduces noise for known-accepted risks |
-| 2 | `taudit map` (authority matrix) | Visual "who gets what" for security review |
-| 3 | Reusable workflow / composite action parsing | Real-world GHA coverage |
-| 4 | Azure DevOps parser | Second platform |
-| 5 | SARIF output | GitHub code scanning integration |
-| 6 | Stretch rules (egress, audit trail, floating image) | Deeper analysis |
-| 7 | `taudit diff` | PR-time authority change detection |
-| 8 | Governance correlation schema | Cross-tool event linking (taudit/tsafe/CellOS) |
+| 1 | Reusable workflow / composite action parsing | Real-world GHA coverage |
+| 2 | Azure DevOps parser | Second platform |
+| 3 | Stretch rules (egress, audit trail) | Deeper analysis |
+| 4 | Governance correlation schema | Cross-tool event linking (taudit/tsafe/CellOS) |
+| 5 | Git-integrated diffing and PR automation | Makes `taudit diff` useful in review workflows |

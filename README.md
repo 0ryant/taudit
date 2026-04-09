@@ -38,6 +38,7 @@ Then it walks the graph looking for:
 | **Unpinned Action** | Third-party action without SHA digest pin |
 | **Untrusted With Authority** | Unpinned action step has direct access to secrets |
 | **Artifact Boundary Crossing** | Artifact from privileged step consumed across trust boundary |
+| **Floating Image** | Container image reference without a digest pin |
 | **Long-Lived Credential** | Secret name matches static credential patterns (API keys, passwords) |
 
 Severity is graduated from real-world signal: constrained identity to SHA-pinned action = Medium. Broad identity to unpinned action = Critical. The tool handles unknowns honestly — if it can't fully resolve the authority graph, it marks it `Partial` and tells you why.
@@ -70,11 +71,29 @@ taudit scan .github/workflows/
 # JSON output (includes full authority graph)
 taudit scan .github/workflows/ --format json
 
+# SARIF output for code scanning ingestion
+taudit scan .github/workflows/ --format sarif
+
 # CloudEvents JSONL (one event per finding)
 taudit scan .github/workflows/ --format cloudevents
 
 # CI mode: fail only on high+ severity
 taudit scan .github/workflows/ --severity-threshold high
+
+# Skip generated or vendored workflows
+taudit scan .github/workflows/ --exclude 'generated/**'
+
+# Suppress findings already accepted in a baseline report
+taudit scan .github/workflows/ --baseline taudit-baseline.json
+
+# CI-friendly summary counts only
+taudit scan .github/workflows/ --quiet
+
+# Show node metadata in propagation paths
+taudit scan .github/workflows/release.yml --verbose
+
+# Disable ANSI colors explicitly
+taudit scan .github/workflows/ --no-color
 ```
 
 ### Authority Map
@@ -89,6 +108,16 @@ Rust toolchain           ThirdParty       X
 fmt                      FirstParty       X
 clippy                   FirstParty       X
 test                     FirstParty       X
+```
+
+### Diff
+
+```bash
+# Compare two workflow revisions in terminal format
+taudit diff before.yml after.yml
+
+# Emit a machine-readable diff payload
+taudit diff before.yml after.yml --format json
 ```
 
 ### Suppress known-accepted findings
@@ -115,7 +144,7 @@ taudit scan . --ignore-file .taudit/ignore.yml
 1. **Parse** — GitHub Actions YAML into typed nodes (steps, secrets, identities, images) with trust zone classification (FirstParty, ThirdParty, Untrusted)
 2. **Build graph** — Directed edges model authority flow: `HasAccessTo`, `Produces`, `Consumes`, `UsesImage`, `DelegatesTo`
 3. **Propagate** — BFS from authority-bearing sources (secrets, identities) through edges, flagging trust boundary crossings
-4. **Analyze** — 6 rules pattern-match against the graph, producing findings with severity, evidence paths, and remediation routing
+4. **Analyze** — 7 rules pattern-match against the graph, producing findings with severity, evidence paths, and remediation routing
 
 Trust zones are explicit on every node:
 - **FirstParty** — code you own (`run:` steps, local actions)
@@ -127,11 +156,13 @@ Trust zones are explicit on every node:
 ```
 taudit-core          graph, propagation engine, rules, finding model (no I/O)
 taudit-parse-gha     GitHub Actions YAML → AuthorityGraph
-taudit-report-*      terminal, JSON, CloudEvents JSONL output
+taudit-report-*      terminal, JSON, and SARIF report adapters
+taudit-report-sarif  SARIF 2.1.0 adapter for code scanning platforms
+taudit-sink-cloudevents findings → CloudEvents JSONL event stream
 taudit-cli           composition root (clap, file I/O, wiring)
 ```
 
-6 crates, 62 tests, ~3,500 LOC. Ports and adapters — core has zero I/O dependencies.
+7 crates, 86 tests, ~5,000 LOC. Ports and adapters — core has zero I/O dependencies.
 
 ## CI Integration
 
@@ -151,6 +182,7 @@ Exit codes: `0` = no findings above threshold, `1` = findings above threshold.
 |---|---|---|
 | Terminal | `--format terminal` (default) | Human review, CI logs |
 | JSON | `--format json` | Programmatic consumption, full graph included |
+| SARIF | `--format sarif` | GitHub code scanning and SARIF consumers |
 | CloudEvents JSONL | `--format cloudevents` | Event-driven pipelines, SIEM ingestion |
 
 ## What taudit is not
