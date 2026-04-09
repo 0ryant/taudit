@@ -2,7 +2,7 @@
 
 Three horizons. Each is a superset of the previous.
 
-**Current state:** 7 crates, 91 tests, ~5,300 LOC, 7 analysis rules, 1 parser (GitHub Actions), 4 output formats (terminal, JSON, CloudEvents JSONL, SARIF), 4 commands (scan, map, diff, completions). MVP complete. Deep into AAA: Tier 1 done, Tier 2 partial, Tier 3 mostly done, Tier 4 partial, Tier 6 partial, Tier 7 partial.
+**Current state:** 7 crates, 98 tests, ~5,800 LOC, 7 analysis rules, 1 parser (GitHub Actions), 4 output formats (terminal, JSON, CloudEvents JSONL, SARIF), 4 commands (scan, map, diff, completions). MVP complete. Deep into AAA: Tier 1 done, Tier 2 partial, Tier 3 mostly done, Tier 4 partial, Tier 6 partial, Tier 7 partial.
 
 **Effort key:** S = hours, M = days, L = week+
 
@@ -117,9 +117,9 @@ Real GHA workflows use features that affect the completeness of the authority gr
 Identity modelling is the biggest long-term risk. Modern pipelines use OIDC tokens, service principals, and cloud identities with massive over-scope by default.
 
 - [x] **OIDC token detection** — `id-token: write` tags identity as OIDC-capable (`META_OIDC`)
-- [ ] **Cloud identity inference** — detect `aws-actions/configure-aws-credentials`, `google-github-actions/auth`, `azure/login` from step `uses:` + `with:` inputs; create Identity or Secret nodes
-- [ ] **Scope propagation escalation** — Broad identity → Untrusted step should escalate to Critical regardless of sink pinning
-- [ ] **Container authority modeling** — steps running inside a floating container should inherit its trust zone; currently a modeling gap (container Image node is disconnected from its steps)
+- [x] **Cloud identity inference** — `aws-actions/configure-aws-credentials` (role-to-assume), `google-github-actions/auth` (workload_identity_provider), `azure/login` (client-id without client-secret) each create a Broad OIDC Identity node; static credential paths fall through to existing `with:` secret scanning
+- [x] **Container authority modeling** — steps inside a job container now have `UsesImage` edges to the container Image node; authority propagates through it (floating container = Untrusted sink)
+- [ ] **Scope propagation escalation** — cloud OIDC identity reaching a pinned ThirdParty sink: currently High; could escalate given the cloud blast radius
 - [ ] **FederateIdentity recommendation refinement** — OIDC-tagged identities suggest specific provider (`actions/oidc-federation` vs. cloud-native)
 
 ### Tier 5: Second Platform (L, unlocks enterprise)
@@ -265,9 +265,9 @@ Documented incompleteness — not bugs, but places where the graph underapproxim
 
 | Gap | Impact | Fix direction |
 |-----|--------|---------------|
-| Container → step authority | Steps inside a floating container inherit its supply chain risk, but no `UsesImage` edge connects them. `FloatingImage` flags the image; propagation doesn't escalate steps running in it. | Add `UsesImage` edge from each step to its job's container Image node in the parser |
+| ~~Container → step authority~~ | ~~Steps inside a floating container inherit its supply chain risk, but no `UsesImage` edge connects them.~~ | ✅ Fixed — `UsesImage` edges now connect each step to its job container |
 | Composite actions | `uses: ./.github/actions/foo` with `using: composite` hides sub-steps from the graph entirely | Parse `action.yml` and inline steps; mark Partial if action.yml is unavailable |
-| Expression conditionals | `if: ${{ github.event_name == 'push' }}` — steps with conditionals are modelled as always-executing | Mark steps with `if:` as Partial-contributing (low priority — this is conservative, not dangerous) |
+| Expression conditionals | `if: ${{ github.event_name == 'push' }}` — steps with conditionals are modelled as always-executing | Low priority — conservative (over-reports), not dangerous |
 | Reusable workflow authority | `job.uses` marks the graph Partial but doesn't model what secrets/identities the called workflow uses | Would require fetching and parsing the called workflow's YAML |
 
 ---
