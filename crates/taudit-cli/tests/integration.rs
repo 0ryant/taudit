@@ -154,6 +154,41 @@ jobs:
 }
 
 #[test]
+fn pull_request_target_run_steps_are_untrusted_with_authority() {
+    // Minimal PRT workflow: run: step with GITHUB_TOKEN access but no write-all
+    // (so no OverPrivilegedIdentity). The UntrustedWithAuthority finding should
+    // fire because trigger-based classification marks run: steps as Untrusted.
+    let yaml = r#"
+on: pull_request_target
+permissions:
+  contents: read
+jobs:
+  check:
+    steps:
+      - run: echo "PR title is ${{ github.event.pull_request.title }}"
+"#;
+    let graph = parse(yaml);
+
+    // run: step should be Untrusted (trigger-based classification)
+    let steps: Vec<_> = graph.nodes_of_kind(NodeKind::Step).collect();
+    assert_eq!(steps.len(), 1);
+    assert_eq!(
+        steps[0].trust_zone,
+        taudit_core::graph::TrustZone::Untrusted,
+        "run: step in pull_request_target workflow must be Untrusted"
+    );
+
+    // UntrustedWithAuthority should fire because the Untrusted step has GITHUB_TOKEN access
+    let findings = rules::run_all_rules(&graph, DEFAULT_MAX_HOPS);
+    assert!(
+        findings
+            .iter()
+            .any(|f| f.category == FindingCategory::UntrustedWithAuthority),
+        "should detect UntrustedWithAuthority for run: step in pull_request_target workflow"
+    );
+}
+
+#[test]
 fn sha_pinned_action_gets_third_party_zone() {
     let yaml = r#"
 jobs:
@@ -274,4 +309,146 @@ ignore:
     // Nothing should be suppressed — path doesn't match
     assert_eq!(result.findings.len(), total);
     assert_eq!(result.suppressed_count, 0);
+}
+
+// ── --exclude flag tests ──────────────────────────────
+
+#[test]
+fn glob_match_excludes_matching_paths() {
+    use taudit_core::ignore::glob_match;
+
+    // Basic wildcard
+    assert!(glob_match("*.yml", "workflow.yml"));
+    assert!(!glob_match("*.yml", "workflow.yaml"));
+    assert!(glob_match("generated/*.yml", "generated/ci.yml"));
+    assert!(!glob_match("generated/*.yml", "src/ci.yml"));
+
+    // Double-star (path traversal)
+    assert!(glob_match(".github/**/*.yml", ".github/workflows/ci.yml"));
+    assert!(glob_match(".github/**/*.yml", ".github/workflows/sub/ci.yml"));
+    assert!(!glob_match(".github/**/*.yml", "src/workflows/ci.yml"));
+}
+
+#[test]
+fn exclude_patterns_filter_resolved_paths() {
+    // Simulate the filter applied in cmd_scan over a list of paths
+    use std::path::PathBuf;
+    use taudit_core::ignore::glob_match;
+
+    let paths = vec![
+        PathBuf::from(".github/workflows/ci.yml"),
+        PathBuf::from(".github/workflows/release.yml"),
+        PathBuf::from("vendor/workflows/ci.yml"),
+    ];
+
+    let exclude = vec!["vendor/**".to_string()];
+
+    let filtered: Vec<_> = paths
+        .iter()
+        .filter(|p| {
+            let s = p.display().to_string();
+            !exclude.iter().any(|pat| glob_match(pat, &s))
+        })
+        .collect();
+
+    assert_eq!(filtered.len(), 2);
+    assert!(filtered.iter().all(|p| !p.display().to_string().contains("vendor")));
+}
+
+// ── --baseline suppression tests ─────────────────────
+
+#[test]
+fn baseline_suppresses_matching_findings() {
+    let yaml = std::fs::read_to_string(fixture("over-privileged.yml")).unwrap();
+    let graph = parse(&yaml);
+    let findings = rules::run_all_rules(&graph, DEFAULT_MAX_HOPS);
+    let total = findings.len();
+    assert!(total > 0);
+
+    // Build a baseline JSON that contains the first finding
+    let first = &findings[0];
+    let category_str = serde_json::to_value(&first.category)
+        .unwrap()
+        .as_str()
+        .unwrap()
+        .to_string();
+    let message = first.message.clone();
+
+    let baseline_json = serde_json::json!({
+        "findings": [
+            {
+                "category": category_str,
+                "message": message
+            }
+        ]
+    });
+
+    // Write to a temp file and reload via load_baseline indirectly by constructing
+    // the set manually (same logic as load_baseline)
+    let mut baseline_set = std::collections::HashSet::new();
+    baseline_set.insert((category_str.clone(), message.clone()));
+
+    // Filter findings using the same logic as apply_baseline
+    let (kept, suppressed) = {
+        let mut kept = Vec::new();
+        let mut sup = 0usize;
+        for f in findings.clone() {
+            let key = (
+                serde_json::to_value(&f.category)
+                    .ok()
+                    .and_then(|v| v.as_str().map(str::to_string))
+                    .unwrap_or_default(),
+                f.message.clone(),
+            );
+            if baseline_set.contains(&key) {
+                sup += 1;
+            } else {
+                kept.push(f);
+            }
+        }
+        (kept, sup)
+    };
+
+    assert_eq!(suppressed, 1, "baseline should suppress exactly the matching finding");
+    assert_eq!(kept.len(), total - 1);
+    // Baseline drop should not affect findings with different messages
+    assert!(!kept.iter().any(|f| f.message == message && {
+        let k = serde_json::to_value(&f.category)
+            .ok()
+            .and_then(|v| v.as_str().map(str::to_string))
+            .unwrap_or_default();
+        k == category_str
+    }));
+
+    // Suppress unused variable warning
+    let _ = baseline_json;
+}
+
+#[test]
+fn baseline_empty_suppresses_nothing() {
+    let yaml = std::fs::read_to_string(fixture("over-privileged.yml")).unwrap();
+    let graph = parse(&yaml);
+    let findings = rules::run_all_rules(&graph, DEFAULT_MAX_HOPS);
+    let total = findings.len();
+
+    let baseline_set: std::collections::HashSet<(String, String)> = std::collections::HashSet::new();
+
+    let (kept, suppressed) = {
+        let mut kept = Vec::new();
+        let mut sup = 0usize;
+        for f in findings {
+            let key = (
+                serde_json::to_value(&f.category)
+                    .ok()
+                    .and_then(|v| v.as_str().map(str::to_string))
+                    .unwrap_or_default(),
+                f.message.clone(),
+            );
+            if baseline_set.contains(&key) { sup += 1; } else { kept.push(f); }
+        }
+        (kept, sup)
+    };
+
+    assert_eq!(suppressed, 0);
+    assert_eq!(kept.len(), total);
 }

@@ -23,13 +23,23 @@ impl PipelineParser for GhaParser {
         let mut graph = AuthorityGraph::new(source.clone());
         let mut secret_ids: HashMap<String, NodeId> = HashMap::new();
 
+        let is_pull_request_target = workflow
+            .triggers
+            .as_ref()
+            .map(trigger_has_pull_request_target)
+            .unwrap_or(false);
+
         // Workflow-level permissions -> GITHUB_TOKEN identity node
         let token_id = if let Some(ref perms) = workflow.permissions {
             let perm_string = perms.to_string();
             let scope = IdentityScope::from_permissions(&perm_string);
             let mut meta = HashMap::new();
-            meta.insert(META_PERMISSIONS.into(), perm_string);
+            meta.insert(META_PERMISSIONS.into(), perm_string.clone());
             meta.insert(META_IDENTITY_SCOPE.into(), format!("{scope:?}").to_lowercase());
+            // OIDC: id-token: write → token is OIDC-capable (federated scope)
+            if perm_string.contains("id-token") && perm_string.contains("write") {
+                meta.insert(META_OIDC.into(), "true".into());
+            }
             Some(graph.add_node_with_metadata(
                 NodeKind::Identity,
                 "GITHUB_TOKEN",
@@ -46,8 +56,11 @@ impl PipelineParser for GhaParser {
                 let perm_string = perms.to_string();
                 let scope = IdentityScope::from_permissions(&perm_string);
                 let mut meta = HashMap::new();
-                meta.insert(META_PERMISSIONS.into(), perm_string);
+                meta.insert(META_PERMISSIONS.into(), perm_string.clone());
                 meta.insert(META_IDENTITY_SCOPE.into(), format!("{scope:?}").to_lowercase());
+                if perm_string.contains("id-token") && perm_string.contains("write") {
+                    meta.insert(META_OIDC.into(), "true".into());
+                }
                 Some(graph.add_node_with_metadata(
                     NodeKind::Identity,
                     format!("GITHUB_TOKEN ({})", job_name),
@@ -58,6 +71,47 @@ impl PipelineParser for GhaParser {
                 token_id
             };
 
+            // Reusable workflow: job.uses= means this job delegates to another workflow.
+            // We cannot resolve it inline — mark the graph partial and skip steps.
+            if let Some(ref uses) = job.uses {
+                let trust_zone = if is_sha_pinned(uses) {
+                    TrustZone::ThirdParty
+                } else {
+                    TrustZone::Untrusted
+                };
+                let rw_id = graph.add_node(NodeKind::Image, uses, trust_zone);
+                // Synthetic step represents this job delegating to the called workflow
+                let job_step_id =
+                    graph.add_node(NodeKind::Step, job_name, TrustZone::FirstParty);
+                graph.add_edge(job_step_id, rw_id, EdgeKind::DelegatesTo);
+                if let Some(tok_id) = job_token_id {
+                    graph.add_edge(job_step_id, tok_id, EdgeKind::HasAccessTo);
+                }
+                graph.mark_partial(format!(
+                    "reusable workflow '{}' in job '{}' cannot be resolved inline — authority within the called workflow is unknown",
+                    uses, job_name
+                ));
+                continue;
+            }
+
+            // Container: job-level container image — add as Image node
+            if let Some(ref container) = job.container {
+                let image_str = container.image();
+                let trust_zone = if is_docker_digest_pinned(image_str) {
+                    TrustZone::ThirdParty
+                } else {
+                    TrustZone::Untrusted
+                };
+                let mut meta = HashMap::new();
+                meta.insert(META_CONTAINER.into(), "true".into());
+                if is_docker_digest_pinned(image_str) {
+                    if let Some(digest) = image_str.split("@sha256:").nth(1) {
+                        meta.insert(META_DIGEST.into(), format!("sha256:{}", digest));
+                    }
+                }
+                graph.add_node_with_metadata(NodeKind::Image, image_str, trust_zone, meta);
+            }
+
             for (step_idx, step) in job.steps.iter().enumerate() {
                 let default_name = format!("{}[{}]", job_name, step_idx);
                 let step_name = step.name.as_deref().unwrap_or(&default_name);
@@ -66,6 +120,9 @@ impl PipelineParser for GhaParser {
                 let (trust_zone, image_node_id) = if let Some(ref uses) = step.uses {
                     let (zone, image_id) = classify_action(uses, &mut graph);
                     (zone, Some(image_id))
+                } else if is_pull_request_target {
+                    // run: step in a pull_request_target workflow — may execute fork code
+                    (TrustZone::Untrusted, None)
                 } else {
                     // Inline `run:` step — first party
                     (TrustZone::FirstParty, None)
@@ -159,6 +216,22 @@ impl PipelineParser for GhaParser {
     }
 }
 
+/// Returns true if the workflow's `on:` triggers include `pull_request_target`.
+/// GHA `on:` is polymorphic: string, sequence, or mapping.
+fn trigger_has_pull_request_target(triggers: &serde_yaml::Value) -> bool {
+    const PRT: &str = "pull_request_target";
+    match triggers {
+        serde_yaml::Value::String(s) => s == PRT,
+        serde_yaml::Value::Sequence(seq) => seq
+            .iter()
+            .any(|v| v.as_str().map(|s| s == PRT).unwrap_or(false)),
+        serde_yaml::Value::Mapping(map) => map
+            .iter()
+            .any(|(k, _)| k.as_str().map(|s| s == PRT).unwrap_or(false)),
+        _ => false,
+    }
+}
+
 /// Classify a `uses:` reference into trust zone and create image node.
 fn classify_action(uses: &str, graph: &mut AuthorityGraph) -> (TrustZone, NodeId) {
     let pinned = is_sha_pinned(uses);
@@ -237,10 +310,30 @@ impl std::fmt::Display for Permissions {
 
 #[derive(Debug, Deserialize)]
 pub struct GhaWorkflow {
+    /// Workflow trigger(s). Polymorphic: string, sequence, or mapping.
+    #[serde(rename = "on", default)]
+    pub triggers: Option<serde_yaml::Value>,
     #[serde(default)]
     pub permissions: Option<Permissions>,
     #[serde(default)]
     pub jobs: HashMap<String, GhaJob>,
+}
+
+/// Job-level container config. Polymorphic: string image or map with `image:` key.
+#[derive(Debug, Deserialize)]
+#[serde(untagged)]
+pub enum ContainerConfig {
+    Image(String),
+    Full { image: String },
+}
+
+impl ContainerConfig {
+    pub fn image(&self) -> &str {
+        match self {
+            ContainerConfig::Image(s) => s,
+            ContainerConfig::Full { image } => image,
+        }
+    }
 }
 
 #[derive(Debug, Deserialize)]
@@ -251,6 +344,12 @@ pub struct GhaJob {
     pub env: Option<HashMap<String, String>>,
     #[serde(default)]
     pub steps: Vec<GhaStep>,
+    /// Reusable workflow reference — `uses: owner/repo/.github/workflows/foo.yml@ref`
+    #[serde(default)]
+    pub uses: Option<String>,
+    /// Job container image.
+    #[serde(default)]
+    pub container: Option<ContainerConfig>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -452,6 +551,203 @@ jobs:
         assert_eq!(
             identities[0].metadata.get(META_IDENTITY_SCOPE),
             Some(&"constrained".to_string())
+        );
+    }
+
+    #[test]
+    fn pull_request_target_string_trigger_marks_run_steps_untrusted() {
+        let yaml = r#"
+on: pull_request_target
+jobs:
+  check:
+    steps:
+      - uses: actions/checkout@a5ac7e51b41094c92402da3b24376905380afc29
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+      - run: npm test
+"#;
+        let graph = parse(yaml);
+        let steps: Vec<_> = graph.nodes_of_kind(NodeKind::Step).collect();
+        assert_eq!(steps.len(), 2);
+
+        // run: step should be Untrusted (might execute fork code)
+        let run_step = steps.iter().find(|s| s.name.contains("check[1]")).unwrap();
+        assert_eq!(
+            run_step.trust_zone,
+            TrustZone::Untrusted,
+            "run: step in pull_request_target workflow should be Untrusted"
+        );
+
+        // uses: step keeps its own trust zone (SHA-pinned = ThirdParty)
+        let checkout_step = steps.iter().find(|s| s.name.contains("check[0]")).unwrap();
+        assert_eq!(checkout_step.trust_zone, TrustZone::ThirdParty);
+    }
+
+    #[test]
+    fn pull_request_target_sequence_trigger_marks_run_steps_untrusted() {
+        let yaml = r#"
+on: [push, pull_request_target]
+jobs:
+  ci:
+    steps:
+      - run: echo hi
+"#;
+        let graph = parse(yaml);
+        let steps: Vec<_> = graph.nodes_of_kind(NodeKind::Step).collect();
+        assert_eq!(steps[0].trust_zone, TrustZone::Untrusted);
+    }
+
+    #[test]
+    fn pull_request_target_mapping_trigger_marks_run_steps_untrusted() {
+        let yaml = r#"
+on:
+  pull_request_target:
+    types: [opened, synchronize]
+jobs:
+  ci:
+    steps:
+      - run: echo hi
+"#;
+        let graph = parse(yaml);
+        let steps: Vec<_> = graph.nodes_of_kind(NodeKind::Step).collect();
+        assert_eq!(steps[0].trust_zone, TrustZone::Untrusted);
+    }
+
+    #[test]
+    fn push_trigger_does_not_mark_run_steps_untrusted() {
+        let yaml = r#"
+on: push
+jobs:
+  ci:
+    steps:
+      - run: echo hi
+"#;
+        let graph = parse(yaml);
+        let steps: Vec<_> = graph.nodes_of_kind(NodeKind::Step).collect();
+        assert_eq!(
+            steps[0].trust_zone,
+            TrustZone::FirstParty,
+            "push-triggered run: steps should remain FirstParty"
+        );
+    }
+
+    #[test]
+    fn reusable_workflow_creates_image_and_marks_partial() {
+        let yaml = r#"
+jobs:
+  call:
+    uses: org/repo/.github/workflows/deploy.yml@main
+"#;
+        let graph = parse(yaml);
+        let images: Vec<_> = graph.nodes_of_kind(NodeKind::Image).collect();
+        assert_eq!(images.len(), 1);
+        assert_eq!(images[0].name, "org/repo/.github/workflows/deploy.yml@main");
+        assert_eq!(images[0].trust_zone, TrustZone::Untrusted); // not SHA-pinned
+
+        // Step node representing the job delegation
+        let steps: Vec<_> = graph.nodes_of_kind(NodeKind::Step).collect();
+        assert_eq!(steps.len(), 1);
+        assert_eq!(steps[0].name, "call");
+
+        // DelegatesTo edge from step to reusable workflow image
+        let delegates: Vec<_> = graph
+            .edges_from(steps[0].id)
+            .filter(|e| e.kind == EdgeKind::DelegatesTo)
+            .collect();
+        assert_eq!(delegates.len(), 1);
+
+        assert_eq!(graph.completeness, AuthorityCompleteness::Partial);
+    }
+
+    #[test]
+    fn reusable_workflow_sha_pinned_is_third_party() {
+        let yaml = r#"
+jobs:
+  call:
+    uses: org/repo/.github/workflows/deploy.yml@a5ac7e51b41094c92402da3b24376905380afc29
+"#;
+        let graph = parse(yaml);
+        let images: Vec<_> = graph.nodes_of_kind(NodeKind::Image).collect();
+        assert_eq!(images[0].trust_zone, TrustZone::ThirdParty);
+    }
+
+    #[test]
+    fn container_unpinned_creates_image_node_untrusted() {
+        let yaml = r#"
+jobs:
+  build:
+    container: ubuntu:22.04
+    steps:
+      - run: echo hi
+"#;
+        let graph = parse(yaml);
+        let images: Vec<_> = graph.nodes_of_kind(NodeKind::Image).collect();
+        assert_eq!(images.len(), 1);
+        assert_eq!(images[0].name, "ubuntu:22.04");
+        assert_eq!(images[0].trust_zone, TrustZone::Untrusted);
+        assert_eq!(
+            images[0].metadata.get(META_CONTAINER),
+            Some(&"true".to_string())
+        );
+    }
+
+    #[test]
+    fn container_digest_pinned_creates_image_node_third_party() {
+        let yaml = r#"
+jobs:
+  build:
+    container:
+      image: "ubuntu@sha256:a5ac7e51b41094c92402da3b24376905380afc29a5ac7e51b41094c92402da3b"
+    steps:
+      - run: echo hi
+"#;
+        let graph = parse(yaml);
+        let images: Vec<_> = graph.nodes_of_kind(NodeKind::Image).collect();
+        assert_eq!(images.len(), 1);
+        assert_eq!(images[0].trust_zone, TrustZone::ThirdParty);
+        assert_eq!(
+            images[0].metadata.get(META_CONTAINER),
+            Some(&"true".to_string())
+        );
+    }
+
+    #[test]
+    fn oidc_permission_tags_identity_with_meta_oidc() {
+        let yaml = r#"
+permissions:
+  id-token: write
+  contents: read
+jobs:
+  ci:
+    steps:
+      - run: echo hi
+"#;
+        let graph = parse(yaml);
+        let identities: Vec<_> = graph.nodes_of_kind(NodeKind::Identity).collect();
+        assert_eq!(identities.len(), 1);
+        assert_eq!(
+            identities[0].metadata.get(META_OIDC),
+            Some(&"true".to_string()),
+            "id-token: write should mark identity as OIDC-capable"
+        );
+    }
+
+    #[test]
+    fn non_oidc_permission_does_not_tag_meta_oidc() {
+        let yaml = r#"
+permissions:
+  contents: read
+jobs:
+  ci:
+    steps:
+      - run: echo hi
+"#;
+        let graph = parse(yaml);
+        let identities: Vec<_> = graph.nodes_of_kind(NodeKind::Identity).collect();
+        assert_eq!(identities.len(), 1);
+        assert!(
+            identities[0].metadata.get(META_OIDC).is_none(),
+            "contents:read should not tag as OIDC"
         );
     }
 

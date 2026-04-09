@@ -1,7 +1,7 @@
 use crate::finding::{Finding, FindingCategory, Recommendation, Severity};
 use crate::graph::{
-    is_sha_pinned, AuthorityGraph, EdgeKind, IdentityScope, NodeKind, TrustZone, META_DIGEST,
-    META_IDENTITY_SCOPE, META_PERMISSIONS,
+    is_docker_digest_pinned, is_sha_pinned, AuthorityGraph, EdgeKind, IdentityScope, NodeKind,
+    TrustZone, META_CONTAINER, META_DIGEST, META_IDENTITY_SCOPE, META_PERMISSIONS,
 };
 use crate::propagation;
 
@@ -355,6 +355,54 @@ pub fn long_lived_credential(graph: &AuthorityGraph) -> Vec<Finding> {
     findings
 }
 
+/// Tier 6 Rule: Container image without Docker digest pinning.
+///
+/// Job-level containers marked with `META_CONTAINER` that aren't pinned to
+/// `image@sha256:<64hex>` can be silently mutated between runs. Deduplicates
+/// by image name (same image in multiple jobs flags once).
+pub fn floating_image(graph: &AuthorityGraph) -> Vec<Finding> {
+    let mut findings = Vec::new();
+    let mut seen = std::collections::HashSet::new();
+
+    for image in graph.nodes_of_kind(NodeKind::Image) {
+        let is_container = image
+            .metadata
+            .get(META_CONTAINER)
+            .map(|v| v == "true")
+            .unwrap_or(false);
+
+        if !is_container {
+            continue;
+        }
+
+        if !seen.insert(image.name.as_str()) {
+            continue;
+        }
+
+        if !is_docker_digest_pinned(&image.name) {
+            findings.push(Finding {
+                severity: Severity::Medium,
+                category: FindingCategory::FloatingImage,
+                path: None,
+                nodes_involved: vec![image.id],
+                message: format!(
+                    "Container image '{}' is not pinned to a digest",
+                    image.name
+                ),
+                recommendation: Recommendation::PinAction {
+                    current: image.name.clone(),
+                    pinned: format!(
+                        "{}@sha256:<digest>",
+                        image.name.split(':').next().unwrap_or(&image.name)
+                    ),
+                },
+            });
+        }
+    }
+
+    findings
+}
+
 /// Run all rules against a graph.
 pub fn run_all_rules(graph: &AuthorityGraph, max_hops: usize) -> Vec<Finding> {
     let mut findings = Vec::new();
@@ -366,6 +414,7 @@ pub fn run_all_rules(graph: &AuthorityGraph, max_hops: usize) -> Vec<Finding> {
     findings.extend(artifact_boundary_crossing(graph));
     // Stretch rules
     findings.extend(long_lived_credential(graph));
+    findings.extend(floating_image(graph));
 
     findings.sort_by_key(|f| f.severity);
 
@@ -559,6 +608,45 @@ mod tests {
         assert_eq!(findings.len(), 1);
         assert_eq!(findings[0].severity, Severity::Medium);
         assert!(findings[0].message.contains("unknown"));
+    }
+
+    #[test]
+    fn floating_image_unpinned_container_flagged() {
+        let mut g = AuthorityGraph::new(source("ci.yml"));
+        let mut meta = std::collections::HashMap::new();
+        meta.insert(META_CONTAINER.into(), "true".into());
+        g.add_node_with_metadata(NodeKind::Image, "ubuntu:22.04", TrustZone::Untrusted, meta);
+
+        let findings = floating_image(&g);
+        assert_eq!(findings.len(), 1);
+        assert_eq!(findings[0].category, FindingCategory::FloatingImage);
+        assert_eq!(findings[0].severity, Severity::Medium);
+    }
+
+    #[test]
+    fn floating_image_digest_pinned_container_not_flagged() {
+        let mut g = AuthorityGraph::new(source("ci.yml"));
+        let mut meta = std::collections::HashMap::new();
+        meta.insert(META_CONTAINER.into(), "true".into());
+        g.add_node_with_metadata(
+            NodeKind::Image,
+            "ubuntu@sha256:a5ac7e51b41094c92402da3b24376905380afc29a5ac7e51b41094c92402da3b",
+            TrustZone::ThirdParty,
+            meta,
+        );
+
+        let findings = floating_image(&g);
+        assert!(findings.is_empty(), "digest-pinned container should not be flagged");
+    }
+
+    #[test]
+    fn floating_image_ignores_action_images() {
+        let mut g = AuthorityGraph::new(source("ci.yml"));
+        // Image node without META_CONTAINER — this is a step uses: action, not a container
+        g.add_node(NodeKind::Image, "actions/checkout@v4", TrustZone::Untrusted);
+
+        let findings = floating_image(&g);
+        assert!(findings.is_empty(), "floating_image should not flag step actions");
     }
 
     #[test]

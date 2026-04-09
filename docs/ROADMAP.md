@@ -2,7 +2,7 @@
 
 Three horizons. Each is a superset of the previous.
 
-**Current state:** 6 crates, 62 tests, ~3,500 LOC, 6 analysis rules, 1 parser (GitHub Actions), 3 output formats (terminal, JSON, CloudEvents JSONL), 2 commands (scan, map). MVP complete.
+**Current state:** 7 crates, 86 tests, ~4,800 LOC, 7 analysis rules, 1 parser (GitHub Actions), 4 output formats (terminal, JSON, CloudEvents JSONL, SARIF), 3 commands (scan, map, diff). MVP complete. AAA Tier 1+2 (partial) + Tier 3+4 (partial) + Tier 6 (partial) + Tier 7 quick wins shipped.
 
 **Effort key:** S = hours, M = days, L = week+
 
@@ -88,18 +88,18 @@ Organized by impact tier. Each tier unlocks a class of adoption.
 
 These determine whether teams keep using taudit past day 1.
 
-- [ ] `.tauditignore` with glob + category matching (from MVP)
-- [ ] `--severity-threshold` flag (from MVP)
-- [ ] `--exclude` glob patterns for generated/vendored workflows
-- [ ] `--baseline` file (suppress findings from a known-good scan)
-- [ ] `--quiet` mode (summary counts only, for CI logs)
+- [x] `.tauditignore` with glob + category matching (from MVP)
+- [x] `--severity-threshold` flag (from MVP)
+- [x] `--exclude` glob patterns for generated/vendored workflows
+- [x] `--baseline` file (suppress findings from a known-good scan)
+- [x] `--quiet` mode (summary counts only, for CI logs)
 
 ### Tier 2: Platform Integration (M each, highest leverage)
 
 Put findings where engineers already look.
 
-- [ ] **SARIF output adapter** — findings appear in GitHub code scanning tab
-- [ ] **`taudit diff`** — before/after authority graph diff between pipeline versions
+- [x] **SARIF output adapter** — findings appear in GitHub code scanning tab
+- [x] **`taudit diff`** — before/after authority graph diff between pipeline versions
 - [ ] **PR comment bot** — `taudit diff base..head` posts authority changes to PR
 - [ ] **GitHub Action** — `uses: taudit-dev/taudit-action@sha` with configurable severity gate
 
@@ -107,9 +107,9 @@ Put findings where engineers already look.
 
 Real GHA workflows use features the current parser doesn't handle. Priority order by likelihood of encountering in real repos.
 
-- [ ] **Reusable workflow support** (`workflow_call` inputs/secrets passthrough)
+- [x] **Reusable workflow support** (`workflow_call` — job.uses detected, graph marked Partial, DelegatesTo edge created)
 - [ ] **Composite action parsing** (action.yml with `using: composite`)
-- [ ] **Trigger-based trust classification** (pull_request_target = untrusted source)
+- [x] **Trigger-based trust classification** (pull_request_target = untrusted source)
 - [ ] **Expression evaluation** (`${{ github.event_name }}` in conditionals)
 - [ ] **Matrix strategy awareness** (trust zones may differ per matrix entry)
 - [ ] **`AuthorityCompleteness::Partial` propagation** for unsupported YAML constructs — flag what the parser skipped, not just what it found
@@ -118,7 +118,7 @@ Real GHA workflows use features the current parser doesn't handle. Priority orde
 
 Identity modelling is the biggest long-term risk. Modern pipelines use OIDC tokens, service principals, and cloud identities with massive over-scope by default.
 
-- [ ] **OIDC token detection** — `permissions: id-token: write` → identity with federated scope
+- [x] **OIDC token detection** — `permissions: id-token: write` → identity tagged with `META_OIDC: "true"`
 - [ ] **Cloud identity inference** — AWS role assumption, Azure federated credentials detected from action inputs
 - [ ] **Scope propagation** — if an identity is `Broad` and propagates to an `Untrusted` step, escalate severity
 - [ ] **Identity recommendation refinement** — `FederateIdentity` recommendations carry specific OIDC provider suggestions
@@ -136,14 +136,14 @@ Don't over-expand rules before identity depth. Authority propagation is the core
 
 - [ ] **EgressBlindspot** — steps with secrets + network access + no egress constraint
 - [ ] **MissingAuditTrail** — authority-bearing steps with no logging
-- [ ] **FloatingImage** — container images without digest pinning
+- [x] **FloatingImage** — container images without digest pinning
 - [ ] **Confidence scoring** — severity modulated by context + `AuthorityCompleteness`
 - [ ] **Custom rule loading** — user-defined rules via YAML policy files
 
 ### Tier 7: Enterprise Polish (M each)
 
-- [ ] `--no-color` flag + automatic tty detection
-- [ ] `--verbose` mode (full node metadata in terminal report)
+- [x] `--no-color` flag + automatic tty detection
+- [x] `--verbose` mode (full node metadata in terminal report)
 - [ ] Stable schema versioning (v1/v2 contract evolution)
 - [ ] JSON Schema CI validation in quality.yml
 - [ ] Release workflow with multi-platform binaries (linux-x64, linux-arm64, darwin-x64, darwin-arm64)
@@ -163,7 +163,7 @@ Don't over-expand rules before identity depth. Authority propagation is the core
 - [ ] Two CI platforms supported (GHA + ADO)
 - [ ] `AuthorityCompleteness` propagated through all outputs
 - [ ] Identity scope modelled with OIDC/cloud identity awareness
-- [ ] Findings appear in GitHub code scanning (SARIF)
+- [x] Findings appear in GitHub code scanning (SARIF)
 - [ ] PR bot posts authority changes
 - [ ] `.tauditignore` + `--baseline` eliminate all noise
 - [ ] Reusable workflows and composite actions parsed correctly

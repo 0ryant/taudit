@@ -87,8 +87,11 @@ impl IgnoreRule {
     }
 }
 
-/// Match a glob pattern with single `*` wildcards against a file path.
-fn glob_match(pattern: &str, text: &str) -> bool {
+/// Match a glob pattern against a file path.
+/// Supports `*` (match any sequence of characters) and `**` (same, but
+/// `**` in the middle of a pattern naturally matches path separators too).
+/// Exported so the CLI can apply the same logic for `--exclude` patterns.
+pub fn glob_match(pattern: &str, text: &str) -> bool {
     if pattern == "*" {
         return true;
     }

@@ -476,16 +476,18 @@ dependencies = [
 ]
 
 [[package]]
-name = "taudit-cli"
+name = "taudit"
 version = "0.1.0"
 dependencies = [
  "anyhow",
  "clap",
+ "colored",
  "serde_json",
  "serde_yaml",
  "taudit-core",
  "taudit-parse-gha",
  "taudit-report-json",
+ "taudit-report-sarif",
  "taudit-report-terminal",
  "taudit-sink-cloudevents",
 ]
@@ -511,6 +513,15 @@ dependencies = [
 
 [[package]]
 name = "taudit-report-json"
+version = "0.1.0"
+dependencies = [
+ "serde",
+ "serde_json",
+ "taudit-core",
+]
+
+[[package]]
+name = "taudit-report-sarif"
 version = "0.1.0"
 dependencies = [
  "serde",

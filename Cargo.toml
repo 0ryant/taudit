@@ -6,6 +6,7 @@ members = [
     "crates/taudit-parse-gha",
     "crates/taudit-report-terminal",
     "crates/taudit-report-json",
+    "crates/taudit-report-sarif",
     "crates/taudit-sink-cloudevents",
 ]
 

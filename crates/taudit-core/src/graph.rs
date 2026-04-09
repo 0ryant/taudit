@@ -14,6 +14,10 @@ pub const META_DIGEST: &str = "digest";
 pub const META_PERMISSIONS: &str = "permissions";
 pub const META_IDENTITY_SCOPE: &str = "identity_scope";
 pub const META_INFERRED: &str = "inferred";
+/// Marks an Image node as a job container (not a `uses:` action).
+pub const META_CONTAINER: &str = "container";
+/// Marks an Identity node as OIDC-capable (`permissions: id-token: write`).
+pub const META_OIDC: &str = "oidc";
 
 // ── Shared helpers ─────────────────────────────────────
 
@@ -26,6 +30,17 @@ pub fn is_sha_pinned(ref_str: &str) -> bool {
             .split('@')
             .next_back()
             .map(|s| s.len() >= 40 && s.chars().all(|c| c.is_ascii_hexdigit()))
+            .unwrap_or(false)
+}
+
+/// Returns true if `image` is pinned to a Docker digest.
+/// Docker digest format: `image@sha256:<64-hex-chars>`.
+pub fn is_docker_digest_pinned(image: &str) -> bool {
+    image.contains("@sha256:")
+        && image
+            .split("@sha256:")
+            .nth(1)
+            .map(|h| h.len() == 64 && h.chars().all(|c| c.is_ascii_hexdigit()))
             .unwrap_or(false)
 }
 

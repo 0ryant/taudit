@@ -20,7 +20,12 @@ macro_rules! wln {
     };
 }
 
-pub struct TerminalReport;
+#[derive(Default)]
+pub struct TerminalReport {
+    /// When true, emit node metadata (kind, trust zone, permissions) for each
+    /// finding's path nodes.
+    pub verbose: bool,
+}
 
 impl<W: std::io::Write> ReportSink<W> for TerminalReport {
     fn emit(
@@ -146,6 +151,53 @@ impl<W: std::io::Write> ReportSink<W> for TerminalReport {
                     }
                 }
                 wln!(w)?;
+
+                if self.verbose {
+                    // Collect path node IDs in order
+                    let mut path_nodes = vec![path.source];
+                    for edge_id in &path.edges {
+                        if let Some(edge) = graph.edge(*edge_id) {
+                            path_nodes.push(edge.to);
+                        }
+                    }
+                    for node_id in path_nodes {
+                        if let Some(node) = graph.node(node_id) {
+                            let kind_str = format!("{:?}", node.kind).to_lowercase();
+                            let zone_str = format!("{:?}", node.trust_zone).to_lowercase();
+                            w!(w, "          {} ({}, {})", node.name.dimmed(), kind_str, zone_str)?;
+                            // Show relevant metadata
+                            if let Some(scope) = node.metadata.get("identity_scope") {
+                                w!(w, ", scope: {}", scope)?;
+                            }
+                            if let Some(perms) = node.metadata.get("permissions") {
+                                w!(w, ", permissions: {}", perms)?;
+                            }
+                            if let Some(digest) = node.metadata.get("digest") {
+                                w!(w, ", pin: {}…", &digest[..digest.len().min(12)])?;
+                            }
+                            if node.metadata.get("inferred").map(|v| v == "true").unwrap_or(false) {
+                                w!(w, " (inferred)")?;
+                            }
+                            wln!(w)?;
+                        }
+                    }
+                }
+            } else if self.verbose && !finding.nodes_involved.is_empty() {
+                // No path but there are involved nodes — show them
+                for &node_id in &finding.nodes_involved {
+                    if let Some(node) = graph.node(node_id) {
+                        let kind_str = format!("{:?}", node.kind).to_lowercase();
+                        let zone_str = format!("{:?}", node.trust_zone).to_lowercase();
+                        w!(w, "          {} ({}, {})", node.name.dimmed(), kind_str, zone_str)?;
+                        if let Some(scope) = node.metadata.get("identity_scope") {
+                            w!(w, ", scope: {}", scope)?;
+                        }
+                        if let Some(perms) = node.metadata.get("permissions") {
+                            w!(w, ", permissions: {}", perms)?;
+                        }
+                        wln!(w)?;
+                    }
+                }
             }
 
             let fix_text = match &finding.recommendation {
