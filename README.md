@@ -120,6 +120,21 @@ taudit diff before.yml after.yml
 taudit diff before.yml after.yml --format json
 ```
 
+### CellOS platform smoke
+
+Run taudit inside a CellOS execution cell (via `cellos-supervisor`) to verify
+platform compatibility:
+
+```bash
+just cellos-smoke
+```
+
+Notes:
+- This expects a local CellOS checkout at `.refs/cellos` (default in this repo)
+  or `../CellOS`.
+- You can override with `CELLOS_REPO=/path/to/CellOS just cellos-smoke`.
+- The smoke uses `tests/fixtures/clean.yml` and runs with `CELL_OS_USE_NOOP_SINK=1`.
+
 ### Version
 
 ```bash

@@ -35,3 +35,7 @@ fix:
 self-test:
     cargo run -p taudit-cli -- scan .refs/cellos/.github/workflows/
     cargo run -p taudit-cli -- scan .refs/tsafe/.github/workflows/
+
+# Run taudit inside a CellOS execution cell (platform smoke check).
+cellos-smoke:
+    bash scripts/cellos_smoke.sh
