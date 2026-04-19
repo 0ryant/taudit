@@ -5,9 +5,12 @@ use taudit_core::ports::ReportSink;
 
 use serde::Serialize;
 
+const JSON_REPORT_SCHEMA_VERSION: &str = "v1";
+
 /// JSON report containing the full authority graph and all findings.
 #[derive(Serialize)]
 pub struct JsonReport<'a> {
+    pub schema_version: &'static str,
     pub graph: &'a AuthorityGraph,
     pub findings: &'a [Finding],
     pub summary: Summary,
@@ -40,6 +43,7 @@ impl<W: std::io::Write> ReportSink<W> for JsonReportSink {
         use taudit_core::finding::Severity;
 
         let report = JsonReport {
+            schema_version: JSON_REPORT_SCHEMA_VERSION,
             graph,
             findings,
             summary: Summary {
@@ -81,6 +85,10 @@ impl<W: std::io::Write> ReportSink<W> for JsonReportSink {
 #[cfg(test)]
 mod tests {
     use std::{fs, path::PathBuf};
+    use crate::JsonReportSink;
+    use taudit_core::finding::{Finding, Recommendation, Severity};
+    use taudit_core::graph::PipelineSource;
+    use taudit_core::ports::ReportSink;
 
     fn workspace_file(relative: &str) -> PathBuf {
         PathBuf::from(env!("CARGO_MANIFEST_DIR"))
@@ -105,6 +113,41 @@ mod tests {
         assert!(
             errors.is_empty(),
             "{instance_relative} does not match {schema_relative}:\n{}",
+            errors.join("\n")
+        );
+    }
+
+    #[test]
+    fn emitted_report_includes_schema_version_and_matches_schema() {
+        let graph = taudit_core::graph::AuthorityGraph::new(PipelineSource {
+            file: ".github/workflows/ci.yml".into(),
+            repo: None,
+            git_ref: None,
+        });
+        let findings = vec![Finding {
+            severity: Severity::Medium,
+            category: taudit_core::finding::FindingCategory::UnpinnedAction,
+            path: None,
+            nodes_involved: vec![],
+            message: "test finding".into(),
+            recommendation: Recommendation::Manual {
+                action: "pin the action".into(),
+            },
+        }];
+
+        let mut buf = Vec::new();
+        JsonReportSink.emit(&mut buf, &graph, &findings).unwrap();
+
+        let report: serde_json::Value = serde_json::from_slice(&buf).unwrap();
+        assert_eq!(report["schema_version"], "v1");
+
+        let schema = read_json("contracts/schemas/taudit-report.schema.json");
+        let validator = jsonschema::validator_for(&schema).expect("report schema should compile");
+        let errors: Vec<String> = validator.iter_errors(&report).map(|err| err.to_string()).collect();
+
+        assert!(
+            errors.is_empty(),
+            "emitted report does not match report schema:\n{}",
             errors.join("\n")
         );
     }

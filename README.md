@@ -236,9 +236,11 @@ Exit codes: `0` = no findings above threshold, `1` = findings above threshold.
 | Format | Flag | Use case |
 |---|---|---|
 | Terminal | `--format terminal` (default) | Human review, CI logs |
-| JSON | `--format json` | Programmatic consumption, full graph included |
+| JSON | `--format json` | Programmatic consumption, full graph included, top-level `schema_version` |
 | SARIF | `--format sarif` | GitHub code scanning and SARIF consumers |
 | CloudEvents JSONL | `--format cloudevents` | Event-driven pipelines, SIEM ingestion |
+
+The stable JSON report contract is currently `schema_version: "v1"` and is defined in `contracts/schemas/taudit-report.schema.json`.
 
 ## What taudit is not
 

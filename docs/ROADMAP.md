@@ -143,7 +143,7 @@ Don't rush this. Depth + correctness on GHA first.
 - [x] `--verbose` mode (full node metadata in terminal report)
 - [x] Shell completions (bash, zsh, fish) — `taudit completions <shell>`
 - [x] Release workflow — 5-platform binaries (linux-x64, linux-arm64, macos-x64, macos-arm64, windows-x64)
-- [ ] Stable schema versioning (v1/v2 contract evolution)
+- [x] Stable schema versioning (v1/v2 contract evolution)
 - [x] JSON Schema CI validation in quality.yml
 - [x] `cargo-audit` in CI
 - [ ] Homebrew formula / nix package

@@ -4,9 +4,14 @@
   "title": "taudit Report",
   "description": "JSON output from `taudit scan --format json`. Contains the authority graph, all findings, and a summary.",
   "type": "object",
-  "required": ["graph", "findings", "summary"],
+  "required": ["schema_version", "graph", "findings", "summary"],
   "additionalProperties": false,
   "properties": {
+    "schema_version": {
+      "type": "string",
+      "const": "v1",
+      "description": "Stable JSON report contract version"
+    },
     "graph": { "$ref": "#/$defs/AuthorityGraph" },
     "findings": {
       "type": "array",
