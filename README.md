@@ -41,7 +41,7 @@ Then it walks the graph looking for:
 | **Floating Image** | Container image reference without a digest pin |
 | **Long-Lived Credential** | Secret name matches static credential patterns (API keys, passwords) |
 
-Severity is graduated from real-world signal: constrained identity to SHA-pinned action = Medium. Broad identity to unpinned action = Critical. The tool handles unknowns honestly — if it can't fully resolve the authority graph, it marks it `Partial` and tells you why.
+Severity is graduated from real-world signal: constrained identity to SHA-pinned action = Medium. Broad identity to unpinned action = Critical. The tool handles unknowns honestly — if it can't fully resolve the authority graph, it marks it `Partial`, tells you why, and caps findings at High until the graph is complete.
 
 ## Install
 

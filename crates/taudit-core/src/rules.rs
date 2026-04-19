@@ -1,9 +1,28 @@
 use crate::finding::{Finding, FindingCategory, Recommendation, Severity};
 use crate::graph::{
-    is_docker_digest_pinned, is_sha_pinned, AuthorityGraph, EdgeKind, IdentityScope, NodeKind,
-    TrustZone, META_CONTAINER, META_DIGEST, META_IDENTITY_SCOPE, META_PERMISSIONS,
+    is_docker_digest_pinned, is_sha_pinned, AuthorityCompleteness, AuthorityGraph, EdgeKind,
+    IdentityScope, NodeKind, TrustZone, META_CONTAINER, META_DIGEST, META_IDENTITY_SCOPE,
+    META_PERMISSIONS,
 };
 use crate::propagation;
+
+fn cap_severity(severity: Severity, max_severity: Severity) -> Severity {
+    if severity < max_severity {
+        max_severity
+    } else {
+        severity
+    }
+}
+
+fn apply_confidence_cap(graph: &AuthorityGraph, findings: &mut [Finding]) {
+    if graph.completeness != AuthorityCompleteness::Partial {
+        return;
+    }
+
+    for finding in findings {
+        finding.severity = cap_severity(finding.severity, Severity::High);
+    }
+}
 
 /// MVP Rule 1: Authority (secret/identity) propagated across a trust boundary.
 ///
@@ -422,6 +441,8 @@ pub fn run_all_rules(graph: &AuthorityGraph, max_hops: usize) -> Vec<Finding> {
     findings.extend(long_lived_credential(graph));
     findings.extend(floating_image(graph));
 
+    apply_confidence_cap(graph, &mut findings);
+
     findings.sort_by_key(|f| f.severity);
 
     findings
@@ -627,6 +648,40 @@ mod tests {
         assert_eq!(findings.len(), 1);
         assert_eq!(findings[0].category, FindingCategory::FloatingImage);
         assert_eq!(findings[0].severity, Severity::Medium);
+    }
+
+    #[test]
+    fn partial_graph_caps_critical_findings_at_high() {
+        let mut g = AuthorityGraph::new(source("ci.yml"));
+        g.mark_partial("matrix strategy hides some authority paths");
+
+        let identity = g.add_node(NodeKind::Identity, "GITHUB_TOKEN", TrustZone::FirstParty);
+        let step = g.add_node(NodeKind::Step, "deploy", TrustZone::Untrusted);
+        let image = g.add_node(NodeKind::Image, "evil/action@main", TrustZone::Untrusted);
+
+        g.add_edge(step, identity, EdgeKind::HasAccessTo);
+        g.add_edge(step, image, EdgeKind::UsesImage);
+
+        let findings = run_all_rules(&g, 4);
+        assert!(findings.iter().any(|f| f.category == FindingCategory::AuthorityPropagation));
+        assert!(findings.iter().any(|f| f.category == FindingCategory::UntrustedWithAuthority));
+        assert!(findings.iter().all(|f| f.severity >= Severity::High));
+        assert!(!findings.iter().any(|f| f.severity == Severity::Critical));
+    }
+
+    #[test]
+    fn complete_graph_keeps_critical_findings() {
+        let mut g = AuthorityGraph::new(source("ci.yml"));
+
+        let identity = g.add_node(NodeKind::Identity, "GITHUB_TOKEN", TrustZone::FirstParty);
+        let step = g.add_node(NodeKind::Step, "deploy", TrustZone::Untrusted);
+        let image = g.add_node(NodeKind::Image, "evil/action@main", TrustZone::Untrusted);
+
+        g.add_edge(step, identity, EdgeKind::HasAccessTo);
+        g.add_edge(step, image, EdgeKind::UsesImage);
+
+        let findings = run_all_rules(&g, 4);
+        assert!(findings.iter().any(|f| f.severity == Severity::Critical));
     }
 
     #[test]

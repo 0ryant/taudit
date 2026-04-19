@@ -1,7 +1,7 @@
 use std::path::PathBuf;
 
 use taudit_core::finding::{FindingCategory, Severity};
-use taudit_core::graph::{NodeKind, PipelineSource, TrustZone};
+use taudit_core::graph::{AuthorityCompleteness, NodeKind, PipelineSource, TrustZone};
 use taudit_core::ignore::IgnoreConfig;
 use taudit_core::ports::PipelineParser;
 use taudit_core::propagation::DEFAULT_MAX_HOPS;
@@ -86,6 +86,31 @@ fn propagation_leaky_detects_boundary_crossings() {
             "propagation finding missing path evidence"
         );
     }
+}
+
+#[test]
+fn partial_graph_caps_findings_below_critical() {
+        let yaml = r#"
+on: pull_request_target
+permissions: write-all
+jobs:
+    test:
+        strategy:
+            matrix:
+                os: [ubuntu-latest, windows-latest]
+        steps:
+            - run: echo "checking PR"
+"#;
+        let graph = parse(yaml);
+        assert_eq!(graph.completeness, AuthorityCompleteness::Partial);
+
+        let findings = rules::run_all_rules(&graph, DEFAULT_MAX_HOPS);
+        assert!(!findings.is_empty());
+        assert!(!findings.iter().any(|f| f.severity == Severity::Critical));
+        assert!(findings.iter().any(|f| f.severity == Severity::High));
+        assert!(findings
+                .iter()
+                .any(|f| f.category == FindingCategory::UntrustedWithAuthority));
 }
 
 #[test]

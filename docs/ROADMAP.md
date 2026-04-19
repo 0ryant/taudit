@@ -2,7 +2,7 @@
 
 Three horizons. Each is a superset of the previous.
 
-**Current state:** 7 crates, 101 tests, ~5,500 LOC, 7 analysis rules, 1 parser (GitHub Actions), 5 commands (scan, map, diff, completions, version), 4 output formats (terminal, JSON, CloudEvents JSONL, SARIF). MVP complete. Deep into AAA: Tier 1 done, Tier 2 partial, Tier 3 mostly done, Tier 4 partial, Tier 6 partial, Tier 7 partial.
+**Current state:** 7 crates, 104 tests, ~5,500 LOC, 7 analysis rules, 1 parser (GitHub Actions), 5 commands (scan, map, diff, completions, version), 4 output formats (terminal, JSON, CloudEvents JSONL, SARIF). MVP complete. Deep into AAA: Tier 1 done, Tier 2 partial, Tier 3 mostly done, Tier 4 partial, Tier 6 partial, Tier 7 partial.
 
 **Effort key:** S = hours, M = days, L = week+
 
@@ -134,7 +134,7 @@ Don't rush this. Depth + correctness on GHA first.
 - [x] **FloatingImage** — container images without digest pinning (Medium severity)
 - [ ] **EgressBlindspot** — steps with secrets + network access + no egress constraint
 - [ ] **MissingAuditTrail** — authority-bearing steps with no logging
-- [ ] **Confidence scoring** — severity modulated by `AuthorityCompleteness` (Partial graph → cap max severity)
+- [x] **Confidence scoring** — severity modulated by `AuthorityCompleteness` (Partial graph → cap max severity at High)
 - [ ] **Custom rule loading** — user-defined rules via YAML policy files
 
 ### Tier 7: Enterprise Polish (M each)
