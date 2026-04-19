@@ -145,7 +145,7 @@ Don't rush this. Depth + correctness on GHA first.
 - [x] Release workflow — 5-platform binaries (linux-x64, linux-arm64, macos-x64, macos-arm64, windows-x64)
 - [ ] Stable schema versioning (v1/v2 contract evolution)
 - [x] JSON Schema CI validation in quality.yml
-- [ ] `cargo-audit` in CI
+- [x] `cargo-audit` in CI
 - [ ] Homebrew formula / nix package
 
 ### Tier 8: Graph Power (M-L each, differentiation)

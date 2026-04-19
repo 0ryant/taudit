@@ -41,6 +41,12 @@ jobs:
       - name: cargo deny
         run: cargo deny check licenses bans sources
 
+      - name: Install cargo-audit
+        run: cargo install cargo-audit --locked
+
+      - name: cargo audit
+        run: cargo audit
+
       - name: Validate report and CloudEvents contracts
         run: |
           cargo test -p taudit-report-json
