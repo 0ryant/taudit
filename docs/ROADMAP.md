@@ -146,7 +146,7 @@ Don't rush this. Depth + correctness on GHA first.
 - [x] Stable schema versioning (v1/v2 contract evolution)
 - [x] JSON Schema CI validation in quality.yml
 - [x] `cargo-audit` in CI
-- [ ] Homebrew formula / nix package
+- [x] Homebrew formula / nix package
 
 ### Tier 8: Graph Power (M-L each, differentiation)
 
