@@ -19,6 +19,7 @@ The tag workflow reruns the same release-critical checks before publishing:
 - `cargo clippy --workspace --all-targets -- -D warnings`
 - `cargo test --workspace`
 - `cargo deny check licenses bans sources`
+- `cargo audit`
 
 ## Verifying a release archive
 

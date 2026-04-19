@@ -36,6 +36,12 @@ jobs:
       - name: cargo deny
         run: cargo deny check licenses bans sources
 
+      - name: Install cargo-audit
+        run: cargo install cargo-audit --locked
+
+      - name: cargo audit
+        run: cargo audit
+
   # Create the GitHub release from the pushed tag before any build jobs run.
   create-release:
     needs: quality
