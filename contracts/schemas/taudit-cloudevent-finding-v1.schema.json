@@ -4,7 +4,17 @@
   "title": "taudit CloudEvent Finding v1",
   "description": "CloudEvents 1.0 envelope wrapping a single taudit finding. One event per JSONL line.",
   "type": "object",
-  "required": ["specversion", "id", "source", "type"],
+  "required": [
+    "specversion",
+    "id",
+    "source",
+    "type",
+    "correlationid",
+    "provenancerepo",
+    "provenanceproducer",
+    "provenanceversion",
+    "provenancekind"
+  ],
   "properties": {
     "specversion": {
       "type": "string",
@@ -41,6 +51,30 @@
       "type": "string",
       "enum": ["complete", "partial", "unknown"],
       "description": "Authority graph completeness extension attribute"
+    },
+    "correlationid": {
+      "type": "string",
+      "minLength": 1,
+      "description": "Shared correlation key for all events emitted from a single taudit scan"
+    },
+    "provenancerepo": {
+      "type": "string",
+      "const": "taudit",
+      "description": "Repository that emitted the event"
+    },
+    "provenanceproducer": {
+      "type": "string",
+      "const": "taudit-sink-cloudevents",
+      "description": "Subsystem that produced the CloudEvent envelope"
+    },
+    "provenanceversion": {
+      "type": "string",
+      "description": "Producer version or schema version"
+    },
+    "provenancekind": {
+      "type": "string",
+      "const": "finding",
+      "description": "High-level evidence kind for taudit finding events"
     },
     "data": {
       "type": "object",

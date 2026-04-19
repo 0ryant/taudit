@@ -29,10 +29,23 @@ pub struct CloudEventV1 {
     /// Authority graph completeness: "complete", "partial", or "unknown".
     #[serde(skip_serializing_if = "Option::is_none")]
     pub tauditcompleteness: Option<String>,
+    /// Shared correlation key for a single operator flow.
+    pub correlationid: String,
+    /// Repository that emitted the event.
+    pub provenancerepo: String,
+    /// Binary, command, or subsystem that produced the event.
+    pub provenanceproducer: String,
+    /// Producer version or schema version.
+    pub provenanceversion: String,
+    /// High-level evidence kind.
+    pub provenancekind: String,
 }
 
 /// Event source identifier for taudit.
 const EVENT_SOURCE: &str = "taudit";
+const PROVENANCE_REPO: &str = "taudit";
+const PROVENANCE_PRODUCER: &str = "taudit-sink-cloudevents";
+const PROVENANCE_KIND: &str = "finding";
 
 /// Map a FindingCategory to a CloudEvents type string.
 fn event_type(category: FindingCategory) -> String {
@@ -51,7 +64,11 @@ fn event_type(category: FindingCategory) -> String {
 }
 
 /// Build a CloudEvents 1.0 envelope for a single finding.
-fn finding_to_event(finding: &Finding, graph: &AuthorityGraph) -> CloudEventV1 {
+fn finding_to_event(
+    finding: &Finding,
+    graph: &AuthorityGraph,
+    correlation_id: &str,
+) -> CloudEventV1 {
     let data = serde_json::to_value(finding)
         .unwrap_or_else(|_| serde_json::Value::String(finding.message.clone()));
 
@@ -71,6 +88,11 @@ fn finding_to_event(finding: &Finding, graph: &AuthorityGraph) -> CloudEventV1 {
         time: Some(chrono::Utc::now().to_rfc3339()),
         data: Some(data),
         tauditcompleteness: Some(completeness_str.into()),
+        correlationid: correlation_id.to_string(),
+        provenancerepo: PROVENANCE_REPO.into(),
+        provenanceproducer: PROVENANCE_PRODUCER.into(),
+        provenanceversion: env!("CARGO_PKG_VERSION").into(),
+        provenancekind: PROVENANCE_KIND.into(),
     }
 }
 
@@ -87,8 +109,10 @@ impl<W: std::io::Write> ReportSink<W> for CloudEventsJsonlSink {
         graph: &AuthorityGraph,
         findings: &[Finding],
     ) -> Result<(), TauditError> {
+        let correlation_id = uuid::Uuid::new_v4().to_string();
+
         for finding in findings {
-            let event = finding_to_event(finding, graph);
+            let event = finding_to_event(finding, graph, &correlation_id);
             serde_json::to_writer(&mut *w, &event)
                 .map_err(|e| TauditError::Report(format!("CloudEvents serialization: {e}")))?;
             writeln!(w).map_err(|e| TauditError::Report(e.to_string()))?;
@@ -184,6 +208,10 @@ mod tests {
         assert!(event["time"].is_string());
         assert!(event["data"].is_object());
         assert_eq!(event["tauditcompleteness"], "complete");
+        assert!(event["correlationid"].is_string());
+        assert_eq!(event["provenancerepo"], "taudit");
+        assert_eq!(event["provenanceproducer"], "taudit-sink-cloudevents");
+        assert_eq!(event["provenancekind"], "finding");
     }
 
     #[test]
@@ -315,6 +343,86 @@ mod tests {
             "checked-in CloudEvent example does not match schema:\n{}",
             errors.join("\n")
         );
+    }
+
+    #[test]
+    fn emitted_event_matches_shared_envelope_schema() {
+        let graph = AuthorityGraph::new(test_source());
+        let findings = vec![test_finding(
+            FindingCategory::AuthorityPropagation,
+            Severity::Critical,
+        )];
+
+        let mut buf = Vec::new();
+        CloudEventsJsonlSink
+            .emit(&mut buf, &graph, &findings)
+            .unwrap();
+
+        let output = String::from_utf8(buf).unwrap();
+        let event = serde_json::from_str(output.lines().next().unwrap()).unwrap();
+        let schema = read_json("contracts/schemas/ecosystem-evidence-envelope-v0.schema.json");
+        let validator = jsonschema::validator_for(&schema).expect("shared envelope schema should compile");
+        let errors: Vec<String> = validator.iter_errors(&event).map(|err| err.to_string()).collect();
+
+        assert!(
+            errors.is_empty(),
+            "emitted event does not match shared envelope schema:\n{}",
+            errors.join("\n")
+        );
+    }
+
+    #[test]
+    fn checked_in_example_matches_shared_envelope_schema() {
+        let event = read_json("contracts/examples/over-privileged-finding.cloudevent.json");
+        let schema = read_json("contracts/schemas/ecosystem-evidence-envelope-v0.schema.json");
+        let validator = jsonschema::validator_for(&schema).expect("shared envelope schema should compile");
+        let errors: Vec<String> = validator.iter_errors(&event).map(|err| err.to_string()).collect();
+
+        assert!(
+            errors.is_empty(),
+            "checked-in CloudEvent example does not match shared envelope schema:\n{}",
+            errors.join("\n")
+        );
+    }
+
+    #[test]
+    fn shared_envelope_example_matches_shared_envelope_schema() {
+        let event = read_json("contracts/examples/ecosystem-evidence-envelope.example.json");
+        let schema = read_json("contracts/schemas/ecosystem-evidence-envelope-v0.schema.json");
+        let validator = jsonschema::validator_for(&schema).expect("shared envelope schema should compile");
+        let errors: Vec<String> = validator.iter_errors(&event).map(|err| err.to_string()).collect();
+
+        assert!(
+            errors.is_empty(),
+            "checked-in shared envelope example does not match shared envelope schema:\n{}",
+            errors.join("\n")
+        );
+    }
+
+    #[test]
+    fn findings_from_same_emit_share_correlation_id() {
+        let graph = AuthorityGraph::new(test_source());
+        let findings = vec![
+            test_finding(FindingCategory::UnpinnedAction, Severity::Medium),
+            test_finding(FindingCategory::AuthorityPropagation, Severity::Critical),
+        ];
+
+        let mut buf = Vec::new();
+        CloudEventsJsonlSink
+            .emit(&mut buf, &graph, &findings)
+            .unwrap();
+
+        let output = String::from_utf8(buf).unwrap();
+        let correlation_ids: Vec<String> = output
+            .lines()
+            .map(|line| {
+                let event: serde_json::Value = serde_json::from_str(line).unwrap();
+                event["correlationid"].as_str().unwrap().to_string()
+            })
+            .collect();
+
+        assert_eq!(correlation_ids.len(), 2);
+        assert_eq!(correlation_ids[0], correlation_ids[1]);
     }
 
     #[test]

@@ -2,7 +2,7 @@
 
 Three horizons. Each is a superset of the previous.
 
-**Current state:** 7 crates, 104 tests, ~5,500 LOC, 7 analysis rules, 1 parser (GitHub Actions), 5 commands (scan, map, diff, completions, version), 4 output formats (terminal, JSON, CloudEvents JSONL, SARIF). MVP complete. Deep into AAA: Tier 1 done, Tier 2 partial, Tier 3 mostly done, Tier 4 partial, Tier 6 partial, Tier 7 partial.
+**Current state:** 7 crates, 112 tests, ~5,500 LOC, 7 analysis rules, 1 parser (GitHub Actions), 5 commands (scan, map, diff, completions, version), 4 output formats (terminal, JSON, CloudEvents JSONL, SARIF). MVP complete. Deep into AAA: Tier 1 done, Tier 2 partial, Tier 3 mostly done, Tier 4 partial, Tier 6 partial, Tier 7 partial.
 
 **Effort key:** S = hours, M = days, L = week+
 
@@ -28,7 +28,7 @@ Three horizons. Each is a superset of the previous.
 | 8 | CloudEvents JSONL sink with schema | Done |
 | 9 | Authority map command | Done |
 | 10 | CI pipeline (fmt, clippy, test, deny, dependabot) | Done |
-| 11 | 101 tests (unit + integration + sink) | Done |
+| 11 | 112 tests (unit + integration + sink) | Done |
 
 ### Precision (do first — the credibility layer)
 

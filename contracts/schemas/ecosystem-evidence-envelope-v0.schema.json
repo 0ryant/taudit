@@ -1,0 +1,83 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://taudit.dev/schemas/ecosystem-evidence-envelope-v0.schema.json",
+  "title": "0ryant Ecosystem Evidence Envelope v0",
+  "description": "Draft shared CloudEvents-style envelope for taudit, tsafe, tencrypt, tedit, and 0ryant-shell. This schema only standardizes the common envelope and shared extension attributes. Repo-local payload stays in data.",
+  "type": "object",
+  "required": [
+    "specversion",
+    "id",
+    "source",
+    "type",
+    "subject",
+    "time",
+    "datacontenttype",
+    "correlationid",
+    "provenancerepo",
+    "provenanceproducer",
+    "data"
+  ],
+  "properties": {
+    "specversion": {
+      "type": "string",
+      "const": "1.0"
+    },
+    "id": {
+      "type": "string",
+      "description": "Event identifier unique within the producing system"
+    },
+    "source": {
+      "type": "string",
+      "minLength": 1,
+      "description": "Producer identity, typically repo or binary name such as taudit, tsafe, tencrypt, or 0ryant-shell"
+    },
+    "type": {
+      "type": "string",
+      "pattern": "^[a-z0-9]+(\\.[a-z0-9_]+)+$",
+      "description": "Stable event type name such as io.taudit.finding.authority_propagation"
+    },
+    "subject": {
+      "type": "string",
+      "minLength": 1,
+      "description": "Operator-facing subject of the event: pipeline path, command target, hostname, or contract name"
+    },
+    "time": {
+      "type": "string",
+      "format": "date-time",
+      "description": "RFC 3339 event timestamp"
+    },
+    "datacontenttype": {
+      "type": "string",
+      "const": "application/json"
+    },
+    "correlationid": {
+      "type": "string",
+      "minLength": 1,
+      "description": "Shared correlation key used to join events across repos for a single operator flow"
+    },
+    "provenancerepo": {
+      "type": "string",
+      "minLength": 1,
+      "description": "Repository that emitted the event"
+    },
+    "provenanceproducer": {
+      "type": "string",
+      "minLength": 1,
+      "description": "Binary, command, or subsystem that produced the event"
+    },
+    "provenanceversion": {
+      "type": "string",
+      "description": "Producer version or schema version, if known"
+    },
+    "provenancekind": {
+      "type": "string",
+      "enum": ["finding", "execution", "authority", "certificate", "editor", "other"],
+      "description": "High-level class of evidence to support filtering and routing"
+    },
+    "data": {
+      "type": "object",
+      "description": "Repo-local payload. The common envelope does not constrain internal fields beyond JSON object shape."
+    }
+  },
+  "additionalProperties": true
+}

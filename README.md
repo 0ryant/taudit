@@ -210,7 +210,7 @@ taudit-sink-cloudevents findings → CloudEvents JSONL event stream
 taudit-cli           composition root (clap, file I/O, wiring)
 ```
 
-7 crates, 101 tests, ~5,500 LOC. Ports and adapters — core has zero I/O dependencies.
+7 crates, 112 tests, ~5,500 LOC. Ports and adapters — core has zero I/O dependencies.
 
 ## CI Integration
 

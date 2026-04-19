@@ -20,6 +20,7 @@ Only the first two gates should block `v0.1.0`.
 - [x] Correct repository ownership references from `ktilcock` to `0ryant`
 - [x] Replace placeholder source-install text in `README.md`
 - [x] Make homepage/repository links consistent across manifests and docs
+- [ ] Ensure the canonical public repo URL resolves at `github.com/0ryant/taudit` before the next publish/tag
 - [x] Add `SECURITY.md` with disclosure path and expected response model
 - [x] Add `CONTRIBUTING.md` with local quality gate and development flow
 - [x] Add `CHANGELOG.md` with initial release notes for `v0.1.0`
