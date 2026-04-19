@@ -12,6 +12,10 @@ versions:
 check: fmt clippy test deny
     @echo "just check: OK"
 
+contracts:
+    cargo test -p taudit-report-json
+    cargo test -p taudit-sink-cloudevents
+
 fmt:
     cargo fmt --all -- --check
 

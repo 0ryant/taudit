@@ -25,6 +25,12 @@ Optional extra check:
 just audit
 ```
 
+Contract-focused check:
+
+```bash
+just contracts
+```
+
 ## Common development tasks
 
 ```bash

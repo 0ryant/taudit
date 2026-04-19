@@ -1,0 +1,28 @@
+{
+  "specversion": "1.0",
+  "id": "00000000-0000-4000-8000-000000000001",
+  "source": "taudit",
+  "type": "io.taudit.finding.authority_propagation",
+  "subject": "tests/fixtures/over-privileged.yml",
+  "datacontenttype": "application/json",
+  "time": "2026-04-19T00:00:00Z",
+  "data": {
+    "category": "authority_propagation",
+    "message": "GITHUB_TOKEN propagated to some-org/deploy-action@main across trust boundary",
+    "nodes_involved": [0, 1],
+    "path": {
+      "boundary_crossing": ["first_party", "untrusted"],
+      "crossed_boundary": true,
+      "edges": [0],
+      "sink": 1,
+      "source": 0
+    },
+    "recommendation": {
+      "command": "tsafe exec --ns <scoped-namespace> -- <command>",
+      "explanation": "Scope GITHUB_TOKEN to only the steps that need it",
+      "type": "tsafe_remediation"
+    },
+    "severity": "critical"
+  },
+  "tauditcompleteness": "complete"
+}

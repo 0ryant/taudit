@@ -304,6 +304,20 @@ mod tests {
     }
 
     #[test]
+    fn checked_in_example_matches_cloudevent_schema() {
+        let event = read_json("contracts/examples/over-privileged-finding.cloudevent.json");
+        let schema = read_json("contracts/schemas/taudit-cloudevent-finding-v1.schema.json");
+        let validator = jsonschema::validator_for(&schema).expect("cloudevent schema should compile");
+        let errors: Vec<String> = validator.iter_errors(&event).map(|err| err.to_string()).collect();
+
+        assert!(
+            errors.is_empty(),
+            "checked-in CloudEvent example does not match schema:\n{}",
+            errors.join("\n")
+        );
+    }
+
+    #[test]
     fn empty_findings_produces_empty_output() {
         let graph = AuthorityGraph::new(test_source());
 

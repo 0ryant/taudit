@@ -41,34 +41,7 @@ jobs:
       - name: cargo deny
         run: cargo deny check licenses bans sources
 
-      - name: Validate JSON contracts
+      - name: Validate report and CloudEvents contracts
         run: |
-          python3 -c "
-          import json, os, sys
-          schema_dir = 'contracts/schemas'
-          example_dir = 'contracts/examples'
-          errors = 0
-          for f in os.listdir(example_dir):
-              if not f.endswith('.json'):
-                  continue
-              path = os.path.join(example_dir, f)
-              try:
-                  with open(path) as fh:
-                      json.load(fh)
-                  print(f'  OK: {path}')
-              except json.JSONDecodeError as e:
-                  print(f'  FAIL: {path}: {e}', file=sys.stderr)
-                  errors += 1
-          for f in os.listdir(schema_dir):
-              if not f.endswith('.json'):
-                  continue
-              path = os.path.join(schema_dir, f)
-              try:
-                  with open(path) as fh:
-                      json.load(fh)
-                  print(f'  OK: {path}')
-              except json.JSONDecodeError as e:
-                  print(f'  FAIL: {path}: {e}', file=sys.stderr)
-                  errors += 1
-          sys.exit(1 if errors else 0)
-          "
+          cargo test -p taudit-report-json
+          cargo test -p taudit-sink-cloudevents
