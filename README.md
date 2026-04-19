@@ -52,10 +52,15 @@ cargo install taudit
 Or build from source:
 
 ```bash
-git clone https://github.com/YOUR_ORG/taudit.git
+git clone https://github.com/0ryant/taudit.git
 cd taudit
 cargo install --path crates/taudit-cli
 ```
+
+## Support
+
+- Product support: open a GitHub issue in this repository.
+- Security issues: follow the process in `SECURITY.md`.
 
 ## Usage
 
@@ -205,7 +210,7 @@ taudit-sink-cloudevents findings → CloudEvents JSONL event stream
 taudit-cli           composition root (clap, file I/O, wiring)
 ```
 
-7 crates, 98 tests, ~5,800 LOC. Ports and adapters — core has zero I/O dependencies.
+7 crates, 101 tests, ~5,500 LOC. Ports and adapters — core has zero I/O dependencies.
 
 ## CI Integration
 
@@ -247,3 +252,8 @@ taudit models a finite set of authority primitives. When every primitive is capt
 ## License
 
 MIT OR Apache-2.0
+
+## Release trust
+
+Release archives ship with SHA-256 checksum files and an SPDX dependency SBOM.
+See `docs/release-trust.md` for verification steps.

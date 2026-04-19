@@ -17,7 +17,7 @@
   "$defs": {
     "AuthorityGraph": {
       "type": "object",
-      "required": ["source", "nodes", "edges"],
+      "required": ["source", "nodes", "edges", "completeness"],
       "additionalProperties": false,
       "properties": {
         "source": { "$ref": "#/$defs/PipelineSource" },
@@ -28,8 +28,17 @@
         "edges": {
           "type": "array",
           "items": { "$ref": "#/$defs/Edge" }
+        },
+        "completeness": { "$ref": "#/$defs/AuthorityCompleteness" },
+        "completeness_gaps": {
+          "type": "array",
+          "items": { "type": "string" }
         }
       }
+    },
+    "AuthorityCompleteness": {
+      "type": "string",
+      "enum": ["complete", "partial", "unknown"]
     },
     "PipelineSource": {
       "type": "object",
@@ -193,7 +202,7 @@
     },
     "Summary": {
       "type": "object",
-      "required": ["total_findings", "critical", "high", "medium", "low", "info", "total_nodes", "total_edges"],
+      "required": ["total_findings", "critical", "high", "medium", "low", "info", "total_nodes", "total_edges", "completeness"],
       "additionalProperties": false,
       "properties": {
         "total_findings": { "type": "integer", "minimum": 0 },
@@ -203,7 +212,12 @@
         "low": { "type": "integer", "minimum": 0 },
         "info": { "type": "integer", "minimum": 0 },
         "total_nodes": { "type": "integer", "minimum": 0 },
-        "total_edges": { "type": "integer", "minimum": 0 }
+        "total_edges": { "type": "integer", "minimum": 0 },
+        "completeness": { "$ref": "#/$defs/AuthorityCompleteness" },
+        "completeness_gaps": {
+          "type": "array",
+          "items": { "type": "string" }
+        }
       }
     }
   }

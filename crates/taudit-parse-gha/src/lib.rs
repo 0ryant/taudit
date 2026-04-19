@@ -39,7 +39,7 @@ impl PipelineParser for GhaParser {
             // OIDC: id-token: write → token is OIDC-capable (federated scope).
             // Check the formatted substring directly — Permissions::Map fmt produces
             // "id-token: write" so this won't false-positive on "contents: write".
-            if perm_string.contains("id-token: write") {
+            if perm_string.contains("id-token: write") || perm_string == "write-all" {
                 meta.insert(META_OIDC.into(), "true".into());
             }
             Some(graph.add_node_with_metadata(
@@ -354,8 +354,9 @@ fn classify_cloud_auth(
             // OIDC path: role-to-assume present (no static access key needed)
             let w = with?;
             let role = w.get("role-to-assume")?;
-            // Use the role name (last segment of the ARN) for readability
-            let short = role.split(':').next_back().unwrap_or(role.as_str());
+            // ARN format: arn:aws:iam::123456789012:role/my-role
+            // Split on '/' to get the role name; fall back to the full value.
+            let short = role.split('/').next_back().unwrap_or(role.as_str());
             let mut meta = HashMap::new();
             meta.insert(META_OIDC.into(), "true".into());
             meta.insert(META_IDENTITY_SCOPE.into(), "broad".into());
@@ -962,6 +963,26 @@ jobs:
     }
 
     #[test]
+    fn write_all_permission_tags_identity_as_oidc() {
+        // `permissions: write-all` grants every permission including id-token: write.
+        let yaml = r#"
+permissions: write-all
+jobs:
+  ci:
+    steps:
+      - run: echo hi
+"#;
+        let graph = parse(yaml);
+        let identities: Vec<_> = graph.nodes_of_kind(NodeKind::Identity).collect();
+        assert_eq!(identities.len(), 1);
+        assert_eq!(
+            identities[0].metadata.get(META_OIDC),
+            Some(&"true".to_string()),
+            "write-all grants all permissions including id-token: write"
+        );
+    }
+
+    #[test]
     fn container_steps_linked_to_container_image() {
         let yaml = r#"
 jobs:
@@ -1028,7 +1049,8 @@ jobs:
         let graph = parse(yaml);
         let identities: Vec<_> = graph.nodes_of_kind(NodeKind::Identity).collect();
         assert_eq!(identities.len(), 1);
-        assert!(identities[0].name.starts_with("AWS/"));
+        // ARN arn:aws:iam::123456789012:role/my-deploy-role → last '/' segment
+        assert_eq!(identities[0].name, "AWS/my-deploy-role");
         assert_eq!(
             identities[0].metadata.get(META_OIDC),
             Some(&"true".to_string())

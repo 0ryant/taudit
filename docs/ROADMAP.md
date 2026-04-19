@@ -2,7 +2,7 @@
 
 Three horizons. Each is a superset of the previous.
 
-**Current state:** 7 crates, 98 tests, ~5,800 LOC, 7 analysis rules, 1 parser (GitHub Actions), 4 output formats (terminal, JSON, CloudEvents JSONL, SARIF), 4 commands (scan, map, diff, completions). MVP complete. Deep into AAA: Tier 1 done, Tier 2 partial, Tier 3 mostly done, Tier 4 partial, Tier 6 partial, Tier 7 partial.
+**Current state:** 7 crates, 101 tests, ~5,500 LOC, 7 analysis rules, 1 parser (GitHub Actions), 5 commands (scan, map, diff, completions, version), 4 output formats (terminal, JSON, CloudEvents JSONL, SARIF). MVP complete. Deep into AAA: Tier 1 done, Tier 2 partial, Tier 3 mostly done, Tier 4 partial, Tier 6 partial, Tier 7 partial.
 
 **Effort key:** S = hours, M = days, L = week+
 
@@ -28,7 +28,7 @@ Three horizons. Each is a superset of the previous.
 | 8 | CloudEvents JSONL sink with schema | Done |
 | 9 | Authority map command | Done |
 | 10 | CI pipeline (fmt, clippy, test, deny, dependabot) | Done |
-| 11 | 91 tests (unit + integration + sink) | Done |
+| 11 | 101 tests (unit + integration + sink) | Done |
 
 ### Precision (do first — the credibility layer)
 
@@ -144,7 +144,7 @@ Don't rush this. Depth + correctness on GHA first.
 - [x] Shell completions (bash, zsh, fish) — `taudit completions <shell>`
 - [x] Release workflow — 5-platform binaries (linux-x64, linux-arm64, macos-x64, macos-arm64, windows-x64)
 - [ ] Stable schema versioning (v1/v2 contract evolution)
-- [ ] JSON Schema CI validation in quality.yml
+- [x] JSON Schema CI validation in quality.yml
 - [ ] `cargo-audit` in CI
 - [ ] Homebrew formula / nix package
 
@@ -214,7 +214,7 @@ Don't rush this. Depth + correctness on GHA first.
 
 **Operational maturity:**
 
-- [ ] SBOM generation per release
+- [x] SBOM generation per release
 - [ ] Signed releases (cosign or minisign)
 - [ ] Fuzzing (cargo-fuzz on parser inputs)
 - [ ] Property-based tests (proptest on graph invariants)
@@ -282,7 +282,7 @@ Documented incompleteness — not bugs, but places where the graph underapproxim
 - ✅ Reusable workflow detection (`job.uses`)
 - ✅ Matrix strategy marking graph Partial
 - ✅ `pull_request_target` trust zone classification
-- ✅ Job container images
+- ✅ Job container images with `UsesImage` edges to all steps in the job
 
 **Still open:**
 - Composite actions (steps hidden behind `action.yml`)
@@ -293,11 +293,11 @@ Documented incompleteness — not bugs, but places where the graph underapproxim
 **Resolved:**
 - ✅ `IdentityScope` classification (Broad/Constrained/Unknown)
 - ✅ OIDC-capable identity tagged (`META_OIDC`)
+- ✅ Cloud identity inference (AWS/GCP/Azure OIDC action detection)
+- ✅ Container authority propagation to steps
 
 **Still open:**
-- Cloud identity inference (AWS/GCP/Azure action detection)
-- Scope propagation escalation (Broad → Untrusted = always Critical)
-- Container trust zone not propagated to steps running inside it
+- Scope propagation escalation nuance (cloud OIDC identity to pinned ThirdParty sink)
 
 ---
 
@@ -314,7 +314,7 @@ AAA ═════════════════════════�
   T1: noise elimination    ✅ DONE
   T2: platform integration ◑ SARIF+diff+stdin done; PR bot+GHA pending
   T3: parser precision     ◑ reusable/matrix/container/PRT done; composite pending
-  T4: identity depth       ◑ OIDC tagging done; cloud inference pending
+  T4: identity depth       ◑ OIDC tagging + cloud inference + container auth done; escalation nuance pending
   T5: Azure DevOps         ○ not started
   T6: rule depth           ◑ FloatingImage done; Egress/Audit pending
   T7: enterprise polish    ◑ completions+release+color+verbose done

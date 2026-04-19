@@ -8,8 +8,8 @@ const SARIF_SCHEMA: &str =
     "https://schemastore.azurewebsites.net/schemas/json/sarif-2.1.0.json";
 const SARIF_VERSION: &str = "2.1.0";
 const TOOL_NAME: &str = "taudit";
-const TOOL_URI: &str = "https://github.com/ktilcock/taudit";
-const RULES_BASE_URI: &str = "https://github.com/ktilcock/taudit/blob/main/docs/rules";
+const TOOL_URI: &str = "https://github.com/0ryant/taudit";
+const RULES_BASE_URI: &str = "https://github.com/0ryant/taudit/blob/main/docs/rules";
 
 // ── Static rule catalogue ───────────────────────────────
 

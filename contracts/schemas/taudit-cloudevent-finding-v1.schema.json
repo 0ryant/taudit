@@ -16,6 +16,7 @@
     },
     "source": {
       "type": "string",
+      "const": "taudit",
       "description": "Always 'taudit'"
     },
     "type": {
@@ -35,6 +36,11 @@
       "type": "string",
       "format": "date-time",
       "description": "RFC 3339 timestamp"
+    },
+    "tauditcompleteness": {
+      "type": "string",
+      "enum": ["complete", "partial", "unknown"],
+      "description": "Authority graph completeness extension attribute"
     },
     "data": {
       "type": "object",

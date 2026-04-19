@@ -10,7 +10,8 @@
         "name": "GITHUB_TOKEN",
         "trust_zone": "first_party",
         "metadata": {
-          "permissions": "{ contents: read }"
+          "permissions": "{ contents: read }",
+          "identity_scope": "constrained"
         }
       },
       {
@@ -56,11 +57,12 @@
         "to": 0,
         "kind": "has_access_to"
       }
-    ]
+    ],
+    "completeness": "complete"
   },
   "findings": [
     {
-      "severity": "high",
+      "severity": "medium",
       "category": "authority_propagation",
       "path": {
         "source": 0,
@@ -89,11 +91,12 @@
   "summary": {
     "total_findings": 1,
     "critical": 0,
-    "high": 1,
-    "medium": 0,
+    "high": 0,
+    "medium": 1,
     "low": 0,
     "info": 0,
     "total_nodes": 4,
-    "total_edges": 3
+    "total_edges": 3,
+    "completeness": "complete"
   }
 }

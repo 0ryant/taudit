@@ -22,7 +22,6 @@ jobs:
       - name: Rust toolchain
         uses: dtolnay/rust-toolchain@98e1b82157cd469e843cb7f524c1313b4ad9492c # 1.88
         with:
-          toolchain: stable
           components: rustfmt, clippy
 
       - uses: Swatinem/rust-cache@9d47c6ad4b02e050fd481d890b2ea34778fd09d6 # v2.7.8

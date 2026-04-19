@@ -77,3 +77,51 @@ impl<W: std::io::Write> ReportSink<W> for JsonReportSink {
         Ok(())
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use std::{fs, path::PathBuf};
+
+    fn workspace_file(relative: &str) -> PathBuf {
+        PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("../..")
+            .join(relative)
+    }
+
+    fn read_json(relative: &str) -> serde_json::Value {
+        let path = workspace_file(relative);
+        let text = fs::read_to_string(&path)
+            .unwrap_or_else(|err| panic!("failed to read {}: {err}", path.display()));
+        serde_json::from_str(&text)
+            .unwrap_or_else(|err| panic!("failed to parse {}: {err}", path.display()))
+    }
+
+    fn assert_schema_validates_instance(schema_relative: &str, instance_relative: &str) {
+        let schema = read_json(schema_relative);
+        let instance = read_json(instance_relative);
+        let validator = jsonschema::validator_for(&schema)
+            .unwrap_or_else(|err| panic!("invalid schema {schema_relative}: {err}"));
+        let errors: Vec<String> = validator.iter_errors(&instance).map(|err| err.to_string()).collect();
+        assert!(
+            errors.is_empty(),
+            "{instance_relative} does not match {schema_relative}:\n{}",
+            errors.join("\n")
+        );
+    }
+
+    #[test]
+    fn clean_report_example_matches_schema() {
+        assert_schema_validates_instance(
+            "contracts/schemas/taudit-report.schema.json",
+            "contracts/examples/clean-report.json",
+        );
+    }
+
+    #[test]
+    fn over_privileged_report_example_matches_schema() {
+        assert_schema_validates_instance(
+            "contracts/schemas/taudit-report.schema.json",
+            "contracts/examples/over-privileged-report.json",
+        );
+    }
+}

@@ -10,7 +10,9 @@
         "name": "GITHUB_TOKEN",
         "trust_zone": "first_party",
         "metadata": {
-          "permissions": "write-all"
+          "identity_scope": "broad",
+          "permissions": "write-all",
+          "oidc": "true"
         }
       },
       {
@@ -58,14 +60,14 @@
       {
         "id": 7,
         "kind": "secret",
-        "name": "AWS_ACCESS_KEY_ID",
+        "name": "AWS_SECRET_ACCESS_KEY",
         "trust_zone": "first_party",
         "metadata": {}
       },
       {
         "id": 8,
         "kind": "secret",
-        "name": "AWS_SECRET_ACCESS_KEY",
+        "name": "AWS_ACCESS_KEY_ID",
         "trust_zone": "first_party",
         "metadata": {}
       },
@@ -132,7 +134,8 @@
         "to": 9,
         "kind": "has_access_to"
       }
-    ]
+    ],
+    "completeness": "complete"
   },
   "findings": [
     {
@@ -264,7 +267,7 @@
         5,
         6
       ],
-      "message": "GITHUB_TOKEN has permissions 'write-all' — likely broader than needed",
+      "message": "GITHUB_TOKEN has broad scope (permissions: 'write-all') — likely broader than needed",
       "recommendation": {
         "type": "reduce_permissions",
         "current": "write-all",
@@ -296,16 +299,43 @@
         "current": "actions/checkout@v4",
         "pinned": "actions/checkout@<sha256-digest>"
       }
+    },
+    {
+      "severity": "low",
+      "category": "long_lived_credential",
+      "nodes_involved": [
+        7
+      ],
+      "message": "'AWS_SECRET_ACCESS_KEY' looks like a long-lived static credential",
+      "recommendation": {
+        "type": "federate_identity",
+        "static_secret": "AWS_SECRET_ACCESS_KEY",
+        "oidc_provider": "GitHub Actions OIDC (id-token: write)"
+      }
+    },
+    {
+      "severity": "low",
+      "category": "long_lived_credential",
+      "nodes_involved": [
+        8
+      ],
+      "message": "'AWS_ACCESS_KEY_ID' looks like a long-lived static credential",
+      "recommendation": {
+        "type": "federate_identity",
+        "static_secret": "AWS_ACCESS_KEY_ID",
+        "oidc_provider": "GitHub Actions OIDC (id-token: write)"
+      }
     }
   ],
   "summary": {
-    "total_findings": 9,
+    "total_findings": 11,
     "critical": 6,
     "high": 1,
     "medium": 2,
-    "low": 0,
+    "low": 2,
     "info": 0,
     "total_nodes": 10,
-    "total_edges": 9
+    "total_edges": 9,
+    "completeness": "complete"
   }
 }
