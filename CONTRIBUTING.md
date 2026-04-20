@@ -39,10 +39,10 @@ just fix
 just self-test
 ```
 
-Optional platform-integration smoke:
+Optional runtime-integration smoke:
 
 ```bash
-CELLOS_REPO=/path/to/CellOS just cellos-smoke
+just runtime-smoke
 ```
 
 ## Pull requests

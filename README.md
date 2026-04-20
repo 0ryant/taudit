@@ -134,23 +134,23 @@ taudit diff before.yml after.yml
 taudit diff before.yml after.yml --format json
 ```
 
-### CellOS platform smoke
+### Runtime isolation smoke (optional)
 
-Run taudit inside a CellOS execution cell (via `cellos-supervisor`) to verify
+Run taudit with an execution-isolation runtime harness to verify
 platform compatibility:
 
 ```bash
-just cellos-smoke
+just runtime-smoke
 ```
 
 Notes:
-- This expects a local CellOS checkout available via `CELLOS_REPO` or at a conventional sibling path such as `../CellOS`.
-- Set `CELLOS_REPO=/path/to/CellOS` explicitly if your checkout lives elsewhere.
-- The smoke uses `tests/fixtures/clean.yml` and runs with `CELL_OS_USE_NOOP_SINK=1`.
+- This smoke recipe is optional and intended for platform-integration validation.
+- The smoke uses `tests/fixtures/clean.yml`.
 
-### Emit CellOS spec
+### Emit execution-runtime spec
 
-Generate an execution-cell JSON spec that runs `taudit scan` inside CellOS:
+Generate an execution-cell JSON spec that runs `taudit scan` in an
+isolation runtime:
 
 ```bash
 # Print spec JSON to stdout
@@ -160,11 +160,7 @@ taudit emit-spec .github/workflows/ci.yml --severity-threshold high --quiet
 taudit emit-spec .github/workflows/ci.yml --output /tmp/taudit-cell.json
 ```
 
-Then run it with CellOS:
-
-```bash
-CELL_OS_USE_NOOP_SINK=1 cargo run -p cellos-supervisor -- /tmp/taudit-cell.json
-```
+Then pass that spec to your runtime supervisor/executor.
 
 ### Version
 

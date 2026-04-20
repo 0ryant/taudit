@@ -40,6 +40,10 @@ self-test:
     cargo run -p taudit-cli -- scan .refs/cellos/.github/workflows/
     cargo run -p taudit-cli -- scan .refs/tsafe/.github/workflows/
 
-# Run taudit inside a CellOS execution cell (platform smoke check).
+# Run taudit inside an execution-isolation runtime (platform smoke check).
+runtime-smoke:
+    bash scripts/cellos_smoke.sh
+
+# Backward-compatible alias.
 cellos-smoke:
     bash scripts/cellos_smoke.sh

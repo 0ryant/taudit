@@ -39,7 +39,7 @@ Every feature classified by current state, what MVP means, and the path to produ
 
 | | Status |
 |---|---|
-| **Current** | SOLID. 5 severity levels. 9 finding categories (5 MVP + 4 stretch). 6 recommendation variants routing to tsafe, CellOS, or manual action. PropagationPath as first-class path evidence. Ignore and baseline suppression are implemented at the CLI layer. |
+| **Current** | SOLID. 5 severity levels. 9 finding categories (5 MVP + 4 stretch). 6 recommendation variants routing to tsafe, an isolation runtime, or manual action. PropagationPath as first-class path evidence. Ignore and baseline suppression are implemented at the CLI layer. |
 | **MVP** | Ship as-is. |
 | **AAA** | Confidence scoring. Richer suppression management beyond `.tauditignore` and baseline reports. |
 
@@ -105,7 +105,7 @@ Every feature classified by current state, what MVP means, and the path to produ
 |---|---|
 | **Current** | SOLID. Hand-rolled CloudEventV1 envelope with taudit-specific and shared-envelope schema validation. One JSONL line per finding. Type prefix `io.taudit.finding.{category}`. Correlation and provenance fields included. 13 unit tests. |
 | **MVP** | Ship as-is. |
-| **AAA** | Direct JetStream/Kafka publish. Correlation with CellOS execution events. Governance correlation ID extension attribute. |
+| **AAA** | Direct JetStream/Kafka publish. Correlation with execution-runtime events. Governance correlation ID extension attribute. |
 
 ---
 
@@ -185,5 +185,5 @@ Every feature classified by current state, what MVP means, and the path to produ
 | 1 | Reusable workflow / composite action parsing | Real-world GHA coverage |
 | 2 | Azure DevOps parser | Second platform |
 | 3 | Stretch rules (egress, audit trail) | Deeper analysis |
-| 4 | Governance correlation schema | Cross-tool event linking (taudit/tsafe/CellOS) |
+| 4 | Governance correlation schema | Cross-tool event linking (taudit/tsafe/runtime-executor) |
 | 5 | Git-integrated diffing and PR automation | Makes `taudit diff` useful in review workflows |

@@ -5,7 +5,7 @@
 **taudit** -- the pipeline authority scanner. Models how authority propagates through CI/CD pipelines, so you can prove least privilege. Not a scanner -- a privilege dataflow analyser.
 
 taudit is one layer in a closed governance loop:
-**taudit** (detect over-authority) --> **tsafe** (constrain secrets) --> **CellOS** (contain execution) --> runtime --> **taudit** (re-observe).
+**taudit** (detect over-authority) --> **tsafe** (constrain secrets) --> **execution isolation runtime** (contain execution) --> runtime --> **taudit** (re-observe).
 
 ## North star
 
@@ -26,8 +26,8 @@ Every secret, identity, and token in a pipeline should be provably scoped to onl
 1. Graph-first: the authority graph is the product, not the findings.
 2. Path evidence: every finding includes the full propagation path.
 3. No I/O in core: `taudit-core` is a pure domain library.
-4. Day-1 value without tsafe or CellOS installed.
-5. Remediation routes to the right tool: scope findings --> tsafe, isolation findings --> CellOS.
+4. Day-1 value without tsafe or any specific isolation runtime installed.
+5. Remediation routes to the right tool: scope findings --> tsafe, isolation findings --> your execution isolation runtime.
 6. SHA pinning is the minimum bar for third-party trust.
 
 ## Anti-goals

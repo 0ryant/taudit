@@ -50,7 +50,7 @@ Three horizons. Each is a superset of the previous.
 
 | # | Item | Effort | Status |
 |---|------|--------|--------|
-| **18** | Run on production workflows | M | Done — 10 workflows across taudit/tsafe/CellOS |
+| **18** | Run on production workflows | M | Done — 10 workflows across taudit/tsafe/runtime-isolation repos |
 | **19** | Tune findings from real-world signal | S | Done — constrained+pinned graduated to Medium |
 
 ### Packaging
@@ -150,7 +150,7 @@ Don't rush this. Depth + correctness on GHA first.
 
 ### Tier 8: Graph Power (M-L each, differentiation)
 
-- [ ] **Isolation boundary support** — explicit breaks in propagation (CellOS containment = graph boundary)
+- [ ] **Isolation boundary support** — explicit breaks in propagation (runtime containment = graph boundary)
 - [ ] **Subgraph extraction** per job (focus view)
 - [ ] **Graphviz DOT export** from `taudit map`
 - [ ] **Adjacency index** for large graphs (O(n) scan → O(1) lookup for mono-repo scale)
@@ -189,16 +189,16 @@ Don't rush this. Depth + correctness on GHA first.
 
 **Governance loop completion:**
 
-- [ ] **Governance correlation schema** — shared CloudEvents extension attribute linking taudit findings → tsafe remediation → CellOS execution events
+- [ ] **Governance correlation schema** — shared CloudEvents extension attribute linking taudit findings → tsafe remediation → runtime execution events
 - [ ] **tsafe recommendation validation** — `taudit verify` confirms tsafe namespace scoping matches finding recommendations
-- [ ] **CellOS spec generation** — `taudit emit-spec` generates CellOS cell specs from isolation findings
-- [ ] **Feedback loop** — `taudit scan` consumes CellOS execution events to verify containment was applied
+- [ ] **Runtime spec generation** — `taudit emit-spec` generates execution-cell specs from isolation findings
+- [ ] **Feedback loop** — `taudit scan` consumes runtime execution events to verify containment was applied
 
 **Self-hosting:**
 
 - [ ] **taudit scans taudit** — quality.yml includes `taudit scan` as a CI step with zero findings
 - [ ] **taudit scans tsafe** — zero findings
-- [ ] **taudit scans CellOS** — zero findings
+- [ ] **taudit scans runtime isolation harness** — zero findings
 
 **Complete rule coverage:**
 
@@ -209,7 +209,7 @@ Don't rush this. Depth + correctness on GHA first.
 **Complete output coverage:**
 
 - [x] Terminal, JSON, CloudEvents JSONL, SARIF — all four formats done
-- [ ] **JetStream publish adapter** — optional direct NATS publish for CellOS-integrated deployments
+- [ ] **JetStream publish adapter** — optional direct NATS publish for runtime-integrated deployments
 - [ ] **Governance correlation ID** in CloudEvents extension attributes
 
 **Operational maturity:**
@@ -229,7 +229,7 @@ Don't rush this. Depth + correctness on GHA first.
 - [ ] All 9 finding categories implemented
 - [ ] `AuthorityCompleteness` is `Complete` for all three parsers (every authority primitive modelled)
 - [ ] Identity scope modelled for OIDC, service principals, cloud identities
-- [ ] Governance loop has correlation IDs across taudit/tsafe/CellOS
+- [ ] Governance loop has correlation IDs across taudit/tsafe/runtime-executor
 - [ ] taudit scans all three sister projects with zero findings
 - [ ] Policy-as-code supports user-defined rules
 - [x] Four output formats (terminal, JSON, CloudEvents, SARIF)
