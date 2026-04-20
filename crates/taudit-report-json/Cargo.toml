@@ -1,14 +1,17 @@
 [package]
 name = "taudit-report-json"
 description = "Structured JSON authority graph + findings report"
-version = "0.1.0"
+version = "0.1.1"
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
 authors.workspace = true
+repository.workspace = true
+keywords.workspace = true
+categories.workspace = true
 
 [dependencies]
-taudit-core = { version = "0.1.0", path = "../taudit-core" }
+taudit-core = { version = "0.1.1", path = "../taudit-core" }
 serde = { workspace = true }
 serde_json = { workspace = true }
 

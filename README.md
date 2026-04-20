@@ -99,7 +99,16 @@ taudit scan .github/workflows/release.yml --verbose
 
 # Disable ANSI colors explicitly
 taudit scan .github/workflows/ --no-color
+
+# Override runtime artifact destinations
+taudit scan .github/workflows/ --telemetry-dir /tmp/taudit/telemetry --receipt-dir /tmp/taudit/receipts --log-dir /tmp/taudit/logs
 ```
+
+Every `taudit scan` run writes runtime artifacts to XDG-style defaults unless overridden:
+
+- Telemetry (JSONL): `$TAUDIT_TELEMETRY_DIR` or `$XDG_STATE_HOME/taudit/telemetry` or `$HOME/.local/state/taudit/telemetry`
+- Receipts (JSON): `$TAUDIT_RECEIPT_DIR` or `$XDG_DATA_HOME/taudit/receipts` or `$HOME/.local/share/taudit/receipts`
+- Logs: `$TAUDIT_LOG_DIR` or `$XDG_STATE_HOME/taudit/logs` or `$HOME/.local/state/taudit/logs`
 
 ### Authority Map
 
@@ -135,9 +144,8 @@ just cellos-smoke
 ```
 
 Notes:
-- This expects a local CellOS checkout at `.refs/cellos` (default in this repo)
-  or `../CellOS`.
-- You can override with `CELLOS_REPO=/path/to/CellOS just cellos-smoke`.
+- This expects a local CellOS checkout available via `CELLOS_REPO` or at a conventional sibling path such as `../CellOS`.
+- Set `CELLOS_REPO=/path/to/CellOS` explicitly if your checkout lives elsewhere.
 - The smoke uses `tests/fixtures/clean.yml` and runs with `CELL_OS_USE_NOOP_SINK=1`.
 
 ### Emit CellOS spec

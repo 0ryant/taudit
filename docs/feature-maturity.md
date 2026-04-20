@@ -103,7 +103,7 @@ Every feature classified by current state, what MVP means, and the path to produ
 
 | | Status |
 |---|---|
-| **Current** | SOLID. Hand-rolled CloudEventV1 envelope (matches CellOS pattern). One JSONL line per finding. Type prefix `io.taudit.finding.{category}`. JSON Schema contract. 7 unit tests. |
+| **Current** | SOLID. Hand-rolled CloudEventV1 envelope with taudit-specific and shared-envelope schema validation. One JSONL line per finding. Type prefix `io.taudit.finding.{category}`. Correlation and provenance fields included. 13 unit tests. |
 | **MVP** | Ship as-is. |
 | **AAA** | Direct JetStream/Kafka publish. Correlation with CellOS execution events. Governance correlation ID extension attribute. |
 

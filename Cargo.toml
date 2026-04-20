@@ -16,7 +16,7 @@ rust-version = "1.85"
 license = "MIT OR Apache-2.0"
 authors = ["Ryan Tilcock"]
 repository = "https://github.com/0ryant/taudit"
-keywords = ["security", "ci-cd", "pipeline", "audit", "supply-chain"]
+keywords = ["github-actions", "pipeline-security", "least-privilege", "devsecops", "supply-chain"]
 categories = ["command-line-utilities", "development-tools"]
 
 [workspace.dependencies]

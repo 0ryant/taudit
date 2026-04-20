@@ -1569,7 +1569,7 @@ dependencies = [
 
 [[package]]
 name = "taudit"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "anyhow",
  "clap",
@@ -1587,7 +1587,7 @@ dependencies = [
 
 [[package]]
 name = "taudit-core"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "serde",
  "serde_json",
@@ -1596,7 +1596,7 @@ dependencies = [
 
 [[package]]
 name = "taudit-parse-gha"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "serde",
  "serde_yaml",
@@ -1606,7 +1606,7 @@ dependencies = [
 
 [[package]]
 name = "taudit-report-json"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "jsonschema",
  "serde",
@@ -1616,7 +1616,7 @@ dependencies = [
 
 [[package]]
 name = "taudit-report-sarif"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "serde",
  "serde_json",
@@ -1625,7 +1625,7 @@ dependencies = [
 
 [[package]]
 name = "taudit-report-terminal"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "colored",
  "taudit-core",
@@ -1633,7 +1633,7 @@ dependencies = [
 
 [[package]]
 name = "taudit-sink-cloudevents"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "chrono",
  "jsonschema",

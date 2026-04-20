@@ -2,3 +2,16 @@
 *.swp
 *.swo
 .DS_Store
+
+# Local coordination scratch notes should not accumulate in the public repo.
+Plans/*-ecosystem-note-*.md
+docs/ECOSYSTEM_NOTE_FROM_*.md
+
+# Internal collaboration and roadmap planning artifacts should stay local.
+Plans/
+BUILD_SHEET.md
+.refs/
+
+# Common local editor noise.
+.idea/
+.vscode/

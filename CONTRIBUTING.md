@@ -37,7 +37,12 @@ just contracts
 just versions
 just fix
 just self-test
-just cellos-smoke
+```
+
+Optional platform-integration smoke:
+
+```bash
+CELLOS_REPO=/path/to/CellOS just cellos-smoke
 ```
 
 ## Pull requests

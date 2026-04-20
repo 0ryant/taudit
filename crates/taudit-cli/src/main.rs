@@ -2,6 +2,7 @@ use anyhow::{Context, Result};
 use clap::{CommandFactory, Parser};
 use std::collections::HashSet;
 use std::path::PathBuf;
+use std::time::{SystemTime, UNIX_EPOCH};
 
 use taudit_core::finding::Severity;
 use taudit_core::graph::PipelineSource;
@@ -74,6 +75,24 @@ enum Cli {
         /// Use this to surface only new findings since the last known-good scan.
         #[arg(long)]
         baseline: Option<PathBuf>,
+
+        /// Directory to write telemetry events (JSONL).
+        /// Default: $TAUDIT_TELEMETRY_DIR or
+        /// $XDG_STATE_HOME/taudit/telemetry or $HOME/.local/state/taudit/telemetry
+        #[arg(long)]
+        telemetry_dir: Option<PathBuf>,
+
+        /// Directory to write scan receipts (JSON).
+        /// Default: $TAUDIT_RECEIPT_DIR or
+        /// $XDG_DATA_HOME/taudit/receipts or $HOME/.local/share/taudit/receipts
+        #[arg(long)]
+        receipt_dir: Option<PathBuf>,
+
+        /// Directory to write taudit logs.
+        /// Default: $TAUDIT_LOG_DIR or
+        /// $XDG_STATE_HOME/taudit/logs or $HOME/.local/state/taudit/logs
+        #[arg(long)]
+        log_dir: Option<PathBuf>,
     },
 
     /// Show authority map — which steps access which secrets/identities
@@ -152,6 +171,17 @@ enum OutputFormat {
     Cloudevents,
 }
 
+impl OutputFormat {
+    fn as_str(&self) -> &'static str {
+        match self {
+            OutputFormat::Terminal => "terminal",
+            OutputFormat::Json => "json",
+            OutputFormat::Sarif => "sarif",
+            OutputFormat::Cloudevents => "cloudevents",
+        }
+    }
+}
+
 #[derive(Clone, clap::ValueEnum)]
 enum DiffOutputFormat {
     Terminal,
@@ -200,6 +230,16 @@ struct ScanOpts {
     quiet: bool,
     verbose: bool,
     baseline: Option<PathBuf>,
+    telemetry_dir: Option<PathBuf>,
+    receipt_dir: Option<PathBuf>,
+    log_dir: Option<PathBuf>,
+}
+
+#[derive(Clone)]
+struct RuntimeArtifactPaths {
+    telemetry_dir: PathBuf,
+    receipt_dir: PathBuf,
+    log_dir: PathBuf,
 }
 
 fn main() -> Result<()> {
@@ -217,6 +257,9 @@ fn main() -> Result<()> {
             quiet,
             verbose,
             baseline,
+            telemetry_dir,
+            receipt_dir,
+            log_dir,
         } => {
             // Configure color output before any terminal report is emitted.
             // Disable when --no-color is set OR when stdout is not a tty.
@@ -234,6 +277,9 @@ fn main() -> Result<()> {
                 quiet,
                 verbose,
                 baseline,
+                telemetry_dir,
+                receipt_dir,
+                log_dir,
             })
         }
         Cli::Completions { shell } => {
@@ -368,6 +414,9 @@ fn cmd_scan(opts: ScanOpts) -> Result<()> {
         quiet,
         verbose,
         baseline,
+        telemetry_dir,
+        receipt_dir,
+        log_dir,
     } = opts;
 
     let parser = GhaParser;
@@ -381,6 +430,7 @@ fn cmd_scan(opts: ScanOpts) -> Result<()> {
     let baseline_fingerprints = load_baseline(baseline)?;
 
     let threshold = severity_threshold.map(|s| s.to_severity());
+    let runtime_paths = resolve_runtime_artifact_paths(telemetry_dir, receipt_dir, log_dir)?;
 
     // Resolve and filter paths. `-` (stdin) bypasses the glob exclude filter.
     let all_paths = resolve_paths(&paths)?;
@@ -399,6 +449,8 @@ fn cmd_scan(opts: ScanOpts) -> Result<()> {
 
     // Quiet mode: accumulate totals across files
     let mut quiet_total = SeverityCounts::default();
+    let mut findings_total = 0usize;
+    let mut suppressed_total = 0usize;
 
     for path in &resolved {
         let graph = if path.as_os_str() == "-" {
@@ -421,6 +473,8 @@ fn cmd_scan(opts: ScanOpts) -> Result<()> {
         // Apply baseline suppression
         let (findings, suppressed_baseline) =
             apply_baseline(after_ignore, &baseline_fingerprints);
+        findings_total += findings.len();
+        suppressed_total += suppressed_ignore + suppressed_baseline;
 
         // Determine exit code based on threshold
         let has_actionable = match threshold {
@@ -512,7 +566,159 @@ fn cmd_scan(opts: ScanOpts) -> Result<()> {
         .ok();
     }
 
+    let now_secs = now_unix_seconds();
+    if let Err(err) = write_runtime_artifacts(
+        &runtime_paths,
+        now_secs,
+        &resolved,
+        &format,
+        max_hops,
+        findings_total,
+        suppressed_total,
+        exit_code,
+    ) {
+        eprintln!("warning: failed to write runtime artifacts: {err}");
+    }
+
     std::process::exit(exit_code);
+}
+
+fn now_unix_seconds() -> u64 {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|d| d.as_secs())
+        .unwrap_or(0)
+}
+
+fn env_path(name: &str) -> Option<PathBuf> {
+    std::env::var_os(name).map(PathBuf::from)
+}
+
+fn xdg_data_home() -> Option<PathBuf> {
+    env_path("XDG_DATA_HOME").or_else(|| env_path("HOME").map(|h| h.join(".local/share")))
+}
+
+fn xdg_state_home() -> Option<PathBuf> {
+    env_path("XDG_STATE_HOME").or_else(|| env_path("HOME").map(|h| h.join(".local/state")))
+}
+
+fn resolve_runtime_artifact_paths(
+    telemetry_dir: Option<PathBuf>,
+    receipt_dir: Option<PathBuf>,
+    log_dir: Option<PathBuf>,
+) -> Result<RuntimeArtifactPaths> {
+    let telemetry_dir = if let Some(p) = telemetry_dir {
+        p
+    } else if let Some(p) = env_path("TAUDIT_TELEMETRY_DIR") {
+        p
+    } else {
+        xdg_state_home()
+            .map(|p| p.join("taudit/telemetry"))
+            .context("cannot resolve telemetry dir: set TAUDIT_TELEMETRY_DIR, XDG_STATE_HOME, or HOME")?
+    };
+
+    let receipt_dir = if let Some(p) = receipt_dir {
+        p
+    } else if let Some(p) = env_path("TAUDIT_RECEIPT_DIR") {
+        p
+    } else {
+        xdg_data_home()
+            .map(|p| p.join("taudit/receipts"))
+            .context("cannot resolve receipt dir: set TAUDIT_RECEIPT_DIR, XDG_DATA_HOME, or HOME")?
+    };
+
+    let log_dir = if let Some(p) = log_dir {
+        p
+    } else if let Some(p) = env_path("TAUDIT_LOG_DIR") {
+        p
+    } else {
+        xdg_state_home()
+            .map(|p| p.join("taudit/logs"))
+            .context("cannot resolve log dir: set TAUDIT_LOG_DIR, XDG_STATE_HOME, or HOME")?
+    };
+
+    Ok(RuntimeArtifactPaths {
+        telemetry_dir,
+        receipt_dir,
+        log_dir,
+    })
+}
+
+fn ensure_dir(path: &PathBuf) -> Result<()> {
+    std::fs::create_dir_all(path)
+        .with_context(|| format!("failed to create directory {}", path.display()))
+}
+
+fn write_runtime_artifacts(
+    paths: &RuntimeArtifactPaths,
+    now_secs: u64,
+    resolved_paths: &[PathBuf],
+    format: &OutputFormat,
+    max_hops: usize,
+    findings_total: usize,
+    suppressed_total: usize,
+    exit_code: i32,
+) -> Result<()> {
+    ensure_dir(&paths.telemetry_dir)?;
+    ensure_dir(&paths.receipt_dir)?;
+    ensure_dir(&paths.log_dir)?;
+
+    let telemetry_file = paths.telemetry_dir.join("events.jsonl");
+    let telemetry_event = serde_json::json!({
+        "event": "scan_completed",
+        "ts_unix": now_secs,
+        "paths_scanned": resolved_paths.len(),
+        "findings_total": findings_total,
+        "suppressed_total": suppressed_total,
+        "exit_code": exit_code,
+    });
+    append_line(&telemetry_file, &telemetry_event.to_string())?;
+
+    let receipt_file = paths.receipt_dir.join(format!("receipt-{now_secs}.json"));
+    let path_strings: Vec<String> = resolved_paths
+        .iter()
+        .map(|p| p.display().to_string())
+        .collect();
+    let receipt = serde_json::json!({
+        "kind": "taudit.scan.receipt",
+        "ts_unix": now_secs,
+        "format": format.as_str(),
+        "max_hops": max_hops,
+        "paths": path_strings,
+        "findings_total": findings_total,
+        "suppressed_total": suppressed_total,
+        "exit_code": exit_code,
+    });
+    let receipt_text = serde_json::to_string_pretty(&receipt)
+        .with_context(|| "failed to serialize scan receipt")?;
+    std::fs::write(&receipt_file, receipt_text)
+        .with_context(|| format!("failed to write receipt {}", receipt_file.display()))?;
+
+    let log_file = paths.log_dir.join("taudit.log");
+    let log_line = format!(
+        "ts_unix={} event=scan_completed format={} paths={} findings={} suppressed={} exit_code={}",
+        now_secs,
+        format.as_str(),
+        resolved_paths.len(),
+        findings_total,
+        suppressed_total,
+        exit_code
+    );
+    append_line(&log_file, &log_line)?;
+
+    Ok(())
+}
+
+fn append_line(path: &PathBuf, line: &str) -> Result<()> {
+    use std::io::Write;
+    let mut file = std::fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(path)
+        .with_context(|| format!("failed to open {}", path.display()))?;
+    writeln!(file, "{line}")
+        .with_context(|| format!("failed to append to {}", path.display()))?;
+    Ok(())
 }
 
 /// Load ignore config from file. Tries `--ignore-file` path first,
@@ -976,5 +1182,31 @@ mod tests {
         assert!(argv.iter().any(|v| v == "critical"));
         assert!(argv.iter().any(|v| v == "--quiet"));
         assert!(argv.iter().any(|v| v == "--no-color"));
+    }
+
+    #[test]
+    fn resolve_runtime_artifact_paths_prefers_explicit_values() {
+        let telemetry = PathBuf::from("/tmp/telemetry-explicit");
+        let receipt = PathBuf::from("/tmp/receipt-explicit");
+        let log = PathBuf::from("/tmp/log-explicit");
+
+        let resolved = resolve_runtime_artifact_paths(
+            Some(telemetry.clone()),
+            Some(receipt.clone()),
+            Some(log.clone()),
+        )
+        .expect("should resolve explicit paths");
+
+        assert_eq!(resolved.telemetry_dir, telemetry);
+        assert_eq!(resolved.receipt_dir, receipt);
+        assert_eq!(resolved.log_dir, log);
+    }
+
+    #[test]
+    fn output_format_as_str_matches_cli_values() {
+        assert_eq!(OutputFormat::Terminal.as_str(), "terminal");
+        assert_eq!(OutputFormat::Json.as_str(), "json");
+        assert_eq!(OutputFormat::Sarif.as_str(), "sarif");
+        assert_eq!(OutputFormat::Cloudevents.as_str(), "cloudevents");
     }
 }

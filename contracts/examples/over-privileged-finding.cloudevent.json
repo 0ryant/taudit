@@ -9,7 +9,7 @@
   "correlationid": "demo-flow-2026-04-19-001",
   "provenancerepo": "taudit",
   "provenanceproducer": "taudit-sink-cloudevents",
-  "provenanceversion": "0.1.0",
+  "provenanceversion": "0.1.1",
   "provenancekind": "finding",
   "data": {
     "category": "authority_propagation",

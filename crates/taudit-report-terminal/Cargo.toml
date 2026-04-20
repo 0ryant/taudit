@@ -1,12 +1,15 @@
 [package]
 name = "taudit-report-terminal"
 description = "Coloured terminal report with propagation paths"
-version = "0.1.0"
+version = "0.1.1"
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
 authors.workspace = true
+repository.workspace = true
+keywords.workspace = true
+categories.workspace = true
 
 [dependencies]
-taudit-core = { version = "0.1.0", path = "../taudit-core" }
+taudit-core = { version = "0.1.1", path = "../taudit-core" }
 colored = { workspace = true }

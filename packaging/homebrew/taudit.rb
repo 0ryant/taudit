@@ -10,7 +10,7 @@
 class Taudit < Formula
   desc "CI/CD authority scanner for secrets, identities, and trust boundaries"
   homepage "https://github.com/0ryant/taudit"
-  version "0.1.0"
+  version "0.1.1"
   license "MIT OR Apache-2.0"
 
   on_macos do
