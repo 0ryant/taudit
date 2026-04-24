@@ -17,10 +17,20 @@ impl PipelineParser for GhaParser {
     }
 
     fn parse(&self, content: &str, source: &PipelineSource) -> Result<AuthorityGraph, TauditError> {
-        let workflow: GhaWorkflow = serde_yaml::from_str(content)
+        let mut de = serde_yaml::Deserializer::from_str(content);
+        let doc = de
+            .next()
+            .ok_or_else(|| TauditError::Parse("empty YAML document".into()))?;
+        let workflow: GhaWorkflow = GhaWorkflow::deserialize(doc)
             .map_err(|e| TauditError::Parse(format!("YAML parse error: {e}")))?;
+        let extra_docs = de.next().is_some();
 
         let mut graph = AuthorityGraph::new(source.clone());
+        if extra_docs {
+            graph.mark_partial(
+                "file contains multiple YAML documents (--- separator) — only the first was analyzed".to_string(),
+            );
+        }
         let mut secret_ids: HashMap<String, NodeId> = HashMap::new();
 
         let is_pull_request_target = workflow
