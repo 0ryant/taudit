@@ -172,7 +172,12 @@ pub fn unpinned_action(graph: &AuthorityGraph) -> Vec<Finding> {
 
         // Container images are handled by floating_image — skip here to avoid
         // double-flagging the same node as both UnpinnedAction and FloatingImage.
-        if image.metadata.get(META_CONTAINER).map(|v| v == "true").unwrap_or(false) {
+        if image
+            .metadata
+            .get(META_CONTAINER)
+            .map(|v| v == "true")
+            .unwrap_or(false)
+        {
             continue;
         }
 
@@ -433,10 +438,7 @@ pub fn floating_image(graph: &AuthorityGraph) -> Vec<Finding> {
                 category: FindingCategory::FloatingImage,
                 path: None,
                 nodes_involved: vec![image.id],
-                message: format!(
-                    "Container image '{}' is not pinned to a digest",
-                    image.name
-                ),
+                message: format!("Container image '{}' is not pinned to a digest", image.name),
                 recommendation: Recommendation::PinAction {
                     current: image.name.clone(),
                     pinned: format!(
@@ -464,8 +466,12 @@ pub fn persisted_credential(graph: &AuthorityGraph) -> Vec<Finding> {
             continue;
         }
 
-        let Some(step) = graph.node(edge.from) else { continue };
-        let Some(target) = graph.node(edge.to) else { continue };
+        let Some(step) = graph.node(edge.from) else {
+            continue;
+        };
+        let Some(target) = graph.node(edge.to) else {
+            continue;
+        };
 
         findings.push(Finding {
             severity: Severity::High,
@@ -670,8 +676,12 @@ mod tests {
         let mut meta = std::collections::HashMap::new();
         meta.insert(META_PERMISSIONS.into(), "write-all".into());
         meta.insert(META_IDENTITY_SCOPE.into(), "broad".into());
-        let identity =
-            g.add_node_with_metadata(NodeKind::Identity, "GITHUB_TOKEN", TrustZone::FirstParty, meta);
+        let identity = g.add_node_with_metadata(
+            NodeKind::Identity,
+            "GITHUB_TOKEN",
+            TrustZone::FirstParty,
+            meta,
+        );
         let step = g.add_node(NodeKind::Step, "build", TrustZone::FirstParty);
         g.add_edge(step, identity, EdgeKind::HasAccessTo);
 
@@ -687,8 +697,12 @@ mod tests {
         let mut meta = std::collections::HashMap::new();
         meta.insert(META_PERMISSIONS.into(), "custom-scope".into());
         meta.insert(META_IDENTITY_SCOPE.into(), "unknown".into());
-        let identity =
-            g.add_node_with_metadata(NodeKind::Identity, "GITHUB_TOKEN", TrustZone::FirstParty, meta);
+        let identity = g.add_node_with_metadata(
+            NodeKind::Identity,
+            "GITHUB_TOKEN",
+            TrustZone::FirstParty,
+            meta,
+        );
         let step = g.add_node(NodeKind::Step, "build", TrustZone::FirstParty);
         g.add_edge(step, identity, EdgeKind::HasAccessTo);
 
@@ -724,8 +738,12 @@ mod tests {
         g.add_edge(step, image, EdgeKind::UsesImage);
 
         let findings = run_all_rules(&g, 4);
-        assert!(findings.iter().any(|f| f.category == FindingCategory::AuthorityPropagation));
-        assert!(findings.iter().any(|f| f.category == FindingCategory::UntrustedWithAuthority));
+        assert!(findings
+            .iter()
+            .any(|f| f.category == FindingCategory::AuthorityPropagation));
+        assert!(findings
+            .iter()
+            .any(|f| f.category == FindingCategory::UntrustedWithAuthority));
         assert!(findings.iter().all(|f| f.severity >= Severity::High));
         assert!(!findings.iter().any(|f| f.severity == Severity::Critical));
     }
@@ -758,7 +776,10 @@ mod tests {
         );
 
         let findings = floating_image(&g);
-        assert!(findings.is_empty(), "digest-pinned container should not be flagged");
+        assert!(
+            findings.is_empty(),
+            "digest-pinned container should not be flagged"
+        );
     }
 
     #[test]
@@ -784,13 +805,20 @@ mod tests {
         g.add_node(NodeKind::Image, "actions/checkout@v4", TrustZone::Untrusted);
 
         let findings = floating_image(&g);
-        assert!(findings.is_empty(), "floating_image should not flag step actions");
+        assert!(
+            findings.is_empty(),
+            "floating_image should not flag step actions"
+        );
     }
 
     #[test]
     fn persisted_credential_rule_fires_on_persists_to_edge() {
         let mut g = AuthorityGraph::new(source("ci.yml"));
-        let token = g.add_node(NodeKind::Identity, "System.AccessToken", TrustZone::FirstParty);
+        let token = g.add_node(
+            NodeKind::Identity,
+            "System.AccessToken",
+            TrustZone::FirstParty,
+        );
         let checkout = g.add_node(NodeKind::Step, "checkout", TrustZone::FirstParty);
         g.add_edge(checkout, token, EdgeKind::PersistsTo);
 
@@ -807,12 +835,8 @@ mod tests {
         let step = g.add_node(NodeKind::Step, "TerraformCLI@0", TrustZone::Untrusted);
         let mut meta = std::collections::HashMap::new();
         meta.insert(META_CLI_FLAG_EXPOSED.into(), "true".into());
-        let secret = g.add_node_with_metadata(
-            NodeKind::Secret,
-            "db_password",
-            TrustZone::FirstParty,
-            meta,
-        );
+        let secret =
+            g.add_node_with_metadata(NodeKind::Secret, "db_password", TrustZone::FirstParty, meta);
         g.add_edge(step, secret, EdgeKind::HasAccessTo);
 
         let findings = untrusted_with_authority(&g);
@@ -833,12 +857,19 @@ mod tests {
         let mut meta = std::collections::HashMap::new();
         meta.insert(META_PERMISSIONS.into(), "{ contents: read }".into());
         meta.insert(META_IDENTITY_SCOPE.into(), "constrained".into());
-        let identity =
-            g.add_node_with_metadata(NodeKind::Identity, "GITHUB_TOKEN", TrustZone::FirstParty, meta);
+        let identity = g.add_node_with_metadata(
+            NodeKind::Identity,
+            "GITHUB_TOKEN",
+            TrustZone::FirstParty,
+            meta,
+        );
         let step = g.add_node(NodeKind::Step, "build", TrustZone::FirstParty);
         g.add_edge(step, identity, EdgeKind::HasAccessTo);
 
         let findings = over_privileged_identity(&g);
-        assert!(findings.is_empty(), "constrained scope should not be flagged");
+        assert!(
+            findings.is_empty(),
+            "constrained scope should not be flagged"
+        );
     }
 }

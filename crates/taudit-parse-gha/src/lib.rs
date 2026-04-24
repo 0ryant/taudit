@@ -35,7 +35,10 @@ impl PipelineParser for GhaParser {
             let scope = IdentityScope::from_permissions(&perm_string);
             let mut meta = HashMap::new();
             meta.insert(META_PERMISSIONS.into(), perm_string.clone());
-            meta.insert(META_IDENTITY_SCOPE.into(), format!("{scope:?}").to_lowercase());
+            meta.insert(
+                META_IDENTITY_SCOPE.into(),
+                format!("{scope:?}").to_lowercase(),
+            );
             // OIDC: id-token: write → token is OIDC-capable (federated scope).
             // Check the formatted substring directly — Permissions::Map fmt produces
             // "id-token: write" so this won't false-positive on "contents: write".
@@ -59,7 +62,10 @@ impl PipelineParser for GhaParser {
                 let scope = IdentityScope::from_permissions(&perm_string);
                 let mut meta = HashMap::new();
                 meta.insert(META_PERMISSIONS.into(), perm_string.clone());
-                meta.insert(META_IDENTITY_SCOPE.into(), format!("{scope:?}").to_lowercase());
+                meta.insert(
+                    META_IDENTITY_SCOPE.into(),
+                    format!("{scope:?}").to_lowercase(),
+                );
                 if perm_string.contains("id-token: write") {
                     meta.insert(META_OIDC.into(), "true".into());
                 }
@@ -83,8 +89,7 @@ impl PipelineParser for GhaParser {
                 };
                 let rw_id = graph.add_node(NodeKind::Image, uses, trust_zone);
                 // Synthetic step represents this job delegating to the called workflow
-                let job_step_id =
-                    graph.add_node(NodeKind::Step, job_name, TrustZone::FirstParty);
+                let job_step_id = graph.add_node(NodeKind::Step, job_name, TrustZone::FirstParty);
                 graph.add_edge(job_step_id, rw_id, EdgeKind::DelegatesTo);
                 if let Some(tok_id) = job_token_id {
                     graph.add_edge(job_step_id, tok_id, EdgeKind::HasAccessTo);
@@ -236,11 +241,8 @@ impl PipelineParser for GhaParser {
                                 .unwrap_or(remaining.len());
                             let secret_name = &remaining[..end];
                             if !secret_name.is_empty() {
-                                let secret_id = find_or_create_secret(
-                                    &mut graph,
-                                    &mut secret_ids,
-                                    secret_name,
-                                );
+                                let secret_id =
+                                    find_or_create_secret(&mut graph, &mut secret_ids, secret_name);
                                 // Mark as inferred — not precisely mapped
                                 if let Some(node) = graph.nodes.get_mut(secret_id) {
                                     node.metadata
@@ -376,7 +378,10 @@ fn classify_cloud_auth(
             let mut meta = HashMap::new();
             meta.insert(META_OIDC.into(), "true".into());
             meta.insert(META_IDENTITY_SCOPE.into(), "broad".into());
-            meta.insert(META_PERMISSIONS.into(), "GCP workload identity federation".into());
+            meta.insert(
+                META_PERMISSIONS.into(),
+                "GCP workload identity federation".into(),
+            );
             Some(graph.add_node_with_metadata(
                 NodeKind::Identity,
                 format!("GCP/{short}"),
@@ -395,7 +400,10 @@ fn classify_cloud_auth(
             let mut meta = HashMap::new();
             meta.insert(META_OIDC.into(), "true".into());
             meta.insert(META_IDENTITY_SCOPE.into(), "broad".into());
-            meta.insert(META_PERMISSIONS.into(), "Azure federated credential (OIDC)".into());
+            meta.insert(
+                META_PERMISSIONS.into(),
+                "Azure federated credential (OIDC)".into(),
+            );
             Some(graph.add_node_with_metadata(
                 NodeKind::Identity,
                 format!("Azure/{client_id}"),
@@ -801,10 +809,7 @@ jobs:
         let graph = parse(yaml);
         assert_eq!(graph.completeness, AuthorityCompleteness::Partial);
         assert!(
-            graph
-                .completeness_gaps
-                .iter()
-                .any(|g| g.contains("matrix")),
+            graph.completeness_gaps.iter().any(|g| g.contains("matrix")),
             "matrix strategy should be recorded as a completeness gap"
         );
     }
@@ -936,7 +941,7 @@ jobs:
         let identities: Vec<_> = graph.nodes_of_kind(NodeKind::Identity).collect();
         assert_eq!(identities.len(), 1);
         assert!(
-            identities[0].metadata.get(META_OIDC).is_none(),
+            !identities[0].metadata.contains_key(META_OIDC),
             "contents:read should not tag as OIDC"
         );
     }
@@ -957,7 +962,7 @@ jobs:
         let identities: Vec<_> = graph.nodes_of_kind(NodeKind::Identity).collect();
         assert_eq!(identities.len(), 1);
         assert!(
-            identities[0].metadata.get(META_OIDC).is_none(),
+            !identities[0].metadata.contains_key(META_OIDC),
             "contents:write without id-token must not be tagged OIDC"
         );
     }
@@ -1007,7 +1012,12 @@ jobs:
                 .edges_from(step.id)
                 .filter(|e| e.kind == EdgeKind::UsesImage && e.to == container_id)
                 .collect();
-            assert_eq!(links.len(), 1, "step '{}' must link to container", step.name);
+            assert_eq!(
+                links.len(),
+                1,
+                "step '{}' must link to container",
+                step.name
+            );
         }
     }
 
@@ -1023,13 +1033,15 @@ jobs:
     steps:
       - run: echo hi
 "#;
-        use taudit_core::rules;
         use taudit_core::propagation::DEFAULT_MAX_HOPS;
+        use taudit_core::rules;
         let graph = parse(yaml);
         let findings = rules::run_all_rules(&graph, DEFAULT_MAX_HOPS);
         // Should detect: GITHUB_TOKEN (broad) propagates to ubuntu:22.04 (Untrusted) via step
         assert!(
-            findings.iter().any(|f| f.category == taudit_core::finding::FindingCategory::AuthorityPropagation),
+            findings
+                .iter()
+                .any(|f| f.category == taudit_core::finding::FindingCategory::AuthorityPropagation),
             "authority should propagate from step to floating container"
         );
     }
@@ -1150,7 +1162,10 @@ jobs:
 "#;
         let graph = parse(yaml);
         let identities: Vec<_> = graph.nodes_of_kind(NodeKind::Identity).collect();
-        assert!(identities.is_empty(), "static AWS creds must not create Identity node");
+        assert!(
+            identities.is_empty(),
+            "static AWS creds must not create Identity node"
+        );
         let secrets: Vec<_> = graph.nodes_of_kind(NodeKind::Secret).collect();
         assert_eq!(secrets.len(), 2, "both static secrets captured");
     }

@@ -84,8 +84,8 @@ impl<W: std::io::Write> ReportSink<W> for JsonReportSink {
 
 #[cfg(test)]
 mod tests {
-    use std::{fs, path::PathBuf};
     use crate::JsonReportSink;
+    use std::{fs, path::PathBuf};
     use taudit_core::finding::{Finding, Recommendation, Severity};
     use taudit_core::graph::PipelineSource;
     use taudit_core::ports::ReportSink;
@@ -109,7 +109,10 @@ mod tests {
         let instance = read_json(instance_relative);
         let validator = jsonschema::validator_for(&schema)
             .unwrap_or_else(|err| panic!("invalid schema {schema_relative}: {err}"));
-        let errors: Vec<String> = validator.iter_errors(&instance).map(|err| err.to_string()).collect();
+        let errors: Vec<String> = validator
+            .iter_errors(&instance)
+            .map(|err| err.to_string())
+            .collect();
         assert!(
             errors.is_empty(),
             "{instance_relative} does not match {schema_relative}:\n{}",
@@ -143,7 +146,10 @@ mod tests {
 
         let schema = read_json("contracts/schemas/taudit-report.schema.json");
         let validator = jsonschema::validator_for(&schema).expect("report schema should compile");
-        let errors: Vec<String> = validator.iter_errors(&report).map(|err| err.to_string()).collect();
+        let errors: Vec<String> = validator
+            .iter_errors(&report)
+            .map(|err| err.to_string())
+            .collect();
 
         assert!(
             errors.is_empty(),

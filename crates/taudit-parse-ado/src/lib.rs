@@ -184,7 +184,9 @@ fn process_variables(
                     "variable group '{group}' in {scope} — contents unresolvable without ADO API access"
                 ));
             }
-            AdoVariable::Named { name, is_secret, .. } => {
+            AdoVariable::Named {
+                name, is_secret, ..
+            } => {
                 if *is_secret {
                     let id = find_or_create_secret(graph, cache, name);
                     ids.push(id);
@@ -291,7 +293,11 @@ fn process_steps(
 }
 
 /// Classify an ADO step, returning (name, trust_zone, inline_script_text).
-fn classify_step(step: &AdoStep, job_name: &str, idx: usize) -> (String, TrustZone, Option<String>) {
+fn classify_step(
+    step: &AdoStep,
+    job_name: &str,
+    idx: usize,
+) -> (String, TrustZone, Option<String>) {
     let default_name = || format!("{job_name}[{idx}]");
 
     let name = step
@@ -362,7 +368,8 @@ fn extract_dollar_paren_secrets(
                     // itself logs -var values in plan output and debug traces).
                     if is_in_terraform_var_flag(text, pos) {
                         if let Some(node) = graph.nodes.get_mut(id) {
-                            node.metadata.insert(META_CLI_FLAG_EXPOSED.into(), "true".into());
+                            node.metadata
+                                .insert(META_CLI_FLAG_EXPOSED.into(), "true".into());
                         }
                     }
                     graph.add_edge(step_id, id, EdgeKind::HasAccessTo);
@@ -565,13 +572,25 @@ impl<'de> serde::Deserialize<'de> for AdoVariables {
                                 continue;
                             }
                         }
-                        let name = map.get("name").and_then(|v| v.as_str()).unwrap_or("").to_string();
-                        let value = map.get("value").and_then(|v| v.as_str()).unwrap_or("").to_string();
+                        let name = map
+                            .get("name")
+                            .and_then(|v| v.as_str())
+                            .unwrap_or("")
+                            .to_string();
+                        let value = map
+                            .get("value")
+                            .and_then(|v| v.as_str())
+                            .unwrap_or("")
+                            .to_string();
                         let is_secret = map
                             .get("isSecret")
                             .and_then(|v| v.as_bool())
                             .unwrap_or(false);
-                        vars.push(AdoVariable::Named { name, value, is_secret });
+                        vars.push(AdoVariable::Named {
+                            name,
+                            value,
+                            is_secret,
+                        });
                     }
                 }
             }
@@ -579,7 +598,11 @@ impl<'de> serde::Deserialize<'de> for AdoVariables {
                 for (k, v) in map {
                     let name = k.as_str().unwrap_or("").to_string();
                     let value = v.as_str().unwrap_or("").to_string();
-                    vars.push(AdoVariable::Named { name, value, is_secret: false });
+                    vars.push(AdoVariable::Named {
+                        name,
+                        value,
+                        is_secret: false,
+                    });
                 }
             }
             _ => {}
@@ -591,8 +614,14 @@ impl<'de> serde::Deserialize<'de> for AdoVariables {
 
 #[derive(Debug)]
 pub enum AdoVariable {
-    Group { group: String },
-    Named { name: String, value: String, is_secret: bool },
+    Group {
+        group: String,
+    },
+    Named {
+        name: String,
+        value: String,
+        is_secret: bool,
+    },
 }
 
 #[cfg(test)]
@@ -660,7 +689,10 @@ steps:
         );
         assert_eq!(graph.completeness, AuthorityCompleteness::Partial);
         assert!(
-            graph.completeness_gaps.iter().any(|g| g.contains("MySecretGroup")),
+            graph
+                .completeness_gaps
+                .iter()
+                .any(|g| g.contains("MySecretGroup")),
             "completeness gap should name the variable group"
         );
     }
@@ -680,7 +712,10 @@ steps:
         let identities: Vec<_> = graph.nodes_of_kind(NodeKind::Identity).collect();
         // System.AccessToken + service connection
         assert_eq!(identities.len(), 2);
-        let conn = identities.iter().find(|i| i.name == "MyServiceConnection").unwrap();
+        let conn = identities
+            .iter()
+            .find(|i| i.name == "MyServiceConnection")
+            .unwrap();
         assert_eq!(
             conn.metadata.get("service_connection"),
             Some(&"true".to_string())
@@ -870,7 +905,12 @@ steps:
                 .edges_from(step.id)
                 .filter(|e| e.kind == EdgeKind::HasAccessTo && e.to == token_id)
                 .collect();
-            assert_eq!(links.len(), 1, "step '{}' must link to System.AccessToken", step.name);
+            assert_eq!(
+                links.len(),
+                1,
+                "step '{}' must link to System.AccessToken",
+                step.name
+            );
         }
     }
 
@@ -904,7 +944,10 @@ steps:
         let graph = parse(yaml);
         // Mapping-style variables without isSecret — no secret nodes created
         let secrets: Vec<_> = graph.nodes_of_kind(NodeKind::Secret).collect();
-        assert!(secrets.is_empty(), "plain mapping vars should not create secret nodes");
+        assert!(
+            secrets.is_empty(),
+            "plain mapping vars should not create secret nodes"
+        );
     }
 
     #[test]
@@ -987,7 +1030,7 @@ steps:
         let secrets: Vec<_> = graph.nodes_of_kind(NodeKind::Secret).collect();
         assert_eq!(secrets.len(), 1);
         assert!(
-            secrets[0].metadata.get(META_CLI_FLAG_EXPOSED).is_none(),
+            !secrets[0].metadata.contains_key(META_CLI_FLAG_EXPOSED),
             "non -var secret should not be marked as cli_flag_exposed"
         );
     }
@@ -1011,6 +1054,10 @@ steps:
             .edges_from(steps[0].id)
             .filter(|e| e.kind == EdgeKind::HasAccessTo && e.to == secret_id)
             .collect();
-        assert_eq!(links.len(), 1, "step should be linked to variable group secret");
+        assert_eq!(
+            links.len(),
+            1,
+            "step should be linked to variable group secret"
+        );
     }
 }

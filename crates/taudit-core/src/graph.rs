@@ -378,10 +378,7 @@ mod tests {
             IdentityScope::from_permissions("{ id-token: write }"),
             IdentityScope::Broad
         );
-        assert_eq!(
-            IdentityScope::from_permissions(""),
-            IdentityScope::Broad
-        );
+        assert_eq!(IdentityScope::from_permissions(""), IdentityScope::Broad);
         assert_eq!(
             IdentityScope::from_permissions("custom-scope"),
             IdentityScope::Unknown

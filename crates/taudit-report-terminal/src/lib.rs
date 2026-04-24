@@ -105,7 +105,10 @@ impl<W: std::io::Write> ReportSink<W> for TerminalReport {
 
             // Propagation path
             if let Some(ref path) = finding.path {
-                let source_name = graph.node(path.source).map(|n| n.name.as_str()).unwrap_or("?");
+                let source_name = graph
+                    .node(path.source)
+                    .map(|n| n.name.as_str())
+                    .unwrap_or("?");
                 let source_kind = graph
                     .node(path.source)
                     .map(|n| node_kind_label(n.kind))
@@ -186,21 +189,20 @@ impl<W: std::io::Write> ReportSink<W> for TerminalReport {
                     .collect();
 
                 let suffix = if nodes.len() > 4 {
-                    format!(" {}", format!("…(+{} more)", nodes.len() - 4).bright_black())
+                    format!(
+                        " {}",
+                        format!("…(+{} more)", nodes.len() - 4).bright_black()
+                    )
                 } else {
                     String::new()
                 };
 
                 // Use the appropriate connector based on edge semantics
-                let connector = if finding
-                    .nodes_involved
-                    .windows(2)
-                    .any(|w| {
-                        graph
-                            .edges_from(w[0])
-                            .any(|e| e.to == w[1] && e.kind == EdgeKind::PersistsTo)
-                    })
-                {
+                let connector = if finding.nodes_involved.windows(2).any(|w| {
+                    graph
+                        .edges_from(w[0])
+                        .any(|e| e.to == w[1] && e.kind == EdgeKind::PersistsTo)
+                }) {
                     format!(" {} ", "persists→".bright_black())
                 } else {
                     format!(" {} ", "→".bright_black())
@@ -283,7 +285,12 @@ fn emit_verbose_nodes<W: std::io::Write>(
             if let Some(digest) = node.metadata.get("digest") {
                 w!(w, ", pin: {}…", &digest[..digest.len().min(12)])?;
             }
-            if node.metadata.get("inferred").map(|v| v == "true").unwrap_or(false) {
+            if node
+                .metadata
+                .get("inferred")
+                .map(|v| v == "true")
+                .unwrap_or(false)
+            {
                 w!(w, " (inferred)")?;
             }
             wln!(w)?;
@@ -308,31 +315,37 @@ pub fn print_banner<W: std::io::Write>(w: &mut W, file_count: usize) -> std::io:
     )
 }
 
+/// Counts for the run-level summary footer.
+pub struct RunSummary {
+    pub total_files: usize,
+    pub files_with_findings: usize,
+    pub clean_files: usize,
+    pub partial_files: usize,
+    pub critical: usize,
+    pub high: usize,
+    pub medium: usize,
+    pub low: usize,
+}
+
 /// Print the run-level summary (call once after the scan loop).
-pub fn print_summary<W: std::io::Write>(
-    w: &mut W,
-    total_files: usize,
-    files_with_findings: usize,
-    clean_files: usize,
-    partial_files: usize,
-    critical: usize,
-    high: usize,
-    medium: usize,
-    low: usize,
-) -> std::io::Result<()> {
+pub fn print_summary<W: std::io::Write>(w: &mut W, s: &RunSummary) -> std::io::Result<()> {
     writeln!(w, "{}", "─".repeat(RULE_WIDTH).bright_black())?;
 
-    if clean_files > 0 {
+    if s.clean_files > 0 {
         writeln!(
             w,
             "{}",
-            format!("✓ {clean_files} {} clean", if clean_files == 1 { "file" } else { "files" })
-                .green()
-                .bold()
+            format!(
+                "✓ {} {} clean",
+                s.clean_files,
+                if s.clean_files == 1 { "file" } else { "files" }
+            )
+            .green()
+            .bold()
         )?;
     }
 
-    let total_findings = critical + high + medium + low;
+    let total_findings = s.critical + s.high + s.medium + s.low;
     if total_findings == 0 {
         writeln!(w, "{}", "✓ no findings across all files".green().bold())?;
         return Ok(());
@@ -340,32 +353,40 @@ pub fn print_summary<W: std::io::Write>(
 
     write!(w, "{} ", "Summary".bright_white().bold())?;
     let mut parts = Vec::new();
-    if critical > 0 {
-        parts.push(format!("{}", format!("{critical} critical").bright_red().bold()));
+    if s.critical > 0 {
+        parts.push(format!(
+            "{}",
+            format!("{} critical", s.critical).bright_red().bold()
+        ));
     }
-    if high > 0 {
-        parts.push(format!("{}", format!("{high} high").bright_red()));
+    if s.high > 0 {
+        parts.push(format!("{}", format!("{} high", s.high).bright_red()));
     }
-    if medium > 0 {
-        parts.push(format!("{}", format!("{medium} medium").yellow()));
+    if s.medium > 0 {
+        parts.push(format!("{}", format!("{} medium", s.medium).yellow()));
     }
-    if low > 0 {
-        parts.push(format!("{}", format!("{low} low").bright_yellow()));
+    if s.low > 0 {
+        parts.push(format!("{}", format!("{} low", s.low).bright_yellow()));
     }
     writeln!(w, "{}", parts.join("  "))?;
 
     writeln!(
         w,
         "{}",
-        format!("  Files with findings: {files_with_findings} / {total_files}").bright_black()
+        format!(
+            "  Files with findings: {} / {}",
+            s.files_with_findings, s.total_files
+        )
+        .bright_black()
     )?;
 
-    if partial_files > 0 {
+    if s.partial_files > 0 {
         writeln!(
             w,
             "{}",
             format!(
-                "  Partial graphs: {partial_files} — findings from partial graphs may be incomplete"
+                "  Partial graphs: {} — findings from partial graphs may be incomplete",
+                s.partial_files
             )
             .yellow()
         )?;

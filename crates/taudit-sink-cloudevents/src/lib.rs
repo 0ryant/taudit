@@ -132,9 +132,9 @@ impl<W: std::io::Write> ReportSink<W> for CloudEventsJsonlSink {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::{fs, path::PathBuf};
     use taudit_core::finding::{Recommendation, Severity};
     use taudit_core::graph::PipelineSource;
-    use std::{fs, path::PathBuf};
 
     fn test_source() -> PipelineSource {
         PipelineSource {
@@ -324,8 +324,12 @@ mod tests {
         let output = String::from_utf8(buf).unwrap();
         let event = serde_json::from_str(output.lines().next().unwrap()).unwrap();
         let schema = read_json("contracts/schemas/taudit-cloudevent-finding-v1.schema.json");
-        let validator = jsonschema::validator_for(&schema).expect("cloudevent schema should compile");
-        let errors: Vec<String> = validator.iter_errors(&event).map(|err| err.to_string()).collect();
+        let validator =
+            jsonschema::validator_for(&schema).expect("cloudevent schema should compile");
+        let errors: Vec<String> = validator
+            .iter_errors(&event)
+            .map(|err| err.to_string())
+            .collect();
 
         assert!(
             errors.is_empty(),
@@ -338,8 +342,12 @@ mod tests {
     fn checked_in_example_matches_cloudevent_schema() {
         let event = read_json("contracts/examples/over-privileged-finding.cloudevent.json");
         let schema = read_json("contracts/schemas/taudit-cloudevent-finding-v1.schema.json");
-        let validator = jsonschema::validator_for(&schema).expect("cloudevent schema should compile");
-        let errors: Vec<String> = validator.iter_errors(&event).map(|err| err.to_string()).collect();
+        let validator =
+            jsonschema::validator_for(&schema).expect("cloudevent schema should compile");
+        let errors: Vec<String> = validator
+            .iter_errors(&event)
+            .map(|err| err.to_string())
+            .collect();
 
         assert!(
             errors.is_empty(),
@@ -364,8 +372,12 @@ mod tests {
         let output = String::from_utf8(buf).unwrap();
         let event = serde_json::from_str(output.lines().next().unwrap()).unwrap();
         let schema = read_json("contracts/schemas/ecosystem-evidence-envelope-v0.schema.json");
-        let validator = jsonschema::validator_for(&schema).expect("shared envelope schema should compile");
-        let errors: Vec<String> = validator.iter_errors(&event).map(|err| err.to_string()).collect();
+        let validator =
+            jsonschema::validator_for(&schema).expect("shared envelope schema should compile");
+        let errors: Vec<String> = validator
+            .iter_errors(&event)
+            .map(|err| err.to_string())
+            .collect();
 
         assert!(
             errors.is_empty(),
@@ -378,8 +390,12 @@ mod tests {
     fn checked_in_example_matches_shared_envelope_schema() {
         let event = read_json("contracts/examples/over-privileged-finding.cloudevent.json");
         let schema = read_json("contracts/schemas/ecosystem-evidence-envelope-v0.schema.json");
-        let validator = jsonschema::validator_for(&schema).expect("shared envelope schema should compile");
-        let errors: Vec<String> = validator.iter_errors(&event).map(|err| err.to_string()).collect();
+        let validator =
+            jsonschema::validator_for(&schema).expect("shared envelope schema should compile");
+        let errors: Vec<String> = validator
+            .iter_errors(&event)
+            .map(|err| err.to_string())
+            .collect();
 
         assert!(
             errors.is_empty(),
@@ -392,8 +408,12 @@ mod tests {
     fn shared_envelope_example_matches_shared_envelope_schema() {
         let event = read_json("contracts/examples/ecosystem-evidence-envelope.example.json");
         let schema = read_json("contracts/schemas/ecosystem-evidence-envelope-v0.schema.json");
-        let validator = jsonschema::validator_for(&schema).expect("shared envelope schema should compile");
-        let errors: Vec<String> = validator.iter_errors(&event).map(|err| err.to_string()).collect();
+        let validator =
+            jsonschema::validator_for(&schema).expect("shared envelope schema should compile");
+        let errors: Vec<String> = validator
+            .iter_errors(&event)
+            .map(|err| err.to_string())
+            .collect();
 
         assert!(
             errors.is_empty(),

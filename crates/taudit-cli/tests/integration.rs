@@ -90,7 +90,7 @@ fn propagation_leaky_detects_boundary_crossings() {
 
 #[test]
 fn partial_graph_caps_findings_below_critical() {
-        let yaml = r#"
+    let yaml = r#"
 on: pull_request_target
 permissions: write-all
 jobs:
@@ -101,16 +101,16 @@ jobs:
         steps:
             - run: echo "checking PR"
 "#;
-        let graph = parse(yaml);
-        assert_eq!(graph.completeness, AuthorityCompleteness::Partial);
+    let graph = parse(yaml);
+    assert_eq!(graph.completeness, AuthorityCompleteness::Partial);
 
-        let findings = rules::run_all_rules(&graph, DEFAULT_MAX_HOPS);
-        assert!(!findings.is_empty());
-        assert!(!findings.iter().any(|f| f.severity == Severity::Critical));
-        assert!(findings.iter().any(|f| f.severity == Severity::High));
-        assert!(findings
-                .iter()
-                .any(|f| f.category == FindingCategory::UntrustedWithAuthority));
+    let findings = rules::run_all_rules(&graph, DEFAULT_MAX_HOPS);
+    assert!(!findings.is_empty());
+    assert!(!findings.iter().any(|f| f.severity == Severity::Critical));
+    assert!(findings.iter().any(|f| f.severity == Severity::High));
+    assert!(findings
+        .iter()
+        .any(|f| f.category == FindingCategory::UntrustedWithAuthority));
 }
 
 #[test]
@@ -261,7 +261,10 @@ fn severity_threshold_filters_exit_code_logic() {
     assert!(has_any);
 
     // All findings still present regardless of threshold
-    assert!(findings.len() > 0, "threshold doesn't remove findings from report");
+    assert!(
+        !findings.is_empty(),
+        "threshold doesn't remove findings from report"
+    );
 }
 
 #[test]
@@ -275,7 +278,10 @@ fn threshold_high_skips_medium_and_low() {
 
     // With threshold=Critical: only critical matters -> no trigger
     let would_exit = findings.iter().any(|f| f.severity <= Severity::Critical);
-    assert!(!would_exit, "no critical findings -> exit 0 with critical threshold");
+    assert!(
+        !would_exit,
+        "no critical findings -> exit 0 with critical threshold"
+    );
 }
 
 // ── Ignore file tests ─────────────────────────────────
@@ -308,11 +314,20 @@ ignore:
         .iter()
         .filter(|f| f.category == FindingCategory::UnpinnedAction)
         .count();
-    assert_eq!(unpinned_after, 0, "unpinned action findings should be suppressed");
-    assert!(result.suppressed_count > 0, "should have suppressed findings");
+    assert_eq!(
+        unpinned_after, 0,
+        "unpinned action findings should be suppressed"
+    );
+    assert!(
+        result.suppressed_count > 0,
+        "should have suppressed findings"
+    );
 
     // Other findings should still be present
-    assert!(!result.findings.is_empty(), "non-matching findings should survive");
+    assert!(
+        !result.findings.is_empty(),
+        "non-matching findings should survive"
+    );
 }
 
 #[test]
@@ -350,7 +365,10 @@ fn glob_match_excludes_matching_paths() {
 
     // Double-star (path traversal)
     assert!(glob_match(".github/**/*.yml", ".github/workflows/ci.yml"));
-    assert!(glob_match(".github/**/*.yml", ".github/workflows/sub/ci.yml"));
+    assert!(glob_match(
+        ".github/**/*.yml",
+        ".github/workflows/sub/ci.yml"
+    ));
     assert!(!glob_match(".github/**/*.yml", "src/workflows/ci.yml"));
 }
 
@@ -360,13 +378,13 @@ fn exclude_patterns_filter_resolved_paths() {
     use std::path::PathBuf;
     use taudit_core::ignore::glob_match;
 
-    let paths = vec![
+    let paths = [
         PathBuf::from(".github/workflows/ci.yml"),
         PathBuf::from(".github/workflows/release.yml"),
         PathBuf::from("vendor/workflows/ci.yml"),
     ];
 
-    let exclude = vec!["vendor/**".to_string()];
+    let exclude = ["vendor/**".to_string()];
 
     let filtered: Vec<_> = paths
         .iter()
@@ -377,7 +395,9 @@ fn exclude_patterns_filter_resolved_paths() {
         .collect();
 
     assert_eq!(filtered.len(), 2);
-    assert!(filtered.iter().all(|p| !p.display().to_string().contains("vendor")));
+    assert!(filtered
+        .iter()
+        .all(|p| !p.display().to_string().contains("vendor")));
 }
 
 // ── --baseline suppression tests ─────────────────────
@@ -392,7 +412,7 @@ fn baseline_suppresses_matching_findings() {
 
     // Build a baseline JSON that contains the first finding
     let first = &findings[0];
-    let category_str = serde_json::to_value(&first.category)
+    let category_str = serde_json::to_value(first.category)
         .unwrap()
         .as_str()
         .unwrap()
@@ -419,7 +439,7 @@ fn baseline_suppresses_matching_findings() {
         let mut sup = 0usize;
         for f in findings.clone() {
             let key = (
-                serde_json::to_value(&f.category)
+                serde_json::to_value(f.category)
                     .ok()
                     .and_then(|v| v.as_str().map(str::to_string))
                     .unwrap_or_default(),
@@ -434,11 +454,14 @@ fn baseline_suppresses_matching_findings() {
         (kept, sup)
     };
 
-    assert_eq!(suppressed, 1, "baseline should suppress exactly the matching finding");
+    assert_eq!(
+        suppressed, 1,
+        "baseline should suppress exactly the matching finding"
+    );
     assert_eq!(kept.len(), total - 1);
     // Baseline drop should not affect findings with different messages
     assert!(!kept.iter().any(|f| f.message == message && {
-        let k = serde_json::to_value(&f.category)
+        let k = serde_json::to_value(f.category)
             .ok()
             .and_then(|v| v.as_str().map(str::to_string))
             .unwrap_or_default();
@@ -456,20 +479,25 @@ fn baseline_empty_suppresses_nothing() {
     let findings = rules::run_all_rules(&graph, DEFAULT_MAX_HOPS);
     let total = findings.len();
 
-    let baseline_set: std::collections::HashSet<(String, String)> = std::collections::HashSet::new();
+    let baseline_set: std::collections::HashSet<(String, String)> =
+        std::collections::HashSet::new();
 
     let (kept, suppressed) = {
         let mut kept = Vec::new();
         let mut sup = 0usize;
         for f in findings {
             let key = (
-                serde_json::to_value(&f.category)
+                serde_json::to_value(f.category)
                     .ok()
                     .and_then(|v| v.as_str().map(str::to_string))
                     .unwrap_or_default(),
                 f.message.clone(),
             );
-            if baseline_set.contains(&key) { sup += 1; } else { kept.push(f); }
+            if baseline_set.contains(&key) {
+                sup += 1;
+            } else {
+                kept.push(f);
+            }
         }
         (kept, sup)
     };

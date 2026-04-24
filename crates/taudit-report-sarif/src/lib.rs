@@ -4,8 +4,7 @@ use taudit_core::finding::{Finding, FindingCategory, Severity};
 use taudit_core::graph::AuthorityGraph;
 use taudit_core::ports::ReportSink;
 
-const SARIF_SCHEMA: &str =
-    "https://schemastore.azurewebsites.net/schemas/json/sarif-2.1.0.json";
+const SARIF_SCHEMA: &str = "https://schemastore.azurewebsites.net/schemas/json/sarif-2.1.0.json";
 const SARIF_VERSION: &str = "2.1.0";
 const TOOL_NAME: &str = "taudit";
 const TOOL_URI: &str = "https://github.com/0ryant/taudit";
@@ -331,11 +330,11 @@ mod tests {
         let sarif = emit_to_string(&graph, &findings);
         let results = sarif["runs"][0]["results"].as_array().unwrap();
 
-        assert_eq!(results[0]["level"], "error");   // Critical
-        assert_eq!(results[1]["level"], "error");   // High
+        assert_eq!(results[0]["level"], "error"); // Critical
+        assert_eq!(results[1]["level"], "error"); // High
         assert_eq!(results[2]["level"], "warning"); // Medium
-        assert_eq!(results[3]["level"], "note");    // Low
-        assert_eq!(results[4]["level"], "note");    // Info
+        assert_eq!(results[3]["level"], "note"); // Low
+        assert_eq!(results[4]["level"], "note"); // Info
     }
 
     #[test]

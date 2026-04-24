@@ -474,9 +474,7 @@ fn cmd_scan(opts: ScanOpts) -> Result<()> {
                 return true; // never exclude stdin
             }
             let path_str = p.display().to_string();
-            !exclude
-                .iter()
-                .any(|pattern| glob_match(pattern, &path_str))
+            !exclude.iter().any(|pattern| glob_match(pattern, &path_str))
         })
         .collect();
 
@@ -520,8 +518,7 @@ fn cmd_scan(opts: ScanOpts) -> Result<()> {
         let suppressed_ignore = ignore_result.suppressed_count;
 
         // Apply baseline suppression
-        let (findings, suppressed_baseline) =
-            apply_baseline(after_ignore, &baseline_fingerprints);
+        let (findings, suppressed_baseline) = apply_baseline(after_ignore, &baseline_fingerprints);
         findings_total += findings.len();
         suppressed_total += suppressed_ignore + suppressed_baseline;
 
@@ -580,9 +577,7 @@ fn cmd_scan(opts: ScanOpts) -> Result<()> {
                                 ));
                             }
                             if suppressed_baseline > 0 {
-                                notes.push(format!(
-                                    "{suppressed_baseline} suppressed by baseline"
-                                ));
+                                notes.push(format!("{suppressed_baseline} suppressed by baseline"));
                             }
                             writeln!(stdout, "  ({})", notes.join(", ")).ok();
                         }
@@ -625,14 +620,16 @@ fn cmd_scan(opts: ScanOpts) -> Result<()> {
     if !quiet && matches!(format, OutputFormat::Terminal) {
         taudit_report_terminal::print_summary(
             &mut stdout,
-            resolved.len(),
-            terminal_files_with_findings,
-            terminal_clean,
-            terminal_partial_files,
-            terminal_totals.critical,
-            terminal_totals.high,
-            terminal_totals.medium,
-            terminal_totals.low,
+            &taudit_report_terminal::RunSummary {
+                total_files: resolved.len(),
+                files_with_findings: terminal_files_with_findings,
+                clean_files: terminal_clean,
+                partial_files: terminal_partial_files,
+                critical: terminal_totals.critical,
+                high: terminal_totals.high,
+                medium: terminal_totals.medium,
+                low: terminal_totals.low,
+            },
         )
         .ok();
     }
@@ -642,11 +639,13 @@ fn cmd_scan(opts: ScanOpts) -> Result<()> {
         &runtime_paths,
         now_secs,
         &resolved,
-        &format,
-        max_hops,
-        findings_total,
-        suppressed_total,
-        exit_code,
+        &ScanStats {
+            format: &format,
+            max_hops,
+            findings_total,
+            suppressed_total,
+            exit_code,
+        },
     ) {
         eprintln!("warning: failed to write runtime artifacts: {err}");
     }
@@ -693,7 +692,11 @@ fn resolve_runtime_artifact_paths(
         .or_else(|| env_path("TAUDIT_LOG_DIR"))
         .or_else(|| xdg_state_home().map(|p| p.join("taudit/logs")));
 
-    RuntimeArtifactPaths { telemetry_dir, receipt_dir, log_dir }
+    RuntimeArtifactPaths {
+        telemetry_dir,
+        receipt_dir,
+        log_dir,
+    }
 }
 
 fn ensure_dir(path: &PathBuf) -> Result<()> {
@@ -701,16 +704,27 @@ fn ensure_dir(path: &PathBuf) -> Result<()> {
         .with_context(|| format!("failed to create directory {}", path.display()))
 }
 
-fn write_runtime_artifacts(
-    paths: &RuntimeArtifactPaths,
-    now_secs: u64,
-    resolved_paths: &[PathBuf],
-    format: &OutputFormat,
+struct ScanStats<'a> {
+    format: &'a OutputFormat,
     max_hops: usize,
     findings_total: usize,
     suppressed_total: usize,
     exit_code: i32,
+}
+
+fn write_runtime_artifacts(
+    paths: &RuntimeArtifactPaths,
+    now_secs: u64,
+    resolved_paths: &[PathBuf],
+    stats: &ScanStats<'_>,
 ) -> Result<()> {
+    let ScanStats {
+        format,
+        max_hops,
+        findings_total,
+        suppressed_total,
+        exit_code,
+    } = stats;
     if let Some(ref telemetry_dir) = paths.telemetry_dir {
         ensure_dir(telemetry_dir)?;
         let telemetry_file = telemetry_dir.join("events.jsonl");
@@ -773,8 +787,7 @@ fn append_line(path: &PathBuf, line: &str) -> Result<()> {
         .append(true)
         .open(path)
         .with_context(|| format!("failed to open {}", path.display()))?;
-    writeln!(file, "{line}")
-        .with_context(|| format!("failed to append to {}", path.display()))?;
+    writeln!(file, "{line}").with_context(|| format!("failed to append to {}", path.display()))?;
     Ok(())
 }
 
@@ -1091,7 +1104,10 @@ fn parse_content(
         .with_context(|| format!("Failed to parse {source_file}"))
 }
 
-fn parse_file(parser: &dyn taudit_core::ports::PipelineParser, path: &PathBuf) -> Result<taudit_core::graph::AuthorityGraph> {
+fn parse_file(
+    parser: &dyn taudit_core::ports::PipelineParser,
+    path: &PathBuf,
+) -> Result<taudit_core::graph::AuthorityGraph> {
     let content = std::fs::read_to_string(path)
         .with_context(|| format!("Failed to read {}", path.display()))?;
     parse_content(parser, content, path.display().to_string())
@@ -1190,10 +1206,7 @@ mod tests {
         assert_eq!(added.len(), 1);
         assert_eq!(removed.len(), 1);
         assert_eq!(added[0].category, FindingCategory::AuthorityPropagation);
-        assert_eq!(
-            removed[0].category,
-            FindingCategory::OverPrivilegedIdentity
-        );
+        assert_eq!(removed[0].category, FindingCategory::OverPrivilegedIdentity);
     }
 
     #[test]
