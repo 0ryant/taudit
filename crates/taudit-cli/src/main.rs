@@ -492,7 +492,10 @@ fn cmd_scan(opts: ScanOpts) -> Result<()> {
     let mut terminal_partial_files = 0usize;
     let mut terminal_totals = SeverityCounts::default();
     // SARIF accumulates all (graph, findings) pairs and emits one document after the loop.
-    let mut sarif_buffer: Vec<(taudit_core::graph::AuthorityGraph, Vec<taudit_core::finding::Finding>)> = Vec::new();
+    let mut sarif_buffer: Vec<(
+        taudit_core::graph::AuthorityGraph,
+        Vec<taudit_core::finding::Finding>,
+    )> = Vec::new();
 
     for path in &resolved {
         let graph = if path.as_os_str() == "-" {
