@@ -34,12 +34,13 @@ Then it walks the graph looking for:
 | Category | What it catches |
 |---|---|
 | **Authority Propagation** | Secret or identity reaches a step in a lower trust zone |
-| **Over-Privileged Identity** | GITHUB_TOKEN with broader permissions than needed |
+| **Over-Privileged Identity** | GITHUB_TOKEN / System.AccessToken with broader permissions than needed |
 | **Unpinned Action** | Third-party action without SHA digest pin |
-| **Untrusted With Authority** | Unpinned action step has direct access to secrets |
+| **Untrusted With Authority** | Unpinned step has direct access to secrets or identities |
 | **Artifact Boundary Crossing** | Artifact from privileged step consumed across trust boundary |
 | **Floating Image** | Container image reference without a digest pin |
 | **Long-Lived Credential** | Secret name matches static credential patterns (API keys, passwords) |
+| **Persisted Credential** | `persistCredentials: true` writes token to disk, accessible to all subsequent steps |
 
 Severity is graduated from real-world signal: constrained identity to SHA-pinned action = Medium. Broad identity to unpinned action = Critical. The tool handles unknowns honestly — if it can't fully resolve the authority graph, it marks it `Partial`, tells you why, and caps findings at High until the graph is complete.
 
@@ -91,24 +92,29 @@ taudit scan .github/workflows/ --exclude 'generated/**'
 # Suppress findings already accepted in a baseline report
 taudit scan .github/workflows/ --baseline taudit-baseline.json
 
+# Scan an Azure DevOps pipeline
+taudit scan .pipelines/azure-pipelines.yml --platform azure-devops
+
 # CI-friendly summary counts only
 taudit scan .github/workflows/ --quiet
 
 # Show node metadata in propagation paths
 taudit scan .github/workflows/release.yml --verbose
 
-# Disable ANSI colors explicitly
+# Disable ANSI colors (also honored via NO_COLOR env var)
 taudit scan .github/workflows/ --no-color
 
 # Override runtime artifact destinations
 taudit scan .github/workflows/ --telemetry-dir /tmp/taudit/telemetry --receipt-dir /tmp/taudit/receipts --log-dir /tmp/taudit/logs
 ```
 
-Every `taudit scan` run writes runtime artifacts to XDG-style defaults unless overridden:
+Every `taudit scan` run writes runtime artifacts to XDG-style defaults unless overridden. All three paths are optional — if neither the env var nor HOME can be resolved (e.g. in a minimal CI container) the artifact is silently skipped without failing the scan:
 
 - Telemetry (JSONL): `$TAUDIT_TELEMETRY_DIR` or `$XDG_STATE_HOME/taudit/telemetry` or `$HOME/.local/state/taudit/telemetry`
 - Receipts (JSON): `$TAUDIT_RECEIPT_DIR` or `$XDG_DATA_HOME/taudit/receipts` or `$HOME/.local/share/taudit/receipts`
-- Logs: `$TAUDIT_LOG_DIR` or `$XDG_STATE_HOME/taudit/logs` or `$HOME/.local/state/taudit/logs`
+- Logs (plain text): `$TAUDIT_LOG_DIR` or `$XDG_STATE_HOME/taudit/logs` or `$HOME/.local/state/taudit/logs`
+
+**Color in CI**: taudit outputs ANSI color by default. GitHub Actions and Azure DevOps log viewers render ANSI from piped stdout. Disable with `--no-color` or `NO_COLOR=1` (any value). Log files are always written as plain text regardless of this setting.
 
 ### Authority Map
 
@@ -193,10 +199,10 @@ taudit scan . --ignore-file .taudit/ignore.yml
 
 ## How it works
 
-1. **Parse** — GitHub Actions YAML into typed nodes (steps, secrets, identities, images) with trust zone classification (FirstParty, ThirdParty, Untrusted)
-2. **Build graph** — Directed edges model authority flow: `HasAccessTo`, `Produces`, `Consumes`, `UsesImage`, `DelegatesTo`
+1. **Parse** — GitHub Actions or Azure DevOps YAML into typed nodes (steps, secrets, identities, images) with trust zone classification (FirstParty, ThirdParty, Untrusted). Select platform with `--platform github-actions` (default) or `--platform azure-devops`.
+2. **Build graph** — Directed edges model authority flow: `HasAccessTo`, `Produces`, `Consumes`, `UsesImage`, `DelegatesTo`, `PersistsTo`
 3. **Propagate** — BFS from authority-bearing sources (secrets, identities) through edges, flagging trust boundary crossings
-4. **Analyze** — 7 rules pattern-match against the graph, producing findings with severity, evidence paths, and remediation routing
+4. **Analyze** — 8 rules pattern-match against the graph, producing findings with severity, evidence paths, and remediation routing
 
 Trust zones are explicit on every node:
 - **FirstParty** — code you own (`run:` steps, local actions)

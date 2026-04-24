@@ -8,9 +8,10 @@ use taudit_core::finding::Severity;
 use taudit_core::graph::PipelineSource;
 use taudit_core::ignore::{glob_match, IgnoreConfig};
 use taudit_core::map;
-use taudit_core::ports::{PipelineParser, ReportSink};
+use taudit_core::ports::ReportSink;
 use taudit_core::propagation::DEFAULT_MAX_HOPS;
 use taudit_core::rules;
+use taudit_parse_ado::AdoParser;
 use taudit_parse_gha::GhaParser;
 use taudit_report_json::JsonReportSink;
 use taudit_report_sarif::SarifReportSink;
@@ -50,7 +51,8 @@ enum Cli {
         ignore_file: Option<PathBuf>,
 
         /// Disable ANSI color codes in terminal output.
-        /// Automatically set when stdout is not a tty.
+        /// Also honored via the NO_COLOR environment variable (any value disables color).
+        /// Color is on by default — CI log viewers (GitHub Actions, Azure DevOps) render ANSI.
         #[arg(long, default_value_t = false)]
         no_color: bool,
 
@@ -93,6 +95,10 @@ enum Cli {
         /// $XDG_STATE_HOME/taudit/logs or $HOME/.local/state/taudit/logs
         #[arg(long)]
         log_dir: Option<PathBuf>,
+
+        /// CI/CD platform to parse. Default: github-actions.
+        #[arg(long, default_value = "github-actions")]
+        platform: Platform,
     },
 
     /// Show authority map — which steps access which secrets/identities
@@ -100,6 +106,10 @@ enum Cli {
         /// Path to pipeline YAML file(s) or directory
         #[arg(required = true)]
         paths: Vec<PathBuf>,
+
+        /// CI/CD platform to parse. Default: github-actions.
+        #[arg(long, default_value = "github-actions")]
+        platform: Platform,
     },
 
     /// Generate shell completions and print them to stdout.
@@ -160,6 +170,10 @@ enum Cli {
         /// Maximum propagation depth for BFS analysis
         #[arg(long, default_value_t = DEFAULT_MAX_HOPS)]
         max_hops: usize,
+
+        /// CI/CD platform to parse. Default: github-actions.
+        #[arg(long, default_value = "github-actions")]
+        platform: Platform,
     },
 }
 
@@ -186,6 +200,15 @@ impl OutputFormat {
 enum DiffOutputFormat {
     Terminal,
     Json,
+}
+
+#[derive(Clone, clap::ValueEnum, Default)]
+enum Platform {
+    #[default]
+    #[value(name = "github-actions")]
+    GithubActions,
+    #[value(name = "azure-devops")]
+    AzureDevOps,
 }
 
 /// Severity levels for the threshold flag.
@@ -233,13 +256,14 @@ struct ScanOpts {
     telemetry_dir: Option<PathBuf>,
     receipt_dir: Option<PathBuf>,
     log_dir: Option<PathBuf>,
+    platform: Platform,
 }
 
 #[derive(Clone)]
 struct RuntimeArtifactPaths {
-    telemetry_dir: PathBuf,
-    receipt_dir: PathBuf,
-    log_dir: PathBuf,
+    telemetry_dir: Option<PathBuf>,
+    receipt_dir: Option<PathBuf>,
+    log_dir: Option<PathBuf>,
 }
 
 fn main() -> Result<()> {
@@ -260,12 +284,15 @@ fn main() -> Result<()> {
             telemetry_dir,
             receipt_dir,
             log_dir,
+            platform,
         } => {
-            // Configure color output before any terminal report is emitted.
-            // Disable when --no-color is set OR when stdout is not a tty.
-            use std::io::IsTerminal;
-            if no_color || !std::io::stdout().is_terminal() {
+            // Color is on by default — CI log viewers (GHA, ADO) render ANSI from piped stdout.
+            // Disable only when --no-color is passed or the NO_COLOR env var is set (no-color.org).
+            // The log file sink writes plain text independently; this setting only affects stdout.
+            if no_color || std::env::var_os("NO_COLOR").is_some() {
                 colored::control::set_override(false);
+            } else {
+                colored::control::set_override(true);
             }
             cmd_scan(ScanOpts {
                 paths,
@@ -280,6 +307,7 @@ fn main() -> Result<()> {
                 telemetry_dir,
                 receipt_dir,
                 log_dir,
+                platform,
             })
         }
         Cli::Completions { shell } => {
@@ -297,13 +325,14 @@ fn main() -> Result<()> {
             quiet,
             output,
         } => cmd_emit_spec(target, id, ttl_seconds, severity_threshold, quiet, output),
-        Cli::Map { paths } => cmd_map(paths),
+        Cli::Map { paths, platform } => cmd_map(paths, platform),
         Cli::Diff {
             before,
             after,
             format,
             max_hops,
-        } => cmd_diff(before, after, format, max_hops),
+            platform,
+        } => cmd_diff(before, after, format, max_hops, platform),
     }
 }
 
@@ -312,12 +341,14 @@ fn cmd_diff(
     after: PathBuf,
     format: DiffOutputFormat,
     max_hops: usize,
+    platform: Platform,
 ) -> Result<()> {
-    let parser = GhaParser;
+    let parser = make_parser(&platform);
+    let parser = parser.as_ref();
     let mut stdout = std::io::stdout().lock();
 
-    let before_graph = parse_file(&parser, &before)?;
-    let after_graph = parse_file(&parser, &after)?;
+    let before_graph = parse_file(parser, &before)?;
+    let after_graph = parse_file(parser, &after)?;
 
     let before_findings = rules::run_all_rules(&before_graph, max_hops);
     let after_findings = rules::run_all_rules(&after_graph, max_hops);
@@ -417,9 +448,11 @@ fn cmd_scan(opts: ScanOpts) -> Result<()> {
         telemetry_dir,
         receipt_dir,
         log_dir,
+        platform,
     } = opts;
 
-    let parser = GhaParser;
+    let parser_box = make_parser(&platform);
+    let parser = parser_box.as_ref();
     let mut stdout = std::io::stdout().lock();
     let mut exit_code = 0;
 
@@ -430,7 +463,7 @@ fn cmd_scan(opts: ScanOpts) -> Result<()> {
     let baseline_fingerprints = load_baseline(baseline)?;
 
     let threshold = severity_threshold.map(|s| s.to_severity());
-    let runtime_paths = resolve_runtime_artifact_paths(telemetry_dir, receipt_dir, log_dir)?;
+    let runtime_paths = resolve_runtime_artifact_paths(telemetry_dir, receipt_dir, log_dir);
 
     // Resolve and filter paths. `-` (stdin) bypasses the glob exclude filter.
     let all_paths = resolve_paths(&paths)?;
@@ -447,10 +480,19 @@ fn cmd_scan(opts: ScanOpts) -> Result<()> {
         })
         .collect();
 
-    // Quiet mode: accumulate totals across files
+    // Terminal mode: print run banner before the loop
+    if !quiet && matches!(format, OutputFormat::Terminal) {
+        taudit_report_terminal::print_banner(&mut stdout, resolved.len()).ok();
+    }
+
     let mut quiet_total = SeverityCounts::default();
     let mut findings_total = 0usize;
     let mut suppressed_total = 0usize;
+    // Terminal summary accumulators
+    let mut terminal_clean = 0usize;
+    let mut terminal_files_with_findings = 0usize;
+    let mut terminal_partial_files = 0usize;
+    let mut terminal_totals = SeverityCounts::default();
 
     for path in &resolved {
         let graph = if path.as_os_str() == "-" {
@@ -459,10 +501,17 @@ fn cmd_scan(opts: ScanOpts) -> Result<()> {
             std::io::stdin()
                 .read_to_string(&mut content)
                 .with_context(|| "Failed to read from stdin")?;
-            parse_content(&parser, content, "<stdin>".to_string())?
+            parse_content(parser, content, "<stdin>".to_string())?
         } else {
-            parse_file(&parser, path)?
+            parse_file(parser, path)?
         };
+
+        if graph.completeness == taudit_core::graph::AuthorityCompleteness::Partial
+            || graph.completeness == taudit_core::graph::AuthorityCompleteness::Unknown
+        {
+            terminal_partial_files += 1;
+        }
+
         let all_findings = rules::run_all_rules(&graph, max_hops);
 
         // Apply .tauditignore
@@ -512,25 +561,31 @@ fn cmd_scan(opts: ScanOpts) -> Result<()> {
         } else {
             match format {
                 OutputFormat::Terminal => {
-                    TerminalReport { verbose }
-                        .emit(&mut stdout, &graph, &findings)
-                        .with_context(|| "Failed to write terminal report")?;
-                    if suppressed_ignore > 0 || suppressed_baseline > 0 {
-                        use std::io::Write;
-                        let mut notes = Vec::new();
-                        if suppressed_ignore > 0 {
-                            notes.push(format!(
-                                "{} suppressed by .tauditignore",
-                                suppressed_ignore
-                            ));
+                    if findings.is_empty() {
+                        // Clean file — accumulate, don't emit per-file section
+                        terminal_clean += 1;
+                    } else {
+                        terminal_files_with_findings += 1;
+                        let counts = SeverityCounts::from_findings(&findings);
+                        terminal_totals.add(&counts);
+                        TerminalReport { verbose }
+                            .emit(&mut stdout, &graph, &findings)
+                            .with_context(|| "Failed to write terminal report")?;
+                        if suppressed_ignore > 0 || suppressed_baseline > 0 {
+                            use std::io::Write;
+                            let mut notes = Vec::new();
+                            if suppressed_ignore > 0 {
+                                notes.push(format!(
+                                    "{suppressed_ignore} suppressed by .tauditignore"
+                                ));
+                            }
+                            if suppressed_baseline > 0 {
+                                notes.push(format!(
+                                    "{suppressed_baseline} suppressed by baseline"
+                                ));
+                            }
+                            writeln!(stdout, "  ({})", notes.join(", ")).ok();
                         }
-                        if suppressed_baseline > 0 {
-                            notes.push(format!(
-                                "{} suppressed by baseline",
-                                suppressed_baseline
-                            ));
-                        }
-                        writeln!(stdout, "  ({})\n", notes.join(", ")).ok();
                     }
                 }
                 OutputFormat::Json => {
@@ -562,6 +617,22 @@ fn cmd_scan(opts: ScanOpts) -> Result<()> {
             quiet_total.high,
             quiet_total.medium,
             quiet_total.low,
+        )
+        .ok();
+    }
+
+    // Terminal mode: print run summary after the loop
+    if !quiet && matches!(format, OutputFormat::Terminal) {
+        taudit_report_terminal::print_summary(
+            &mut stdout,
+            resolved.len(),
+            terminal_files_with_findings,
+            terminal_clean,
+            terminal_partial_files,
+            terminal_totals.critical,
+            terminal_totals.high,
+            terminal_totals.medium,
+            terminal_totals.low,
         )
         .ok();
     }
@@ -602,46 +673,27 @@ fn xdg_state_home() -> Option<PathBuf> {
     env_path("XDG_STATE_HOME").or_else(|| env_path("HOME").map(|h| h.join(".local/state")))
 }
 
+/// Resolve runtime artifact paths. Each path is independently optional — if a path cannot
+/// be resolved (no CLI flag, no env var, no HOME/XDG), that artifact is silently skipped.
+/// This ensures CI containers without HOME set don't fail before scanning anything.
 fn resolve_runtime_artifact_paths(
     telemetry_dir: Option<PathBuf>,
     receipt_dir: Option<PathBuf>,
     log_dir: Option<PathBuf>,
-) -> Result<RuntimeArtifactPaths> {
-    let telemetry_dir = if let Some(p) = telemetry_dir {
-        p
-    } else if let Some(p) = env_path("TAUDIT_TELEMETRY_DIR") {
-        p
-    } else {
-        xdg_state_home()
-            .map(|p| p.join("taudit/telemetry"))
-            .context("cannot resolve telemetry dir: set TAUDIT_TELEMETRY_DIR, XDG_STATE_HOME, or HOME")?
-    };
+) -> RuntimeArtifactPaths {
+    let telemetry_dir = telemetry_dir
+        .or_else(|| env_path("TAUDIT_TELEMETRY_DIR"))
+        .or_else(|| xdg_state_home().map(|p| p.join("taudit/telemetry")));
 
-    let receipt_dir = if let Some(p) = receipt_dir {
-        p
-    } else if let Some(p) = env_path("TAUDIT_RECEIPT_DIR") {
-        p
-    } else {
-        xdg_data_home()
-            .map(|p| p.join("taudit/receipts"))
-            .context("cannot resolve receipt dir: set TAUDIT_RECEIPT_DIR, XDG_DATA_HOME, or HOME")?
-    };
+    let receipt_dir = receipt_dir
+        .or_else(|| env_path("TAUDIT_RECEIPT_DIR"))
+        .or_else(|| xdg_data_home().map(|p| p.join("taudit/receipts")));
 
-    let log_dir = if let Some(p) = log_dir {
-        p
-    } else if let Some(p) = env_path("TAUDIT_LOG_DIR") {
-        p
-    } else {
-        xdg_state_home()
-            .map(|p| p.join("taudit/logs"))
-            .context("cannot resolve log dir: set TAUDIT_LOG_DIR, XDG_STATE_HOME, or HOME")?
-    };
+    let log_dir = log_dir
+        .or_else(|| env_path("TAUDIT_LOG_DIR"))
+        .or_else(|| xdg_state_home().map(|p| p.join("taudit/logs")));
 
-    Ok(RuntimeArtifactPaths {
-        telemetry_dir,
-        receipt_dir,
-        log_dir,
-    })
+    RuntimeArtifactPaths { telemetry_dir, receipt_dir, log_dir }
 }
 
 fn ensure_dir(path: &PathBuf) -> Result<()> {
@@ -659,52 +711,57 @@ fn write_runtime_artifacts(
     suppressed_total: usize,
     exit_code: i32,
 ) -> Result<()> {
-    ensure_dir(&paths.telemetry_dir)?;
-    ensure_dir(&paths.receipt_dir)?;
-    ensure_dir(&paths.log_dir)?;
+    if let Some(ref telemetry_dir) = paths.telemetry_dir {
+        ensure_dir(telemetry_dir)?;
+        let telemetry_file = telemetry_dir.join("events.jsonl");
+        let telemetry_event = serde_json::json!({
+            "event": "scan_completed",
+            "ts_unix": now_secs,
+            "paths_scanned": resolved_paths.len(),
+            "findings_total": findings_total,
+            "suppressed_total": suppressed_total,
+            "exit_code": exit_code,
+        });
+        append_line(&telemetry_file, &telemetry_event.to_string())?;
+    }
 
-    let telemetry_file = paths.telemetry_dir.join("events.jsonl");
-    let telemetry_event = serde_json::json!({
-        "event": "scan_completed",
-        "ts_unix": now_secs,
-        "paths_scanned": resolved_paths.len(),
-        "findings_total": findings_total,
-        "suppressed_total": suppressed_total,
-        "exit_code": exit_code,
-    });
-    append_line(&telemetry_file, &telemetry_event.to_string())?;
+    if let Some(ref receipt_dir) = paths.receipt_dir {
+        ensure_dir(receipt_dir)?;
+        let receipt_file = receipt_dir.join(format!("receipt-{now_secs}.json"));
+        let path_strings: Vec<String> = resolved_paths
+            .iter()
+            .map(|p| p.display().to_string())
+            .collect();
+        let receipt = serde_json::json!({
+            "kind": "taudit.scan.receipt",
+            "ts_unix": now_secs,
+            "format": format.as_str(),
+            "max_hops": max_hops,
+            "paths": path_strings,
+            "findings_total": findings_total,
+            "suppressed_total": suppressed_total,
+            "exit_code": exit_code,
+        });
+        let receipt_text = serde_json::to_string_pretty(&receipt)
+            .with_context(|| "failed to serialize scan receipt")?;
+        std::fs::write(&receipt_file, receipt_text)
+            .with_context(|| format!("failed to write receipt {}", receipt_file.display()))?;
+    }
 
-    let receipt_file = paths.receipt_dir.join(format!("receipt-{now_secs}.json"));
-    let path_strings: Vec<String> = resolved_paths
-        .iter()
-        .map(|p| p.display().to_string())
-        .collect();
-    let receipt = serde_json::json!({
-        "kind": "taudit.scan.receipt",
-        "ts_unix": now_secs,
-        "format": format.as_str(),
-        "max_hops": max_hops,
-        "paths": path_strings,
-        "findings_total": findings_total,
-        "suppressed_total": suppressed_total,
-        "exit_code": exit_code,
-    });
-    let receipt_text = serde_json::to_string_pretty(&receipt)
-        .with_context(|| "failed to serialize scan receipt")?;
-    std::fs::write(&receipt_file, receipt_text)
-        .with_context(|| format!("failed to write receipt {}", receipt_file.display()))?;
-
-    let log_file = paths.log_dir.join("taudit.log");
-    let log_line = format!(
-        "ts_unix={} event=scan_completed format={} paths={} findings={} suppressed={} exit_code={}",
-        now_secs,
-        format.as_str(),
-        resolved_paths.len(),
-        findings_total,
-        suppressed_total,
-        exit_code
-    );
-    append_line(&log_file, &log_line)?;
+    if let Some(ref log_dir) = paths.log_dir {
+        ensure_dir(log_dir)?;
+        let log_file = log_dir.join("taudit.log");
+        let log_line = format!(
+            "ts_unix={} event=scan_completed format={} paths={} findings={} suppressed={} exit_code={}",
+            now_secs,
+            format.as_str(),
+            resolved_paths.len(),
+            findings_total,
+            suppressed_total,
+            exit_code
+        );
+        append_line(&log_file, &log_line)?;
+    }
 
     Ok(())
 }
@@ -914,11 +971,12 @@ impl SeverityCounts {
     }
 }
 
-fn cmd_map(paths: Vec<PathBuf>) -> Result<()> {
-    let parser = GhaParser;
+fn cmd_map(paths: Vec<PathBuf>, platform: Platform) -> Result<()> {
+    let parser_box = make_parser(&platform);
+    let parser = parser_box.as_ref();
 
     for path in resolve_paths(&paths)? {
-        let graph = parse_file(&parser, &path)?;
+        let graph = parse_file(parser, &path)?;
         let authority_map = map::authority_map(&graph);
 
         println!("Authority Map: {}\n", path.display());
@@ -1011,8 +1069,15 @@ fn build_cellos_spec(
     })
 }
 
+fn make_parser(platform: &Platform) -> Box<dyn taudit_core::ports::PipelineParser> {
+    match platform {
+        Platform::GithubActions => Box::new(GhaParser),
+        Platform::AzureDevOps => Box::new(AdoParser),
+    }
+}
+
 fn parse_content(
-    parser: &GhaParser,
+    parser: &dyn taudit_core::ports::PipelineParser,
     content: String,
     source_file: String,
 ) -> Result<taudit_core::graph::AuthorityGraph> {
@@ -1026,7 +1091,7 @@ fn parse_content(
         .with_context(|| format!("Failed to parse {source_file}"))
 }
 
-fn parse_file(parser: &GhaParser, path: &PathBuf) -> Result<taudit_core::graph::AuthorityGraph> {
+fn parse_file(parser: &dyn taudit_core::ports::PipelineParser, path: &PathBuf) -> Result<taudit_core::graph::AuthorityGraph> {
     let content = std::fs::read_to_string(path)
         .with_context(|| format!("Failed to read {}", path.display()))?;
     parse_content(parser, content, path.display().to_string())
@@ -1194,12 +1259,11 @@ mod tests {
             Some(telemetry.clone()),
             Some(receipt.clone()),
             Some(log.clone()),
-        )
-        .expect("should resolve explicit paths");
+        );
 
-        assert_eq!(resolved.telemetry_dir, telemetry);
-        assert_eq!(resolved.receipt_dir, receipt);
-        assert_eq!(resolved.log_dir, log);
+        assert_eq!(resolved.telemetry_dir, Some(telemetry));
+        assert_eq!(resolved.receipt_dir, Some(receipt));
+        assert_eq!(resolved.log_dir, Some(log));
     }
 
     #[test]

@@ -47,11 +47,20 @@ pub enum FindingCategory {
     UnpinnedAction,
     UntrustedWithAuthority,
     ArtifactBoundaryCrossing,
-    // Stretch
-    EgressBlindspot,
-    MissingAuditTrail,
+    // Stretch — implemented
     FloatingImage,
     LongLivedCredential,
+    /// Credential written to disk by a step (e.g. `persistCredentials: true` on a checkout).
+    /// Disk-persisted credentials are accessible to all subsequent steps and any process
+    /// with filesystem access, unlike runtime-only `HasAccessTo` authority.
+    PersistedCredential,
+    // Reserved — requires ADO/GH API enrichment beyond pipeline YAML
+    /// Requires runtime network telemetry or policy enrichment — not detectable from YAML alone.
+    #[doc(hidden)]
+    EgressBlindspot,
+    /// Requires external audit-sink configuration data — not detectable from YAML alone.
+    #[doc(hidden)]
+    MissingAuditTrail,
 }
 
 /// Routing: scope findings -> TsafeRemediation; isolation findings -> CellosRemediation.

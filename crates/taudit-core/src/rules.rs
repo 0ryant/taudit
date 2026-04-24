@@ -1,8 +1,8 @@
 use crate::finding::{Finding, FindingCategory, Recommendation, Severity};
 use crate::graph::{
     is_docker_digest_pinned, is_sha_pinned, AuthorityCompleteness, AuthorityGraph, EdgeKind,
-    IdentityScope, NodeKind, TrustZone, META_CONTAINER, META_DIGEST, META_IDENTITY_SCOPE,
-    META_PERMISSIONS,
+    IdentityScope, NodeKind, TrustZone, META_CLI_FLAG_EXPOSED, META_CONTAINER, META_DIGEST,
+    META_IDENTITY_SCOPE, META_PERMISSIONS,
 };
 use crate::propagation;
 
@@ -221,16 +221,32 @@ pub fn untrusted_with_authority(graph: &AuthorityGraph) -> Vec<Finding> {
 
             if let Some(target) = graph.node(edge.to) {
                 if matches!(target.kind, NodeKind::Secret | NodeKind::Identity) {
+                    let cli_flag_exposed = target
+                        .metadata
+                        .get(META_CLI_FLAG_EXPOSED)
+                        .map(|v| v == "true")
+                        .unwrap_or(false);
+
                     let recommendation = if target.kind == NodeKind::Secret {
-                        Recommendation::CellosRemediation {
-                            reason: format!(
-                                "Untrusted step '{}' has direct access to secret '{}'",
-                                step.name, target.name
-                            ),
-                            spec_hint: format!(
-                                "cellos run --network deny-all --broker env:{}",
-                                target.name
-                            ),
+                        if cli_flag_exposed {
+                            Recommendation::Manual {
+                                action: format!(
+                                    "Move '{}' from -var flag to TF_VAR_{} env var — \
+                                     -var values appear in pipeline logs and Terraform plan output",
+                                    target.name, target.name
+                                ),
+                            }
+                        } else {
+                            Recommendation::CellosRemediation {
+                                reason: format!(
+                                    "Untrusted step '{}' has direct access to secret '{}'",
+                                    step.name, target.name
+                                ),
+                                spec_hint: format!(
+                                    "cellos run --network deny-all --broker env:{}",
+                                    target.name
+                                ),
+                            }
                         }
                     } else {
                         Recommendation::ReducePermissions {
@@ -243,20 +259,27 @@ pub fn untrusted_with_authority(graph: &AuthorityGraph) -> Vec<Finding> {
                         }
                     };
 
+                    let log_exposure_note = if cli_flag_exposed {
+                        " (passed as -var flag — value visible in pipeline logs)"
+                    } else {
+                        ""
+                    };
+
                     findings.push(Finding {
                         severity: Severity::Critical,
                         category: FindingCategory::UntrustedWithAuthority,
                         path: None,
                         nodes_involved: vec![step.id, target.id],
                         message: format!(
-                            "Untrusted step '{}' has direct access to {} '{}'",
+                            "Untrusted step '{}' has direct access to {} '{}'{}",
                             step.name,
                             if target.kind == NodeKind::Secret {
                                 "secret"
                             } else {
                                 "identity"
                             },
-                            target.name
+                            target.name,
+                            log_exposure_note,
                         ),
                         recommendation,
                     });
@@ -428,6 +451,43 @@ pub fn floating_image(graph: &AuthorityGraph) -> Vec<Finding> {
     findings
 }
 
+/// Stretch Rule: checkout step with `persistCredentials: true` writes credentials to disk.
+///
+/// The PersistsTo edge connects a checkout step to the token it persists. Disk-resident
+/// credentials are accessible to all subsequent steps (and to any process with filesystem
+/// access), unlike runtime-only HasAccessTo authority which expires when the step exits.
+pub fn persisted_credential(graph: &AuthorityGraph) -> Vec<Finding> {
+    let mut findings = Vec::new();
+
+    for edge in &graph.edges {
+        if edge.kind != EdgeKind::PersistsTo {
+            continue;
+        }
+
+        let Some(step) = graph.node(edge.from) else { continue };
+        let Some(target) = graph.node(edge.to) else { continue };
+
+        findings.push(Finding {
+            severity: Severity::High,
+            category: FindingCategory::PersistedCredential,
+            path: None,
+            nodes_involved: vec![step.id, target.id],
+            message: format!(
+                "'{}' persists '{}' to disk via persistCredentials: true — \
+                 credential remains in .git/config and is accessible to all subsequent steps",
+                step.name, target.name
+            ),
+            recommendation: Recommendation::Manual {
+                action: "Remove persistCredentials: true from the checkout step. \
+                         Pass credentials explicitly only to steps that need them."
+                    .into(),
+            },
+        });
+    }
+
+    findings
+}
+
 /// Run all rules against a graph.
 pub fn run_all_rules(graph: &AuthorityGraph, max_hops: usize) -> Vec<Finding> {
     let mut findings = Vec::new();
@@ -440,6 +500,7 @@ pub fn run_all_rules(graph: &AuthorityGraph, max_hops: usize) -> Vec<Finding> {
     // Stretch rules
     findings.extend(long_lived_credential(graph));
     findings.extend(floating_image(graph));
+    findings.extend(persisted_credential(graph));
 
     apply_confidence_cap(graph, &mut findings);
 
@@ -724,6 +785,46 @@ mod tests {
 
         let findings = floating_image(&g);
         assert!(findings.is_empty(), "floating_image should not flag step actions");
+    }
+
+    #[test]
+    fn persisted_credential_rule_fires_on_persists_to_edge() {
+        let mut g = AuthorityGraph::new(source("ci.yml"));
+        let token = g.add_node(NodeKind::Identity, "System.AccessToken", TrustZone::FirstParty);
+        let checkout = g.add_node(NodeKind::Step, "checkout", TrustZone::FirstParty);
+        g.add_edge(checkout, token, EdgeKind::PersistsTo);
+
+        let findings = persisted_credential(&g);
+        assert_eq!(findings.len(), 1);
+        assert_eq!(findings[0].category, FindingCategory::PersistedCredential);
+        assert_eq!(findings[0].severity, Severity::High);
+        assert!(findings[0].message.contains("persistCredentials"));
+    }
+
+    #[test]
+    fn untrusted_with_cli_flag_exposed_secret_notes_log_exposure() {
+        let mut g = AuthorityGraph::new(source("ci.yml"));
+        let step = g.add_node(NodeKind::Step, "TerraformCLI@0", TrustZone::Untrusted);
+        let mut meta = std::collections::HashMap::new();
+        meta.insert(META_CLI_FLAG_EXPOSED.into(), "true".into());
+        let secret = g.add_node_with_metadata(
+            NodeKind::Secret,
+            "db_password",
+            TrustZone::FirstParty,
+            meta,
+        );
+        g.add_edge(step, secret, EdgeKind::HasAccessTo);
+
+        let findings = untrusted_with_authority(&g);
+        assert_eq!(findings.len(), 1);
+        assert!(
+            findings[0].message.contains("-var flag"),
+            "message should note -var flag log exposure"
+        );
+        assert!(matches!(
+            findings[0].recommendation,
+            Recommendation::Manual { .. }
+        ));
     }
 
     #[test]

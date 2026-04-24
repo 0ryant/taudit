@@ -15,3 +15,7 @@ BUILD_SHEET.md
 # Common local editor noise.
 .idea/
 .vscode/
+
+# Local AI session state — never committed.
+MEMORY/
+.claude/

@@ -1,0 +1,192 @@
+.TH TAUDIT 1 "2026-04-24" "taudit 0.1.1" "User Commands"
+.SH NAME
+taudit \- pipeline authority scanner
+.SH SYNOPSIS
+.B taudit
+.I command
+.RI [ options ]
+.SH DESCRIPTION
+.B taudit
+builds a directed authority graph from CI/CD pipeline YAML and walks it looking for security issues: secrets crossing trust boundaries, over-privileged identities, unpinned actions, credentials persisted to disk, and more.
+.PP
+Supported platforms: GitHub Actions (default), Azure DevOps.
+.SH COMMANDS
+.SS taudit scan \fIpath...\fR
+Scan one or more pipeline files or directories for authority findings.
+.TP
+.B path
+One or more paths to pipeline YAML files or directories. Use
+.B \-
+to read from stdin.
+.TP
+.B \-\-platform \fIplatform\fR
+CI/CD platform to parse. One of
+.BR github\-actions " (default) or " azure\-devops .
+.TP
+.B \-\-format \fIfmt\fR
+Output format. One of
+.BR terminal " (default), " json ", " sarif ", " cloudevents .
+.TP
+.B \-\-max\-hops \fIn\fR
+Maximum BFS depth for propagation analysis (default: 4).
+.TP
+.B \-\-severity\-threshold \fIlevel\fR
+Minimum severity to produce a non-zero exit code. Findings below this level still appear in the report.
+Values:
+.BR critical ", " high ", " medium ", " low ", " info .
+.TP
+.B \-\-ignore\-file \fIpath\fR
+Path to a
+.I .tauditignore
+file. Defaults to
+.I .tauditignore
+in the working directory if present.
+.TP
+.B \-\-exclude \fIglob\fR
+Glob pattern to exclude from scanning. May be specified multiple times.
+.TP
+.B \-\-baseline \fIpath\fR
+Path to a JSON report from a prior scan. Findings whose (category, message) pair appears in the baseline are suppressed.
+.TP
+.B \-\-quiet
+Summary-only output: print finding counts per file and a grand total instead of full per-finding details.
+.TP
+.B \-\-verbose
+Show node metadata (kind, trust zone, permissions) for each node in a finding's propagation path.
+.TP
+.B \-\-no\-color
+Disable ANSI color codes in terminal output. Also honored via the
+.B NO_COLOR
+environment variable (any value disables color). Color is on by default \[em] CI log viewers (GitHub Actions, Azure DevOps) render ANSI from piped stdout.
+.TP
+.B \-\-telemetry\-dir \fIpath\fR
+Directory to write telemetry events (JSONL). Default:
+.BR $TAUDIT_TELEMETRY_DIR " or " $XDG_STATE_HOME/taudit/telemetry " or " $HOME/.local/state/taudit/telemetry .
+If none can be resolved, telemetry is silently skipped.
+.TP
+.B \-\-receipt\-dir \fIpath\fR
+Directory to write scan receipts (JSON). Default:
+.BR $TAUDIT_RECEIPT_DIR " or " $XDG_DATA_HOME/taudit/receipts " or " $HOME/.local/share/taudit/receipts .
+.TP
+.B \-\-log\-dir \fIpath\fR
+Directory to write plain-text logs. Default:
+.BR $TAUDIT_LOG_DIR " or " $XDG_STATE_HOME/taudit/logs " or " $HOME/.local/state/taudit/logs .
+.SS taudit map \fIpath...\fR
+Print a tabular authority map showing which steps access which secrets and identities.
+.TP
+.B \-\-platform \fIplatform\fR
+CI/CD platform to parse (same values as
+.BR scan ).
+.SS taudit diff \fIbefore\fR \fIafter\fR
+Compare findings between two pipeline revisions.
+.TP
+.B \-\-format \fIfmt\fR
+Output format. One of
+.BR terminal " (default), " json .
+.TP
+.B \-\-platform \fIplatform\fR
+CI/CD platform to parse.
+.SS taudit completions \fIshell\fR
+Print shell completions to stdout.
+Values:
+.BR bash ", " zsh ", " fish ", " powershell ", " elvish .
+.SS taudit emit\-spec \fItarget\fR
+Emit a CellOS execution-cell JSON spec that runs
+.B taudit scan
+in an isolation runtime.
+.SS taudit version
+Print the taudit version string.
+.SH FINDING CATEGORIES
+.TP
+.B authority_propagation
+Secret or identity propagated to a step in a lower trust zone. Severity: Critical (untrusted sink), High (SHA-pinned sink), Medium (SHA-pinned + constrained identity).
+.TP
+.B over_privileged_identity
+Identity with broader scope than needed. Severity: High (broad), Medium (unknown).
+.TP
+.B unpinned_action
+Third-party action or image not pinned to a SHA digest. Severity: Medium.
+.TP
+.B untrusted_with_authority
+Untrusted step has direct access to a secret or identity. Severity: Critical. If the secret is passed via a Terraform
+.B \-var
+flag, the message notes log exposure risk and recommends
+.B TF_VAR_*
+env vars instead.
+.TP
+.B artifact_boundary_crossing
+Artifact from a privileged step consumed across a trust boundary. Severity: High.
+.TP
+.B floating_image
+Container image without a Docker digest pin. Severity: Medium.
+.TP
+.B long_lived_credential
+Secret name matches static credential patterns (API keys, passwords, signing keys). Severity: Low.
+.TP
+.B persisted_credential
+Checkout step with
+.B persistCredentials: true
+writes the access token to
+.I .git/config
+on disk, making it accessible to all subsequent steps. Severity: High.
+.SH ENVIRONMENT
+.TP
+.B NO_COLOR
+When set to any value, disables ANSI color output. Takes precedence over
+.BR \-\-no\-color .
+See
+.I https://no-color.org/
+for the specification.
+.TP
+.B TAUDIT_TELEMETRY_DIR
+Override the telemetry directory. Takes precedence over XDG defaults.
+.TP
+.B TAUDIT_RECEIPT_DIR
+Override the receipt directory.
+.TP
+.B TAUDIT_LOG_DIR
+Override the log directory. Log files are always written as plain text regardless of color settings.
+.TP
+.B XDG_STATE_HOME
+Used to resolve telemetry and log directories when
+.B TAUDIT_TELEMETRY_DIR
+and
+.B TAUDIT_LOG_DIR
+are not set.
+.TP
+.B XDG_DATA_HOME
+Used to resolve the receipt directory when
+.B TAUDIT_RECEIPT_DIR
+is not set.
+.SH EXIT STATUS
+.TP
+.B 0
+No actionable findings (or all findings are below
+.BR \-\-severity\-threshold ).
+.TP
+.B 1
+One or more findings meet or exceed the severity threshold.
+.SH EXAMPLES
+.nf
+# Scan all GitHub Actions workflows
+taudit scan .github/workflows/
+
+# Scan an Azure DevOps pipeline
+taudit scan .pipelines/azure-pipelines.yml --platform azure-devops
+
+# Fail only on critical findings; SARIF output for code scanning
+taudit scan .github/workflows/ --format sarif --severity-threshold critical
+
+# Suppress previously accepted findings
+taudit scan . --baseline taudit-baseline.json
+
+# Compare two revisions
+taudit diff before.yml after.yml
+
+# Force plain output (no color)
+NO_COLOR=1 taudit scan .github/workflows/
+.fi
+.SH SEE ALSO
+Project home: https://github.com/0ryant/taudit
+.PP
+Bug reports: https://github.com/0ryant/taudit/issues

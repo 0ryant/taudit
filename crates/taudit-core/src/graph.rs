@@ -18,6 +18,10 @@ pub const META_INFERRED: &str = "inferred";
 pub const META_CONTAINER: &str = "container";
 /// Marks an Identity node as OIDC-capable (`permissions: id-token: write`).
 pub const META_OIDC: &str = "oidc";
+/// Marks a Secret node whose value is interpolated into a CLI flag argument (e.g. `-var "key=$(SECRET)"`).
+/// CLI flag values appear in pipeline log output even when ADO secret masking is active,
+/// because the command string is logged before masking runs and Terraform itself logs `-var` values.
+pub const META_CLI_FLAG_EXPOSED: &str = "cli_flag_exposed";
 
 // ── Shared helpers ─────────────────────────────────────
 
@@ -152,7 +156,7 @@ pub struct Node {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum EdgeKind {
-    /// Step -> Secret or Identity (authority granted).
+    /// Step -> Secret or Identity (authority granted at runtime).
     HasAccessTo,
     /// Step -> Artifact (data flows out).
     Produces,
@@ -162,6 +166,10 @@ pub enum EdgeKind {
     UsesImage,
     /// Step -> Step (cross-job or action boundary).
     DelegatesTo,
+    /// Step -> Secret or Identity (credential written to disk, outliving the step's lifetime).
+    /// Distinct from HasAccessTo: disk persistence is accessible to all subsequent steps
+    /// and processes with filesystem access, not just the step that created it.
+    PersistsTo,
 }
 
 /// A directed edge in the authority graph.

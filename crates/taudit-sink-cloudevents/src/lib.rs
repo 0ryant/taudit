@@ -55,10 +55,13 @@ fn event_type(category: FindingCategory) -> String {
         FindingCategory::UnpinnedAction => "unpinned_action",
         FindingCategory::UntrustedWithAuthority => "untrusted_with_authority",
         FindingCategory::ArtifactBoundaryCrossing => "artifact_boundary_crossing",
-        FindingCategory::EgressBlindspot => "egress_blindspot",
-        FindingCategory::MissingAuditTrail => "missing_audit_trail",
         FindingCategory::FloatingImage => "floating_image",
         FindingCategory::LongLivedCredential => "long_lived_credential",
+        FindingCategory::PersistedCredential => "persisted_credential",
+        #[allow(deprecated)]
+        FindingCategory::EgressBlindspot => "egress_blindspot",
+        #[allow(deprecated)]
+        FindingCategory::MissingAuditTrail => "missing_audit_trail",
     };
     format!("io.taudit.finding.{suffix}")
 }

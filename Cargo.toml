@@ -4,6 +4,7 @@ members = [
     "crates/taudit-core",
     "crates/taudit-cli",
     "crates/taudit-parse-gha",
+    "crates/taudit-parse-ado",
     "crates/taudit-report-terminal",
     "crates/taudit-report-json",
     "crates/taudit-report-sarif",

@@ -93,10 +93,11 @@
             "unpinned_action",
             "untrusted_with_authority",
             "artifact_boundary_crossing",
-            "egress_blindspot",
-            "missing_audit_trail",
             "floating_image",
-            "long_lived_credential"
+            "long_lived_credential",
+            "persisted_credential",
+            "egress_blindspot",
+            "missing_audit_trail"
           ]
         },
         "path": {
