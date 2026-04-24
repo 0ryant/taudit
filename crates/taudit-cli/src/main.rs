@@ -491,6 +491,8 @@ fn cmd_scan(opts: ScanOpts) -> Result<()> {
     let mut terminal_files_with_findings = 0usize;
     let mut terminal_partial_files = 0usize;
     let mut terminal_totals = SeverityCounts::default();
+    // SARIF accumulates all (graph, findings) pairs and emits one document after the loop.
+    let mut sarif_buffer: Vec<(taudit_core::graph::AuthorityGraph, Vec<taudit_core::finding::Finding>)> = Vec::new();
 
     for path in &resolved {
         let graph = if path.as_os_str() == "-" {
@@ -589,9 +591,7 @@ fn cmd_scan(opts: ScanOpts) -> Result<()> {
                         .with_context(|| "Failed to write JSON report")?;
                 }
                 OutputFormat::Sarif => {
-                    SarifReportSink
-                        .emit(&mut stdout, &graph, &findings)
-                        .with_context(|| "Failed to write SARIF report")?;
+                    sarif_buffer.push((graph, findings));
                 }
                 OutputFormat::Cloudevents => {
                     CloudEventsJsonlSink
@@ -600,6 +600,17 @@ fn cmd_scan(opts: ScanOpts) -> Result<()> {
                 }
             }
         }
+    }
+
+    // Emit the single aggregated SARIF document now that all files have been scanned.
+    if !quiet && !sarif_buffer.is_empty() && matches!(format, OutputFormat::Sarif) {
+        let items: Vec<_> = sarif_buffer
+            .iter()
+            .map(|(g, f)| (g, f.as_slice()))
+            .collect();
+        SarifReportSink
+            .emit_multi(&mut stdout, &items)
+            .with_context(|| "Failed to write SARIF report")?;
     }
 
     if quiet && resolved.len() > 1 {

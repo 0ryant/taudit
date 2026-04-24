@@ -145,17 +145,23 @@ struct SarifArtifactLocation {
 
 pub struct SarifReportSink;
 
-impl<W: std::io::Write> ReportSink<W> for SarifReportSink {
-    fn emit(
+impl SarifReportSink {
+    /// Emit a single SARIF 2.1.0 document aggregating findings from multiple
+    /// pipeline files. All results land in one `runs[0]` entry so downstream
+    /// consumers (sarif-tools, jq, VS Code) see a valid top-level JSON object.
+    pub fn emit_multi<W: std::io::Write>(
         &self,
         w: &mut W,
-        graph: &AuthorityGraph,
-        findings: &[Finding],
+        items: &[(&AuthorityGraph, &[Finding])],
     ) -> Result<(), TauditError> {
         let rules = build_rules();
-        let results = findings
+        let results: Vec<SarifResult> = items
             .iter()
-            .map(|f| finding_to_result(f, &graph.source.file))
+            .flat_map(|(graph, findings)| {
+                findings
+                    .iter()
+                    .map(|f| finding_to_result(f, &graph.source.file))
+            })
             .collect();
 
         let log = SarifLog {
@@ -178,6 +184,17 @@ impl<W: std::io::Write> ReportSink<W> for SarifReportSink {
             .map_err(|e| TauditError::Report(format!("SARIF serialization error: {e}")))?;
 
         Ok(())
+    }
+}
+
+impl<W: std::io::Write> ReportSink<W> for SarifReportSink {
+    fn emit(
+        &self,
+        w: &mut W,
+        graph: &AuthorityGraph,
+        findings: &[Finding],
+    ) -> Result<(), TauditError> {
+        self.emit_multi(w, &[(graph, findings)])
     }
 }
 
@@ -357,5 +374,67 @@ mod tests {
 
         let base = &r["locations"][0]["physicalLocation"]["artifactLocation"]["uriBaseId"];
         assert_eq!(base, "%SRCROOT%");
+    }
+
+    #[test]
+    fn emit_multi_produces_single_sarif_document() {
+        let source_a = PipelineSource {
+            file: ".github/workflows/ci.yml".into(),
+            repo: None,
+            git_ref: None,
+        };
+        let source_b = PipelineSource {
+            file: ".github/workflows/deploy.yml".into(),
+            repo: None,
+            git_ref: None,
+        };
+        let graph_a = AuthorityGraph::new(source_a);
+        let graph_b = AuthorityGraph::new(source_b);
+
+        let findings_a = vec![make_finding(
+            Severity::High,
+            FindingCategory::UnpinnedAction,
+            "Unpinned checkout in ci",
+        )];
+        let findings_b = vec![make_finding(
+            Severity::Critical,
+            FindingCategory::AuthorityPropagation,
+            "Secret reaches untrusted step in deploy",
+        )];
+
+        let mut buf = Vec::new();
+        SarifReportSink
+            .emit_multi(
+                &mut buf,
+                &[
+                    (&graph_a, findings_a.as_slice()),
+                    (&graph_b, findings_b.as_slice()),
+                ],
+            )
+            .unwrap();
+
+        // Must be a single valid JSON document — not two concatenated ones.
+        let sarif: serde_json::Value = serde_json::from_slice(&buf)
+            .expect("emit_multi must produce a single valid JSON document");
+
+        assert_eq!(sarif["version"], "2.1.0");
+
+        // One run containing both files' results.
+        let runs = sarif["runs"].as_array().unwrap();
+        assert_eq!(runs.len(), 1, "expected exactly one run");
+
+        let results = runs[0]["results"].as_array().unwrap();
+        assert_eq!(results.len(), 2, "expected both files' findings in one run");
+
+        let uris: Vec<&str> = results
+            .iter()
+            .map(|r| {
+                r["locations"][0]["physicalLocation"]["artifactLocation"]["uri"]
+                    .as_str()
+                    .unwrap()
+            })
+            .collect();
+        assert!(uris.contains(&".github/workflows/ci.yml"));
+        assert!(uris.contains(&".github/workflows/deploy.yml"));
     }
 }

@@ -71,7 +71,7 @@ impl PipelineParser for GhaParser {
                 }
                 Some(graph.add_node_with_metadata(
                     NodeKind::Identity,
-                    format!("GITHUB_TOKEN ({})", job_name),
+                    format!("GITHUB_TOKEN ({job_name})"),
                     TrustZone::FirstParty,
                     meta,
                 ))
@@ -95,8 +95,7 @@ impl PipelineParser for GhaParser {
                     graph.add_edge(job_step_id, tok_id, EdgeKind::HasAccessTo);
                 }
                 graph.mark_partial(format!(
-                    "reusable workflow '{}' in job '{}' cannot be resolved inline — authority within the called workflow is unknown",
-                    uses, job_name
+                    "reusable workflow '{uses}' in job '{job_name}' cannot be resolved inline — authority within the called workflow is unknown"
                 ));
                 continue;
             }
@@ -109,8 +108,7 @@ impl PipelineParser for GhaParser {
                 .is_some()
             {
                 graph.mark_partial(format!(
-                    "job '{}' uses matrix strategy — authority shape may differ per matrix entry",
-                    job_name
+                    "job '{job_name}' uses matrix strategy — authority shape may differ per matrix entry"
                 ));
             }
 
@@ -128,7 +126,7 @@ impl PipelineParser for GhaParser {
                 meta.insert(META_CONTAINER.into(), "true".into());
                 if pinned {
                     if let Some(digest) = image_str.split("@sha256:").nth(1) {
-                        meta.insert(META_DIGEST.into(), format!("sha256:{}", digest));
+                        meta.insert(META_DIGEST.into(), format!("sha256:{digest}"));
                     }
                 }
                 Some(graph.add_node_with_metadata(NodeKind::Image, image_str, trust_zone, meta))
@@ -137,7 +135,7 @@ impl PipelineParser for GhaParser {
             };
 
             for (step_idx, step) in job.steps.iter().enumerate() {
-                let default_name = format!("{}[{}]", job_name, step_idx);
+                let default_name = format!("{job_name}[{step_idx}]");
                 let step_name = step.name.as_deref().unwrap_or(&default_name);
 
                 // Determine trust zone and create image node if `uses:` present
@@ -250,8 +248,7 @@ impl PipelineParser for GhaParser {
                                 }
                                 graph.add_edge(step_id, secret_id, EdgeKind::HasAccessTo);
                                 graph.mark_partial(format!(
-                                    "secret '{}' referenced in run: script — inferred, not precisely mapped",
-                                    secret_name
+                                    "secret '{secret_name}' referenced in run: script — inferred, not precisely mapped"
                                 ));
                             }
                             pos = abs_start + end;

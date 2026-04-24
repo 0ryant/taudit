@@ -2,6 +2,12 @@
 
 All notable changes to this project will be documented in this file.
 
+## v0.2.1 — 2026-04-25
+
+### Fixed
+
+- **SARIF output with multiple files** — scanning a directory or passing multiple paths with `--format sarif` previously emitted one complete SARIF document per file, concatenated end-to-end. Downstream consumers (`jq`, `sarif-tools`, VS Code SARIF Viewer, any `json.load`) failed with `JSONDecodeError: Extra data`. All findings are now aggregated into a single SARIF 2.1.0 document with one `runs[0]` entry, as the spec requires.
+
 ## v0.2.0 — 2026-04-25
 
 ### Added
