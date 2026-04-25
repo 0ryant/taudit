@@ -2,6 +2,25 @@
 
 All notable changes to this project will be documented in this file.
 
+## v0.2.3 — 2026-04-25
+
+### Added
+
+- **3 new ADO PR-boundary rules** — all gate on `trigger=pr` context so they fire only when attacker-controlled code is involved, not on every pipeline:
+  - `variable_group_in_pr_job` (Critical) — ADO variable group secrets are reachable from a PR-triggered job; malicious PR code can exfiltrate them via log output or network calls.
+  - `self_hosted_pool_pr_hijack` (Critical) — PR-triggered job runs on a self-hosted agent and checks out the repository; attacker can inject malicious git hooks that persist on the shared runner and execute with full pipeline authority on subsequent runs.
+  - `service_connection_scope_mismatch` (High) — broad-scope ADO service connection (subscription-wide Azure RBAC, no OIDC federation) is reachable from a PR-triggered job, enabling lateral movement into the Azure tenant.
+
+- **Parser tagging for new rules:**
+  - ADO: `pool.name` without `vmImage` → Image node tagged `self_hosted: true`; variable group secrets tagged `variable_group: true`; `checkout: self` steps tagged `checkout_self: true`; service connections tagged `service_connection: true`.
+  - GHA: `runs-on: self-hosted` (string, sequence, or group mapping) → Image node tagged `self_hosted: true`; `actions/checkout` steps tagged `checkout_self: true` regardless of pin level (trigger context gates the rule, not the pin).
+
+- **`taudit explain` subcommand** — `taudit explain` lists all 16 rules with severity. `taudit explain <rule>` shows the full description, tags, and remediation guidance. Unknown rule exits 2 with the valid ID list.
+
+### Fixed
+
+- **`cargo fmt`** — format gate now passes on all crates.
+
 ## v0.2.2 — 2026-04-25
 
 ### Fixed

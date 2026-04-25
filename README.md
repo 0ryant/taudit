@@ -31,16 +31,26 @@ taudit builds a directed **authority graph** from your pipeline YAML. Nodes are 
 
 Then it walks the graph looking for:
 
-| Category | What it catches |
-|---|---|
-| **Authority Propagation** | Secret or identity reaches a step in a lower trust zone |
-| **Over-Privileged Identity** | GITHUB_TOKEN / System.AccessToken with broader permissions than needed |
-| **Unpinned Action** | Third-party action without SHA digest pin |
-| **Untrusted With Authority** | Unpinned step has direct access to secrets or identities |
-| **Artifact Boundary Crossing** | Artifact from privileged step consumed across trust boundary |
-| **Floating Image** | Container image reference without a digest pin |
-| **Long-Lived Credential** | Secret name matches static credential patterns (API keys, passwords) |
-| **Persisted Credential** | `persistCredentials: true` writes token to disk, accessible to all subsequent steps |
+| Rule | Severity | What it catches |
+|---|---|---|
+| `authority_propagation` | Critical | Secret or identity reaches a step in a lower trust zone |
+| `over_privileged_identity` | High | GITHUB_TOKEN / System.AccessToken with broader permissions than needed |
+| `unpinned_action` | High | Third-party action without SHA digest pin |
+| `untrusted_with_authority` | Critical | Unpinned or untrusted step has direct access to secrets or identities |
+| `artifact_boundary_crossing` | High | Artifact from privileged step consumed across a trust boundary |
+| `floating_image` | Medium | Container image reference without a digest pin |
+| `long_lived_credential` | High | Secret name matches static credential patterns (API keys, passwords) |
+| `persisted_credential` | Critical | `persistCredentials: true` writes token to disk, accessible to all subsequent steps |
+| `trigger_context_mismatch` | Critical | `pull_request_target` / ADO `pr:` trigger with authority-bearing steps |
+| `cross_workflow_authority_chain` | Critical | Authority-bearing step delegates to an external or untrusted workflow |
+| `authority_cycle` | High | Workflow delegation graph contains a cycle |
+| `uplift_without_attestation` | Info | OIDC-privileged build produces no signed provenance attestation |
+| `self_mutating_pipeline` | Critical | Step writes to `GITHUB_ENV` or `GITHUB_PATH`, injecting into subsequent steps |
+| `variable_group_in_pr_job` | Critical | ADO variable group secrets reachable from a PR-triggered job |
+| `self_hosted_pool_pr_hijack` | Critical | PR pipeline runs on self-hosted agent and checks out the repository |
+| `service_connection_scope_mismatch` | High | Broad-scope ADO service connection reachable from a PR-triggered job |
+
+Run `taudit explain` to list all rules, or `taudit explain <rule>` for full description and remediation guidance.
 
 Severity is graduated from real-world signal: constrained identity to SHA-pinned action = Medium. Broad identity to unpinned action = Critical. The tool handles unknowns honestly — if it can't fully resolve the authority graph, it marks it `Partial`, tells you why, and caps findings at High until the graph is complete.
 
@@ -168,6 +178,17 @@ taudit emit-spec .github/workflows/ci.yml --output /tmp/taudit-cell.json
 
 Then pass that spec to your runtime supervisor/executor.
 
+### Explain rules
+
+```bash
+# List all 16 rules with severity
+taudit explain
+
+# Full description for a single rule
+taudit explain unpinned_action
+taudit explain variable_group_in_pr_job
+```
+
 ### Version
 
 ```bash
@@ -202,7 +223,7 @@ taudit scan . --ignore-file .taudit/ignore.yml
 1. **Parse** — GitHub Actions or Azure DevOps YAML into typed nodes (steps, secrets, identities, images) with trust zone classification (FirstParty, ThirdParty, Untrusted). Select platform with `--platform github-actions` (default) or `--platform azure-devops`.
 2. **Build graph** — Directed edges model authority flow: `HasAccessTo`, `Produces`, `Consumes`, `UsesImage`, `DelegatesTo`, `PersistsTo`
 3. **Propagate** — BFS from authority-bearing sources (secrets, identities) through edges, flagging trust boundary crossings
-4. **Analyze** — 8 rules pattern-match against the graph, producing findings with severity, evidence paths, and remediation routing
+4. **Analyze** — 16 rules pattern-match against the graph, producing findings with severity, evidence paths, and remediation routing
 
 Trust zones are explicit on every node:
 - **FirstParty** — code you own (`run:` steps, local actions)
@@ -212,15 +233,17 @@ Trust zones are explicit on every node:
 ## Architecture
 
 ```
-taudit-core          graph, propagation engine, rules, finding model (no I/O)
-taudit-parse-gha     GitHub Actions YAML → AuthorityGraph
-taudit-report-*      terminal, JSON, and SARIF report adapters
-taudit-report-sarif  SARIF 2.1.0 adapter for code scanning platforms
+taudit-core             graph, propagation engine, 16 rules, finding model (no I/O)
+taudit-parse-gha        GitHub Actions YAML → AuthorityGraph
+taudit-parse-ado        Azure DevOps YAML → AuthorityGraph
+taudit-report-terminal  colored terminal reporter
+taudit-report-json      JSON report adapter
+taudit-report-sarif     SARIF 2.1.0 adapter for code scanning platforms
 taudit-sink-cloudevents findings → CloudEvents JSONL event stream
-taudit-cli           composition root (clap, file I/O, wiring)
+taudit-cli              composition root (clap, file I/O, wiring)
 ```
 
-7 crates, 112 tests, ~5,500 LOC. Ports and adapters — core has zero I/O dependencies.
+8 crates, 176 tests, ~9,800 LOC. Ports and adapters — core has zero I/O dependencies.
 
 ## CI Integration
 
