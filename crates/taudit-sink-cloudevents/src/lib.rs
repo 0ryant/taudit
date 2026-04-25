@@ -63,6 +63,9 @@ fn event_type(category: FindingCategory) -> String {
         FindingCategory::AuthorityCycle => "authority_cycle",
         FindingCategory::UpliftWithoutAttestation => "uplift_without_attestation",
         FindingCategory::SelfMutatingPipeline => "self_mutating_pipeline",
+        FindingCategory::VariableGroupInPrJob => "variable_group_in_pr_job",
+        FindingCategory::SelfHostedPoolPrHijack => "self_hosted_pool_pr_hijack",
+        FindingCategory::ServiceConnectionScopeMismatch => "service_connection_scope_mismatch",
         #[allow(deprecated)]
         FindingCategory::EgressBlindspot => "egress_blindspot",
         #[allow(deprecated)]

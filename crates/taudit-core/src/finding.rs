@@ -64,6 +64,12 @@ pub enum FindingCategory {
     UpliftWithoutAttestation,
     /// Step writes to the environment gate ($GITHUB_ENV, pipeline variables) — authority can propagate.
     SelfMutatingPipeline,
+    /// ADO variable group consumed by a PR-triggered job, crossing trust boundary.
+    VariableGroupInPrJob,
+    /// Self-hosted agent pool used in a PR-triggered job that also checks out the repository.
+    SelfHostedPoolPrHijack,
+    /// Broad-scope ADO service connection reachable from a PR-triggered job without OIDC.
+    ServiceConnectionScopeMismatch,
     // Reserved — requires ADO/GH API enrichment beyond pipeline YAML
     /// Requires runtime network telemetry or policy enrichment — not detectable from YAML alone.
     #[doc(hidden)]

@@ -183,6 +183,45 @@ const RULE_DEFS: &[RuleDef] = &[
         security_severity: "9.0",
         tags: &["security", "injection"],
     },
+    RuleDef {
+        id: "variable_group_in_pr_job",
+        name: "VariableGroupInPrJob",
+        short_description: "PR-triggered job accesses ADO variable group secrets",
+        full_description:
+            "A PR-triggered pipeline job has access to variable group secrets. PR \
+             pipelines run in the context of untrusted contributor code — variable group \
+             secrets crossing this boundary may be exfiltrated via log output, environment \
+             variables, or network calls.",
+        default_level: "error",
+        security_severity: "9.0",
+        tags: &["security", "privilege-escalation"],
+    },
+    RuleDef {
+        id: "self_hosted_pool_pr_hijack",
+        name: "SelfHostedPoolPrHijack",
+        short_description: "PR pipeline uses self-hosted pool with repository checkout",
+        full_description:
+            "A PR-triggered pipeline runs on a self-hosted agent and checks out the \
+             repository. An attacker can inject malicious git hooks via the PR that persist \
+             on the shared runner, executing with the pipeline's full authority on \
+             subsequent runs.",
+        default_level: "error",
+        security_severity: "9.0",
+        tags: &["security", "injection"],
+    },
+    RuleDef {
+        id: "service_connection_scope_mismatch",
+        name: "ServiceConnectionScopeMismatch",
+        short_description: "Broad-scope service connection accessible from PR-triggered job",
+        full_description:
+            "A PR-triggered pipeline job has access to an ADO service connection with \
+             broad or unknown scope and no OIDC federation. The static credential may have \
+             subscription-wide Azure RBAC permissions, enabling lateral movement into the \
+             Azure tenant from untrusted PR code.",
+        default_level: "error",
+        security_severity: "7.5",
+        tags: &["security", "privilege-escalation"],
+    },
 ];
 
 // ── SARIF 2.1.0 schema structs ──────────────────────────
@@ -602,6 +641,9 @@ mod tests {
             FindingCategory::AuthorityCycle,
             FindingCategory::UpliftWithoutAttestation,
             FindingCategory::SelfMutatingPipeline,
+            FindingCategory::VariableGroupInPrJob,
+            FindingCategory::SelfHostedPoolPrHijack,
+            FindingCategory::ServiceConnectionScopeMismatch,
         ];
 
         for cat in categories {

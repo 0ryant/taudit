@@ -128,6 +128,23 @@ impl PipelineParser for GhaParser {
                 ));
             }
 
+            // Self-hosted runner detection: `runs-on: self-hosted` or a sequence
+            // that includes `self-hosted`. Creates an Image node tagged with
+            // META_SELF_HOSTED so downstream rules can flag the job. Hosted
+            // runners (ubuntu-latest, etc.) are not represented as Image nodes —
+            // this keeps the graph focused on non-default attack surface.
+            if is_self_hosted_runner(job.runs_on.as_ref()) {
+                let runner_name = runner_label(job.runs_on.as_ref()).unwrap_or("self-hosted");
+                let mut meta = HashMap::new();
+                meta.insert(META_SELF_HOSTED.into(), "true".into());
+                graph.add_node_with_metadata(
+                    NodeKind::Image,
+                    runner_name,
+                    TrustZone::FirstParty,
+                    meta,
+                );
+            }
+
             // Container: job-level container image — add as Image node and capture ID
             // so each step in this job can be linked to it via UsesImage.
             let container_image_id: Option<NodeId> = if let Some(ref container) = job.container {
@@ -203,6 +220,20 @@ impl PipelineParser for GhaParser {
                     ) {
                         if let Some(node) = graph.nodes.get_mut(step_id) {
                             node.metadata.insert(META_ATTESTS.into(), "true".into());
+                        }
+                    }
+                }
+
+                // actions/checkout detection. Tag unconditionally — downstream rules
+                // gate on trigger context (pull_request / pull_request_target) to
+                // decide whether the checkout is pulling untrusted fork code. Tagging
+                // here avoids trigger-ordering dependencies across jobs.
+                if let Some(ref uses) = step.uses {
+                    let action = uses.split('@').next().unwrap_or(uses);
+                    if action == "actions/checkout" {
+                        if let Some(node) = graph.nodes.get_mut(step_id) {
+                            node.metadata
+                                .insert(META_CHECKOUT_SELF.into(), "true".into());
                         }
                     }
                 }
@@ -322,6 +353,65 @@ fn trigger_has_pull_request_target(triggers: &serde_yaml::Value) -> bool {
             .iter()
             .any(|(k, _)| k.as_str().map(|s| s == PRT).unwrap_or(false)),
         _ => false,
+    }
+}
+
+/// Returns true if `runs-on` names a self-hosted runner.
+///
+/// GHA `runs-on` is polymorphic: a string (`ubuntu-latest`, `self-hosted`), a
+/// sequence (`[self-hosted, linux, x64]`), or — for group selection — a mapping
+/// (`{ group: my-group, labels: [...] }`). Any form that contains `self-hosted`
+/// (as a string, sequence entry, or label entry) is considered self-hosted.
+/// Explicit `group:` without `self-hosted` is also self-hosted by construction.
+fn is_self_hosted_runner(runs_on: Option<&serde_yaml::Value>) -> bool {
+    const SH: &str = "self-hosted";
+    let Some(val) = runs_on else {
+        return false;
+    };
+    match val {
+        serde_yaml::Value::String(s) => s == SH,
+        serde_yaml::Value::Sequence(seq) => seq
+            .iter()
+            .any(|v| v.as_str().map(|s| s == SH).unwrap_or(false)),
+        serde_yaml::Value::Mapping(map) => {
+            if map.contains_key("group") {
+                return true;
+            }
+            if let Some(labels) = map.get("labels") {
+                match labels {
+                    serde_yaml::Value::String(s) => s == SH,
+                    serde_yaml::Value::Sequence(seq) => seq
+                        .iter()
+                        .any(|v| v.as_str().map(|s| s == SH).unwrap_or(false)),
+                    _ => false,
+                }
+            } else {
+                false
+            }
+        }
+        _ => false,
+    }
+}
+
+/// Extract a human-readable label from a `runs-on` value for naming the Image
+/// node. Prefers the first non-`self-hosted` label in a sequence (more specific),
+/// falls back to the string value or "self-hosted".
+fn runner_label(runs_on: Option<&serde_yaml::Value>) -> Option<&str> {
+    let val = runs_on?;
+    match val {
+        serde_yaml::Value::String(s) => Some(s.as_str()),
+        serde_yaml::Value::Sequence(seq) => {
+            for v in seq {
+                if let Some(s) = v.as_str() {
+                    if s != "self-hosted" {
+                        return Some(s);
+                    }
+                }
+            }
+            seq.first().and_then(|v| v.as_str())
+        }
+        serde_yaml::Value::Mapping(map) => map.get("group").and_then(|v| v.as_str()),
+        _ => None,
     }
 }
 
@@ -530,6 +620,10 @@ pub struct GhaJob {
     /// shape may differ per matrix entry — graph is marked Partial.
     #[serde(default)]
     pub strategy: Option<serde_yaml::Value>,
+    /// Runner label(s). Can be a string (`ubuntu-latest`), a sequence
+    /// (`[self-hosted, linux]`), or absent for reusable workflows.
+    #[serde(rename = "runs-on", default)]
+    pub runs_on: Option<serde_yaml::Value>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -1266,6 +1360,124 @@ jobs:
         assert_eq!(
             steps[0].metadata.get(META_ATTESTS),
             Some(&"true".to_string())
+        );
+    }
+
+    #[test]
+    fn self_hosted_string_runs_on_creates_image_with_self_hosted_metadata() {
+        let yaml = r#"
+jobs:
+  build:
+    runs-on: self-hosted
+    steps:
+      - run: echo hi
+"#;
+        let graph = parse(yaml);
+        let images: Vec<_> = graph.nodes_of_kind(NodeKind::Image).collect();
+        let runner = images
+            .iter()
+            .find(|i| i.metadata.contains_key(META_SELF_HOSTED))
+            .expect("self-hosted runner Image node must be created");
+        assert_eq!(
+            runner.metadata.get(META_SELF_HOSTED),
+            Some(&"true".to_string())
+        );
+    }
+
+    #[test]
+    fn self_hosted_in_sequence_runs_on_creates_image_with_self_hosted_metadata() {
+        let yaml = r#"
+jobs:
+  build:
+    runs-on: [self-hosted, linux, x64]
+    steps:
+      - run: echo hi
+"#;
+        let graph = parse(yaml);
+        let images: Vec<_> = graph.nodes_of_kind(NodeKind::Image).collect();
+        let runner = images
+            .iter()
+            .find(|i| i.metadata.contains_key(META_SELF_HOSTED))
+            .expect("self-hosted runner Image node must be created");
+        assert_eq!(
+            runner.metadata.get(META_SELF_HOSTED),
+            Some(&"true".to_string())
+        );
+    }
+
+    #[test]
+    fn hosted_runner_does_not_create_self_hosted_image() {
+        let yaml = r#"
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - run: echo hi
+"#;
+        let graph = parse(yaml);
+        let self_hosted_images: Vec<_> = graph
+            .nodes_of_kind(NodeKind::Image)
+            .filter(|i| i.metadata.contains_key(META_SELF_HOSTED))
+            .collect();
+        assert!(
+            self_hosted_images.is_empty(),
+            "hosted runner must not produce a self-hosted Image node"
+        );
+    }
+
+    #[test]
+    fn actions_checkout_step_tagged_with_meta_checkout_self() {
+        let yaml = r#"
+jobs:
+  ci:
+    steps:
+      - uses: actions/checkout@v4
+      - run: echo hi
+"#;
+        let graph = parse(yaml);
+        let steps: Vec<_> = graph.nodes_of_kind(NodeKind::Step).collect();
+        let checkout_step = steps
+            .iter()
+            .find(|s| s.metadata.contains_key(META_CHECKOUT_SELF))
+            .expect("actions/checkout step must be tagged META_CHECKOUT_SELF");
+        assert_eq!(
+            checkout_step.metadata.get(META_CHECKOUT_SELF),
+            Some(&"true".to_string())
+        );
+    }
+
+    #[test]
+    fn actions_checkout_sha_pinned_also_tagged() {
+        let yaml = r#"
+jobs:
+  ci:
+    steps:
+      - uses: actions/checkout@a5ac7e51b41094c92402da3b24376905380afc29
+"#;
+        let graph = parse(yaml);
+        let steps: Vec<_> = graph.nodes_of_kind(NodeKind::Step).collect();
+        assert_eq!(steps.len(), 1);
+        assert_eq!(
+            steps[0].metadata.get(META_CHECKOUT_SELF),
+            Some(&"true".to_string()),
+            "SHA-pinned checkout must still be tagged — rule gates on trigger context"
+        );
+    }
+
+    #[test]
+    fn non_checkout_uses_not_tagged_checkout_self() {
+        let yaml = r#"
+jobs:
+  ci:
+    steps:
+      - uses: some-org/other-action@v1
+"#;
+        let graph = parse(yaml);
+        let steps: Vec<_> = graph.nodes_of_kind(NodeKind::Step).collect();
+        assert_eq!(steps.len(), 1);
+        assert!(
+            !steps[0].metadata.contains_key(META_CHECKOUT_SELF),
+            "non-checkout uses: must not be tagged"
         );
     }
 

@@ -47,6 +47,9 @@ impl PipelineParser for AdoParser {
             meta,
         );
 
+        // Pipeline-level pool: adds Image node, tagged self-hosted when applicable.
+        process_pool(&pipeline.pool, &mut graph);
+
         // Pipeline-level variable groups and named secrets.
         // plain_vars tracks non-secret named variables so $(VAR) refs in scripts
         // don't generate false-positive Secret nodes for plain config values.
@@ -88,6 +91,8 @@ impl PipelineParser for AdoParser {
                         &mut plain_vars,
                     );
 
+                    process_pool(&job.pool, &mut graph);
+
                     let all_secrets: Vec<NodeId> = pipeline_secret_ids
                         .iter()
                         .chain(&stage_secret_ids)
@@ -120,6 +125,8 @@ impl PipelineParser for AdoParser {
                     &job_name,
                     &mut plain_vars,
                 );
+
+                process_pool(&job.pool, &mut graph);
 
                 let all_secrets: Vec<NodeId> = pipeline_secret_ids
                     .iter()
@@ -157,6 +164,40 @@ impl PipelineParser for AdoParser {
     }
 }
 
+/// Process an ADO `pool:` block. ADO pools come in two shapes:
+///   - `pool: my-self-hosted-pool` (string shorthand — always self-hosted)
+///   - `pool: { name: my-pool }` (named pool — self-hosted)
+///   - `pool: { vmImage: ubuntu-latest }` (Microsoft-hosted)
+///   - `pool: { name: my-pool, vmImage: ubuntu-latest }` (hosted; vmImage wins)
+///
+/// Creates an Image node representing the agent environment. Self-hosted pools
+/// are tagged with META_SELF_HOSTED so downstream rules can flag them.
+fn process_pool(pool: &Option<serde_yaml::Value>, graph: &mut AuthorityGraph) {
+    let Some(pool_val) = pool else {
+        return;
+    };
+
+    let (image_name, is_self_hosted) = match pool_val {
+        serde_yaml::Value::String(s) => (s.clone(), true),
+        serde_yaml::Value::Mapping(map) => {
+            let name = map.get("name").and_then(|v| v.as_str());
+            let vm_image = map.get("vmImage").and_then(|v| v.as_str());
+            match (name, vm_image) {
+                (_, Some(vm)) => (vm.to_string(), false),
+                (Some(n), None) => (n.to_string(), true),
+                (None, None) => return,
+            }
+        }
+        _ => return,
+    };
+
+    let mut meta = HashMap::new();
+    if is_self_hosted {
+        meta.insert(META_SELF_HOSTED.into(), "true".into());
+    }
+    graph.add_node_with_metadata(NodeKind::Image, image_name, TrustZone::FirstParty, meta);
+}
+
 /// Process a variable list, creating Secret nodes and returning their IDs.
 /// Returns IDs for secrets only (not variable groups, which are opaque).
 /// Populates `plain_vars` with the names of non-secret named variables so
@@ -188,7 +229,7 @@ fn process_variables(
                     continue;
                 }
                 let mut meta = HashMap::new();
-                meta.insert("variable_group".into(), "true".into());
+                meta.insert(META_VARIABLE_GROUP.into(), "true".into());
                 let id = graph.add_node_with_metadata(
                     NodeKind::Secret,
                     group.as_str(),
@@ -254,6 +295,18 @@ fn process_steps(
             graph.add_edge(step_id, token_id, EdgeKind::PersistsTo);
         }
 
+        // `checkout: self` pulls the repo being built. In a PR trigger context this
+        // is the untrusted fork head — tag the step so downstream rules can gate on
+        // trigger context. Default ADO checkout (`checkout: self`) is the common case.
+        if let Some(ref ck) = step.checkout {
+            if ck == "self" {
+                if let Some(node) = graph.nodes.get_mut(step_id) {
+                    node.metadata
+                        .insert(META_CHECKOUT_SELF.into(), "true".into());
+                }
+            }
+        }
+
         // Inherited pipeline/stage/job secrets
         for &secret_id in inherited_secrets {
             graph.add_edge(step_id, secret_id, EdgeKind::HasAccessTo);
@@ -275,7 +328,7 @@ fn process_steps(
                 let conn_name = yaml_value_as_str(val).unwrap_or(raw_key.as_str());
                 if !conn_name.starts_with("$(") {
                     let mut meta = HashMap::new();
-                    meta.insert("service_connection".into(), "true".into());
+                    meta.insert(META_SERVICE_CONNECTION.into(), "true".into());
                     meta.insert(META_IDENTITY_SCOPE.into(), "broad".into());
                     // ADO service connections are the platform's federated-identity equivalent
                     // (modern Azure service connections use workload identity federation /
@@ -727,7 +780,7 @@ steps:
         assert_eq!(secrets.len(), 1);
         assert_eq!(secrets[0].name, "MySecretGroup");
         assert_eq!(
-            secrets[0].metadata.get("variable_group"),
+            secrets[0].metadata.get(META_VARIABLE_GROUP),
             Some(&"true".to_string())
         );
         assert_eq!(graph.completeness, AuthorityCompleteness::Partial);
@@ -760,7 +813,7 @@ steps:
             .find(|i| i.name == "MyServiceConnection")
             .unwrap();
         assert_eq!(
-            conn.metadata.get("service_connection"),
+            conn.metadata.get(META_SERVICE_CONNECTION),
             Some(&"true".to_string())
         );
         assert_eq!(
@@ -1118,6 +1171,65 @@ steps:
             graph.metadata.get(META_TRIGGER),
             Some(&"pr".to_string()),
             "ADO pr: trigger should set graph META_TRIGGER"
+        );
+    }
+
+    #[test]
+    fn self_hosted_pool_by_name_creates_image_with_self_hosted_metadata() {
+        let yaml = r#"
+pool:
+  name: my-self-hosted-pool
+
+steps:
+  - script: echo hi
+"#;
+        let graph = parse(yaml);
+        let images: Vec<_> = graph.nodes_of_kind(NodeKind::Image).collect();
+        assert_eq!(images.len(), 1);
+        assert_eq!(images[0].name, "my-self-hosted-pool");
+        assert_eq!(
+            images[0].metadata.get(META_SELF_HOSTED),
+            Some(&"true".to_string()),
+            "pool.name without vmImage must be tagged self-hosted"
+        );
+    }
+
+    #[test]
+    fn vm_image_pool_is_not_tagged_self_hosted() {
+        let yaml = r#"
+pool:
+  vmImage: ubuntu-latest
+
+steps:
+  - script: echo hi
+"#;
+        let graph = parse(yaml);
+        let images: Vec<_> = graph.nodes_of_kind(NodeKind::Image).collect();
+        assert_eq!(images.len(), 1);
+        assert_eq!(images[0].name, "ubuntu-latest");
+        assert!(
+            !images[0].metadata.contains_key(META_SELF_HOSTED),
+            "pool.vmImage is Microsoft-hosted — must not be tagged self-hosted"
+        );
+    }
+
+    #[test]
+    fn checkout_self_step_tagged_with_meta_checkout_self() {
+        let yaml = r#"
+steps:
+  - checkout: self
+  - script: echo hi
+"#;
+        let graph = parse(yaml);
+        let steps: Vec<_> = graph.nodes_of_kind(NodeKind::Step).collect();
+        assert_eq!(steps.len(), 2);
+        let checkout_step = steps
+            .iter()
+            .find(|s| s.metadata.contains_key(META_CHECKOUT_SELF))
+            .expect("one step must be tagged META_CHECKOUT_SELF");
+        assert_eq!(
+            checkout_step.metadata.get(META_CHECKOUT_SELF),
+            Some(&"true".to_string())
         );
     }
 

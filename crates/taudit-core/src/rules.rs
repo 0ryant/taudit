@@ -1,9 +1,10 @@
 use crate::finding::{Finding, FindingCategory, Recommendation, Severity};
 use crate::graph::{
     is_docker_digest_pinned, is_sha_pinned, AuthorityCompleteness, AuthorityGraph, EdgeKind,
-    IdentityScope, NodeId, NodeKind, TrustZone, META_ATTESTS, META_CLI_FLAG_EXPOSED,
-    META_CONTAINER, META_DIGEST, META_IDENTITY_SCOPE, META_OIDC, META_PERMISSIONS, META_TRIGGER,
-    META_WRITES_ENV_GATE,
+    IdentityScope, NodeId, NodeKind, TrustZone, META_ATTESTS, META_CHECKOUT_SELF,
+    META_CLI_FLAG_EXPOSED, META_CONTAINER, META_DIGEST, META_IDENTITY_SCOPE, META_OIDC,
+    META_PERMISSIONS, META_SELF_HOSTED, META_SERVICE_CONNECTION, META_TRIGGER,
+    META_VARIABLE_GROUP, META_WRITES_ENV_GATE,
 };
 use crate::propagation;
 
@@ -850,6 +851,194 @@ pub fn self_mutating_pipeline(graph: &AuthorityGraph) -> Vec<Finding> {
     findings
 }
 
+/// Rule: ADO variable group consumed by a PR-triggered job.
+///
+/// Variable groups hold secrets scoped to pipelines. When a PR-triggered job has
+/// `HasAccessTo` a Secret/Identity carrying `META_VARIABLE_GROUP = "true"`, those
+/// secrets cross into an untrusted-contributor execution context.
+pub fn variable_group_in_pr_job(graph: &AuthorityGraph) -> Vec<Finding> {
+    // Only fires when the pipeline has a PR trigger
+    let trigger = graph
+        .metadata
+        .get(META_TRIGGER)
+        .map(|s| s.as_str())
+        .unwrap_or("");
+    if trigger != "pull_request_target" && trigger != "pr" {
+        return Vec::new();
+    }
+
+    let mut findings = Vec::new();
+
+    for step in graph.nodes_of_kind(NodeKind::Step) {
+        let accessed_var_groups: Vec<&_> = graph
+            .edges_from(step.id)
+            .filter(|e| e.kind == EdgeKind::HasAccessTo)
+            .filter_map(|e| graph.node(e.to))
+            .filter(|n| {
+                (n.kind == NodeKind::Secret || n.kind == NodeKind::Identity)
+                    && n.metadata
+                        .get(META_VARIABLE_GROUP)
+                        .map(|v| v == "true")
+                        .unwrap_or(false)
+            })
+            .collect();
+
+        if !accessed_var_groups.is_empty() {
+            let group_names: Vec<_> = accessed_var_groups.iter().map(|n| n.name.as_str()).collect();
+            findings.push(Finding {
+                severity: Severity::Critical,
+                category: FindingCategory::VariableGroupInPrJob,
+                path: None,
+                nodes_involved: std::iter::once(step.id)
+                    .chain(accessed_var_groups.iter().map(|n| n.id))
+                    .collect(),
+                message: format!(
+                    "PR-triggered step '{}' accesses variable group(s) [{}] — secrets cross into untrusted PR execution context",
+                    step.name,
+                    group_names.join(", ")
+                ),
+                recommendation: Recommendation::Manual {
+                    action: "Move variable group consumption into a workflow triggered by a trusted event (e.g. merge to main), or gate PR pipelines behind explicit environment approvals".into(),
+                },
+            });
+        }
+    }
+
+    findings
+}
+
+/// Rule: self-hosted agent pool used by a PR-triggered pipeline that also checks out the repo.
+///
+/// All three factors present — self-hosted pool + PR trigger + `checkout:self` — combine to
+/// allow an attacker to land malicious git hooks on the shared runner via a PR. Those hooks
+/// persist across pipeline runs and execute with full pipeline authority.
+pub fn self_hosted_pool_pr_hijack(graph: &AuthorityGraph) -> Vec<Finding> {
+    let trigger = graph
+        .metadata
+        .get(META_TRIGGER)
+        .map(|s| s.as_str())
+        .unwrap_or("");
+    if trigger != "pull_request_target" && trigger != "pr" {
+        return Vec::new();
+    }
+
+    // Check if any Image node is self-hosted
+    let has_self_hosted_pool = graph.nodes_of_kind(NodeKind::Image).any(|n| {
+        n.metadata
+            .get(META_SELF_HOSTED)
+            .map(|v| v == "true")
+            .unwrap_or(false)
+    });
+
+    if !has_self_hosted_pool {
+        return Vec::new();
+    }
+
+    // Check if any Step does checkout:self
+    let checkout_steps: Vec<&_> = graph
+        .nodes_of_kind(NodeKind::Step)
+        .filter(|n| {
+            n.metadata
+                .get(META_CHECKOUT_SELF)
+                .map(|v| v == "true")
+                .unwrap_or(false)
+        })
+        .collect();
+
+    if checkout_steps.is_empty() {
+        return Vec::new();
+    }
+
+    // All three factors present: self-hosted + PR trigger + checkout:self.
+    // Collect self-hosted pool nodes for the finding.
+    let pool_nodes: Vec<&_> = graph
+        .nodes_of_kind(NodeKind::Image)
+        .filter(|n| {
+            n.metadata
+                .get(META_SELF_HOSTED)
+                .map(|v| v == "true")
+                .unwrap_or(false)
+        })
+        .collect();
+
+    let mut nodes_involved: Vec<NodeId> = pool_nodes.iter().map(|n| n.id).collect();
+    nodes_involved.extend(checkout_steps.iter().map(|n| n.id));
+
+    vec![Finding {
+        severity: Severity::Critical,
+        category: FindingCategory::SelfHostedPoolPrHijack,
+        path: None,
+        nodes_involved,
+        message:
+            "PR-triggered pipeline uses self-hosted agent pool with checkout:self — enables git hook injection persisting across pipeline runs on the shared runner"
+                .into(),
+        recommendation: Recommendation::Manual {
+            action: "Run PR pipelines on Microsoft-hosted (ephemeral) agents, or disable checkout:self for PR-triggered jobs on self-hosted pools".into(),
+        },
+    }]
+}
+
+/// Rule: ADO service connection with broad/unknown scope and no OIDC federation,
+/// reachable from a PR-triggered job.
+///
+/// Static credentials backing broad-scope service connections can carry
+/// subscription-wide Azure RBAC. When a PR-triggered step has `HasAccessTo` one of
+/// these, PR-author-controlled code can move laterally into the Azure tenant.
+pub fn service_connection_scope_mismatch(graph: &AuthorityGraph) -> Vec<Finding> {
+    let trigger = graph
+        .metadata
+        .get(META_TRIGGER)
+        .map(|s| s.as_str())
+        .unwrap_or("");
+    if trigger != "pull_request_target" && trigger != "pr" {
+        return Vec::new();
+    }
+
+    let mut findings = Vec::new();
+
+    for step in graph.nodes_of_kind(NodeKind::Step) {
+        let broad_scs: Vec<&_> = graph
+            .edges_from(step.id)
+            .filter(|e| e.kind == EdgeKind::HasAccessTo)
+            .filter_map(|e| graph.node(e.to))
+            .filter(|n| {
+                n.kind == NodeKind::Identity
+                    && n.metadata
+                        .get(META_SERVICE_CONNECTION)
+                        .map(|v| v == "true")
+                        .unwrap_or(false)
+                    && n.metadata
+                        .get(META_OIDC)
+                        .map(|v| v != "true")
+                        .unwrap_or(true) // not OIDC-federated
+                    && matches!(
+                        n.metadata.get(META_IDENTITY_SCOPE).map(|s| s.as_str()),
+                        Some("broad") | Some("Broad") | None // unknown scope is also a risk
+                    )
+            })
+            .collect();
+
+        for sc in &broad_scs {
+            findings.push(Finding {
+                severity: Severity::High,
+                category: FindingCategory::ServiceConnectionScopeMismatch,
+                path: None,
+                nodes_involved: vec![step.id, sc.id],
+                message: format!(
+                    "PR-triggered step '{}' accesses service connection '{}' with broad/unknown scope and no OIDC federation — static credential may have subscription-wide Azure RBAC",
+                    step.name, sc.name
+                ),
+                recommendation: Recommendation::FederateIdentity {
+                    static_secret: sc.name.clone(),
+                    oidc_provider: "Azure DevOps workload identity federation (OIDC)".into(),
+                },
+            });
+        }
+    }
+
+    findings
+}
+
 /// Run all rules against a graph.
 pub fn run_all_rules(graph: &AuthorityGraph, max_hops: usize) -> Vec<Finding> {
     let mut findings = Vec::new();
@@ -868,6 +1057,9 @@ pub fn run_all_rules(graph: &AuthorityGraph, max_hops: usize) -> Vec<Finding> {
     findings.extend(authority_cycle(graph));
     findings.extend(uplift_without_attestation(graph));
     findings.extend(self_mutating_pipeline(graph));
+    findings.extend(variable_group_in_pr_job(graph));
+    findings.extend(self_hosted_pool_pr_hijack(graph));
+    findings.extend(service_connection_scope_mismatch(graph));
 
     apply_confidence_cap(graph, &mut findings);
 
@@ -1509,6 +1701,154 @@ mod tests {
         assert!(
             findings[0].nodes_involved.contains(&c),
             "C must be in nodes_involved"
+        );
+    }
+
+    #[test]
+    fn variable_group_in_pr_job_fires_on_pr_trigger_with_var_group() {
+        let mut g = AuthorityGraph::new(source("azure-pipelines.yml"));
+        g.metadata.insert(META_TRIGGER.into(), "pr".into());
+        let mut secret_meta = std::collections::HashMap::new();
+        secret_meta.insert(META_VARIABLE_GROUP.into(), "true".into());
+        let secret = g.add_node_with_metadata(
+            NodeKind::Secret,
+            "prod-deploy-secrets",
+            TrustZone::FirstParty,
+            secret_meta,
+        );
+        let step = g.add_node(NodeKind::Step, "deploy", TrustZone::FirstParty);
+        g.add_edge(step, secret, EdgeKind::HasAccessTo);
+
+        let findings = variable_group_in_pr_job(&g);
+        assert_eq!(findings.len(), 1);
+        assert_eq!(findings[0].severity, Severity::Critical);
+        assert_eq!(findings[0].category, FindingCategory::VariableGroupInPrJob);
+        assert!(findings[0].message.contains("prod-deploy-secrets"));
+    }
+
+    #[test]
+    fn variable_group_in_pr_job_no_fire_without_pr_trigger() {
+        let mut g = AuthorityGraph::new(source("azure-pipelines.yml"));
+        // No trigger metadata — should not fire
+        let mut secret_meta = std::collections::HashMap::new();
+        secret_meta.insert(META_VARIABLE_GROUP.into(), "true".into());
+        let secret = g.add_node_with_metadata(
+            NodeKind::Secret,
+            "prod-deploy-secrets",
+            TrustZone::FirstParty,
+            secret_meta,
+        );
+        let step = g.add_node(NodeKind::Step, "deploy", TrustZone::FirstParty);
+        g.add_edge(step, secret, EdgeKind::HasAccessTo);
+
+        let findings = variable_group_in_pr_job(&g);
+        assert!(
+            findings.is_empty(),
+            "no PR trigger → variable_group_in_pr_job must not fire"
+        );
+    }
+
+    #[test]
+    fn self_hosted_pool_pr_hijack_fires_when_all_three_factors_present() {
+        let mut g = AuthorityGraph::new(source("azure-pipelines.yml"));
+        g.metadata.insert(META_TRIGGER.into(), "pr".into());
+
+        let mut pool_meta = std::collections::HashMap::new();
+        pool_meta.insert(META_SELF_HOSTED.into(), "true".into());
+        g.add_node_with_metadata(
+            NodeKind::Image,
+            "self-hosted-pool",
+            TrustZone::FirstParty,
+            pool_meta,
+        );
+
+        let mut step_meta = std::collections::HashMap::new();
+        step_meta.insert(META_CHECKOUT_SELF.into(), "true".into());
+        g.add_node_with_metadata(NodeKind::Step, "checkout", TrustZone::FirstParty, step_meta);
+
+        let findings = self_hosted_pool_pr_hijack(&g);
+        assert_eq!(findings.len(), 1);
+        assert_eq!(findings[0].severity, Severity::Critical);
+        assert_eq!(
+            findings[0].category,
+            FindingCategory::SelfHostedPoolPrHijack
+        );
+        assert!(findings[0].message.contains("self-hosted"));
+    }
+
+    #[test]
+    fn self_hosted_pool_pr_hijack_no_fire_without_pr_trigger() {
+        let mut g = AuthorityGraph::new(source("azure-pipelines.yml"));
+        // No trigger metadata
+
+        let mut pool_meta = std::collections::HashMap::new();
+        pool_meta.insert(META_SELF_HOSTED.into(), "true".into());
+        g.add_node_with_metadata(
+            NodeKind::Image,
+            "self-hosted-pool",
+            TrustZone::FirstParty,
+            pool_meta,
+        );
+
+        let mut step_meta = std::collections::HashMap::new();
+        step_meta.insert(META_CHECKOUT_SELF.into(), "true".into());
+        g.add_node_with_metadata(NodeKind::Step, "checkout", TrustZone::FirstParty, step_meta);
+
+        let findings = self_hosted_pool_pr_hijack(&g);
+        assert!(
+            findings.is_empty(),
+            "no PR trigger → self_hosted_pool_pr_hijack must not fire"
+        );
+    }
+
+    #[test]
+    fn service_connection_scope_mismatch_fires_on_pr_broad_non_oidc() {
+        let mut g = AuthorityGraph::new(source("azure-pipelines.yml"));
+        g.metadata.insert(META_TRIGGER.into(), "pr".into());
+
+        let mut sc_meta = std::collections::HashMap::new();
+        sc_meta.insert(META_SERVICE_CONNECTION.into(), "true".into());
+        sc_meta.insert(META_IDENTITY_SCOPE.into(), "broad".into());
+        // No META_OIDC → treated as not OIDC-federated
+        let sc = g.add_node_with_metadata(
+            NodeKind::Identity,
+            "prod-azure-sc",
+            TrustZone::FirstParty,
+            sc_meta,
+        );
+        let step = g.add_node(NodeKind::Step, "deploy", TrustZone::FirstParty);
+        g.add_edge(step, sc, EdgeKind::HasAccessTo);
+
+        let findings = service_connection_scope_mismatch(&g);
+        assert_eq!(findings.len(), 1);
+        assert_eq!(findings[0].severity, Severity::High);
+        assert_eq!(
+            findings[0].category,
+            FindingCategory::ServiceConnectionScopeMismatch
+        );
+        assert!(findings[0].message.contains("prod-azure-sc"));
+    }
+
+    #[test]
+    fn service_connection_scope_mismatch_no_fire_without_pr_trigger() {
+        let mut g = AuthorityGraph::new(source("azure-pipelines.yml"));
+        // No trigger metadata
+        let mut sc_meta = std::collections::HashMap::new();
+        sc_meta.insert(META_SERVICE_CONNECTION.into(), "true".into());
+        sc_meta.insert(META_IDENTITY_SCOPE.into(), "broad".into());
+        let sc = g.add_node_with_metadata(
+            NodeKind::Identity,
+            "prod-azure-sc",
+            TrustZone::FirstParty,
+            sc_meta,
+        );
+        let step = g.add_node(NodeKind::Step, "deploy", TrustZone::FirstParty);
+        g.add_edge(step, sc, EdgeKind::HasAccessTo);
+
+        let findings = service_connection_scope_mismatch(&g);
+        assert!(
+            findings.is_empty(),
+            "no PR trigger → service_connection_scope_mismatch must not fire"
         );
     }
 }

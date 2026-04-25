@@ -28,6 +28,14 @@ pub const META_TRIGGER: &str = "trigger";
 pub const META_WRITES_ENV_GATE: &str = "writes_env_gate";
 /// Marks a Step that performs cryptographic provenance attestation (e.g. `actions/attest-build-provenance`).
 pub const META_ATTESTS: &str = "attests";
+/// Marks a Secret node sourced from an ADO variable group (vs inline pipeline variable).
+pub const META_VARIABLE_GROUP: &str = "variable_group";
+/// Marks an Image node as a self-hosted agent pool (pool.name on ADO; runs-on: self-hosted on GHA).
+pub const META_SELF_HOSTED: &str = "self_hosted";
+/// Marks a Step that performs a `checkout: self` (ADO) or default `actions/checkout` on a PR context.
+pub const META_CHECKOUT_SELF: &str = "checkout_self";
+/// Marks an Identity node as an ADO service connection.
+pub const META_SERVICE_CONNECTION: &str = "service_connection";
 
 // ── Shared helpers ─────────────────────────────────────
 
