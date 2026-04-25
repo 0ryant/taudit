@@ -40,6 +40,11 @@ pub const META_SERVICE_CONNECTION: &str = "service_connection";
 /// Implicit tokens are structurally accessible to all tasks by platform design — exposure
 /// to untrusted steps is Info-level (structural) rather than Critical (misconfiguration).
 pub const META_IMPLICIT: &str = "implicit";
+/// Marks a Step that belongs to an ADO deployment job whose `environment:` is
+/// configured with required approvals — a manual gate that breaks automatic
+/// authority propagation. Findings whose path crosses such a node have their
+/// severity reduced by one step (Critical → High → Medium → Low).
+pub const META_ENV_APPROVAL: &str = "env_approval";
 
 // ── Shared helpers ─────────────────────────────────────
 

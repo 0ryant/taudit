@@ -103,6 +103,8 @@ impl PipelineParser for AdoParser {
                         .copied()
                         .collect();
 
+                    let steps_start = graph.nodes.len();
+
                     process_steps(
                         job.steps.as_deref().unwrap_or(&[]),
                         &job_name,
@@ -115,6 +117,10 @@ impl PipelineParser for AdoParser {
 
                     if let Some(ref tpl) = job.template {
                         add_template_delegation(&job_name, tpl, token_id, &mut graph);
+                    }
+
+                    if job.has_environment_binding() {
+                        tag_job_steps_env_approval(&mut graph, steps_start);
                     }
                 }
             }
@@ -137,6 +143,8 @@ impl PipelineParser for AdoParser {
                     .copied()
                     .collect();
 
+                let steps_start = graph.nodes.len();
+
                 process_steps(
                     job.steps.as_deref().unwrap_or(&[]),
                     &job_name,
@@ -149,6 +157,10 @@ impl PipelineParser for AdoParser {
 
                 if let Some(ref tpl) = job.template {
                     add_template_delegation(&job_name, tpl, token_id, &mut graph);
+                }
+
+                if job.has_environment_binding() {
+                    tag_job_steps_env_approval(&mut graph, steps_start);
                 }
             }
         } else if let Some(ref steps) = pipeline.steps {
@@ -199,6 +211,19 @@ fn process_pool(pool: &Option<serde_yaml::Value>, graph: &mut AuthorityGraph) {
         meta.insert(META_SELF_HOSTED.into(), "true".into());
     }
     graph.add_node_with_metadata(NodeKind::Image, image_name, TrustZone::FirstParty, meta);
+}
+
+/// Tag every Step node added since `start_idx` with META_ENV_APPROVAL.
+/// Used after `process_steps` for a job whose `environment:` is configured —
+/// the environment binding indicates the job sits behind a manual approval
+/// gate, which is an isolation boundary that breaks automatic propagation.
+fn tag_job_steps_env_approval(graph: &mut AuthorityGraph, start_idx: usize) {
+    for node in graph.nodes.iter_mut().skip(start_idx) {
+        if node.kind == NodeKind::Step {
+            node.metadata
+                .insert(META_ENV_APPROVAL.into(), "true".into());
+        }
+    }
 }
 
 /// Process a variable list, creating Secret nodes and returning their IDs.
@@ -596,6 +621,19 @@ pub struct AdoJob {
     /// Job-level template reference
     #[serde(default)]
     pub template: Option<String>,
+    /// Deployment-job environment binding. Two YAML shapes:
+    ///
+    ///   - `environment: production` (string shorthand)
+    ///   - `environment: { name: staging, resourceType: VirtualMachine }` (mapping)
+    ///
+    /// When present, the environment may have approvals/checks attached in ADO's
+    /// environment configuration. Approvals are a manual gate — authority cannot
+    /// propagate past one without human intervention. We treat any `environment:`
+    /// binding as an approval candidate and tag the job's steps so propagation
+    /// rules can downgrade severity. (We can't see the approval config from YAML
+    /// alone; the binding is the strongest signal available at parse time.)
+    #[serde(default)]
+    pub environment: Option<serde_yaml::Value>,
 }
 
 impl AdoJob {
@@ -605,6 +643,22 @@ impl AdoJob {
             .or(self.deployment.as_deref())
             .unwrap_or("job")
             .to_string()
+    }
+
+    /// Returns true when the job is bound to an `environment:` — either the
+    /// string form (`environment: production`) or the mapping form with a
+    /// non-empty `name:` field. An empty mapping or empty string is ignored.
+    pub fn has_environment_binding(&self) -> bool {
+        match self.environment.as_ref() {
+            None => false,
+            Some(serde_yaml::Value::String(s)) => !s.trim().is_empty(),
+            Some(serde_yaml::Value::Mapping(m)) => m
+                .get("name")
+                .and_then(|v| v.as_str())
+                .map(|s| !s.trim().is_empty())
+                .unwrap_or(false),
+            _ => false,
+        }
     }
 }
 
@@ -1251,6 +1305,101 @@ steps:
             steps[0].metadata.get(META_WRITES_ENV_GATE),
             Some(&"true".to_string()),
             "##vso[task.setvariable] must mark META_WRITES_ENV_GATE"
+        );
+    }
+
+    #[test]
+    fn environment_key_tags_job_with_env_approval() {
+        // String form: `environment: production`
+        let yaml_string_form = r#"
+jobs:
+  - deployment: DeployWeb
+    environment: production
+    steps:
+      - script: echo deploying
+        displayName: Deploy
+"#;
+        let g1 = parse(yaml_string_form);
+        let tagged: Vec<_> = g1
+            .nodes_of_kind(NodeKind::Step)
+            .filter(|s| s.metadata.get(META_ENV_APPROVAL) == Some(&"true".to_string()))
+            .collect();
+        assert!(
+            !tagged.is_empty(),
+            "string-form `environment:` must tag job's step nodes with META_ENV_APPROVAL"
+        );
+
+        // Mapping form: `environment: { name: staging }`
+        let yaml_mapping_form = r#"
+jobs:
+  - deployment: DeployAPI
+    environment:
+      name: staging
+      resourceType: VirtualMachine
+    steps:
+      - script: echo deploying
+        displayName: Deploy
+"#;
+        let g2 = parse(yaml_mapping_form);
+        let tagged2: Vec<_> = g2
+            .nodes_of_kind(NodeKind::Step)
+            .filter(|s| s.metadata.get(META_ENV_APPROVAL) == Some(&"true".to_string()))
+            .collect();
+        assert!(
+            !tagged2.is_empty(),
+            "mapping-form `environment: {{ name: ... }}` must tag job's step nodes"
+        );
+
+        // Negative: a job with no `environment:` must not be tagged
+        let yaml_no_env = r#"
+jobs:
+  - job: Build
+    steps:
+      - script: echo building
+"#;
+        let g3 = parse(yaml_no_env);
+        let any_tagged = g3
+            .nodes_of_kind(NodeKind::Step)
+            .any(|s| s.metadata.contains_key(META_ENV_APPROVAL));
+        assert!(
+            !any_tagged,
+            "jobs without `environment:` must not carry META_ENV_APPROVAL"
+        );
+    }
+
+    #[test]
+    fn environment_tag_isolated_to_gated_job_only() {
+        // Two jobs side by side: only the deployment job has environment.
+        // Steps from the non-gated job must NOT be tagged.
+        let yaml = r#"
+jobs:
+  - job: Build
+    steps:
+      - script: echo build
+        displayName: build-step
+  - deployment: DeployProd
+    environment: production
+    steps:
+      - script: echo deploy
+        displayName: deploy-step
+"#;
+        let g = parse(yaml);
+        let build_step = g
+            .nodes_of_kind(NodeKind::Step)
+            .find(|s| s.name == "build-step")
+            .expect("build-step must exist");
+        let deploy_step = g
+            .nodes_of_kind(NodeKind::Step)
+            .find(|s| s.name == "deploy-step")
+            .expect("deploy-step must exist");
+        assert!(
+            !build_step.metadata.contains_key(META_ENV_APPROVAL),
+            "non-gated job's step must not be tagged"
+        );
+        assert_eq!(
+            deploy_step.metadata.get(META_ENV_APPROVAL),
+            Some(&"true".to_string()),
+            "gated deployment job's step must be tagged"
         );
     }
 }

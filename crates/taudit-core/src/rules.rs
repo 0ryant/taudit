@@ -2,9 +2,9 @@ use crate::finding::{Finding, FindingCategory, Recommendation, Severity};
 use crate::graph::{
     is_docker_digest_pinned, is_sha_pinned, AuthorityCompleteness, AuthorityGraph, EdgeKind,
     IdentityScope, NodeId, NodeKind, TrustZone, META_ATTESTS, META_CHECKOUT_SELF,
-    META_CLI_FLAG_EXPOSED, META_CONTAINER, META_DIGEST, META_IDENTITY_SCOPE, META_IMPLICIT,
-    META_OIDC, META_PERMISSIONS, META_SELF_HOSTED, META_SERVICE_CONNECTION, META_TRIGGER,
-    META_VARIABLE_GROUP, META_WRITES_ENV_GATE,
+    META_CLI_FLAG_EXPOSED, META_CONTAINER, META_DIGEST, META_ENV_APPROVAL, META_IDENTITY_SCOPE,
+    META_IMPLICIT, META_OIDC, META_PERMISSIONS, META_SELF_HOSTED, META_SERVICE_CONNECTION,
+    META_TRIGGER, META_VARIABLE_GROUP, META_WRITES_ENV_GATE,
 };
 use crate::propagation;
 
@@ -63,19 +63,46 @@ pub fn authority_propagation(graph: &AuthorityGraph, max_hops: usize) -> Vec<Fin
                 .map(|s| s == "constrained")
                 .unwrap_or(false);
 
-            let severity = if sink_is_pinned && source_is_constrained {
+            let source_is_oidc = graph
+                .node(path.source)
+                .and_then(|n| n.metadata.get(META_OIDC))
+                .map(|v| v == "true")
+                .unwrap_or(false);
+
+            // OIDC cloud identities (AWS/GCP/Azure federated creds) carry direct
+            // cloud blast radius — even SHA-pinned third-party code reaching them
+            // can exfiltrate credentials. The token itself is the threat, not the
+            // sink's trust zone, so OIDC sources are Critical regardless of pinning.
+            let base_severity = if sink_is_pinned && source_is_constrained && !source_is_oidc {
                 Severity::Medium
-            } else if sink_is_pinned {
+            } else if sink_is_pinned && !source_is_oidc {
                 Severity::High
             } else {
+                // Untrusted sink OR OIDC source — Critical regardless of pinning
                 Severity::Critical
+            };
+
+            // ADO environment approvals are a manual gate — authority cannot
+            // propagate past one without human intervention. If any node on the
+            // propagation path carries META_ENV_APPROVAL, downgrade severity by
+            // one step and annotate the message so the operator can see why.
+            let crosses_approval_gate = path_crosses_env_approval(graph, &path);
+            let (severity, message_suffix) = if crosses_approval_gate {
+                (
+                    downgrade_one_step(base_severity),
+                    " (mitigated: environment approval gate)",
+                )
+            } else {
+                (base_severity, "")
             };
 
             Finding {
                 severity,
                 category: FindingCategory::AuthorityPropagation,
                 nodes_involved: vec![path.source, path.sink],
-                message: format!("{source_name} propagated to {sink_name} across trust boundary"),
+                message: format!(
+                    "{source_name} propagated to {sink_name} across trust boundary{message_suffix}"
+                ),
                 recommendation: Recommendation::TsafeRemediation {
                     command: "tsafe exec --ns <scoped-namespace> -- <command>".to_string(),
                     explanation: format!("Scope {source_name} to only the steps that need it"),
@@ -84,6 +111,44 @@ pub fn authority_propagation(graph: &AuthorityGraph, max_hops: usize) -> Vec<Fin
             }
         })
         .collect()
+}
+
+/// Returns true if any node touched by `path` (source, sink, or any edge
+/// endpoint along the way) carries META_ENV_APPROVAL = "true".
+fn path_crosses_env_approval(graph: &AuthorityGraph, path: &propagation::PropagationPath) -> bool {
+    let has_marker = |id: NodeId| {
+        graph
+            .node(id)
+            .and_then(|n| n.metadata.get(META_ENV_APPROVAL))
+            .map(|v| v == "true")
+            .unwrap_or(false)
+    };
+
+    if has_marker(path.source) || has_marker(path.sink) {
+        return true;
+    }
+
+    for &edge_id in &path.edges {
+        if let Some(edge) = graph.edge(edge_id) {
+            if has_marker(edge.from) || has_marker(edge.to) {
+                return true;
+            }
+        }
+    }
+    false
+}
+
+/// Reduce a severity by one step. Critical→High, High→Medium, Medium→Low.
+/// Low and Info are already at the floor of meaningful reduction and are
+/// returned unchanged.
+fn downgrade_one_step(severity: Severity) -> Severity {
+    match severity {
+        Severity::Critical => Severity::High,
+        Severity::High => Severity::Medium,
+        Severity::Medium => Severity::Low,
+        Severity::Low => Severity::Low,
+        Severity::Info => Severity::Info,
+    }
 }
 
 /// MVP Rule 2: Identity scope broader than actual usage.
@@ -1313,8 +1378,57 @@ mod tests {
             .filter(|f| f.nodes_involved.contains(&image))
             .collect();
         assert!(!image_findings.is_empty());
-        // SHA-pinned targets get High, not Critical
+        // SHA-pinned targets get High, not Critical (non-OIDC source)
         assert_eq!(image_findings[0].severity, Severity::High);
+    }
+
+    #[test]
+    fn oidc_identity_to_pinned_third_party_is_critical() {
+        let mut g = AuthorityGraph::new(source("ci.yml"));
+
+        // OIDC-federated cloud identity — token itself is the threat
+        let mut id_meta = std::collections::HashMap::new();
+        id_meta.insert(META_OIDC.into(), "true".into());
+        let identity = g.add_node_with_metadata(
+            NodeKind::Identity,
+            "AWS_OIDC_ROLE",
+            TrustZone::FirstParty,
+            id_meta,
+        );
+
+        // SHA-pinned ThirdParty image — would normally be High without OIDC
+        let mut img_meta = std::collections::HashMap::new();
+        img_meta.insert(
+            META_DIGEST.into(),
+            "a5ac7e51b41094c92402da3b24376905380afc29".into(),
+        );
+        let image = g.add_node_with_metadata(
+            NodeKind::Image,
+            "aws-actions/configure-aws-credentials@a5ac7e51b41094c92402da3b24376905380afc29",
+            TrustZone::ThirdParty,
+            img_meta,
+        );
+
+        // Step in ThirdParty zone holds the OIDC identity and uses the pinned image
+        let step = g.add_node(
+            NodeKind::Step,
+            "configure-aws-credentials",
+            TrustZone::ThirdParty,
+        );
+        g.add_edge(step, identity, EdgeKind::HasAccessTo);
+        g.add_edge(step, image, EdgeKind::UsesImage);
+
+        let findings = authority_propagation(&g, 4);
+        let image_findings: Vec<_> = findings
+            .iter()
+            .filter(|f| f.nodes_involved.contains(&image))
+            .collect();
+        assert!(
+            !image_findings.is_empty(),
+            "expected OIDC→pinned propagation finding"
+        );
+        // OIDC source escalates pinned ThirdParty from High → Critical
+        assert_eq!(image_findings[0].severity, Severity::Critical);
     }
 
     #[test]
@@ -2084,5 +2198,77 @@ mod tests {
             ),
             "service_connection_scope_mismatch must recommend CellosRemediation"
         );
+    }
+
+    /// Build a propagation graph with an optional approval-gated middle step:
+    ///   Secret → middle Step (FirstParty) → Artifact → ThirdParty Step.
+    /// When `gated` is true the middle step carries META_ENV_APPROVAL.
+    fn build_env_approval_graph(gated: bool) -> AuthorityGraph {
+        let mut g = AuthorityGraph::new(source("azure-pipelines.yml"));
+
+        let secret = g.add_node(NodeKind::Secret, "DEPLOY_KEY", TrustZone::FirstParty);
+        let mut middle_meta = std::collections::HashMap::new();
+        if gated {
+            middle_meta.insert(META_ENV_APPROVAL.into(), "true".into());
+        }
+        let middle = g.add_node_with_metadata(
+            NodeKind::Step,
+            "deploy-prod",
+            TrustZone::FirstParty,
+            middle_meta,
+        );
+        let artifact = g.add_node(NodeKind::Artifact, "release.tar", TrustZone::FirstParty);
+        let third = g.add_node(
+            NodeKind::Step,
+            "third-party/uploader",
+            TrustZone::ThirdParty,
+        );
+
+        g.add_edge(middle, secret, EdgeKind::HasAccessTo);
+        g.add_edge(middle, artifact, EdgeKind::Produces);
+        g.add_edge(artifact, third, EdgeKind::Consumes);
+
+        g
+    }
+
+    #[test]
+    fn env_approval_gate_reduces_propagation_severity() {
+        // Baseline: no gate → Critical (third-party sink, not SHA-pinned)
+        let baseline = authority_propagation(&build_env_approval_graph(false), 4);
+        let baseline_finding = baseline
+            .iter()
+            .find(|f| f.category == FindingCategory::AuthorityPropagation)
+            .expect("baseline must produce an AuthorityPropagation finding");
+        assert_eq!(baseline_finding.severity, Severity::Critical);
+        assert!(!baseline_finding
+            .message
+            .contains("environment approval gate"));
+
+        // Gated: same shape, middle step tagged → severity drops one step to High
+        let gated = authority_propagation(&build_env_approval_graph(true), 4);
+        let gated_finding = gated
+            .iter()
+            .find(|f| f.category == FindingCategory::AuthorityPropagation)
+            .expect("gated must produce an AuthorityPropagation finding");
+        assert_eq!(
+            gated_finding.severity,
+            Severity::High,
+            "Critical must downgrade to High when path crosses an env-approval gate"
+        );
+        assert!(
+            gated_finding
+                .message
+                .contains("(mitigated: environment approval gate)"),
+            "gated finding must annotate the mitigation in its message"
+        );
+    }
+
+    #[test]
+    fn downgrade_one_step_table() {
+        assert_eq!(downgrade_one_step(Severity::Critical), Severity::High);
+        assert_eq!(downgrade_one_step(Severity::High), Severity::Medium);
+        assert_eq!(downgrade_one_step(Severity::Medium), Severity::Low);
+        assert_eq!(downgrade_one_step(Severity::Low), Severity::Low);
+        assert_eq!(downgrade_one_step(Severity::Info), Severity::Info);
     }
 }
