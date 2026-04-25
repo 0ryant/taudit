@@ -1,4 +1,4 @@
-use crate::graph::{AuthorityGraph, EdgeKind, NodeKind};
+use crate::graph::{AuthorityGraph, EdgeKind, NodeId, NodeKind, META_IDENTITY_SCOPE};
 
 /// A row in the authority map: one step and its authority grants.
 #[derive(Debug)]
@@ -20,13 +20,79 @@ pub struct AuthorityMap {
 
 /// Build the authority map from a graph.
 pub fn authority_map(graph: &AuthorityGraph) -> AuthorityMap {
-    // Collect authority sources (secrets + identities) in stable order
-    let authorities: Vec<_> = graph
+    // Collect authority sources with all metadata needed for disambiguation.
+    // Two-pass approach: first gather raw data, then detect collisions and qualify.
+    struct RawAuthority {
+        id: NodeId,
+        name: String,
+        zone: String,
+        scope: Option<String>,
+    }
+
+    let raw: Vec<RawAuthority> = graph
         .authority_sources()
-        .map(|n| (n.id, n.name.clone()))
+        .map(|n| RawAuthority {
+            id: n.id,
+            name: n.name.clone(),
+            zone: format!("{:?}", n.trust_zone),
+            scope: n.metadata.get(META_IDENTITY_SCOPE).cloned(),
+        })
         .collect();
 
-    let authority_names: Vec<String> = authorities.iter().map(|(_, name)| name.clone()).collect();
+    // Pass 1: count name occurrences to detect collisions.
+    let mut name_counts: std::collections::HashMap<&str, usize> =
+        std::collections::HashMap::new();
+    for r in &raw {
+        *name_counts.entry(r.name.as_str()).or_insert(0) += 1;
+    }
+
+    // Pass 2: build display names, qualifying any that collide.
+    // Track (name, qualifier) occurrences so we can append numeric suffixes
+    // when the qualifier alone still collides.
+    let mut qualifier_counts: std::collections::HashMap<(String, String), usize> =
+        std::collections::HashMap::new();
+    for r in &raw {
+        if name_counts.get(r.name.as_str()).copied().unwrap_or(0) > 1 {
+            let qualifier = r.scope.clone().unwrap_or_else(|| r.zone.clone());
+            *qualifier_counts
+                .entry((r.name.clone(), qualifier))
+                .or_insert(0) += 1;
+        }
+    }
+
+    let mut seen: std::collections::HashMap<(String, String), usize> =
+        std::collections::HashMap::new();
+    let authority_names: Vec<String> = raw
+        .iter()
+        .map(|r| {
+            if name_counts.get(r.name.as_str()).copied().unwrap_or(0) <= 1 {
+                // Unique name — no qualifier needed.
+                r.name.clone()
+            } else {
+                let qualifier = r.scope.clone().unwrap_or_else(|| r.zone.clone());
+                let key = (r.name.clone(), qualifier.clone());
+                let total_with_qualifier =
+                    qualifier_counts.get(&key).copied().unwrap_or(1);
+                let idx = {
+                    let entry = seen.entry(key).or_insert(0);
+                    *entry += 1;
+                    *entry
+                };
+                if total_with_qualifier <= 1 {
+                    // Qualifier alone is sufficient.
+                    format!("{} ({})", r.name, qualifier)
+                } else {
+                    // Multiple share the same qualifier — append numeric index.
+                    format!("{} ({}#{})", r.name, qualifier, idx)
+                }
+            }
+        })
+        .collect();
+
+    // `authorities` keeps the original node name for internal lookup;
+    // `authority_names` holds the qualified display names used for rendering.
+    let authorities: Vec<(NodeId, String)> =
+        raw.iter().map(|r| (r.id, r.name.clone())).collect();
 
     // Build rows for each step
     let mut rows = Vec::new();
@@ -79,7 +145,33 @@ pub fn render_map(map: &AuthorityMap) -> String {
         .unwrap_or(4)
         .max(4);
 
-    let auth_widths: Vec<usize> = map.authorities.iter().map(|a| a.len().max(3)).collect();
+    // Clamp authority column names to MAX_COL chars with ellipsis to prevent
+    // wide tables from wrapping. `chars().count()` handles Unicode correctly.
+    const MAX_COL: usize = 20;
+
+    let display_names: Vec<String> = map
+        .authorities
+        .iter()
+        .map(|a| {
+            let char_count = a.chars().count();
+            if char_count > MAX_COL {
+                let mut s: String = a.chars().take(MAX_COL - 1).collect();
+                s.push('…');
+                s
+            } else {
+                a.clone()
+            }
+        })
+        .collect();
+    let any_truncated = display_names
+        .iter()
+        .zip(map.authorities.iter())
+        .any(|(d, o)| d != o);
+
+    let auth_widths: Vec<usize> = display_names
+        .iter()
+        .map(|a| a.chars().count().max(3))
+        .collect();
 
     let mut out = String::new();
 
@@ -91,7 +183,7 @@ pub fn render_map(map: &AuthorityMap) -> String {
         step_w = step_width,
         zone_w = zone_width
     ));
-    for (i, auth) in map.authorities.iter().enumerate() {
+    for (i, auth) in display_names.iter().enumerate() {
         out.push_str(&format!("  {:^w$}", auth, w = auth_widths[i]));
     }
     out.push('\n');
@@ -120,6 +212,13 @@ pub fn render_map(map: &AuthorityMap) -> String {
             out.push_str(&format!("  {:^w$}", marker, w = auth_widths[i]));
         }
         out.push('\n');
+    }
+
+    if any_truncated {
+        out.push_str(&format!(
+            "\nNote: column names truncated to {} chars.\n",
+            MAX_COL
+        ));
     }
 
     out

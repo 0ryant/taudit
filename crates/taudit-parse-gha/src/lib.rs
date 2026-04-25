@@ -285,13 +285,16 @@ impl PipelineParser for GhaParser {
                     }
                 }
 
-                // Detect writes to the GHA environment gate
+                // Detect writes to the GHA environment gate.
+                // Broad detection: presence of GITHUB_ENV or GITHUB_PATH in a run script
+                // covers every redirect form (`>> $GITHUB_ENV`, `>> "$GITHUB_ENV"`,
+                // `>> ${GITHUB_ENV}`, `tee -a $GITHUB_PATH`, etc.) without brittle
+                // multi-variant string matching. Reading these vars without writing is
+                // extremely rare in practice, making this an acceptable tradeoff for
+                // completeness.
                 if let Some(ref run) = step.run {
-                    let writes_gate = run.contains(">> $GITHUB_ENV")
-                        || run.contains(">>$GITHUB_ENV")
-                        || run.contains(">> \"$GITHUB_ENV\"")
-                        || run.contains(">> $GITHUB_PATH")
-                        || run.contains(">>$GITHUB_PATH");
+                    let writes_gate =
+                        run.contains("GITHUB_ENV") || run.contains("GITHUB_PATH");
                     if writes_gate {
                         if let Some(node) = graph.nodes.get_mut(step_id) {
                             node.metadata

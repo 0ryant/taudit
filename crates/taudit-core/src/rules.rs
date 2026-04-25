@@ -505,12 +505,10 @@ pub fn trigger_context_mismatch(graph: &AuthorityGraph) -> Vec<Finding> {
         None => return Vec::new(),
     };
 
-    let severity = if trigger.contains("pull_request_target") {
-        Severity::Critical
-    } else if trigger.contains("pr") {
-        Severity::High
-    } else {
-        return Vec::new();
+    let severity = match trigger.as_str() {
+        "pull_request_target" => Severity::Critical,
+        "pr" => Severity::High,
+        _ => return Vec::new(),
     };
 
     // Collect steps that hold authority (HasAccessTo a Secret or Identity)
@@ -669,8 +667,17 @@ pub fn authority_cycle(graph: &AuthorityGraph) -> Vec<Finding> {
                 stack[len - 1].1 += 1;
                 let neighbor = delegates_to[node_id][edge_idx];
                 if color[neighbor] == 1 {
-                    cycle_nodes.insert(node_id);
-                    cycle_nodes.insert(neighbor);
+                    // Back edge: cycle found. Collect every node between `neighbor`
+                    // (the cycle start) and `node_id` (the cycle end) along the
+                    // current DFS stack. All stack entries are gray by construction,
+                    // so we walk the stack from `neighbor` to the top.
+                    let cycle_start_idx = stack
+                        .iter()
+                        .position(|&(n, _)| n == neighbor)
+                        .unwrap_or(0);
+                    for &(n, _) in &stack[cycle_start_idx..] {
+                        cycle_nodes.insert(n);
+                    }
                 } else if color[neighbor] == 0 {
                     color[neighbor] = 1;
                     stack.push((neighbor, 0));
@@ -1416,5 +1423,92 @@ mod tests {
         let findings = self_mutating_pipeline(&g);
         assert_eq!(findings.len(), 1);
         assert_eq!(findings[0].severity, Severity::High);
+    }
+
+    #[test]
+    fn trigger_context_mismatch_fires_on_ado_pr_with_secret_as_high() {
+        let mut g = AuthorityGraph::new(source("azure-pipelines.yml"));
+        g.metadata.insert(META_TRIGGER.into(), "pr".into());
+        let secret = g.add_node(NodeKind::Secret, "DEPLOY_KEY", TrustZone::FirstParty);
+        let step = g.add_node(NodeKind::Step, "build", TrustZone::FirstParty);
+        g.add_edge(step, secret, EdgeKind::HasAccessTo);
+
+        let findings = trigger_context_mismatch(&g);
+        assert_eq!(findings.len(), 1);
+        assert_eq!(findings[0].severity, Severity::High);
+        assert_eq!(
+            findings[0].category,
+            FindingCategory::TriggerContextMismatch
+        );
+    }
+
+    #[test]
+    fn cross_workflow_authority_chain_third_party_is_high() {
+        let mut g = AuthorityGraph::new(source("ci.yml"));
+        let step = g.add_node(NodeKind::Step, "deploy", TrustZone::FirstParty);
+        let secret = g.add_node(NodeKind::Secret, "DEPLOY_KEY", TrustZone::FirstParty);
+        // ThirdParty target (SHA-pinned external workflow)
+        let external = g.add_node(
+            NodeKind::Image,
+            "org/repo/.github/workflows/deploy.yml@a5ac7e51b41094c92402da3b24376905380afc29",
+            TrustZone::ThirdParty,
+        );
+        g.add_edge(step, secret, EdgeKind::HasAccessTo);
+        g.add_edge(step, external, EdgeKind::DelegatesTo);
+
+        let findings = cross_workflow_authority_chain(&g);
+        assert_eq!(findings.len(), 1);
+        assert_eq!(
+            findings[0].severity,
+            Severity::High,
+            "ThirdParty delegation target should be High (Critical reserved for Untrusted)"
+        );
+        assert_eq!(
+            findings[0].category,
+            FindingCategory::CrossWorkflowAuthorityChain
+        );
+    }
+
+    #[test]
+    fn self_mutating_pipeline_first_party_no_authority_is_medium() {
+        let mut g = AuthorityGraph::new(source("ci.yml"));
+        let mut meta = std::collections::HashMap::new();
+        meta.insert(META_WRITES_ENV_GATE.into(), "true".into());
+        // FirstParty step writes the gate but holds no secret/identity access.
+        g.add_node_with_metadata(NodeKind::Step, "set-version", TrustZone::FirstParty, meta);
+
+        let findings = self_mutating_pipeline(&g);
+        assert_eq!(findings.len(), 1);
+        assert_eq!(findings[0].severity, Severity::Medium);
+        assert_eq!(findings[0].category, FindingCategory::SelfMutatingPipeline);
+    }
+
+    #[test]
+    fn authority_cycle_3node_cycle_includes_all_members() {
+        // A → B → C → A should produce one finding whose nodes_involved
+        // contains all three node IDs, not just the back-edge endpoints.
+        let mut g = AuthorityGraph::new(source("test.yml"));
+        let a = g.add_node(NodeKind::Step, "A", TrustZone::FirstParty);
+        let b = g.add_node(NodeKind::Step, "B", TrustZone::FirstParty);
+        let c = g.add_node(NodeKind::Step, "C", TrustZone::FirstParty);
+        g.add_edge(a, b, EdgeKind::DelegatesTo);
+        g.add_edge(b, c, EdgeKind::DelegatesTo);
+        g.add_edge(c, a, EdgeKind::DelegatesTo);
+
+        let findings = authority_cycle(&g);
+        assert_eq!(findings.len(), 1);
+        assert_eq!(findings[0].category, FindingCategory::AuthorityCycle);
+        assert!(
+            findings[0].nodes_involved.contains(&a),
+            "A must be in nodes_involved"
+        );
+        assert!(
+            findings[0].nodes_involved.contains(&b),
+            "B must be in nodes_involved — middle of A→B→C→A cycle"
+        );
+        assert!(
+            findings[0].nodes_involved.contains(&c),
+            "C must be in nodes_involved"
+        );
     }
 }

@@ -99,6 +99,10 @@ enum Cli {
         /// CI/CD platform to parse. Default: github-actions.
         #[arg(long, default_value = "github-actions")]
         platform: Platform,
+
+        /// Write the report to this file instead of stdout.
+        #[arg(long, short = 'o')]
+        output: Option<PathBuf>,
     },
 
     /// Show authority map — which steps access which secrets/identities
@@ -110,6 +114,10 @@ enum Cli {
         /// CI/CD platform to parse. Default: github-actions.
         #[arg(long, default_value = "github-actions")]
         platform: Platform,
+
+        /// Disable ANSI color output
+        #[arg(long, default_value_t = false)]
+        no_color: bool,
     },
 
     /// Generate shell completions and print them to stdout.
@@ -151,6 +159,10 @@ enum Cli {
         /// Path for writing the generated spec (stdout if omitted)
         #[arg(long)]
         output: Option<PathBuf>,
+
+        /// CI/CD platform to parse. Default: github-actions.
+        #[arg(long, default_value = "github-actions")]
+        platform: Platform,
     },
 
     /// Diff findings between two pipeline versions
@@ -211,6 +223,15 @@ enum Platform {
     AzureDevOps,
 }
 
+impl Platform {
+    fn as_str(&self) -> &'static str {
+        match self {
+            Platform::GithubActions => "github-actions",
+            Platform::AzureDevOps => "azure-devops",
+        }
+    }
+}
+
 /// Severity levels for the threshold flag.
 #[derive(Clone, clap::ValueEnum)]
 enum SeverityLevel {
@@ -257,6 +278,7 @@ struct ScanOpts {
     receipt_dir: Option<PathBuf>,
     log_dir: Option<PathBuf>,
     platform: Platform,
+    output: Option<PathBuf>,
 }
 
 #[derive(Clone)]
@@ -285,6 +307,7 @@ fn main() -> Result<()> {
             receipt_dir,
             log_dir,
             platform,
+            output,
         } => {
             // Color is on by default — CI log viewers (GHA, ADO) render ANSI from piped stdout.
             // Disable only when --no-color is passed or the NO_COLOR env var is set (no-color.org).
@@ -308,6 +331,7 @@ fn main() -> Result<()> {
                 receipt_dir,
                 log_dir,
                 platform,
+                output,
             })
         }
         Cli::Completions { shell } => {
@@ -324,8 +348,13 @@ fn main() -> Result<()> {
             severity_threshold,
             quiet,
             output,
-        } => cmd_emit_spec(target, id, ttl_seconds, severity_threshold, quiet, output),
-        Cli::Map { paths, platform } => cmd_map(paths, platform),
+            platform,
+        } => cmd_emit_spec(target, id, ttl_seconds, severity_threshold, quiet, output, platform),
+        Cli::Map {
+            paths,
+            platform,
+            no_color,
+        } => cmd_map(paths, platform, no_color),
         Cli::Diff {
             before,
             after,
@@ -449,11 +478,19 @@ fn cmd_scan(opts: ScanOpts) -> Result<()> {
         receipt_dir,
         log_dir,
         platform,
+        output,
     } = opts;
 
     let parser_box = make_parser(&platform);
     let parser = parser_box.as_ref();
-    let mut stdout = std::io::stdout().lock();
+    let stdout_handle = std::io::stdout();
+    let mut writer: Box<dyn std::io::Write> = match output.as_ref() {
+        Some(path) => Box::new(std::io::BufWriter::new(
+            std::fs::File::create(path)
+                .with_context(|| format!("Failed to open output file {}", path.display()))?,
+        )),
+        None => Box::new(stdout_handle.lock()),
+    };
     let mut exit_code = 0;
 
     // Load ignore config
@@ -466,21 +503,21 @@ fn cmd_scan(opts: ScanOpts) -> Result<()> {
     let runtime_paths = resolve_runtime_artifact_paths(telemetry_dir, receipt_dir, log_dir);
 
     // Resolve and filter paths. `-` (stdin) bypasses the glob exclude filter.
-    let all_paths = resolve_paths(&paths)?;
-    let resolved: Vec<PathBuf> = all_paths
+    let all_paths = resolve_paths_tagged(&paths)?;
+    let resolved: Vec<ResolvedPath> = all_paths
         .into_iter()
         .filter(|p| {
-            if p.as_os_str() == "-" {
+            if p.path().as_os_str() == "-" {
                 return true; // never exclude stdin
             }
-            let path_str = p.display().to_string();
+            let path_str = p.path().display().to_string();
             !exclude.iter().any(|pattern| glob_match(pattern, &path_str))
         })
         .collect();
 
     // Terminal mode: print run banner before the loop
     if !quiet && matches!(format, OutputFormat::Terminal) {
-        taudit_report_terminal::print_banner(&mut stdout, resolved.len()).ok();
+        taudit_report_terminal::print_banner(&mut writer, resolved.len()).ok();
     }
 
     let mut quiet_total = SeverityCounts::default();
@@ -496,8 +533,10 @@ fn cmd_scan(opts: ScanOpts) -> Result<()> {
         taudit_core::graph::AuthorityGraph,
         Vec<taudit_core::finding::Finding>,
     )> = Vec::new();
+    let mut skipped_total = 0usize;
 
-    for path in &resolved {
+    for tagged_path in &resolved {
+        let path = tagged_path.path();
         let graph = if path.as_os_str() == "-" {
             let mut content = String::new();
             use std::io::Read;
@@ -506,7 +545,19 @@ fn cmd_scan(opts: ScanOpts) -> Result<()> {
                 .with_context(|| "Failed to read from stdin")?;
             parse_content(parser, content, "<stdin>".to_string())?
         } else {
-            parse_file(parser, path)?
+            match parse_file(parser, path) {
+                Ok(g) => g,
+                Err(err) => match tagged_path {
+                    ResolvedPath::Discovered(_) => {
+                        eprintln!("warning: skipping {}: {err:#}", path.display());
+                        skipped_total += 1;
+                        continue;
+                    }
+                    ResolvedPath::Explicit(_) => {
+                        return Err(err);
+                    }
+                },
+            }
         };
 
         if graph.completeness == taudit_core::graph::AuthorityCompleteness::Partial
@@ -524,10 +575,8 @@ fn cmd_scan(opts: ScanOpts) -> Result<()> {
 
         // Apply baseline suppression
         let (findings, suppressed_baseline) = apply_baseline(after_ignore, &baseline_fingerprints);
-        findings_total += findings.len();
-        suppressed_total += suppressed_ignore + suppressed_baseline;
 
-        // Determine exit code based on threshold
+        // Exit code uses unfiltered findings (semantics must not change with display filter).
         let has_actionable = match threshold {
             Some(ref thresh) => findings.iter().any(|f| f.severity <= *thresh),
             None => !findings.is_empty(),
@@ -536,90 +585,107 @@ fn cmd_scan(opts: ScanOpts) -> Result<()> {
             exit_code = 1;
         }
 
-        if quiet {
-            let counts = SeverityCounts::from_findings(&findings);
-            quiet_total.add(&counts);
-            let total = findings.len();
-            let suppressed = suppressed_ignore + suppressed_baseline;
-            let sup_note = if suppressed > 0 {
-                format!(" ({suppressed} suppressed)")
-            } else {
-                String::new()
-            };
-            use std::io::Write;
-            writeln!(
-                stdout,
-                "{}: {} finding{}{} — {} critical / {} high / {} medium / {} low",
-                path.display(),
-                total,
-                if total == 1 { "" } else { "s" },
-                sup_note,
-                counts.critical,
-                counts.high,
-                counts.medium,
-                counts.low,
-            )
-            .ok();
-        } else {
-            match format {
-                OutputFormat::Terminal => {
-                    if findings.is_empty() {
-                        // Clean file — accumulate, don't emit per-file section
-                        terminal_clean += 1;
+        // Display filter: only show findings at or above the threshold.
+        let (findings, suppressed_threshold) = match threshold {
+            Some(ref thresh) => {
+                let before_len = findings.len();
+                let kept: Vec<_> = findings
+                    .into_iter()
+                    .filter(|f| f.severity <= *thresh)
+                    .collect();
+                let dropped = before_len - kept.len();
+                (kept, dropped)
+            }
+            None => (findings, 0usize),
+        };
+
+        findings_total += findings.len();
+        suppressed_total += suppressed_ignore + suppressed_baseline + suppressed_threshold;
+
+        match format {
+            OutputFormat::Terminal => {
+                if quiet {
+                    let counts = SeverityCounts::from_findings(&findings);
+                    quiet_total.add(&counts);
+                    let total = findings.len();
+                    let suppressed = suppressed_ignore + suppressed_baseline;
+                    let sup_note = if suppressed > 0 {
+                        format!(" ({suppressed} suppressed)")
                     } else {
-                        terminal_files_with_findings += 1;
-                        let counts = SeverityCounts::from_findings(&findings);
-                        terminal_totals.add(&counts);
-                        TerminalReport { verbose }
-                            .emit(&mut stdout, &graph, &findings)
-                            .with_context(|| "Failed to write terminal report")?;
-                        if suppressed_ignore > 0 || suppressed_baseline > 0 {
-                            use std::io::Write;
-                            let mut notes = Vec::new();
-                            if suppressed_ignore > 0 {
-                                notes.push(format!(
-                                    "{suppressed_ignore} suppressed by .tauditignore"
-                                ));
-                            }
-                            if suppressed_baseline > 0 {
-                                notes.push(format!("{suppressed_baseline} suppressed by baseline"));
-                            }
-                            writeln!(stdout, "  ({})", notes.join(", ")).ok();
+                        String::new()
+                    };
+                    use std::io::Write;
+                    writeln!(
+                        &mut writer,
+                        "{}: {} finding{}{} — {} critical / {} high / {} medium / {} low",
+                        path.display(),
+                        total,
+                        if total == 1 { "" } else { "s" },
+                        sup_note,
+                        counts.critical,
+                        counts.high,
+                        counts.medium,
+                        counts.low,
+                    )
+                    .ok();
+                } else if findings.is_empty() {
+                    terminal_clean += 1;
+                } else {
+                    terminal_files_with_findings += 1;
+                    let counts = SeverityCounts::from_findings(&findings);
+                    terminal_totals.add(&counts);
+                    TerminalReport { verbose }
+                        .emit(&mut writer, &graph, &findings)
+                        .with_context(|| "Failed to write terminal report")?;
+                    if suppressed_ignore > 0 || suppressed_baseline > 0 || suppressed_threshold > 0 {
+                        use std::io::Write;
+                        let mut notes = Vec::new();
+                        if suppressed_ignore > 0 {
+                            notes.push(format!(
+                                "{suppressed_ignore} suppressed by .tauditignore"
+                            ));
                         }
+                        if suppressed_baseline > 0 {
+                            notes.push(format!("{suppressed_baseline} suppressed by baseline"));
+                        }
+                        if suppressed_threshold > 0 {
+                            notes.push(format!("{suppressed_threshold} below --severity-threshold"));
+                        }
+                        writeln!(&mut writer, "  ({})", notes.join(", ")).ok();
                     }
                 }
-                OutputFormat::Json => {
-                    JsonReportSink
-                        .emit(&mut stdout, &graph, &findings)
-                        .with_context(|| "Failed to write JSON report")?;
-                }
-                OutputFormat::Sarif => {
-                    sarif_buffer.push((graph, findings));
-                }
-                OutputFormat::Cloudevents => {
-                    CloudEventsJsonlSink
-                        .emit(&mut stdout, &graph, &findings)
-                        .with_context(|| "Failed to write CloudEvents JSONL")?;
-                }
+            }
+            OutputFormat::Json => {
+                JsonReportSink
+                    .emit(&mut writer, &graph, &findings)
+                    .with_context(|| "Failed to write JSON report")?;
+            }
+            OutputFormat::Sarif => {
+                sarif_buffer.push((graph, findings));
+            }
+            OutputFormat::Cloudevents => {
+                CloudEventsJsonlSink
+                    .emit(&mut writer, &graph, &findings)
+                    .with_context(|| "Failed to write CloudEvents JSONL")?;
             }
         }
     }
 
     // Emit the single aggregated SARIF document now that all files have been scanned.
-    if !quiet && !sarif_buffer.is_empty() && matches!(format, OutputFormat::Sarif) {
+    if !sarif_buffer.is_empty() && matches!(format, OutputFormat::Sarif) {
         let items: Vec<_> = sarif_buffer
             .iter()
             .map(|(g, f)| (g, f.as_slice()))
             .collect();
         SarifReportSink
-            .emit_multi(&mut stdout, &items)
+            .emit_multi(&mut writer, &items)
             .with_context(|| "Failed to write SARIF report")?;
     }
 
-    if quiet && resolved.len() > 1 {
+    if quiet && matches!(format, OutputFormat::Terminal) && resolved.len() > 1 {
         use std::io::Write;
         writeln!(
-            stdout,
+            &mut writer,
             "TOTAL: {} findings — {} critical / {} high / {} medium / {} low",
             quiet_total.total(),
             quiet_total.critical,
@@ -633,7 +699,7 @@ fn cmd_scan(opts: ScanOpts) -> Result<()> {
     // Terminal mode: print run summary after the loop
     if !quiet && matches!(format, OutputFormat::Terminal) {
         taudit_report_terminal::print_summary(
-            &mut stdout,
+            &mut writer,
             &taudit_report_terminal::RunSummary {
                 total_files: resolved.len(),
                 files_with_findings: terminal_files_with_findings,
@@ -648,11 +714,21 @@ fn cmd_scan(opts: ScanOpts) -> Result<()> {
         .ok();
     }
 
+    if skipped_total > 0 {
+        eprintln!(
+            "note: {skipped_total} file{} skipped (parse error — check --platform)",
+            if skipped_total == 1 { "" } else { "s" }
+        );
+    }
+
+    let resolved_paths: Vec<PathBuf> =
+        resolved.iter().map(|p| p.path().clone()).collect();
+
     let now_secs = now_unix_seconds();
     if let Err(err) = write_runtime_artifacts(
         &runtime_paths,
         now_secs,
-        &resolved,
+        &resolved_paths,
         &ScanStats {
             format: &format,
             max_hops,
@@ -663,6 +739,10 @@ fn cmd_scan(opts: ScanOpts) -> Result<()> {
     ) {
         eprintln!("warning: failed to write runtime artifacts: {err}");
     }
+
+    use std::io::Write;
+    let _ = writer.flush();
+    drop(writer);
 
     std::process::exit(exit_code);
 }
@@ -998,12 +1078,26 @@ impl SeverityCounts {
     }
 }
 
-fn cmd_map(paths: Vec<PathBuf>, platform: Platform) -> Result<()> {
+fn cmd_map(paths: Vec<PathBuf>, platform: Platform, no_color: bool) -> Result<()> {
+    if no_color || std::env::var_os("NO_COLOR").is_some() {
+        colored::control::set_override(false);
+    }
+
     let parser_box = make_parser(&platform);
     let parser = parser_box.as_ref();
 
-    for path in resolve_paths(&paths)? {
-        let graph = parse_file(parser, &path)?;
+    for tagged_path in resolve_paths_tagged(&paths)? {
+        let path = tagged_path.path().clone();
+        let graph = match parse_file(parser, &path) {
+            Ok(g) => g,
+            Err(err) => match &tagged_path {
+                ResolvedPath::Discovered(_) => {
+                    eprintln!("warning: skipping {}: {err:#}", path.display());
+                    continue;
+                }
+                ResolvedPath::Explicit(_) => return Err(err),
+            },
+        };
         let authority_map = map::authority_map(&graph);
 
         println!("Authority Map: {}\n", path.display());
@@ -1030,6 +1124,7 @@ fn cmd_emit_spec(
     severity_threshold: Option<SeverityLevel>,
     quiet: bool,
     output: Option<PathBuf>,
+    platform: Platform,
 ) -> Result<()> {
     let working_dir = std::env::current_dir().context("Failed to resolve current directory")?;
     let spec = build_cellos_spec(
@@ -1039,6 +1134,7 @@ fn cmd_emit_spec(
         target.to_string_lossy().as_ref(),
         severity_threshold.as_ref(),
         quiet,
+        &platform,
     );
     let rendered = serde_json::to_string_pretty(&spec).context("Failed to render spec JSON")?;
 
@@ -1060,6 +1156,7 @@ fn build_cellos_spec(
     target: &str,
     severity_threshold: Option<&SeverityLevel>,
     quiet: bool,
+    platform: &Platform,
 ) -> serde_json::Value {
     let mut argv = vec![
         "taudit".to_string(),
@@ -1068,6 +1165,8 @@ fn build_cellos_spec(
         "--format".to_string(),
         "json".to_string(),
         "--no-color".to_string(),
+        "--platform".to_string(),
+        platform.as_str().to_string(),
     ];
 
     if let Some(level) = severity_threshold {
@@ -1127,8 +1226,50 @@ fn parse_file(
     parse_content(parser, content, path.display().to_string())
 }
 
+enum ResolvedPath {
+    Explicit(PathBuf),
+    Discovered(PathBuf),
+}
+
+impl ResolvedPath {
+    fn path(&self) -> &PathBuf {
+        match self {
+            ResolvedPath::Explicit(p) | ResolvedPath::Discovered(p) => p,
+        }
+    }
+}
+
+/// Like `resolve_paths`, but tags each result so callers can distinguish
+/// explicitly-named paths (hard-fail on parse error) from directory-walked
+/// paths (soft-fail with a warning, e.g. wrong-platform YAML in a tree).
+fn resolve_paths_tagged(paths: &[PathBuf]) -> Result<Vec<ResolvedPath>> {
+    let mut result = Vec::new();
+    for path in paths {
+        if path.as_os_str() == "-" {
+            result.push(ResolvedPath::Explicit(path.clone()));
+        } else if path.is_dir() {
+            for entry in walkdir(path)? {
+                if let Some(ext) = entry.extension() {
+                    if ext == "yml" || ext == "yaml" {
+                        result.push(ResolvedPath::Discovered(entry));
+                    }
+                }
+            }
+        } else if path.is_file() {
+            result.push(ResolvedPath::Explicit(path.clone()));
+        } else {
+            anyhow::bail!("Path not found: {}", path.display());
+        }
+    }
+    Ok(result)
+}
+
 /// Resolve paths: if a directory, find all .yml/.yaml files recursively.
 /// If a file, use it directly. `-` is passed through as the stdin sentinel.
+///
+/// Retained for callers that want a flat path list without tagged hard/soft-fail
+/// semantics (see `resolve_paths_tagged` for the directory-walk soft-fail variant).
+#[allow(dead_code)]
 fn resolve_paths(paths: &[PathBuf]) -> Result<Vec<PathBuf>> {
     let mut result = Vec::new();
 
@@ -1259,6 +1400,7 @@ mod tests {
             "tests/fixtures/clean.yml",
             Some(&SeverityLevel::Critical),
             true,
+            &Platform::GithubActions,
         );
 
         assert_eq!(spec["apiVersion"], "cellos.io/v1");
@@ -1274,6 +1416,8 @@ mod tests {
         assert!(argv.iter().any(|v| v == "critical"));
         assert!(argv.iter().any(|v| v == "--quiet"));
         assert!(argv.iter().any(|v| v == "--no-color"));
+        assert!(argv.iter().any(|v| v == "--platform"));
+        assert!(argv.iter().any(|v| v == "github-actions"));
     }
 
     #[test]

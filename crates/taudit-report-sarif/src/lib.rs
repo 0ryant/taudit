@@ -15,56 +15,173 @@ const RULES_BASE_URI: &str = "https://github.com/0ryant/taudit/blob/main/docs/ru
 struct RuleDef {
     id: &'static str,
     name: &'static str,
-    description: &'static str,
+    short_description: &'static str,
+    full_description: &'static str,
+    default_level: &'static str,
+    security_severity: &'static str,
+    tags: &'static [&'static str],
 }
 
 const RULE_DEFS: &[RuleDef] = &[
     RuleDef {
         id: "authority_propagation",
         name: "AuthorityPropagation",
-        description: "A secret or identity propagates to a step in a lower trust zone.",
+        short_description: "A secret or identity propagates to a step in a lower trust zone.",
+        full_description:
+            "A secret or identity propagates to a step in a lower trust zone, allowing \
+             privileged credentials to be observed or exfiltrated by untrusted code.",
+        default_level: "error",
+        security_severity: "9.0",
+        tags: &["security", "privilege-escalation"],
     },
     RuleDef {
         id: "over_privileged_identity",
         name: "OverPrivilegedIdentity",
-        description: "A GITHUB_TOKEN or service identity has broader permissions than needed.",
+        short_description:
+            "A GITHUB_TOKEN or service identity has broader permissions than needed.",
+        full_description:
+            "A GITHUB_TOKEN or service identity has broader permissions than needed for the \
+             work the workflow actually performs, expanding the blast radius if the token is \
+             misused or leaked.",
+        default_level: "error",
+        security_severity: "7.5",
+        tags: &["security", "privilege-escalation"],
     },
     RuleDef {
         id: "unpinned_action",
         name: "UnpinnedAction",
-        description: "A third-party action is referenced by mutable tag instead of SHA digest.",
+        short_description:
+            "A third-party action is referenced by mutable tag instead of SHA digest.",
+        full_description:
+            "A third-party action is referenced by a mutable tag or branch instead of an \
+             immutable SHA digest. The action's code can change under the workflow without \
+             any local change, enabling supply-chain attacks.",
+        default_level: "error",
+        security_severity: "7.5",
+        tags: &["security", "supply-chain"],
     },
     RuleDef {
         id: "untrusted_with_authority",
         name: "UntrustedWithAuthority",
-        description: "An untrusted or unpinned step has direct access to a secret or identity.",
+        short_description:
+            "An untrusted or unpinned step has direct access to a secret or identity.",
+        full_description:
+            "An untrusted or unpinned step has direct access to a secret or identity. \
+             Compromise of that step yields immediate compromise of the associated authority.",
+        default_level: "error",
+        security_severity: "9.0",
+        tags: &["security", "privilege-escalation"],
     },
     RuleDef {
         id: "artifact_boundary_crossing",
         name: "ArtifactBoundaryCrossing",
-        description:
+        short_description:
             "An artifact produced by a privileged step is consumed across a trust boundary.",
-    },
-    RuleDef {
-        id: "egress_blindspot",
-        name: "EgressBlindspot",
-        description: "A step with access to secrets has network access and no egress constraint.",
-    },
-    RuleDef {
-        id: "missing_audit_trail",
-        name: "MissingAuditTrail",
-        description: "An authority-bearing step has no logging or audit trail.",
+        full_description:
+            "An artifact produced by a privileged step is consumed across a trust boundary \
+             without attestation or verification, allowing downstream stages to execute \
+             content originating from a higher-trust context without provenance checks.",
+        default_level: "error",
+        security_severity: "7.5",
+        tags: &["security", "supply-chain"],
     },
     RuleDef {
         id: "floating_image",
         name: "FloatingImage",
-        description: "A container image is referenced without a digest pin.",
+        short_description: "A container image is referenced without a digest pin.",
+        full_description:
+            "A container image is referenced by tag (e.g. :latest) rather than an immutable \
+             digest. The image contents may change between runs without any local change, \
+             breaking reproducibility and enabling supply-chain attacks.",
+        default_level: "warning",
+        security_severity: "5.0",
+        tags: &["security", "supply-chain"],
     },
     RuleDef {
         id: "long_lived_credential",
         name: "LongLivedCredential",
-        description:
+        short_description:
             "A secret name matches static credential patterns (API keys, passwords, tokens).",
+        full_description:
+            "A secret referenced by the workflow matches patterns indicating a long-lived \
+             static credential (API key, password, personal access token). Long-lived \
+             credentials should be replaced with short-lived OIDC-issued tokens where possible.",
+        default_level: "error",
+        security_severity: "7.5",
+        tags: &["security", "credentials"],
+    },
+    RuleDef {
+        id: "persisted_credential",
+        name: "PersistedCredential",
+        short_description: "Checkout step persists repository credentials to disk",
+        full_description:
+            "A checkout step with persistCredentials:true writes the repository token to \
+             .git/config on disk, where it persists beyond the lifetime of the step and may \
+             be read by subsequent steps or exfiltrated.",
+        default_level: "error",
+        security_severity: "9.0",
+        tags: &["security", "supply-chain"],
+    },
+    RuleDef {
+        id: "trigger_context_mismatch",
+        name: "TriggerContextMismatch",
+        short_description: "Privileged workflow triggered by untrusted pull request context",
+        full_description:
+            "A workflow triggered by pull_request_target or an ADO pr trigger runs with \
+             write permissions in the base repository context while potentially executing \
+             untrusted code from a fork, creating a privilege escalation path.",
+        default_level: "error",
+        security_severity: "9.0",
+        tags: &["security", "privilege-escalation"],
+    },
+    RuleDef {
+        id: "cross_workflow_authority_chain",
+        name: "CrossWorkflowAuthorityChain",
+        short_description: "Authority-bearing step delegates to external or untrusted workflow",
+        full_description:
+            "A step holding secrets or elevated identity permissions delegates execution to \
+             a reusable workflow or template hosted in an external or untrusted repository, \
+             allowing that external code to inherit the authority.",
+        default_level: "error",
+        security_severity: "9.0",
+        tags: &["security", "supply-chain"],
+    },
+    RuleDef {
+        id: "authority_cycle",
+        name: "AuthorityCycle",
+        short_description: "Workflow delegation graph contains a cycle",
+        full_description:
+            "The workflow delegation graph contains a cycle — a workflow calls itself or \
+             another workflow that eventually calls back, creating unbounded privilege \
+             escalation paths and potential infinite execution.",
+        default_level: "error",
+        security_severity: "7.5",
+        tags: &["security", "configuration"],
+    },
+    RuleDef {
+        id: "uplift_without_attestation",
+        name: "UpliftWithoutAttestation",
+        short_description: "OIDC-privileged build does not produce a signed attestation",
+        full_description:
+            "A step with access to an OIDC identity produces artifacts without generating a \
+             cryptographic attestation. Downstream consumers cannot verify provenance or \
+             integrity of these artifacts.",
+        default_level: "note",
+        security_severity: "0.1",
+        tags: &["security", "supply-chain"],
+    },
+    RuleDef {
+        id: "self_mutating_pipeline",
+        name: "SelfMutatingPipeline",
+        short_description:
+            "Step writes to GITHUB_ENV or GITHUB_PATH, mutating the pipeline environment",
+        full_description:
+            "A step appends to GITHUB_ENV or GITHUB_PATH, injecting values into the \
+             environment or PATH for all subsequent steps. An untrusted or compromised step \
+             could use this to escalate privileges or hijack later execution.",
+        default_level: "error",
+        security_severity: "9.0",
+        tags: &["security", "injection"],
     },
 ];
 
@@ -104,8 +221,25 @@ struct SarifRule {
     name: &'static str,
     #[serde(rename = "shortDescription")]
     short_description: SarifMessage,
+    #[serde(rename = "fullDescription")]
+    full_description: SarifMessage,
+    #[serde(rename = "defaultConfiguration")]
+    default_configuration: SarifDefaultConfiguration,
     #[serde(rename = "helpUri")]
     help_uri: String,
+    properties: SarifRuleProperties,
+}
+
+#[derive(Serialize)]
+struct SarifDefaultConfiguration {
+    level: &'static str,
+}
+
+#[derive(Serialize)]
+struct SarifRuleProperties {
+    #[serde(rename = "security-severity")]
+    security_severity: &'static str,
+    tags: Vec<&'static str>,
 }
 
 #[derive(Serialize, Clone)]
@@ -120,6 +254,21 @@ struct SarifResult {
     level: &'static str,
     message: SarifMessage,
     locations: Vec<SarifLocation>,
+    properties: SarifResultProperties,
+    #[serde(rename = "partialFingerprints")]
+    partial_fingerprints: SarifPartialFingerprints,
+}
+
+#[derive(Serialize)]
+struct SarifResultProperties {
+    #[serde(rename = "security-severity")]
+    security_severity: &'static str,
+}
+
+#[derive(Serialize)]
+struct SarifPartialFingerprints {
+    #[serde(rename = "primaryLocationLineHash")]
+    primary_location_line_hash: String,
 }
 
 #[derive(Serialize)]
@@ -205,9 +354,19 @@ fn build_rules() -> Vec<SarifRule> {
             id: r.id,
             name: r.name,
             short_description: SarifMessage {
-                text: r.description.to_string(),
+                text: r.short_description.to_string(),
+            },
+            full_description: SarifMessage {
+                text: r.full_description.to_string(),
+            },
+            default_configuration: SarifDefaultConfiguration {
+                level: r.default_level,
             },
             help_uri: format!("{RULES_BASE_URI}/{}", r.id),
+            properties: SarifRuleProperties {
+                security_severity: r.security_severity,
+                tags: r.tags.to_vec(),
+            },
         })
         .collect()
 }
@@ -216,6 +375,19 @@ fn build_rules() -> Vec<SarifRule> {
 fn finding_to_result(finding: &Finding, source_file: &str) -> SarifResult {
     let rule_id = category_to_rule_id(&finding.category);
     let level = severity_to_level(&finding.severity);
+    let security_severity = severity_to_security_severity(&finding.severity);
+
+    let uri = source_file.to_string();
+
+    let fingerprint = {
+        use std::collections::hash_map::DefaultHasher;
+        use std::hash::{Hash, Hasher};
+        let mut h = DefaultHasher::new();
+        rule_id.hash(&mut h);
+        uri.hash(&mut h);
+        finding.message.hash(&mut h);
+        format!("{:016x}", h.finish())
+    };
 
     SarifResult {
         rule_id,
@@ -226,11 +398,15 @@ fn finding_to_result(finding: &Finding, source_file: &str) -> SarifResult {
         locations: vec![SarifLocation {
             physical_location: SarifPhysicalLocation {
                 artifact_location: SarifArtifactLocation {
-                    uri: source_file.to_string(),
+                    uri,
                     uri_base_id: "%SRCROOT%",
                 },
             },
         }],
+        properties: SarifResultProperties { security_severity },
+        partial_fingerprints: SarifPartialFingerprints {
+            primary_location_line_hash: fingerprint,
+        },
     }
 }
 
@@ -247,6 +423,16 @@ fn severity_to_level(severity: &Severity) -> &'static str {
         Severity::Critical | Severity::High => "error",
         Severity::Medium => "warning",
         Severity::Low | Severity::Info => "note",
+    }
+}
+
+fn severity_to_security_severity(severity: &Severity) -> &'static str {
+    match severity {
+        Severity::Critical => "9.0",
+        Severity::High => "7.5",
+        Severity::Medium => "5.0",
+        Severity::Low => "2.0",
+        Severity::Info => "0.1",
     }
 }
 
@@ -317,7 +503,15 @@ mod tests {
             assert!(rule["id"].is_string());
             assert!(rule["name"].is_string());
             assert!(rule["shortDescription"]["text"].is_string());
+            assert!(rule["fullDescription"]["text"].is_string());
+            assert!(rule["defaultConfiguration"]["level"].is_string());
             assert!(rule["helpUri"].is_string());
+            assert!(rule["properties"]["security-severity"].is_string());
+            let tags = rule["properties"]["tags"].as_array().unwrap();
+            assert!(
+                tags.iter().any(|t| t == "security"),
+                "every rule must carry the \"security\" tag"
+            );
         }
     }
 
@@ -352,6 +546,13 @@ mod tests {
         assert_eq!(results[2]["level"], "warning"); // Medium
         assert_eq!(results[3]["level"], "note"); // Low
         assert_eq!(results[4]["level"], "note"); // Info
+
+        // security-severity mirrors the finding severity, not the rule default
+        assert_eq!(results[0]["properties"]["security-severity"], "9.0");
+        assert_eq!(results[1]["properties"]["security-severity"], "7.5");
+        assert_eq!(results[2]["properties"]["security-severity"], "5.0");
+        assert_eq!(results[3]["properties"]["security-severity"], "2.0");
+        assert_eq!(results[4]["properties"]["security-severity"], "0.1");
     }
 
     #[test]
@@ -374,6 +575,42 @@ mod tests {
 
         let base = &r["locations"][0]["physicalLocation"]["artifactLocation"]["uriBaseId"];
         assert_eq!(base, "%SRCROOT%");
+
+        // Every result has a stable partialFingerprint for cross-run dedup.
+        let fp = r["partialFingerprints"]["primaryLocationLineHash"]
+            .as_str()
+            .unwrap();
+        assert_eq!(fp.len(), 16, "fingerprint should be 16 hex chars");
+        assert!(fp.chars().all(|c| c.is_ascii_hexdigit()));
+    }
+
+    #[test]
+    fn all_finding_categories_have_rule_definitions() {
+        // Ensures no category falls back to ruleId="unknown", which breaks
+        // GitHub Code Scanning ingestion.
+        let categories = [
+            FindingCategory::AuthorityPropagation,
+            FindingCategory::OverPrivilegedIdentity,
+            FindingCategory::UnpinnedAction,
+            FindingCategory::UntrustedWithAuthority,
+            FindingCategory::ArtifactBoundaryCrossing,
+            FindingCategory::FloatingImage,
+            FindingCategory::LongLivedCredential,
+            FindingCategory::PersistedCredential,
+            FindingCategory::TriggerContextMismatch,
+            FindingCategory::CrossWorkflowAuthorityChain,
+            FindingCategory::AuthorityCycle,
+            FindingCategory::UpliftWithoutAttestation,
+            FindingCategory::SelfMutatingPipeline,
+        ];
+
+        for cat in categories {
+            let id = category_to_rule_id(&cat);
+            assert!(
+                RULE_DEFS.iter().any(|r| r.id == id),
+                "category {cat:?} -> rule id {id:?} has no RuleDef entry"
+            );
+        }
     }
 
     #[test]

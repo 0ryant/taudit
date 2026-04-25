@@ -176,8 +176,6 @@ pub enum EdgeKind {
     /// Distinct from HasAccessTo: disk persistence is accessible to all subsequent steps
     /// and processes with filesystem access, not just the step that created it.
     PersistsTo,
-    /// Step -> Artifact (cryptographically signs or attests the artifact for provenance).
-    Signs,
 }
 
 /// A directed edge in the authority graph.

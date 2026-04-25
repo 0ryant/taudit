@@ -277,6 +277,11 @@ fn process_steps(
                     let mut meta = HashMap::new();
                     meta.insert("service_connection".into(), "true".into());
                     meta.insert(META_IDENTITY_SCOPE.into(), "broad".into());
+                    // ADO service connections are the platform's federated-identity equivalent
+                    // (modern Azure service connections use workload identity federation /
+                    // OIDC). Tag them so uplift_without_attestation treats ADO pipelines with
+                    // the same OIDC-parity logic applied to GHA.
+                    meta.insert(META_OIDC.into(), "true".into());
                     let conn_id = graph.add_node_with_metadata(
                         NodeKind::Identity,
                         conn_name,
@@ -351,14 +356,24 @@ fn classify_step(
 }
 
 /// Add a DelegatesTo edge from a synthetic step node to a template image node.
+///
+/// Trust zone heuristic: templates referenced with `@repository` (e.g. `steps/deploy.yml@templates`)
+/// pull code from an external repository and are Untrusted. Plain relative paths like
+/// `steps/deploy.yml` resolve within the same repo and are FirstParty — mirroring how GHA
+/// treats `./local-action`.
 fn add_template_delegation(
     step_name: &str,
     template_path: &str,
     token_id: NodeId,
     graph: &mut AuthorityGraph,
 ) {
+    let tpl_trust_zone = if template_path.contains('@') {
+        TrustZone::Untrusted
+    } else {
+        TrustZone::FirstParty
+    };
     let step_id = graph.add_node(NodeKind::Step, step_name, TrustZone::FirstParty);
-    let tpl_id = graph.add_node(NodeKind::Image, template_path, TrustZone::Untrusted);
+    let tpl_id = graph.add_node(NodeKind::Image, template_path, tpl_trust_zone);
     graph.add_edge(step_id, tpl_id, EdgeKind::DelegatesTo);
     graph.add_edge(step_id, token_id, EdgeKind::HasAccessTo);
     graph.mark_partial(format!(
