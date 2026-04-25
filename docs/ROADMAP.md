@@ -2,7 +2,7 @@
 
 Three horizons. Each is a superset of the previous.
 
-**Current state (v0.3.0):** 8 crates, 195 tests, ~8,800 LOC, 17 analysis rules, 2 parsers (GHA + ADO), 6 commands (scan, map, diff, explain, version, completions), 4 output formats (terminal, JSON, CloudEvents JSONL, SARIF). Published to crates.io. MVP complete. Deep into AAA: Tier 1 done, Tier 2 done, Tier 3 mostly done, Tier 4 mostly done, Tier 5 done, Tier 6 partial, Tier 7 mostly done.
+**Current state (v0.4.0):** 8 crates, 205 tests, ~9,200 LOC, 17 built-in analysis rules + custom YAML rule loading, 2 parsers (GHA + ADO), 6 commands (scan, map, diff, explain, version, completions), 4 output formats (terminal, JSON, CloudEvents JSONL, SARIF) + Graphviz DOT. Published to crates.io. AAA gate closed. Working toward Roadmap 3: Done.
 
 **Effort key:** S = hours, M = days, L = week+
 
@@ -151,7 +151,7 @@ Identity modelling is the biggest long-term risk. Modern pipelines use OIDC toke
 - [ ] **EgressBlindspot** — steps with secrets + network access + no egress constraint
 - [ ] **MissingAuditTrail** — authority-bearing steps with no logging
 - [x] **Confidence scoring** — severity modulated by `AuthorityCompleteness` (Partial graph → cap max severity at High)
-- [ ] **Custom rule loading** — user-defined rules via YAML policy files
+- [x] **Custom rule loading** — `--rules-dir <path>` loads YAML rule files at runtime; declarative source/sink/path predicates; SARIF dynamic registration (v0.4.0)
 
 ### Tier 7: Enterprise Polish (M each)
 
@@ -168,8 +168,8 @@ Identity modelling is the biggest long-term risk. Modern pipelines use OIDC toke
 ### Tier 8: Graph Power (M-L each, differentiation)
 
 - [ ] **Isolation boundary support** — explicit breaks in propagation (runtime containment = graph boundary)
-- [ ] **Subgraph extraction** per job (focus view)
-- [ ] **Graphviz DOT export** from `taudit map`
+- [x] **Subgraph extraction** per job — `taudit map --job <name>` filters to BFS-reachable subgraph; unknown job name lists available jobs (v0.4.0)
+- [x] **Graphviz DOT export** — `taudit map --format dot`; node shape=kind, color=trust zone, edge label=kind; combine with `--job` for focused diagrams (v0.4.0)
 - [ ] **Adjacency index** for large graphs (O(n) scan → O(1) lookup for mono-repo scale)
 
 ### AAA completion gate
