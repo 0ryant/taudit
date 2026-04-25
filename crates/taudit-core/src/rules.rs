@@ -886,6 +886,52 @@ pub fn self_mutating_pipeline(graph: &AuthorityGraph) -> Vec<Finding> {
     findings
 }
 
+/// Rule: PR-triggered pipeline performs a self checkout.
+///
+/// When a PR/PRT-triggered pipeline checks out the repository, attacker-controlled
+/// code from the fork lands on the runner. Any subsequent step that reads workspace
+/// files (which is almost all of them) can exfiltrate secrets or tamper with build
+/// artifacts. Fires only when the graph has a PR-class trigger.
+pub fn checkout_self_pr_exposure(graph: &AuthorityGraph) -> Vec<Finding> {
+    // Only fires when the graph has a PR/PRT trigger
+    let trigger = graph.metadata.get(META_TRIGGER).map(|s| s.as_str());
+    let is_pr_context = matches!(trigger, Some("pr") | Some("pull_request_target"));
+    if !is_pr_context {
+        return vec![];
+    }
+
+    let mut findings = Vec::new();
+    for step in graph.nodes_of_kind(NodeKind::Step) {
+        let is_checkout_self = step
+            .metadata
+            .get(META_CHECKOUT_SELF)
+            .map(|v| v == "true")
+            .unwrap_or(false);
+        if !is_checkout_self {
+            continue;
+        }
+        findings.push(Finding {
+            category: FindingCategory::CheckoutSelfPrExposure,
+            severity: Severity::High,
+            message: format!(
+                "PR-triggered pipeline checks out the repository at step '{}' — \
+                 attacker-controlled code from the fork lands on the runner and is \
+                 readable by all subsequent steps",
+                step.name
+            ),
+            path: None,
+            nodes_involved: vec![step.id],
+            recommendation: Recommendation::Manual {
+                action: "Use `persist-credentials: false` and avoid reading workspace \
+                         files in subsequent privileged steps. Consider `checkout: none` \
+                         for jobs that only need pipeline config, not source code."
+                    .into(),
+            },
+        });
+    }
+    findings
+}
+
 /// Rule: ADO variable group consumed by a PR-triggered job.
 ///
 /// Variable groups hold secrets scoped to pipelines. When a PR-triggered job has
@@ -1099,6 +1145,7 @@ pub fn run_all_rules(graph: &AuthorityGraph, max_hops: usize) -> Vec<Finding> {
     findings.extend(authority_cycle(graph));
     findings.extend(uplift_without_attestation(graph));
     findings.extend(self_mutating_pipeline(graph));
+    findings.extend(checkout_self_pr_exposure(graph));
     findings.extend(variable_group_in_pr_job(graph));
     findings.extend(self_hosted_pool_pr_hijack(graph));
     findings.extend(service_connection_scope_mismatch(graph));
@@ -1948,6 +1995,38 @@ mod tests {
         assert!(
             findings.is_empty(),
             "no PR trigger → service_connection_scope_mismatch must not fire"
+        );
+    }
+
+    #[test]
+    fn checkout_self_pr_exposure_fires_on_pr_trigger() {
+        let mut g = AuthorityGraph::new(source("azure-pipelines.yml"));
+        g.metadata.insert(META_TRIGGER.into(), "pr".into());
+        let mut step_meta = std::collections::HashMap::new();
+        step_meta.insert(META_CHECKOUT_SELF.into(), "true".into());
+        g.add_node_with_metadata(NodeKind::Step, "checkout", TrustZone::FirstParty, step_meta);
+
+        let findings = checkout_self_pr_exposure(&g);
+        assert_eq!(findings.len(), 1);
+        assert_eq!(
+            findings[0].category,
+            FindingCategory::CheckoutSelfPrExposure
+        );
+        assert_eq!(findings[0].severity, Severity::High);
+    }
+
+    #[test]
+    fn checkout_self_pr_exposure_no_fire_without_pr_trigger() {
+        let mut g = AuthorityGraph::new(source("azure-pipelines.yml"));
+        // No META_TRIGGER set
+        let mut step_meta = std::collections::HashMap::new();
+        step_meta.insert(META_CHECKOUT_SELF.into(), "true".into());
+        g.add_node_with_metadata(NodeKind::Step, "checkout", TrustZone::FirstParty, step_meta);
+
+        let findings = checkout_self_pr_exposure(&g);
+        assert!(
+            findings.is_empty(),
+            "no PR trigger → checkout_self_pr_exposure must not fire"
         );
     }
 

@@ -51,3 +51,11 @@ jobs:
         run: |
           cargo test -p taudit-report-json
           cargo test -p taudit-sink-cloudevents
+
+      - name: taudit self-scan
+        run: |
+          cargo run --bin taudit -- scan .github/workflows/ \
+            --platform github-actions \
+            --severity-threshold high \
+            --quiet \
+            || echo "::warning::taudit found issues in workflow files"

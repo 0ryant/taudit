@@ -112,8 +112,8 @@ enum Cli {
         #[arg(long)]
         log_dir: Option<PathBuf>,
 
-        /// CI/CD platform to parse. Default: github-actions.
-        #[arg(long, default_value = "github-actions")]
+        /// CI/CD platform. Default: auto (detects from YAML content)
+        #[arg(long, default_value = "auto")]
         platform: Platform,
 
         /// Write the report to this file instead of stdout.
@@ -127,8 +127,8 @@ enum Cli {
         #[arg(required = true)]
         paths: Vec<PathBuf>,
 
-        /// CI/CD platform to parse. Default: github-actions.
-        #[arg(long, default_value = "github-actions")]
+        /// CI/CD platform. Default: auto (detects from YAML content)
+        #[arg(long, default_value = "auto")]
         platform: Platform,
 
         /// Disable ANSI color output
@@ -176,8 +176,8 @@ enum Cli {
         #[arg(long)]
         output: Option<PathBuf>,
 
-        /// CI/CD platform to parse. Default: github-actions.
-        #[arg(long, default_value = "github-actions")]
+        /// CI/CD platform. Default: auto (detects from YAML content)
+        #[arg(long, default_value = "auto")]
         platform: Platform,
     },
 
@@ -212,8 +212,8 @@ enum Cli {
         #[arg(long, default_value_t = DEFAULT_MAX_HOPS)]
         max_hops: usize,
 
-        /// CI/CD platform to parse. Default: github-actions.
-        #[arg(long, default_value = "github-actions")]
+        /// CI/CD platform. Default: auto (detects from YAML content)
+        #[arg(long, default_value = "auto")]
         platform: Platform,
     },
 }
@@ -243,9 +243,12 @@ enum DiffOutputFormat {
     Json,
 }
 
-#[derive(Clone, clap::ValueEnum, Default)]
+#[derive(Clone, clap::ValueEnum, Default, PartialEq, Eq, Debug)]
 enum Platform {
+    /// Auto-detect platform per file by sniffing top-level YAML keys.
     #[default]
+    #[value(name = "auto")]
+    Auto,
     #[value(name = "github-actions")]
     GithubActions,
     #[value(name = "azure-devops")]
@@ -255,10 +258,41 @@ enum Platform {
 impl Platform {
     fn as_str(&self) -> &'static str {
         match self {
+            Platform::Auto => "auto",
             Platform::GithubActions => "github-actions",
             Platform::AzureDevOps => "azure-devops",
         }
     }
+}
+
+/// Detect the CI/CD platform from YAML content by inspecting top-level mapping keys.
+///
+/// - Top-level `on:` (GHA trigger key) → `GithubActions`.
+/// - Else if any of `trigger:`, `pr:`, `stages:`, or `jobs:` (without `on:`) is present
+///   at top level → `AzureDevOps`.
+/// - Else → `GithubActions` (safe fallback).
+///
+/// If the YAML doesn't parse or doesn't have a mapping at the root, fall back to
+/// `GithubActions`. The file will be re-parsed by the chosen parser, which has its
+/// own error handling.
+fn detect_platform(content: &str) -> Platform {
+    let parsed: Result<serde_yaml::Value, _> = serde_yaml::from_str(content);
+    let Ok(value) = parsed else {
+        return Platform::GithubActions;
+    };
+    let Some(map) = value.as_mapping() else {
+        return Platform::GithubActions;
+    };
+
+    let has_key = |k: &str| map.contains_key(serde_yaml::Value::String(k.to_string()));
+
+    if has_key("on") {
+        return Platform::GithubActions;
+    }
+    if has_key("trigger") || has_key("pr") || has_key("stages") || has_key("jobs") {
+        return Platform::AzureDevOps;
+    }
+    Platform::GithubActions
 }
 
 /// Severity levels for the threshold flag.
@@ -423,12 +457,30 @@ fn cmd_diff(
     max_hops: usize,
     platform: Platform,
 ) -> Result<()> {
-    let parser = make_parser(&platform);
-    let parser = parser.as_ref();
+    let parser_box = make_parser(&platform);
+    let parser = parser_box.as_ref();
     let mut stdout = std::io::stdout().lock();
 
-    let before_graph = parse_file(parser, &before)?;
-    let after_graph = parse_file(parser, &after)?;
+    // For `--platform auto`, detect each file independently. Otherwise reuse the
+    // pre-built parser to avoid extra allocations.
+    let parse_one = |path: &PathBuf| -> Result<taudit_core::graph::AuthorityGraph> {
+        if platform == Platform::Auto {
+            let content = std::fs::read_to_string(path)
+                .with_context(|| format!("Failed to read {}", path.display()))?;
+            let resolved_platform = resolve_platform(&platform, &content);
+            let per_file_parser = make_parser(&resolved_platform);
+            parse_content(
+                per_file_parser.as_ref(),
+                content,
+                path.display().to_string(),
+            )
+        } else {
+            parse_file(parser, path)
+        }
+    };
+
+    let before_graph = parse_one(&before)?;
+    let after_graph = parse_one(&after)?;
 
     let before_findings = rules::run_all_rules(&before_graph, max_hops);
     let after_findings = rules::run_all_rules(&after_graph, max_hops);
@@ -534,6 +586,8 @@ fn cmd_scan(opts: ScanOpts) -> Result<()> {
         output,
     } = opts;
 
+    // Pre-build a parser for the explicit-platform case. When `--platform auto` is
+    // used, parsers are built per-file inside the loop after detecting from content.
     let parser_box = make_parser(&platform);
     let parser = parser_box.as_ref();
     let stdout_handle = std::io::stdout();
@@ -596,9 +650,45 @@ fn cmd_scan(opts: ScanOpts) -> Result<()> {
             std::io::stdin()
                 .read_to_string(&mut content)
                 .with_context(|| "Failed to read from stdin")?;
-            parse_content(parser, content, "<stdin>".to_string())?
+            // Resolve `Auto` against the stdin content; otherwise reuse the
+            // pre-built parser without re-allocating.
+            if platform == Platform::Auto {
+                let resolved_platform = resolve_platform(&platform, &content);
+                let per_file_parser = make_parser(&resolved_platform);
+                parse_content(per_file_parser.as_ref(), content, "<stdin>".to_string())?
+            } else {
+                parse_content(parser, content, "<stdin>".to_string())?
+            }
         } else {
-            match parse_file(parser, path) {
+            // Read the file once. When auto-detecting, sniff the content to pick
+            // the parser; otherwise reuse the pre-built one. We then call
+            // `parse_content` directly to avoid a redundant filesystem read.
+            let content = match std::fs::read_to_string(path) {
+                Ok(c) => c,
+                Err(err) => match tagged_path {
+                    ResolvedPath::Discovered(_) => {
+                        eprintln!("warning: skipping {}: {err:#}", path.display());
+                        skipped_total += 1;
+                        continue;
+                    }
+                    ResolvedPath::Explicit(_) => {
+                        return Err(anyhow::Error::new(err)
+                            .context(format!("Failed to read {}", path.display())));
+                    }
+                },
+            };
+            let parse_result = if platform == Platform::Auto {
+                let resolved_platform = resolve_platform(&platform, &content);
+                let per_file_parser = make_parser(&resolved_platform);
+                parse_content(
+                    per_file_parser.as_ref(),
+                    content,
+                    path.display().to_string(),
+                )
+            } else {
+                parse_content(parser, content, path.display().to_string())
+            };
+            match parse_result {
                 Ok(g) => g,
                 Err(err) => match tagged_path {
                     ResolvedPath::Discovered(_) => {
@@ -1296,15 +1386,48 @@ fn cmd_map(paths: Vec<PathBuf>, platform: Platform, no_color: bool) -> Result<()
 
     for tagged_path in resolve_paths_tagged(&paths)? {
         let path = tagged_path.path().clone();
-        let graph = match parse_file(parser, &path) {
-            Ok(g) => g,
-            Err(err) => match &tagged_path {
-                ResolvedPath::Discovered(_) => {
-                    eprintln!("warning: skipping {}: {err:#}", path.display());
-                    continue;
-                }
-                ResolvedPath::Explicit(_) => return Err(err),
-            },
+        let graph = if platform == Platform::Auto {
+            // Read once, sniff platform, parse with the right parser.
+            let content = match std::fs::read_to_string(&path) {
+                Ok(c) => c,
+                Err(err) => match &tagged_path {
+                    ResolvedPath::Discovered(_) => {
+                        eprintln!("warning: skipping {}: {err:#}", path.display());
+                        continue;
+                    }
+                    ResolvedPath::Explicit(_) => {
+                        return Err(anyhow::Error::new(err)
+                            .context(format!("Failed to read {}", path.display())));
+                    }
+                },
+            };
+            let resolved_platform = resolve_platform(&platform, &content);
+            let per_file_parser = make_parser(&resolved_platform);
+            match parse_content(
+                per_file_parser.as_ref(),
+                content,
+                path.display().to_string(),
+            ) {
+                Ok(g) => g,
+                Err(err) => match &tagged_path {
+                    ResolvedPath::Discovered(_) => {
+                        eprintln!("warning: skipping {}: {err:#}", path.display());
+                        continue;
+                    }
+                    ResolvedPath::Explicit(_) => return Err(err),
+                },
+            }
+        } else {
+            match parse_file(parser, &path) {
+                Ok(g) => g,
+                Err(err) => match &tagged_path {
+                    ResolvedPath::Discovered(_) => {
+                        eprintln!("warning: skipping {}: {err:#}", path.display());
+                        continue;
+                    }
+                    ResolvedPath::Explicit(_) => return Err(err),
+                },
+            }
         };
         let authority_map = map::authority_map(&graph);
 
@@ -1530,8 +1653,21 @@ fn build_cellos_spec(
 
 fn make_parser(platform: &Platform) -> Box<dyn taudit_core::ports::PipelineParser> {
     match platform {
-        Platform::GithubActions => Box::new(GhaParser),
+        // `Auto` should be resolved to a concrete platform per-file before reaching
+        // this function. If it slips through (e.g. an empty path list never triggers
+        // detection), fall back to the GHA parser to preserve historical behavior.
+        Platform::Auto | Platform::GithubActions => Box::new(GhaParser),
         Platform::AzureDevOps => Box::new(AdoParser),
+    }
+}
+
+/// Resolve `Platform::Auto` against a YAML body. Returns the platform unchanged
+/// when it's already concrete.
+fn resolve_platform(platform: &Platform, content: &str) -> Platform {
+    match platform {
+        Platform::Auto => detect_platform(content),
+        Platform::GithubActions => Platform::GithubActions,
+        Platform::AzureDevOps => Platform::AzureDevOps,
     }
 }
 
@@ -1776,5 +1912,31 @@ mod tests {
         assert_eq!(OutputFormat::Json.as_str(), "json");
         assert_eq!(OutputFormat::Sarif.as_str(), "sarif");
         assert_eq!(OutputFormat::Cloudevents.as_str(), "cloudevents");
+    }
+
+    #[test]
+    fn auto_detects_github_actions() {
+        // Top-level `on:` is the GHA-only trigger key.
+        let yaml = "name: ci\non:\n  push:\n    branches: [main]\njobs:\n  build:\n    runs-on: ubuntu-latest\n    steps:\n      - run: echo hi\n";
+        assert_eq!(detect_platform(yaml), Platform::GithubActions);
+    }
+
+    #[test]
+    fn auto_detects_azure_devops() {
+        // ADO uses `trigger:` / `pr:` / `stages:` / `jobs:` without `on:`.
+        let yaml = "trigger:\n  branches:\n    include: [main]\nstages:\n  - stage: build\n    jobs:\n      - job: compile\n        steps:\n          - script: echo hi\n";
+        assert_eq!(detect_platform(yaml), Platform::AzureDevOps);
+    }
+
+    #[test]
+    fn auto_falls_back_to_github_actions_when_yaml_unparseable() {
+        let yaml = "::: this is not yaml :::\n  - and: [oops";
+        assert_eq!(detect_platform(yaml), Platform::GithubActions);
+    }
+
+    #[test]
+    fn auto_falls_back_to_github_actions_when_no_markers() {
+        let yaml = "name: hello\nversion: 1\n";
+        assert_eq!(detect_platform(yaml), Platform::GithubActions);
     }
 }

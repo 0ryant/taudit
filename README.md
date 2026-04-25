@@ -102,8 +102,8 @@ taudit scan .github/workflows/ --exclude 'generated/**'
 # Suppress findings already accepted in a baseline report
 taudit scan .github/workflows/ --baseline taudit-baseline.json
 
-# Scan an Azure DevOps pipeline
-taudit scan .pipelines/azure-pipelines.yml --platform azure-devops
+# Scan an Azure DevOps pipeline (platform auto-detected; or set --platform azure-devops explicitly)
+taudit scan .pipelines/azure-pipelines.yml
 
 # CI-friendly summary counts only
 taudit scan .github/workflows/ --quiet
@@ -112,7 +112,7 @@ taudit scan .github/workflows/ --quiet
 taudit scan .github/workflows/ --quiet --omit-empty
 
 # Collapse repeated template-instance findings into one summary per file
-taudit scan .pipelines/ --platform azure-devops --collapse-template-instances
+taudit scan .pipelines/ --collapse-template-instances
 
 # Show node metadata in propagation paths
 taudit scan .github/workflows/release.yml --verbose
@@ -187,7 +187,7 @@ Then pass that spec to your runtime supervisor/executor.
 ### Explain rules
 
 ```bash
-# List all 16 rules with severity
+# List all 17 rules with severity
 taudit explain
 
 # Full description for a single rule
@@ -226,10 +226,10 @@ taudit scan . --ignore-file .taudit/ignore.yml
 
 ## How it works
 
-1. **Parse** — GitHub Actions or Azure DevOps YAML into typed nodes (steps, secrets, identities, images) with trust zone classification (FirstParty, ThirdParty, Untrusted). Select platform with `--platform github-actions` (default) or `--platform azure-devops`.
+1. **Parse** — GitHub Actions or Azure DevOps YAML into typed nodes (steps, secrets, identities, images) with trust zone classification (FirstParty, ThirdParty, Untrusted). Platform is auto-detected by default (`--platform auto`); override with `--platform github-actions` or `--platform azure-devops`.
 2. **Build graph** — Directed edges model authority flow: `HasAccessTo`, `Produces`, `Consumes`, `UsesImage`, `DelegatesTo`, `PersistsTo`
 3. **Propagate** — BFS from authority-bearing sources (secrets, identities) through edges, flagging trust boundary crossings
-4. **Analyze** — 16 rules pattern-match against the graph, producing findings with severity, evidence paths, and remediation routing
+4. **Analyze** — 17 rules pattern-match against the graph, producing findings with severity, evidence paths, and remediation routing
 
 Trust zones are explicit on every node:
 - **FirstParty** — code you own (`run:` steps, local actions)
@@ -239,7 +239,7 @@ Trust zones are explicit on every node:
 ## Architecture
 
 ```
-taudit-core             graph, propagation engine, 16 rules, finding model (no I/O)
+taudit-core             graph, propagation engine, 17 rules, finding model (no I/O)
 taudit-parse-gha        GitHub Actions YAML → AuthorityGraph
 taudit-parse-ado        Azure DevOps YAML → AuthorityGraph
 taudit-report-terminal  colored terminal reporter
@@ -249,7 +249,7 @@ taudit-sink-cloudevents findings → CloudEvents JSONL event stream
 taudit-cli              composition root (clap, file I/O, wiring)
 ```
 
-8 crates, 181 tests, ~8,500 LOC. Ports and adapters — core has zero I/O dependencies.
+8 crates, 186 tests, ~8,800 LOC. Ports and adapters — core has zero I/O dependencies.
 
 ## CI Integration
 

@@ -1,0 +1,80 @@
+name: taudit PR authority diff
+
+on:
+  pull_request:
+    paths:
+      - ".github/workflows/**"
+      - "azure-pipelines*.yml"
+      - "**/.pipelines/**"
+
+permissions:
+  contents: read
+  pull-requests: write
+
+jobs:
+  authority-diff:
+    name: Authority graph diff
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Install Rust stable
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Install taudit
+        run: cargo install taudit --locked
+
+      - name: Detect changed pipeline files
+        id: changed
+        run: |
+          BASE=${{ github.event.pull_request.base.sha }}
+          HEAD=${{ github.event.pull_request.head.sha }}
+          FILES=$(git diff --name-only "$BASE" "$HEAD" | grep -E '\.(yml|yaml)$' | head -20 || true)
+          echo "files=$FILES" >> "$GITHUB_OUTPUT"
+
+      - name: Run authority diff on each changed file
+        id: diff
+        if: steps.changed.outputs.files != ''
+        run: |
+          BASE=${{ github.event.pull_request.base.sha }}
+          REPORT=""
+          for FILE in ${{ steps.changed.outputs.files }}; do
+            # Get base version of file (empty string if new)
+            BASE_CONTENT=$(git show "${BASE}:${FILE}" 2>/dev/null || true)
+            if [ -n "$BASE_CONTENT" ] && [ -f "$FILE" ]; then
+              DIFF=$(echo "$BASE_CONTENT" | taudit diff - "$FILE" --no-color 2>&1 || true)
+              if [ -n "$DIFF" ]; then
+                REPORT="${REPORT}\n### \`${FILE}\`\n\`\`\`\n${DIFF}\n\`\`\`\n"
+              fi
+            fi
+          done
+          if [ -n "$REPORT" ]; then
+            echo "report<<EOF" >> "$GITHUB_OUTPUT"
+            echo -e "$REPORT" >> "$GITHUB_OUTPUT"
+            echo "EOF" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Post PR comment
+        if: steps.diff.outputs.report != ''
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const body = `## taudit authority diff\n\n${process.env.REPORT}`;
+            await github.rest.issues.createComment({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: context.issue.number,
+              body
+            });
+        env:
+          REPORT: ${{ steps.diff.outputs.report }}
+
+      - name: Scan head for findings
+        run: |
+          taudit scan . \
+            --platform auto \
+            --severity-threshold high \
+            --quiet \
+            || echo "::warning::taudit found high/critical findings in this PR"

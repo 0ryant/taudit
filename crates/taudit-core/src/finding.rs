@@ -64,6 +64,8 @@ pub enum FindingCategory {
     UpliftWithoutAttestation,
     /// Step writes to the environment gate ($GITHUB_ENV, pipeline variables) — authority can propagate.
     SelfMutatingPipeline,
+    /// PR-triggered pipeline checks out the repository — attacker-controlled fork code lands on the runner.
+    CheckoutSelfPrExposure,
     /// ADO variable group consumed by a PR-triggered job, crossing trust boundary.
     VariableGroupInPrJob,
     /// Self-hosted agent pool used in a PR-triggered job that also checks out the repository.

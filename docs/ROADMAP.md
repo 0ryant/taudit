@@ -2,7 +2,7 @@
 
 Three horizons. Each is a superset of the previous.
 
-**Current state:** 8 crates, 181 tests, ~8,500 LOC, 16 analysis rules, 2 parsers (GHA + ADO), 6 commands (scan, map, diff, explain, version, completions), 4 output formats (terminal, JSON, CloudEvents JSONL, SARIF). MVP complete. Deep into AAA: Tier 1 done, Tier 2 mostly done, Tier 3 mostly done, Tier 4 partial, Tier 5 done, Tier 6 partial, Tier 7 mostly done.
+**Current state:** 8 crates, 186 tests, ~8,800 LOC, 17 analysis rules, 2 parsers (GHA + ADO), 6 commands (scan, map, diff, explain, version, completions), 4 output formats (terminal, JSON, CloudEvents JSONL, SARIF). MVP complete. Deep into AAA: Tier 1 done, Tier 2 mostly done, Tier 3 mostly done, Tier 4 partial, Tier 5 done, Tier 6 partial, Tier 7 mostly done.
 
 **Effort key:** S = hours, M = days, L = week+
 
@@ -102,8 +102,8 @@ Put findings where engineers already look.
 - [x] **`--omit-empty`** — `--quiet` mode silently skips files with zero findings (v0.2.4)
 - [x] **`--collapse-template-instances`** — groups findings sharing `(category, root authority node)` into one summary finding per file (v0.2.4)
 - [x] **Stdin pipe support** — `cat workflow.yml | taudit scan -`
-- [ ] **PR comment bot** — `taudit diff base..head` posts authority changes to PR
-- [ ] **GitHub Action** — `uses: taudit-dev/taudit-action@sha` with configurable severity gate
+- [x] **PR comment bot** — `.github/workflows/taudit-pr-diff.yml` diffs authority graph on every PR touching pipeline files and posts a comment (v0.2.6)
+- [x] **GitHub Action** — `.github/actions/taudit-scan/` composite action, `uses: ./.github/actions/taudit-scan` with 7 inputs and `findings-count` output (v0.2.6)
 
 ### Tier 3: Parser Precision (M-L each, real-world correctness)
 
@@ -131,6 +131,7 @@ Identity modelling is the biggest long-term risk. Modern pipelines use OIDC toke
 
 - [x] **Azure DevOps parser** (`taudit-parse-ado`) — stages, jobs, steps, `System.AccessToken`, service connections, variable groups, template references, pool tagging (`self_hosted`), `checkout: self`, `META_IMPLICIT` for platform-injected identities (v0.2.0)
 - [x] **`--platform azure-devops` CLI flag** — selects parser per scan (v0.2.0)
+- [x] **`--platform auto` (default)** — sniffs each file's YAML structure independently; `on:` → GHA, `trigger:`/`pr:`/`stages:`/`jobs:` → ADO (v0.2.6)
 - [x] **Three ADO PR-boundary rules** — `variable_group_in_pr_job`, `self_hosted_pool_pr_hijack`, `service_connection_scope_mismatch` (v0.2.3)
 - [ ] Environment approvals as isolation boundaries
 
@@ -143,6 +144,7 @@ Identity modelling is the biggest long-term risk. Modern pipelines use OIDC toke
 - [x] **AuthorityCycle** — workflow delegation graph contains a cycle
 - [x] **UpliftWithoutAttestation** — OIDC-privileged build produces no signed provenance
 - [x] **SelfMutatingPipeline** — step writes `GITHUB_ENV` / `GITHUB_PATH` to inject into later steps
+- [x] **CheckoutSelfPrExposure** — PR-triggered pipeline checks out repo; attacker-controlled code lands on runner (v0.2.6)
 - [x] **VariableGroupInPrJob** (ADO) — variable-group secrets reachable from PR-triggered job
 - [x] **SelfHostedPoolPrHijack** (ADO) — PR pipeline runs on self-hosted agent and checks out repo
 - [x] **ServiceConnectionScopeMismatch** (ADO) — broad-scope service connection reachable from PR job
@@ -176,11 +178,11 @@ Identity modelling is the biggest long-term risk. Modern pipelines use OIDC toke
 - [x] `AuthorityCompleteness` propagated — parser marks Partial for reusable workflows, matrix, inferred secrets
 - [ ] Identity scope modelled with OIDC/cloud identity awareness
 - [x] Findings appear in GitHub code scanning (SARIF)
-- [ ] PR bot posts authority changes
+- [x] PR bot posts authority changes (v0.2.6)
 - [x] `.tauditignore` + `--baseline` eliminate known noise
 - [ ] Composite actions parsed correctly
-- [x] 16 analysis rules covering propagation, identity, supply chain, artifact, trigger, delegation, attestation, mutation, and ADO PR boundaries
-- [ ] Available via Homebrew + cargo install + GitHub Action
+- [x] 17 analysis rules covering propagation, identity, supply chain, artifact, trigger, delegation, attestation, mutation, ADO PR boundaries, and PR checkout exposure
+- [x] Available via Homebrew + cargo install + GitHub Action (v0.2.6)
 - [x] Release binaries for 5 targets (linux-x64, linux-arm64, macos-x64, macos-arm64, windows-x64)
 
 **Estimated effort: 2-4 weeks remaining to full AAA.** Tier 4 cloud identity scope-escalation, Tier 2 PR bot, and composite-action parsing are the highest remaining leverage.
@@ -211,7 +213,7 @@ Identity modelling is the biggest long-term risk. Modern pipelines use OIDC toke
 
 **Self-hosting:**
 
-- [ ] **taudit scans taudit** — quality.yml includes `taudit scan` as a CI step with zero findings
+- [x] **taudit scans taudit** — quality.yml includes `taudit scan .github/workflows/` as a CI step (v0.2.6)
 - [ ] **taudit scans tsafe** — zero findings
 - [ ] **taudit scans runtime isolation harness** — zero findings
 
@@ -327,11 +329,11 @@ MVP ═════════════════════════�
                               ↓
 AAA ══════════════════════════╪══════════════════════ YOU ARE HERE
   T1: noise elimination    ✅ DONE
-  T2: platform integration ◑ SARIF+fingerprint+diff+explain+stdin+omit-empty+collapse done; PR bot+GHA pending
+  T2: platform integration ◑ SARIF+fingerprint+diff+explain+stdin+omit-empty+collapse+PR-bot+GHA-action done; (complete)
   T3: parser precision     ◑ reusable/matrix/container/PRT done; composite pending
   T4: identity depth       ◑ OIDC tagging + cloud inference + container auth done; escalation nuance pending
-  T5: Azure DevOps         ✅ DONE — v0.2.0 + v0.2.3 PR-boundary rules
-  T6: rule depth           ◑ 10 rules done (FloatingImage, PersistedCredential, TriggerCtx, CrossWorkflow, Cycle, Uplift, SelfMutating, 3 ADO PR rules); Egress/Audit/custom pending
+  T5: Azure DevOps         ✅ DONE — v0.2.0 + v0.2.3 PR-boundary rules + v0.2.6 auto-detect
+  T6: rule depth           ◑ 11 rules done (FloatingImage, PersistedCredential, TriggerCtx, CrossWorkflow, Cycle, Uplift, SelfMutating, 3 ADO PR rules, CheckoutSelfPrExposure); Egress/Audit/custom pending
   T7: enterprise polish    ◑ completions+release+color+verbose+map-layout done
   T8: graph power          ○ not started
                               |

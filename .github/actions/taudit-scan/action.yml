@@ -1,0 +1,68 @@
+name: taudit pipeline scan
+description: Scan CI/CD pipeline files for authority graph vulnerabilities using taudit
+author: 0ryant
+
+inputs:
+  paths:
+    description: "Space-separated paths or globs to scan (default: current directory)"
+    required: false
+    default: "."
+  platform:
+    description: CI/CD platform to parse (github-actions, azure-devops, auto)
+    required: false
+    default: auto
+  severity-threshold:
+    description: Minimum severity to report (critical, high, medium, low, info)
+    required: false
+    default: low
+  format:
+    description: Output format (terminal, json, sarif)
+    required: false
+    default: terminal
+  fail-on-findings:
+    description: Exit non-zero if any findings at or above severity-threshold are found
+    required: false
+    default: "true"
+  version:
+    description: "taudit version to install (default: latest)"
+    required: false
+    default: latest
+  extra-args:
+    description: Additional arguments passed directly to taudit scan
+    required: false
+    default: ""
+
+outputs:
+  findings-count:
+    description: Total number of findings at or above threshold
+    value: ${{ steps.scan.outputs.findings_count }}
+
+runs:
+  using: composite
+  steps:
+    - name: Install taudit
+      shell: bash
+      run: |
+        if [ "${{ inputs.version }}" = "latest" ]; then
+          cargo install taudit --locked
+        else
+          cargo install taudit --version "${{ inputs.version }}" --locked
+        fi
+
+    - name: Run taudit scan
+      id: scan
+      shell: bash
+      run: |
+        set +e
+        taudit scan ${{ inputs.paths }} \
+          --platform ${{ inputs.platform }} \
+          --severity-threshold ${{ inputs.severity-threshold }} \
+          --format ${{ inputs.format }} \
+          ${{ inputs.extra-args }}
+        EXIT=$?
+        # Extract total findings from exit code logic
+        # taudit exits 1 when findings exceed threshold, 0 when clean
+        echo "findings_count=$EXIT" >> "$GITHUB_OUTPUT"
+        if [ "${{ inputs.fail-on-findings }}" = "true" ]; then
+          exit $EXIT
+        fi

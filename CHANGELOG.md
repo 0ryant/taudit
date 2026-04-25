@@ -2,6 +2,20 @@
 
 All notable changes to this project will be documented in this file.
 
+## v0.2.6 — 2026-04-25
+
+### Added
+
+- **`--platform auto` (default)** — taudit now auto-detects each pipeline file's platform independently by sniffing top-level YAML structure: top-level `on:` key → GitHub Actions; `trigger:`, `pr:`, `stages:`, or `jobs:` (without `on:`) → Azure DevOps; fallback → GitHub Actions. Previously the default was `--platform github-actions`, silently producing 0 findings when scanning ADO repos without an explicit `--platform azure-devops` flag. Each file is detected independently, so mixed-platform directories work correctly.
+
+- **`checkout_self_pr_exposure` rule** (High) — fires when a PR-triggered pipeline checks out the repository (`META_CHECKOUT_SELF = "true"` on a Step node when `META_TRIGGER = "pr"` or `"pull_request_target"`). Attacker-controlled code from a forked PR lands on the runner and is readable by all subsequent steps. Applies to both GHA (`pull_request_target`) and ADO (`pr:` trigger). This is the 17th rule in taudit's rule set.
+
+- **Composite GitHub Action** (`.github/actions/taudit-scan/`) — drop-in `uses: ./.github/actions/taudit-scan` integration for any GitHub workflow. Inputs: `paths`, `platform` (default: `auto`), `severity-threshold`, `format`, `fail-on-findings`, `version`, `extra-args`. Output: `findings-count`.
+
+- **PR authority diff workflow** (`.github/workflows/taudit-pr-diff.yml`) — triggers on pull requests that touch pipeline files (`.github/workflows/**`, `azure-pipelines*.yml`, `**/.pipelines/**`). Diffs the authority graph between base and head, posts a PR comment with the per-file diff, and scans the PR head for High/Critical findings as a non-blocking `::warning::` annotation.
+
+- **taudit self-scan in CI** — `quality.yml` now runs `taudit scan .github/workflows/ --platform github-actions --severity-threshold high --quiet` on every push and PR, emitting a `::warning::` annotation if findings are found (non-blocking gate).
+
 ## v0.2.5 — 2026-04-25
 
 ### Changed
