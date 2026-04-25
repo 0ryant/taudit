@@ -28,6 +28,13 @@ impl PipelineParser for AdoParser {
                 "file contains multiple YAML documents (--- separator) — only the first was analyzed".to_string(),
             );
         }
+
+        // Detect PR trigger — sets graph-level META_TRIGGER for trigger_context_mismatch.
+        let has_pr_trigger = pipeline.pr.is_some();
+        if has_pr_trigger {
+            graph.metadata.insert(META_TRIGGER.into(), "pr".into());
+        }
+
         let mut secret_ids: HashMap<String, NodeId> = HashMap::new();
 
         // System.AccessToken is always present — equivalent to GITHUB_TOKEN.
@@ -298,6 +305,17 @@ fn process_steps(
         // Detect $(varName) in inline script text
         if let Some(ref script) = inline_script {
             extract_dollar_paren_secrets(script, step_id, plain_vars, graph, cache);
+        }
+
+        // Detect ##vso[task.setvariable] — environment gate mutation in ADO pipelines
+        if let Some(ref script) = inline_script {
+            let lower = script.to_lowercase();
+            if lower.contains("##vso[task.setvariable") {
+                if let Some(node) = graph.nodes.get_mut(step_id) {
+                    node.metadata
+                        .insert(META_WRITES_ENV_GATE.into(), "true".into());
+                }
+            }
         }
     }
 }
@@ -1068,6 +1086,41 @@ steps:
             links.len(),
             1,
             "step should be linked to variable group secret"
+        );
+    }
+
+    #[test]
+    fn pr_trigger_sets_meta_trigger_on_graph() {
+        let yaml = r#"
+pr:
+  - '*'
+
+steps:
+  - script: echo hi
+"#;
+        let graph = parse(yaml);
+        assert_eq!(
+            graph.metadata.get(META_TRIGGER),
+            Some(&"pr".to_string()),
+            "ADO pr: trigger should set graph META_TRIGGER"
+        );
+    }
+
+    #[test]
+    fn vso_setvariable_sets_meta_writes_env_gate() {
+        let yaml = r###"
+steps:
+  - script: |
+      echo "##vso[task.setvariable variable=FOO]bar"
+    displayName: Set variable
+"###;
+        let graph = parse(yaml);
+        let steps: Vec<_> = graph.nodes_of_kind(NodeKind::Step).collect();
+        assert_eq!(steps.len(), 1);
+        assert_eq!(
+            steps[0].metadata.get(META_WRITES_ENV_GATE),
+            Some(&"true".to_string()),
+            "##vso[task.setvariable] must mark META_WRITES_ENV_GATE"
         );
     }
 }

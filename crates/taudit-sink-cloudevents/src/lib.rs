@@ -58,6 +58,11 @@ fn event_type(category: FindingCategory) -> String {
         FindingCategory::FloatingImage => "floating_image",
         FindingCategory::LongLivedCredential => "long_lived_credential",
         FindingCategory::PersistedCredential => "persisted_credential",
+        FindingCategory::TriggerContextMismatch => "trigger_context_mismatch",
+        FindingCategory::CrossWorkflowAuthorityChain => "cross_workflow_authority_chain",
+        FindingCategory::AuthorityCycle => "authority_cycle",
+        FindingCategory::UpliftWithoutAttestation => "uplift_without_attestation",
+        FindingCategory::SelfMutatingPipeline => "self_mutating_pipeline",
         #[allow(deprecated)]
         FindingCategory::EgressBlindspot => "egress_blindspot",
         #[allow(deprecated)]

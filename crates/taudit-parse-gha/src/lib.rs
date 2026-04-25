@@ -39,6 +39,12 @@ impl PipelineParser for GhaParser {
             .map(trigger_has_pull_request_target)
             .unwrap_or(false);
 
+        if is_pull_request_target {
+            graph
+                .metadata
+                .insert(META_TRIGGER.into(), "pull_request_target".into());
+        }
+
         // Workflow-level permissions -> GITHUB_TOKEN identity node
         let token_id = if let Some(ref perms) = workflow.permissions {
             let perm_string = perms.to_string();
@@ -188,6 +194,19 @@ impl PipelineParser for GhaParser {
                     }
                 }
 
+                // Attestation action detection
+                if let Some(ref uses) = step.uses {
+                    let action = uses.split('@').next().unwrap_or(uses);
+                    if matches!(
+                        action,
+                        "actions/attest-build-provenance" | "sigstore/cosign-installer"
+                    ) {
+                        if let Some(node) = graph.nodes.get_mut(step_id) {
+                            node.metadata.insert(META_ATTESTS.into(), "true".into());
+                        }
+                    }
+                }
+
                 // Process secrets from workflow-level `env:` (inherited by all jobs/steps)
                 if let Some(ref env) = workflow.env {
                     for env_val in env.values() {
@@ -262,6 +281,21 @@ impl PipelineParser for GhaParser {
                                 ));
                             }
                             pos = abs_start + end;
+                        }
+                    }
+                }
+
+                // Detect writes to the GHA environment gate
+                if let Some(ref run) = step.run {
+                    let writes_gate = run.contains(">> $GITHUB_ENV")
+                        || run.contains(">>$GITHUB_ENV")
+                        || run.contains(">> \"$GITHUB_ENV\"")
+                        || run.contains(">> $GITHUB_PATH")
+                        || run.contains(">>$GITHUB_PATH");
+                    if writes_gate {
+                        if let Some(node) = graph.nodes.get_mut(step_id) {
+                            node.metadata
+                                .insert(META_WRITES_ENV_GATE.into(), "true".into());
                         }
                     }
                 }
@@ -1175,6 +1209,61 @@ jobs:
         );
         let secrets: Vec<_> = graph.nodes_of_kind(NodeKind::Secret).collect();
         assert_eq!(secrets.len(), 2, "both static secrets captured");
+    }
+
+    #[test]
+    fn pull_request_target_sets_meta_trigger_on_graph() {
+        let yaml = r#"
+on: pull_request_target
+jobs:
+  ci:
+    steps:
+      - run: echo hi
+"#;
+        let graph = parse(yaml);
+        assert_eq!(
+            graph.metadata.get(META_TRIGGER),
+            Some(&"pull_request_target".to_string())
+        );
+    }
+
+    #[test]
+    fn github_env_write_in_run_sets_meta_writes_env_gate() {
+        let yaml = r#"
+jobs:
+  build:
+    steps:
+      - name: Set version
+        run: echo "VERSION=1.0" >> $GITHUB_ENV
+"#;
+        let graph = parse(yaml);
+        let steps: Vec<_> = graph.nodes_of_kind(NodeKind::Step).collect();
+        assert_eq!(steps.len(), 1);
+        assert_eq!(
+            steps[0].metadata.get(META_WRITES_ENV_GATE),
+            Some(&"true".to_string()),
+            "run: with >> $GITHUB_ENV must mark META_WRITES_ENV_GATE"
+        );
+    }
+
+    #[test]
+    fn attest_action_sets_meta_attests() {
+        let yaml = r#"
+jobs:
+  release:
+    steps:
+      - name: Attest
+        uses: actions/attest-build-provenance@v1
+        with:
+          subject-path: dist/*
+"#;
+        let graph = parse(yaml);
+        let steps: Vec<_> = graph.nodes_of_kind(NodeKind::Step).collect();
+        assert_eq!(steps.len(), 1);
+        assert_eq!(
+            steps[0].metadata.get(META_ATTESTS),
+            Some(&"true".to_string())
+        );
     }
 
     #[test]

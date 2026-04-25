@@ -1,8 +1,9 @@
 use crate::finding::{Finding, FindingCategory, Recommendation, Severity};
 use crate::graph::{
     is_docker_digest_pinned, is_sha_pinned, AuthorityCompleteness, AuthorityGraph, EdgeKind,
-    IdentityScope, NodeKind, TrustZone, META_CLI_FLAG_EXPOSED, META_CONTAINER, META_DIGEST,
-    META_IDENTITY_SCOPE, META_PERMISSIONS,
+    IdentityScope, NodeId, NodeKind, TrustZone, META_ATTESTS, META_CLI_FLAG_EXPOSED,
+    META_CONTAINER, META_DIGEST, META_IDENTITY_SCOPE, META_OIDC, META_PERMISSIONS, META_TRIGGER,
+    META_WRITES_ENV_GATE,
 };
 use crate::propagation;
 
@@ -494,6 +495,354 @@ pub fn persisted_credential(graph: &AuthorityGraph) -> Vec<Finding> {
     findings
 }
 
+/// Rule: dangerous trigger type (pull_request_target / pr) combined with secret/identity access.
+///
+/// Fires once per workflow when the graph-level `META_TRIGGER` indicates a high-risk
+/// trigger and at least one step holds authority. Aggregates all involved nodes.
+pub fn trigger_context_mismatch(graph: &AuthorityGraph) -> Vec<Finding> {
+    let trigger = match graph.metadata.get(META_TRIGGER) {
+        Some(t) => t.clone(),
+        None => return Vec::new(),
+    };
+
+    let severity = if trigger.contains("pull_request_target") {
+        Severity::Critical
+    } else if trigger.contains("pr") {
+        Severity::High
+    } else {
+        return Vec::new();
+    };
+
+    // Collect steps that hold authority (HasAccessTo a Secret or Identity)
+    let mut steps_with_authority: Vec<NodeId> = Vec::new();
+    let mut authority_targets: Vec<NodeId> = Vec::new();
+
+    for step in graph.nodes_of_kind(NodeKind::Step) {
+        let mut step_holds_authority = false;
+        for edge in graph.edges_from(step.id) {
+            if edge.kind != EdgeKind::HasAccessTo {
+                continue;
+            }
+            if let Some(target) = graph.node(edge.to) {
+                if matches!(target.kind, NodeKind::Secret | NodeKind::Identity) {
+                    step_holds_authority = true;
+                    if !authority_targets.contains(&target.id) {
+                        authority_targets.push(target.id);
+                    }
+                }
+            }
+        }
+        if step_holds_authority {
+            steps_with_authority.push(step.id);
+        }
+    }
+
+    if steps_with_authority.is_empty() {
+        return Vec::new();
+    }
+
+    let n = steps_with_authority.len();
+    let mut nodes_involved = steps_with_authority.clone();
+    nodes_involved.extend(authority_targets);
+
+    vec![Finding {
+        severity,
+        category: FindingCategory::TriggerContextMismatch,
+        path: None,
+        nodes_involved,
+        message: format!(
+            "Workflow triggered by {trigger} with secret/identity access — {n} step(s) hold authority that attacker-controlled code could reach"
+        ),
+        recommendation: Recommendation::Manual {
+            action: "Use a separate workflow triggered by workflow_run (not pull_request_target) for privileged operations, or ensure no checkout of the PR head ref occurs before secret use".into(),
+        },
+    }]
+}
+
+/// Rule: authority (secret/identity) flows into an opaque external workflow via DelegatesTo.
+///
+/// For each Step node: find all `DelegatesTo` edges to Image nodes where the trust zone
+/// is not FirstParty. If the same step also has `HasAccessTo` any Secret or Identity,
+/// emit one finding per delegation edge.
+pub fn cross_workflow_authority_chain(graph: &AuthorityGraph) -> Vec<Finding> {
+    let mut findings = Vec::new();
+
+    for step in graph.nodes_of_kind(NodeKind::Step) {
+        // Collect authority sources this step holds
+        let authority_nodes: Vec<&_> = graph
+            .edges_from(step.id)
+            .filter(|e| e.kind == EdgeKind::HasAccessTo)
+            .filter_map(|e| graph.node(e.to))
+            .filter(|n| matches!(n.kind, NodeKind::Secret | NodeKind::Identity))
+            .collect();
+
+        if authority_nodes.is_empty() {
+            continue;
+        }
+
+        // Find each DelegatesTo edge to a non-FirstParty Image
+        for edge in graph.edges_from(step.id) {
+            if edge.kind != EdgeKind::DelegatesTo {
+                continue;
+            }
+            let Some(target) = graph.node(edge.to) else {
+                continue;
+            };
+            if target.kind != NodeKind::Image {
+                continue;
+            }
+            if target.trust_zone == TrustZone::FirstParty {
+                continue;
+            }
+
+            let severity = match target.trust_zone {
+                TrustZone::Untrusted => Severity::Critical,
+                TrustZone::ThirdParty => Severity::High,
+                TrustZone::FirstParty => continue,
+            };
+
+            let authority_names: Vec<String> =
+                authority_nodes.iter().map(|n| n.name.clone()).collect();
+            let authority_label = authority_names.join(", ");
+
+            let mut nodes_involved = vec![step.id, target.id];
+            nodes_involved.extend(authority_nodes.iter().map(|n| n.id));
+
+            findings.push(Finding {
+                severity,
+                category: FindingCategory::CrossWorkflowAuthorityChain,
+                path: None,
+                nodes_involved,
+                message: format!(
+                    "'{}' delegates to '{}' ({:?}) while holding authority ({}) — authority chain extends into opaque external workflow",
+                    step.name, target.name, target.trust_zone, authority_label
+                ),
+                recommendation: Recommendation::Manual {
+                    action: format!(
+                        "Pin '{}' to a full SHA digest; audit what authority the called workflow receives",
+                        target.name
+                    ),
+                },
+            });
+        }
+    }
+
+    findings
+}
+
+/// Rule: circular DelegatesTo chain — workflow calls itself transitively.
+///
+/// Iterative DFS over `DelegatesTo` edges. Detects back edges (gray → gray) and
+/// collects all nodes that participate in any cycle. If any cycles exist, emits
+/// a single High-severity finding listing all cycle members.
+pub fn authority_cycle(graph: &AuthorityGraph) -> Vec<Finding> {
+    let n = graph.nodes.len();
+    if n == 0 {
+        return Vec::new();
+    }
+
+    // Pre-build adjacency list for DelegatesTo edges only.
+    let mut delegates_to: Vec<Vec<NodeId>> = vec![Vec::new(); n];
+    for edge in &graph.edges {
+        if edge.kind == EdgeKind::DelegatesTo && edge.from < n && edge.to < n {
+            delegates_to[edge.from].push(edge.to);
+        }
+    }
+
+    let mut color: Vec<u8> = vec![0u8; n]; // 0=white, 1=gray, 2=black
+    let mut cycle_nodes: std::collections::BTreeSet<NodeId> = std::collections::BTreeSet::new();
+
+    for start in 0..n {
+        if color[start] != 0 {
+            continue;
+        }
+        color[start] = 1;
+        let mut stack: Vec<(NodeId, usize)> = vec![(start, 0)];
+
+        loop {
+            let len = stack.len();
+            if len == 0 {
+                break;
+            }
+            let (node_id, edge_idx) = stack[len - 1];
+            if edge_idx < delegates_to[node_id].len() {
+                stack[len - 1].1 += 1;
+                let neighbor = delegates_to[node_id][edge_idx];
+                if color[neighbor] == 1 {
+                    cycle_nodes.insert(node_id);
+                    cycle_nodes.insert(neighbor);
+                } else if color[neighbor] == 0 {
+                    color[neighbor] = 1;
+                    stack.push((neighbor, 0));
+                }
+            } else {
+                color[node_id] = 2;
+                stack.pop();
+            }
+        }
+    }
+
+    if cycle_nodes.is_empty() {
+        return Vec::new();
+    }
+
+    vec![Finding {
+        severity: Severity::High,
+        category: FindingCategory::AuthorityCycle,
+        path: None,
+        nodes_involved: cycle_nodes.into_iter().collect(),
+        message:
+            "Circular delegation detected — workflow calls itself transitively, creating unbounded privilege escalation paths"
+                .into(),
+        recommendation: Recommendation::Manual {
+            action: "Break the delegation cycle — a workflow must not directly or transitively call itself".into(),
+        },
+    }]
+}
+
+/// Rule: privileged workflow (OIDC/federated identity) with no provenance attestation step.
+///
+/// Scoped to workflows that actually use OIDC/federated identity (an Identity node with
+/// `META_OIDC = "true"` is present). If no node in the graph has `META_ATTESTS = "true"`,
+/// emit one Info-severity finding listing the steps with HasAccessTo an OIDC identity.
+pub fn uplift_without_attestation(graph: &AuthorityGraph) -> Vec<Finding> {
+    // Scope: only fire when the graph has at least one OIDC-capable Identity
+    let oidc_identity_ids: Vec<NodeId> = graph
+        .nodes_of_kind(NodeKind::Identity)
+        .filter(|n| {
+            n.metadata
+                .get(META_OIDC)
+                .map(|v| v == "true")
+                .unwrap_or(false)
+        })
+        .map(|n| n.id)
+        .collect();
+
+    if oidc_identity_ids.is_empty() {
+        return Vec::new();
+    }
+
+    // Bail if any node already has META_ATTESTS = true
+    let has_attestation = graph.nodes.iter().any(|n| {
+        n.metadata
+            .get(META_ATTESTS)
+            .map(|v| v == "true")
+            .unwrap_or(false)
+    });
+    if has_attestation {
+        return Vec::new();
+    }
+
+    // Collect steps that have HasAccessTo an OIDC identity
+    let mut steps_using_oidc: Vec<NodeId> = Vec::new();
+    for edge in &graph.edges {
+        if edge.kind != EdgeKind::HasAccessTo {
+            continue;
+        }
+        if oidc_identity_ids.contains(&edge.to) && !steps_using_oidc.contains(&edge.from) {
+            steps_using_oidc.push(edge.from);
+        }
+    }
+
+    if steps_using_oidc.is_empty() {
+        return Vec::new();
+    }
+
+    let n = steps_using_oidc.len();
+    let mut nodes_involved = steps_using_oidc.clone();
+    nodes_involved.extend(oidc_identity_ids);
+
+    vec![Finding {
+        severity: Severity::Info,
+        category: FindingCategory::UpliftWithoutAttestation,
+        path: None,
+        nodes_involved,
+        message: format!(
+            "{n} step(s) use OIDC/federated identity but no provenance attestation step was detected — artifact integrity cannot be verified"
+        ),
+        recommendation: Recommendation::Manual {
+            action: "Add 'actions/attest-build-provenance' after your build step (GHA) to provide SLSA provenance. See https://docs.github.com/en/actions/security-guides/using-artifact-attestations".into(),
+        },
+    }]
+}
+
+/// Rule: step writes to the environment gate ($GITHUB_ENV / ##vso[task.setvariable]).
+///
+/// Authority leaking through the environment gate propagates to subsequent steps
+/// outside the explicit graph edges. Severity:
+/// - Untrusted step: Critical (attacker-controlled values inject into pipeline env)
+/// - Step with secret/identity access: High (secrets may leak into env)
+/// - Otherwise: Medium (still a propagation risk)
+pub fn self_mutating_pipeline(graph: &AuthorityGraph) -> Vec<Finding> {
+    let mut findings = Vec::new();
+
+    for step in graph.nodes_of_kind(NodeKind::Step) {
+        let writes_gate = step
+            .metadata
+            .get(META_WRITES_ENV_GATE)
+            .map(|v| v == "true")
+            .unwrap_or(false);
+        if !writes_gate {
+            continue;
+        }
+
+        // Collect authority targets the step has HasAccessTo
+        let authority_nodes: Vec<&_> = graph
+            .edges_from(step.id)
+            .filter(|e| e.kind == EdgeKind::HasAccessTo)
+            .filter_map(|e| graph.node(e.to))
+            .filter(|n| matches!(n.kind, NodeKind::Secret | NodeKind::Identity))
+            .collect();
+
+        let is_untrusted = step.trust_zone == TrustZone::Untrusted;
+        let has_authority = !authority_nodes.is_empty();
+
+        let severity = if is_untrusted {
+            Severity::Critical
+        } else if has_authority {
+            Severity::High
+        } else {
+            Severity::Medium
+        };
+
+        let mut nodes_involved = vec![step.id];
+        nodes_involved.extend(authority_nodes.iter().map(|n| n.id));
+
+        let message = if is_untrusted {
+            format!(
+                "Untrusted step '{}' writes to the environment gate — attacker-controlled values can inject into subsequent steps' environment",
+                step.name
+            )
+        } else if has_authority {
+            let authority_label: Vec<String> =
+                authority_nodes.iter().map(|n| n.name.clone()).collect();
+            format!(
+                "Step '{}' writes to the environment gate while holding authority ({}) — secrets may leak into pipeline environment",
+                step.name,
+                authority_label.join(", ")
+            )
+        } else {
+            format!(
+                "Step '{}' writes to the environment gate — values can propagate into subsequent steps' environment",
+                step.name
+            )
+        };
+
+        findings.push(Finding {
+            severity,
+            category: FindingCategory::SelfMutatingPipeline,
+            path: None,
+            nodes_involved,
+            message,
+            recommendation: Recommendation::Manual {
+                action: "Avoid writing secrets or attacker-controlled values to $GITHUB_ENV / $GITHUB_PATH / pipeline variables. Use explicit step outputs with narrow scoping instead.".into(),
+            },
+        });
+    }
+
+    findings
+}
+
 /// Run all rules against a graph.
 pub fn run_all_rules(graph: &AuthorityGraph, max_hops: usize) -> Vec<Finding> {
     let mut findings = Vec::new();
@@ -507,6 +856,11 @@ pub fn run_all_rules(graph: &AuthorityGraph, max_hops: usize) -> Vec<Finding> {
     findings.extend(long_lived_credential(graph));
     findings.extend(floating_image(graph));
     findings.extend(persisted_credential(graph));
+    findings.extend(trigger_context_mismatch(graph));
+    findings.extend(cross_workflow_authority_chain(graph));
+    findings.extend(authority_cycle(graph));
+    findings.extend(uplift_without_attestation(graph));
+    findings.extend(self_mutating_pipeline(graph));
 
     apply_confidence_cap(graph, &mut findings);
 
@@ -871,5 +1225,196 @@ mod tests {
             findings.is_empty(),
             "constrained scope should not be flagged"
         );
+    }
+
+    #[test]
+    fn trigger_context_mismatch_fires_on_pull_request_target_with_secret() {
+        let mut g = AuthorityGraph::new(source("ci.yml"));
+        g.metadata
+            .insert(META_TRIGGER.into(), "pull_request_target".into());
+        let secret = g.add_node(NodeKind::Secret, "DEPLOY_KEY", TrustZone::FirstParty);
+        let step = g.add_node(NodeKind::Step, "build", TrustZone::FirstParty);
+        g.add_edge(step, secret, EdgeKind::HasAccessTo);
+
+        let findings = trigger_context_mismatch(&g);
+        assert_eq!(findings.len(), 1);
+        assert_eq!(findings[0].severity, Severity::Critical);
+        assert_eq!(
+            findings[0].category,
+            FindingCategory::TriggerContextMismatch
+        );
+    }
+
+    #[test]
+    fn trigger_context_mismatch_no_fire_without_trigger_metadata() {
+        let mut g = AuthorityGraph::new(source("ci.yml"));
+        let secret = g.add_node(NodeKind::Secret, "DEPLOY_KEY", TrustZone::FirstParty);
+        let step = g.add_node(NodeKind::Step, "build", TrustZone::FirstParty);
+        g.add_edge(step, secret, EdgeKind::HasAccessTo);
+
+        let findings = trigger_context_mismatch(&g);
+        assert!(findings.is_empty(), "no trigger metadata → no finding");
+    }
+
+    #[test]
+    fn cross_workflow_authority_chain_detected() {
+        let mut g = AuthorityGraph::new(source("ci.yml"));
+        let step = g.add_node(NodeKind::Step, "deploy", TrustZone::FirstParty);
+        let secret = g.add_node(NodeKind::Secret, "DEPLOY_KEY", TrustZone::FirstParty);
+        let external = g.add_node(
+            NodeKind::Image,
+            "evil/workflow.yml@main",
+            TrustZone::Untrusted,
+        );
+        g.add_edge(step, secret, EdgeKind::HasAccessTo);
+        g.add_edge(step, external, EdgeKind::DelegatesTo);
+
+        let findings = cross_workflow_authority_chain(&g);
+        assert_eq!(findings.len(), 1);
+        assert_eq!(findings[0].severity, Severity::Critical);
+        assert_eq!(
+            findings[0].category,
+            FindingCategory::CrossWorkflowAuthorityChain
+        );
+    }
+
+    #[test]
+    fn cross_workflow_authority_chain_no_fire_if_local_delegation() {
+        let mut g = AuthorityGraph::new(source("ci.yml"));
+        let step = g.add_node(NodeKind::Step, "deploy", TrustZone::FirstParty);
+        let secret = g.add_node(NodeKind::Secret, "DEPLOY_KEY", TrustZone::FirstParty);
+        let local = g.add_node(NodeKind::Image, "./local-action", TrustZone::FirstParty);
+        g.add_edge(step, secret, EdgeKind::HasAccessTo);
+        g.add_edge(step, local, EdgeKind::DelegatesTo);
+
+        let findings = cross_workflow_authority_chain(&g);
+        assert!(
+            findings.is_empty(),
+            "FirstParty delegation should not be flagged"
+        );
+    }
+
+    #[test]
+    fn authority_cycle_detected() {
+        let mut g = AuthorityGraph::new(source("ci.yml"));
+        let a = g.add_node(NodeKind::Step, "A", TrustZone::FirstParty);
+        let b = g.add_node(NodeKind::Step, "B", TrustZone::FirstParty);
+        g.add_edge(a, b, EdgeKind::DelegatesTo);
+        g.add_edge(b, a, EdgeKind::DelegatesTo);
+
+        let findings = authority_cycle(&g);
+        assert_eq!(findings.len(), 1);
+        assert_eq!(findings[0].category, FindingCategory::AuthorityCycle);
+        assert_eq!(findings[0].severity, Severity::High);
+    }
+
+    #[test]
+    fn authority_cycle_no_fire_for_acyclic_graph() {
+        let mut g = AuthorityGraph::new(source("ci.yml"));
+        let a = g.add_node(NodeKind::Step, "A", TrustZone::FirstParty);
+        let b = g.add_node(NodeKind::Step, "B", TrustZone::FirstParty);
+        let c = g.add_node(NodeKind::Step, "C", TrustZone::FirstParty);
+        g.add_edge(a, b, EdgeKind::DelegatesTo);
+        g.add_edge(b, c, EdgeKind::DelegatesTo);
+
+        let findings = authority_cycle(&g);
+        assert!(findings.is_empty(), "acyclic graph must not fire");
+    }
+
+    #[test]
+    fn uplift_without_attestation_fires_when_oidc_no_attests() {
+        let mut g = AuthorityGraph::new(source("ci.yml"));
+        let mut meta = std::collections::HashMap::new();
+        meta.insert(META_OIDC.into(), "true".into());
+        let identity = g.add_node_with_metadata(
+            NodeKind::Identity,
+            "AWS/deploy-role",
+            TrustZone::FirstParty,
+            meta,
+        );
+        let step = g.add_node(NodeKind::Step, "build", TrustZone::FirstParty);
+        g.add_edge(step, identity, EdgeKind::HasAccessTo);
+
+        let findings = uplift_without_attestation(&g);
+        assert_eq!(findings.len(), 1);
+        assert_eq!(findings[0].severity, Severity::Info);
+        assert_eq!(
+            findings[0].category,
+            FindingCategory::UpliftWithoutAttestation
+        );
+    }
+
+    #[test]
+    fn uplift_without_attestation_no_fire_when_attests_present() {
+        let mut g = AuthorityGraph::new(source("ci.yml"));
+        let mut id_meta = std::collections::HashMap::new();
+        id_meta.insert(META_OIDC.into(), "true".into());
+        let identity = g.add_node_with_metadata(
+            NodeKind::Identity,
+            "AWS/deploy-role",
+            TrustZone::FirstParty,
+            id_meta,
+        );
+        let mut step_meta = std::collections::HashMap::new();
+        step_meta.insert(META_ATTESTS.into(), "true".into());
+        let attest_step =
+            g.add_node_with_metadata(NodeKind::Step, "attest", TrustZone::FirstParty, step_meta);
+        let build_step = g.add_node(NodeKind::Step, "build", TrustZone::FirstParty);
+        g.add_edge(build_step, identity, EdgeKind::HasAccessTo);
+        // Touch attest_step so the variable is used (avoid unused warning)
+        let _ = attest_step;
+
+        let findings = uplift_without_attestation(&g);
+        assert!(findings.is_empty(), "attestation present → no finding");
+    }
+
+    #[test]
+    fn uplift_without_attestation_no_fire_without_oidc() {
+        let mut g = AuthorityGraph::new(source("ci.yml"));
+        let mut meta = std::collections::HashMap::new();
+        meta.insert(META_PERMISSIONS.into(), "write-all".into());
+        meta.insert(META_IDENTITY_SCOPE.into(), "broad".into());
+        // Note: no META_OIDC
+        let identity = g.add_node_with_metadata(
+            NodeKind::Identity,
+            "GITHUB_TOKEN",
+            TrustZone::FirstParty,
+            meta,
+        );
+        let step = g.add_node(NodeKind::Step, "build", TrustZone::FirstParty);
+        g.add_edge(step, identity, EdgeKind::HasAccessTo);
+
+        let findings = uplift_without_attestation(&g);
+        assert!(
+            findings.is_empty(),
+            "broad identity without OIDC must not fire"
+        );
+    }
+
+    #[test]
+    fn self_mutating_pipeline_untrusted_is_critical() {
+        let mut g = AuthorityGraph::new(source("ci.yml"));
+        let mut meta = std::collections::HashMap::new();
+        meta.insert(META_WRITES_ENV_GATE.into(), "true".into());
+        g.add_node_with_metadata(NodeKind::Step, "fork-step", TrustZone::Untrusted, meta);
+
+        let findings = self_mutating_pipeline(&g);
+        assert_eq!(findings.len(), 1);
+        assert_eq!(findings[0].severity, Severity::Critical);
+        assert_eq!(findings[0].category, FindingCategory::SelfMutatingPipeline);
+    }
+
+    #[test]
+    fn self_mutating_pipeline_privileged_step_is_high() {
+        let mut g = AuthorityGraph::new(source("ci.yml"));
+        let mut meta = std::collections::HashMap::new();
+        meta.insert(META_WRITES_ENV_GATE.into(), "true".into());
+        let step = g.add_node_with_metadata(NodeKind::Step, "build", TrustZone::FirstParty, meta);
+        let secret = g.add_node(NodeKind::Secret, "DEPLOY_KEY", TrustZone::FirstParty);
+        g.add_edge(step, secret, EdgeKind::HasAccessTo);
+
+        let findings = self_mutating_pipeline(&g);
+        assert_eq!(findings.len(), 1);
+        assert_eq!(findings[0].severity, Severity::High);
     }
 }

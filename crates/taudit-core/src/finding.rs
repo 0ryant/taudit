@@ -54,6 +54,16 @@ pub enum FindingCategory {
     /// Disk-persisted credentials are accessible to all subsequent steps and any process
     /// with filesystem access, unlike runtime-only `HasAccessTo` authority.
     PersistedCredential,
+    /// Dangerous trigger type (pull_request_target / pr) combined with secret/identity access.
+    TriggerContextMismatch,
+    /// Authority (secret/identity) flows into an opaque external workflow via DelegatesTo.
+    CrossWorkflowAuthorityChain,
+    /// Circular DelegatesTo chain — workflow calls itself transitively.
+    AuthorityCycle,
+    /// Privileged workflow (OIDC/broad identity) with no provenance attestation step.
+    UpliftWithoutAttestation,
+    /// Step writes to the environment gate ($GITHUB_ENV, pipeline variables) — authority can propagate.
+    SelfMutatingPipeline,
     // Reserved — requires ADO/GH API enrichment beyond pipeline YAML
     /// Requires runtime network telemetry or policy enrichment — not detectable from YAML alone.
     #[doc(hidden)]

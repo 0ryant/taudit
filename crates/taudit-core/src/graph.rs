@@ -22,6 +22,12 @@ pub const META_OIDC: &str = "oidc";
 /// CLI flag values appear in pipeline log output even when ADO secret masking is active,
 /// because the command string is logged before masking runs and Terraform itself logs `-var` values.
 pub const META_CLI_FLAG_EXPOSED: &str = "cli_flag_exposed";
+/// Graph-level metadata: identifies the trigger type (e.g. `pull_request_target`, `pr`).
+pub const META_TRIGGER: &str = "trigger";
+/// Marks a Step that writes to the environment gate (`$GITHUB_ENV`, ADO `##vso[task.setvariable]`).
+pub const META_WRITES_ENV_GATE: &str = "writes_env_gate";
+/// Marks a Step that performs cryptographic provenance attestation (e.g. `actions/attest-build-provenance`).
+pub const META_ATTESTS: &str = "attests";
 
 // ── Shared helpers ─────────────────────────────────────
 
@@ -170,6 +176,8 @@ pub enum EdgeKind {
     /// Distinct from HasAccessTo: disk persistence is accessible to all subsequent steps
     /// and processes with filesystem access, not just the step that created it.
     PersistsTo,
+    /// Step -> Artifact (cryptographically signs or attests the artifact for provenance).
+    Signs,
 }
 
 /// A directed edge in the authority graph.
@@ -207,6 +215,9 @@ pub struct AuthorityGraph {
     /// Human-readable reasons why the graph is Partial (if applicable).
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub completeness_gaps: Vec<String>,
+    /// Graph-level metadata set by parsers (e.g. trigger type, platform-specific flags).
+    #[serde(default, skip_serializing_if = "HashMap::is_empty")]
+    pub metadata: HashMap<String, String>,
 }
 
 impl AuthorityGraph {
@@ -217,6 +228,7 @@ impl AuthorityGraph {
             edges: Vec::new(),
             completeness: AuthorityCompleteness::Complete,
             completeness_gaps: Vec::new(),
+            metadata: HashMap::new(),
         }
     }
 
