@@ -73,7 +73,14 @@ pub const RULE_DEFS: &[RuleDef] = &[
             "An untrusted or unpinned step has direct access to a secret or identity.",
         full_description:
             "An untrusted or unpinned step has direct access to a secret or identity. \
-             Compromise of that step yields immediate compromise of the associated authority.",
+             Compromise of that step yields immediate compromise of the associated authority. \
+             \n\n\
+             On ADO, System.AccessToken is injected into every task by the platform — this \
+             is structural exposure, not a misconfiguration. Findings against System.AccessToken \
+             are emitted at Info severity to distinguish them from actionable Critical findings \
+             against explicit secrets or service connections. To reduce structural exposure, \
+             set `env.SYSTEM_ACCESSTOKEN` only on steps that require it, or restrict the \
+             token scope via pipeline-level `security:` settings.",
         default_level: "error",
         security_severity: "9.0",
         tags: &["security", "privilege-escalation"],

@@ -38,8 +38,11 @@ impl PipelineParser for AdoParser {
         let mut secret_ids: HashMap<String, NodeId> = HashMap::new();
 
         // System.AccessToken is always present — equivalent to GITHUB_TOKEN.
+        // Tagged implicit: ADO injects this token into every task by platform design;
+        // its exposure to marketplace tasks is structural, not a fixable misconfiguration.
         let mut meta = HashMap::new();
         meta.insert(META_IDENTITY_SCOPE.into(), "broad".into());
+        meta.insert(META_IMPLICIT.into(), "true".into());
         let token_id = graph.add_node_with_metadata(
             NodeKind::Identity,
             "System.AccessToken",

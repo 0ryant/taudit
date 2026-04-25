@@ -36,6 +36,10 @@ pub const META_SELF_HOSTED: &str = "self_hosted";
 pub const META_CHECKOUT_SELF: &str = "checkout_self";
 /// Marks an Identity node as an ADO service connection.
 pub const META_SERVICE_CONNECTION: &str = "service_connection";
+/// Marks an Identity node as implicitly injected by the platform (e.g. ADO System.AccessToken).
+/// Implicit tokens are structurally accessible to all tasks by platform design — exposure
+/// to untrusted steps is Info-level (structural) rather than Critical (misconfiguration).
+pub const META_IMPLICIT: &str = "implicit";
 
 // ── Shared helpers ─────────────────────────────────────
 

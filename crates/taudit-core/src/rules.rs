@@ -2,9 +2,9 @@ use crate::finding::{Finding, FindingCategory, Recommendation, Severity};
 use crate::graph::{
     is_docker_digest_pinned, is_sha_pinned, AuthorityCompleteness, AuthorityGraph, EdgeKind,
     IdentityScope, NodeId, NodeKind, TrustZone, META_ATTESTS, META_CHECKOUT_SELF,
-    META_CLI_FLAG_EXPOSED, META_CONTAINER, META_DIGEST, META_IDENTITY_SCOPE, META_OIDC,
-    META_PERMISSIONS, META_SELF_HOSTED, META_SERVICE_CONNECTION, META_TRIGGER, META_VARIABLE_GROUP,
-    META_WRITES_ENV_GATE,
+    META_CLI_FLAG_EXPOSED, META_CONTAINER, META_DIGEST, META_IDENTITY_SCOPE, META_IMPLICIT,
+    META_OIDC, META_PERMISSIONS, META_SELF_HOSTED, META_SERVICE_CONNECTION, META_TRIGGER,
+    META_VARIABLE_GROUP, META_WRITES_ENV_GATE,
 };
 use crate::propagation;
 
@@ -272,22 +272,50 @@ pub fn untrusted_with_authority(graph: &AuthorityGraph) -> Vec<Finding> {
                         ""
                     };
 
+                    // Platform-implicit tokens (e.g. ADO System.AccessToken) are structurally
+                    // accessible to all tasks by design. Flag at Info — real but not actionable
+                    // as a misconfiguration. Explicit secrets/service connections stay Critical.
+                    let is_implicit = target
+                        .metadata
+                        .get(META_IMPLICIT)
+                        .map(|v| v == "true")
+                        .unwrap_or(false);
+
+                    let (severity, message) =
+                        if is_implicit {
+                            (
+                                Severity::Info,
+                                format!(
+                                "Untrusted step '{}' has structural access to implicit {} '{}' \
+                                 (platform-injected — all tasks receive this token by design)",
+                                step.name,
+                                if target.kind == NodeKind::Secret { "secret" } else { "identity" },
+                                target.name,
+                            ),
+                            )
+                        } else {
+                            (
+                                Severity::Critical,
+                                format!(
+                                    "Untrusted step '{}' has direct access to {} '{}'{}",
+                                    step.name,
+                                    if target.kind == NodeKind::Secret {
+                                        "secret"
+                                    } else {
+                                        "identity"
+                                    },
+                                    target.name,
+                                    log_exposure_note,
+                                ),
+                            )
+                        };
+
                     findings.push(Finding {
-                        severity: Severity::Critical,
+                        severity,
                         category: FindingCategory::UntrustedWithAuthority,
                         path: None,
                         nodes_involved: vec![step.id, target.id],
-                        message: format!(
-                            "Untrusted step '{}' has direct access to {} '{}'{}",
-                            step.name,
-                            if target.kind == NodeKind::Secret {
-                                "secret"
-                            } else {
-                                "identity"
-                            },
-                            target.name,
-                            log_exposure_note,
-                        ),
+                        message,
                         recommendation,
                     });
                 }
@@ -1119,6 +1147,63 @@ mod tests {
         let findings = untrusted_with_authority(&g);
         assert_eq!(findings.len(), 1);
         assert_eq!(findings[0].severity, Severity::Critical);
+    }
+
+    #[test]
+    fn implicit_identity_downgrades_to_info() {
+        let mut g = AuthorityGraph::new(source("ci.yml"));
+        let step = g.add_node(NodeKind::Step, "AzureCLI@2", TrustZone::Untrusted);
+        let mut meta = std::collections::HashMap::new();
+        meta.insert(META_IMPLICIT.into(), "true".into());
+        meta.insert(META_IDENTITY_SCOPE.into(), "broad".into());
+        let token = g.add_node_with_metadata(
+            NodeKind::Identity,
+            "System.AccessToken",
+            TrustZone::FirstParty,
+            meta,
+        );
+        g.add_edge(step, token, EdgeKind::HasAccessTo);
+
+        let findings = untrusted_with_authority(&g);
+        assert_eq!(findings.len(), 1);
+        assert_eq!(
+            findings[0].severity,
+            Severity::Info,
+            "implicit token must be Info not Critical"
+        );
+        assert!(findings[0].message.contains("platform-injected"));
+    }
+
+    #[test]
+    fn explicit_secret_remains_critical_despite_implicit_token() {
+        let mut g = AuthorityGraph::new(source("ci.yml"));
+        let step = g.add_node(NodeKind::Step, "AzureCLI@2", TrustZone::Untrusted);
+        // implicit token → Info
+        let mut meta = std::collections::HashMap::new();
+        meta.insert(META_IMPLICIT.into(), "true".into());
+        let token = g.add_node_with_metadata(
+            NodeKind::Identity,
+            "System.AccessToken",
+            TrustZone::FirstParty,
+            meta,
+        );
+        // explicit secret → Critical
+        let secret = g.add_node(NodeKind::Secret, "ARM_CLIENT_SECRET", TrustZone::FirstParty);
+        g.add_edge(step, token, EdgeKind::HasAccessTo);
+        g.add_edge(step, secret, EdgeKind::HasAccessTo);
+
+        let findings = untrusted_with_authority(&g);
+        assert_eq!(findings.len(), 2);
+        let info = findings
+            .iter()
+            .find(|f| f.severity == Severity::Info)
+            .unwrap();
+        let crit = findings
+            .iter()
+            .find(|f| f.severity == Severity::Critical)
+            .unwrap();
+        assert!(info.message.contains("platform-injected"));
+        assert!(crit.message.contains("ARM_CLIENT_SECRET"));
     }
 
     #[test]
