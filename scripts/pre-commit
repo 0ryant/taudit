@@ -1,0 +1,18 @@
+#!/usr/bin/env bash
+# Pre-commit hook: mirrors the fmt + clippy steps from .github/workflows/quality.yml.
+# Install: just install-hooks
+set -euo pipefail
+
+echo "pre-commit: running cargo fmt check..."
+cargo fmt --all -- --check || {
+    echo "pre-commit: fmt failed — run 'cargo fmt --all' then re-stage"
+    exit 1
+}
+
+echo "pre-commit: running clippy..."
+cargo clippy --workspace --all-targets -- -D warnings || {
+    echo "pre-commit: clippy failed — run 'just fix' then re-stage"
+    exit 1
+}
+
+echo "pre-commit: OK"

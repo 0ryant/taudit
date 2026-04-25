@@ -35,6 +35,11 @@ fix:
     cargo fmt --all
     cargo clippy --workspace --all-targets --fix --allow-dirty --allow-staged
 
+install-hooks:
+    cp scripts/pre-commit .git/hooks/pre-commit
+    chmod +x .git/hooks/pre-commit
+    @echo "pre-commit hook installed"
+
 # Run taudit against its own sister projects (self-test)
 self-test:
     cargo run -p taudit-cli -- scan .refs/cellos/.github/workflows/

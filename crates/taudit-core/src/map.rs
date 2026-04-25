@@ -227,7 +227,7 @@ pub fn render_map(map: &AuthorityMap, term_width: usize) -> String {
             .iter()
             .zip(&auth_widths[start..end])
         {
-            out.push_str(&format!("  {:^w$}", name, w = w));
+            out.push_str(&format!("  {name:^w$}"));
         }
         out.push('\n');
 
@@ -246,15 +246,11 @@ pub fn render_map(map: &AuthorityMap, term_width: usize) -> String {
             let step_display = trunc(&row.step_name, MAX_STEP);
             let zone_display = zone_abbr(&row.trust_zone);
             out.push_str(&format!(
-                "{:<step_w$}  {:<zone_w$}",
-                step_display,
-                zone_display,
-                step_w = step_width,
-                zone_w = ZONE_W,
+                "{step_display:<step_width$}  {zone_display:<ZONE_W$}"
             ));
             for (col, w) in auth_widths[start..end].iter().enumerate() {
                 let marker = if row.access[start + col] { "✓" } else { "·" };
-                out.push_str(&format!("  {:^w$}", marker, w = w));
+                out.push_str(&format!("  {marker:^w$}"));
             }
             out.push('\n');
         }
