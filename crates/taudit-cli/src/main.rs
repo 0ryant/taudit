@@ -1309,11 +1309,20 @@ fn cmd_map(paths: Vec<PathBuf>, platform: Platform, no_color: bool) -> Result<()
         let authority_map = map::authority_map(&graph);
 
         println!("Authority Map: {}\n", path.display());
-        print!("{}", map::render_map(&authority_map));
+        print!("{}", map::render_map(&authority_map, term_width()));
         println!();
     }
 
     Ok(())
+}
+
+/// Detect terminal width for table layout.  Reads `$COLUMNS` (set by most
+/// interactive shells); falls back to 120 when unset or non-numeric.
+fn term_width() -> usize {
+    std::env::var("COLUMNS")
+        .ok()
+        .and_then(|v| v.trim().parse::<usize>().ok())
+        .unwrap_or(120)
 }
 
 fn version_report() -> String {

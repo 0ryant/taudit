@@ -119,101 +119,154 @@ pub fn authority_map(graph: &AuthorityGraph) -> AuthorityMap {
     }
 }
 
+/// Abbreviate a trust-zone debug string to a 2-char code so the zone column
+/// stays narrow regardless of the variant name length.
+fn zone_abbr(zone: &str) -> &'static str {
+    match zone {
+        "FirstParty" => "1P",
+        "ThirdParty" => "3P",
+        _ => "?",
+    }
+}
+
+/// Truncate a string to at most `max` chars, appending `…` when cut.
+fn trunc(s: &str, max: usize) -> String {
+    let n = s.chars().count();
+    if n <= max {
+        s.to_string()
+    } else {
+        let mut out: String = s.chars().take(max - 1).collect();
+        out.push('…');
+        out
+    }
+}
+
 /// Render the authority map as a formatted table string.
-pub fn render_map(map: &AuthorityMap) -> String {
+///
+/// `term_width` controls column-group pagination. Authority columns are
+/// packed left-to-right into groups narrow enough to fit; each group is
+/// emitted as a separate mini-table with a "(columns M–N of T)" label.
+/// Pass `usize::MAX` to disable pagination.
+pub fn render_map(map: &AuthorityMap, term_width: usize) -> String {
     if map.rows.is_empty() && map.authorities.is_empty() {
         return "No steps or authority sources found.\n".to_string();
     }
 
-    // Calculate column widths
+    // Fixed left columns: Step (capped) + Zone (always "1P"/"3P"/"?", 2 chars)
+    const MAX_STEP: usize = 28;
+    const MAX_COL: usize = 18;
+    const ZONE_W: usize = 4; // "Zone" header
+
     let step_width = map
         .rows
         .iter()
-        .map(|r| r.step_name.len())
+        .map(|r| r.step_name.chars().count().min(MAX_STEP))
         .max()
         .unwrap_or(4)
         .max(4);
 
-    let zone_width = map
-        .rows
-        .iter()
-        .map(|r| r.trust_zone.len())
-        .max()
-        .unwrap_or(4)
-        .max(4);
+    // "Step  Zone  " prefix width (step + 2 spaces + zone + 2 spaces)
+    let prefix_width = step_width + 2 + ZONE_W + 2;
 
-    // Clamp authority column names to MAX_COL chars with ellipsis to prevent
-    // wide tables from wrapping. `chars().count()` handles Unicode correctly.
-    const MAX_COL: usize = 20;
-
-    let display_names: Vec<String> = map
-        .authorities
-        .iter()
-        .map(|a| {
-            let char_count = a.chars().count();
-            if char_count > MAX_COL {
-                let mut s: String = a.chars().take(MAX_COL - 1).collect();
-                s.push('…');
-                s
-            } else {
-                a.clone()
-            }
-        })
-        .collect();
+    // Build display names for authority columns, capped to MAX_COL.
+    let display_names: Vec<String> = map.authorities.iter().map(|a| trunc(a, MAX_COL)).collect();
     let any_truncated = display_names
         .iter()
         .zip(map.authorities.iter())
         .any(|(d, o)| d != o);
 
+    // Each authority column occupies: display_name_width + 2 (leading spaces).
     let auth_widths: Vec<usize> = display_names
         .iter()
         .map(|a| a.chars().count().max(3))
         .collect();
 
+    // Split authorities into column groups that fit inside term_width.
+    // Each group: prefix_width + sum(auth_widths[i] + 2).
+    // Always include at least 1 column per group to avoid stalling.
+    let total_cols = auth_widths.len();
+    let mut groups: Vec<(usize, usize)> = Vec::new(); // (start_idx, end_idx exclusive)
+    let mut gi = 0;
+    while gi < total_cols {
+        let mut used = prefix_width;
+        let mut end = gi;
+        while end < total_cols {
+            let next = used + auth_widths[end] + 2;
+            if next > term_width && end > gi {
+                break;
+            }
+            used = next;
+            end += 1;
+        }
+        groups.push((gi, end));
+        gi = end;
+    }
+
+    let multi_group = groups.len() > 1;
     let mut out = String::new();
 
-    // Header
-    out.push_str(&format!(
-        "{:<step_w$}  {:<zone_w$}",
-        "Step",
-        "Zone",
-        step_w = step_width,
-        zone_w = zone_width
-    ));
-    for (i, auth) in display_names.iter().enumerate() {
-        out.push_str(&format!("  {:^w$}", auth, w = auth_widths[i]));
-    }
-    out.push('\n');
+    for (group_idx, &(start, end)) in groups.iter().enumerate() {
+        if multi_group {
+            out.push_str(&format!(
+                "  columns {}-{} of {}\n",
+                start + 1,
+                end,
+                total_cols
+            ));
+        }
 
-    // Separator
-    out.push_str(&"-".repeat(step_width));
-    out.push_str("  ");
-    out.push_str(&"-".repeat(zone_width));
-    for w in &auth_widths {
-        out.push_str("  ");
-        out.push_str(&"-".repeat(*w));
-    }
-    out.push('\n');
-
-    // Rows
-    for row in &map.rows {
+        // Header row
         out.push_str(&format!(
             "{:<step_w$}  {:<zone_w$}",
-            row.step_name,
-            row.trust_zone,
+            "Step",
+            "Zone",
             step_w = step_width,
-            zone_w = zone_width
+            zone_w = ZONE_W,
         ));
-        for (i, &has) in row.access.iter().enumerate() {
-            let marker = if has { "X" } else { "." };
-            out.push_str(&format!("  {:^w$}", marker, w = auth_widths[i]));
+        for (name, w) in display_names[start..end]
+            .iter()
+            .zip(&auth_widths[start..end])
+        {
+            out.push_str(&format!("  {:^w$}", name, w = w));
         }
         out.push('\n');
+
+        // Separator
+        out.push_str(&"-".repeat(step_width));
+        out.push_str("  ");
+        out.push_str(&"-".repeat(ZONE_W));
+        for w in &auth_widths[start..end] {
+            out.push_str("  ");
+            out.push_str(&"-".repeat(*w));
+        }
+        out.push('\n');
+
+        // Data rows
+        for row in &map.rows {
+            let step_display = trunc(&row.step_name, MAX_STEP);
+            let zone_display = zone_abbr(&row.trust_zone);
+            out.push_str(&format!(
+                "{:<step_w$}  {:<zone_w$}",
+                step_display,
+                zone_display,
+                step_w = step_width,
+                zone_w = ZONE_W,
+            ));
+            for (col, w) in auth_widths[start..end].iter().enumerate() {
+                let marker = if row.access[start + col] { "✓" } else { "·" };
+                out.push_str(&format!("  {:^w$}", marker, w = w));
+            }
+            out.push('\n');
+        }
+
+        if group_idx + 1 < groups.len() {
+            out.push('\n');
+        }
     }
 
     if any_truncated {
         out.push_str(&format!(
-            "\nNote: column names truncated to {MAX_COL} chars.\n"
+            "\nnote: column names truncated to {MAX_COL} chars\n"
         ));
     }
 
@@ -268,9 +321,9 @@ mod tests {
         g.add_edge(step, secret, EdgeKind::HasAccessTo);
 
         let map = authority_map(&g);
-        let table = render_map(&map);
+        let table = render_map(&map, 120);
         assert!(table.contains("build"));
         assert!(table.contains("KEY"));
-        assert!(table.contains("X"));
+        assert!(table.contains('✓'));
     }
 }
