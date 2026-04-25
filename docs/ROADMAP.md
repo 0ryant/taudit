@@ -2,7 +2,7 @@
 
 Three horizons. Each is a superset of the previous.
 
-**Current state (v0.2.7):** 8 crates, 186 tests, ~8,800 LOC, 17 analysis rules, 2 parsers (GHA + ADO), 6 commands (scan, map, diff, explain, version, completions), 4 output formats (terminal, JSON, CloudEvents JSONL, SARIF). Published to crates.io. MVP complete. Deep into AAA: Tier 1 done, Tier 2 done, Tier 3 mostly done, Tier 4 partial, Tier 5 done, Tier 6 partial, Tier 7 mostly done.
+**Current state (v0.3.0):** 8 crates, 195 tests, ~8,800 LOC, 17 analysis rules, 2 parsers (GHA + ADO), 6 commands (scan, map, diff, explain, version, completions), 4 output formats (terminal, JSON, CloudEvents JSONL, SARIF). Published to crates.io. MVP complete. Deep into AAA: Tier 1 done, Tier 2 done, Tier 3 mostly done, Tier 4 mostly done, Tier 5 done, Tier 6 partial, Tier 7 mostly done.
 
 **Effort key:** S = hours, M = days, L = week+
 
@@ -59,7 +59,7 @@ Three horizons. Each is a superset of the previous.
 | # | Item | Effort | Status |
 |---|------|--------|--------|
 | **20** | README with install + quickstart + example output | S | Done |
-| **21** | `cargo install taudit` (publish to crates.io) | S | Done — v0.2.7 live on crates.io |
+| **21** | `cargo install taudit` (publish to crates.io) | S | Done — v0.3.0 live on crates.io |
 
 ### MVP ship gate
 
@@ -71,9 +71,9 @@ Three horizons. Each is a superset of the previous.
 - [x] `.tauditignore` suppresses known-accepted risks
 - [x] `--severity-threshold` lets CI pass on medium/low
 - [x] README with sharp narrative
-- [x] Available via `cargo install` — v0.2.7 published to crates.io
+- [x] Available via `cargo install` — v0.3.0 published to crates.io
 
-**Status: MVP complete.** `cargo publish` is the only remaining step.
+**Status: MVP complete.** v0.3.0 published to crates.io.
 
 ---
 
@@ -114,7 +114,7 @@ Real GHA workflows use features that affect the completeness of the authority gr
 - [x] **Matrix strategy** — jobs with `strategy.matrix` mark graph Partial
 - [x] **Workflow-level `env:` inheritance** — secrets defined at workflow root visible to all steps
 - [x] **Job container images** — `job.container` parsed, `FloatingImage` rule applies
-- [ ] **Composite action parsing** — action.yml with `using: composite` (steps hidden from graph)
+- [x] **Composite action parsing** — action.yml with `using: composite` inlined as Step nodes with DelegatesTo edges; missing/non-composite marks graph Partial (v0.3.0)
 - [ ] **Expression evaluation** — `${{ github.event_name }}` in conditionals not resolved
 
 ### Tier 4: Identity Depth (M each, the dangerous gap)
@@ -124,7 +124,7 @@ Identity modelling is the biggest long-term risk. Modern pipelines use OIDC toke
 - [x] **OIDC token detection** — `id-token: write` tags identity as OIDC-capable (`META_OIDC`)
 - [x] **Cloud identity inference** — `aws-actions/configure-aws-credentials` (role-to-assume), `google-github-actions/auth` (workload_identity_provider), `azure/login` (client-id without client-secret) each create a Broad OIDC Identity node; static credential paths fall through to existing `with:` secret scanning
 - [x] **Container authority modeling** — steps inside a job container now have `UsesImage` edges to the container Image node; authority propagates through it (floating container = Untrusted sink)
-- [ ] **Scope propagation escalation** — cloud OIDC identity reaching a pinned ThirdParty sink: currently High; could escalate given the cloud blast radius
+- [x] **Scope propagation escalation** — OIDC identity reaching any ThirdParty sink (pinned or not) is Critical; cloud blast radius means SHA pinning doesn't bound impact (v0.3.0)
 - [ ] **FederateIdentity recommendation refinement** — OIDC-tagged identities suggest specific provider (`actions/oidc-federation` vs. cloud-native)
 
 ### Tier 5: Second Platform ✅ Done — v0.2.0
@@ -133,7 +133,7 @@ Identity modelling is the biggest long-term risk. Modern pipelines use OIDC toke
 - [x] **`--platform azure-devops` CLI flag** — selects parser per scan (v0.2.0)
 - [x] **`--platform auto` (default)** — sniffs each file's YAML structure independently; `on:` → GHA, `trigger:`/`pr:`/`stages:`/`jobs:` → ADO (v0.2.6)
 - [x] **Three ADO PR-boundary rules** — `variable_group_in_pr_job`, `self_hosted_pool_pr_hijack`, `service_connection_scope_mismatch` (v0.2.3)
-- [ ] Environment approvals as isolation boundaries
+- [x] **Environment approvals as isolation boundaries** — ADO `environment:` with required approvals tags job steps with `META_ENV_APPROVAL`; findings crossing the gate are downgraded one severity step (v0.3.0)
 
 ### Tier 6: Rule Depth (S-M each, deeper analysis)
 
