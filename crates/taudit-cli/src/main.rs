@@ -1631,6 +1631,12 @@ fn cmd_explain(rule: Option<String>) -> Result<()> {
             }
             writeln!(out).ok();
             writeln!(out, "  Tags: {}", r.tags.join(", ")).ok();
+            writeln!(
+                out,
+                "\n  See: https://github.com/0ryant/taudit/blob/main/docs/rules/{}.md",
+                r.id
+            )
+            .ok();
             Ok(())
         }
     }
