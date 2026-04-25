@@ -13,6 +13,7 @@ use taudit_core::propagation::DEFAULT_MAX_HOPS;
 use taudit_core::rules;
 use taudit_parse_ado::AdoParser;
 use taudit_parse_gha::GhaParser;
+use taudit_parse_gitlab::GitlabParser;
 use taudit_report_json::JsonReportSink;
 use taudit_report_sarif::SarifReportSink;
 use taudit_report_terminal::TerminalReport;
@@ -276,6 +277,8 @@ enum Platform {
     GithubActions,
     #[value(name = "azure-devops")]
     AzureDevOps,
+    #[value(name = "gitlab")]
+    GitLab,
 }
 
 impl Platform {
@@ -284,20 +287,18 @@ impl Platform {
             Platform::Auto => "auto",
             Platform::GithubActions => "github-actions",
             Platform::AzureDevOps => "azure-devops",
+            Platform::GitLab => "gitlab-ci",
         }
     }
 }
 
 /// Detect the CI/CD platform from YAML content by inspecting top-level mapping keys.
 ///
-/// - Top-level `on:` (GHA trigger key) → `GithubActions`.
-/// - Else if any of `trigger:`, `pr:`, `stages:`, or `jobs:` (without `on:`) is present
-///   at top level → `AzureDevOps`.
+/// - Top-level `on:` → `GithubActions`.
+/// - `stages:` as flat string list (e.g. `["build", "test"]`) → `GitLab`.
+/// - `stages:` as list of objects (e.g. `[{stage: build, jobs: [...]}]`) → `AzureDevOps`.
+/// - `trigger:`, `pr:`, or `jobs:` (without `on:`) → `AzureDevOps`.
 /// - Else → `GithubActions` (safe fallback).
-///
-/// If the YAML doesn't parse or doesn't have a mapping at the root, fall back to
-/// `GithubActions`. The file will be re-parsed by the chosen parser, which has its
-/// own error handling.
 fn detect_platform(content: &str) -> Platform {
     let parsed: Result<serde_yaml::Value, _> = serde_yaml::from_str(content);
     let Ok(value) = parsed else {
@@ -312,9 +313,30 @@ fn detect_platform(content: &str) -> Platform {
     if has_key("on") {
         return Platform::GithubActions;
     }
-    if has_key("trigger") || has_key("pr") || has_key("stages") || has_key("jobs") {
+
+    // `stages:` disambiguation: GitLab uses a flat string list, ADO uses a list of objects.
+    if has_key("stages") {
+        let stages_val = map.get(serde_yaml::Value::String("stages".to_string()));
+        if let Some(serde_yaml::Value::Sequence(seq)) = stages_val {
+            if seq.first().is_some_and(|v| v.is_string()) {
+                return Platform::GitLab;
+            }
+            if seq.first().is_some_and(|v| v.is_mapping()) {
+                return Platform::AzureDevOps;
+            }
+        }
+        // Ambiguous or empty stages: fall through to other keys
+    }
+
+    if has_key("trigger") || has_key("pr") || has_key("jobs") {
         return Platform::AzureDevOps;
     }
+
+    // GitLab CI: look for image: or workflow: at top level alongside jobs as plain keys
+    if has_key("image") || has_key("workflow") {
+        return Platform::GitLab;
+    }
+
     Platform::GithubActions
 }
 
@@ -1751,6 +1773,7 @@ fn make_parser(platform: &Platform) -> Box<dyn taudit_core::ports::PipelineParse
         // detection), fall back to the GHA parser to preserve historical behavior.
         Platform::Auto | Platform::GithubActions => Box::new(GhaParser),
         Platform::AzureDevOps => Box::new(AdoParser),
+        Platform::GitLab => Box::new(GitlabParser),
     }
 }
 
@@ -1761,6 +1784,7 @@ fn resolve_platform(platform: &Platform, content: &str) -> Platform {
         Platform::Auto => detect_platform(content),
         Platform::GithubActions => Platform::GithubActions,
         Platform::AzureDevOps => Platform::AzureDevOps,
+        Platform::GitLab => Platform::GitLab,
     }
 }
 
@@ -2031,5 +2055,25 @@ mod tests {
     fn auto_falls_back_to_github_actions_when_no_markers() {
         let yaml = "name: hello\nversion: 1\n";
         assert_eq!(detect_platform(yaml), Platform::GithubActions);
+    }
+
+    #[test]
+    fn auto_detects_gitlab_ci_by_stages_string_list() {
+        let yaml = "stages:\n  - build\n  - test\n  - deploy\n\nbuild-job:\n  stage: build\n  script:\n    - make\n";
+        assert_eq!(detect_platform(yaml), Platform::GitLab);
+    }
+
+    #[test]
+    fn stages_object_list_still_detects_ado_not_gitlab() {
+        // ADO stages: is a list of objects, not strings
+        let yaml = "trigger:\n  - main\nstages:\n  - stage: build\n    jobs:\n      - job: compile\n        steps:\n          - script: echo hi\n";
+        assert_eq!(detect_platform(yaml), Platform::AzureDevOps);
+    }
+
+    #[test]
+    fn auto_detects_gitlab_ci_by_image_key() {
+        // GitLab CI with image: at top level but no stages:
+        let yaml = "image: alpine:latest\n\nbuild:\n  script:\n    - make\n";
+        assert_eq!(detect_platform(yaml), Platform::GitLab);
     }
 }

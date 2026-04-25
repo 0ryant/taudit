@@ -1,6 +1,6 @@
 [package]
-name = "taudit-report-sarif"
-description = "SARIF 2.1.0 output adapter for taudit"
+name = "taudit-parse-gitlab"
+description = "GitLab CI YAML pipeline to AuthorityGraph parser"
 version = "0.5.0"
 edition.workspace = true
 rust-version.workspace = true
@@ -13,4 +13,5 @@ categories.workspace = true
 [dependencies]
 taudit-core = { version = "0.5.0", path = "../taudit-core" }
 serde = { workspace = true }
-serde_json = { workspace = true }
+serde_yaml = { workspace = true }
+thiserror = { workspace = true }

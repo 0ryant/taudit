@@ -2,17 +2,19 @@
 
 17 built-in rules. Run `taudit explain <rule-id>` for a description in the terminal.
 
+Platforms: **GHA** = GitHub Actions · **ADO** = Azure DevOps · **GL** = GitLab CI
+
 | Rule | Severity | Category | Platform |
 |------|----------|----------|----------|
-| [authority_propagation](authority_propagation.md) | Critical / High | Propagation | GHA, ADO |
-| [over_privileged_identity](over_privileged_identity.md) | High | Privilege | GHA, ADO |
+| [authority_propagation](authority_propagation.md) | Critical / High | Propagation | GHA, ADO, GL |
+| [over_privileged_identity](over_privileged_identity.md) | High | Privilege | GHA, ADO, GL |
 | [unpinned_action](unpinned_action.md) | High | Supply Chain | GHA, ADO |
-| [untrusted_with_authority](untrusted_with_authority.md) | Critical / Info | Propagation | GHA, ADO |
-| [artifact_boundary_crossing](artifact_boundary_crossing.md) | High | Supply Chain | GHA, ADO |
-| [floating_image](floating_image.md) | Medium | Supply Chain | GHA, ADO |
-| [long_lived_credential](long_lived_credential.md) | High | Credentials | GHA, ADO |
+| [untrusted_with_authority](untrusted_with_authority.md) | Critical / Info | Propagation | GHA, ADO, GL |
+| [artifact_boundary_crossing](artifact_boundary_crossing.md) | High | Supply Chain | GHA, ADO, GL |
+| [floating_image](floating_image.md) | Medium | Supply Chain | GHA, ADO, GL |
+| [long_lived_credential](long_lived_credential.md) | High | Credentials | GHA, ADO, GL |
 | [persisted_credential](persisted_credential.md) | Critical | Credentials | GHA |
-| [trigger_context_mismatch](trigger_context_mismatch.md) | Critical / High | Privilege | GHA, ADO |
+| [trigger_context_mismatch](trigger_context_mismatch.md) | Critical / High | Privilege | GHA, ADO, GL |
 | [cross_workflow_authority_chain](cross_workflow_authority_chain.md) | Critical | Propagation | GHA, ADO |
 | [authority_cycle](authority_cycle.md) | High | Configuration | GHA, ADO |
 | [uplift_without_attestation](uplift_without_attestation.md) | Info | Supply Chain | GHA, ADO |

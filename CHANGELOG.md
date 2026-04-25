@@ -2,6 +2,33 @@
 
 All notable changes to this project will be documented in this file.
 
+## v0.5.0 — 2026-04-26
+
+### Added
+
+- **GitLab CI parser** (`taudit-parse-gitlab`) — parses `.gitlab-ci.yml` files into the authority graph. Authority primitives modelled:
+  - `CI_JOB_TOKEN` — implicit `Identity` node (always present, scope=broad), equivalent to ADO's `System.AccessToken`.
+  - `secrets:` (Vault, AWS Secrets Manager, GCP, Azure) — each named secret emits a `Secret` node with `HasAccessTo` edge from the enclosing job.
+  - `id_tokens:` — OIDC identity tokens emit `Identity` nodes tagged `oidc=true`, with audience label. Triggers `long_lived_credential` and `authority_propagation` rules.
+  - `variables:` — variable names matching credential patterns (TOKEN, SECRET, PASSWORD, API_KEY, etc.) emit `Secret` nodes.
+  - `image:` (global and per-job) — emits `Image` node with `UsesImage` edge. Untagged/undigest-pinned images have `TrustZone::Untrusted` (triggers `floating_image` rule).
+  - `services:` — each service entry emits an `Image` node.
+  - `environment:` — environment name recorded as step metadata.
+  - `include:` — marks graph `Partial`.
+  - `extends:` — marks graph `Partial` (job template inheritance not resolved).
+  - `rules: if: $CI_PIPELINE_SOURCE == "merge_request_event"` — sets `META_TRIGGER = "merge_request"`.
+  - `only: [merge_requests]` — sets `META_TRIGGER = "merge_request"`.
+  - `META_JOB_NAME` stamped on all step nodes (enables `--job` subgraph filtering).
+
+- **`--platform gitlab` flag** — forces GitLab CI parsing; auto-detect also recognises `.gitlab-ci.yml` files by YAML structure.
+
+- **Auto-detect disambiguation** — `stages:` as a flat string list (GitLab) is now distinguished from `stages:` as a list of objects (ADO). Previously, any file with `stages:` was classified as ADO.
+
+### Behavioral changes (upgrade notes)
+
+- **Auto-detect change**: files containing `stages: [build, test, deploy]` (flat string list) were previously classified as ADO and likely failed to parse. They are now correctly identified as GitLab CI.
+- **`make_parser` match is exhaustive**: library users who pattern-match on `Platform` will need to add a `Platform::GitLab` arm.
+
 ## v0.4.1 — 2026-04-26
 
 ### Changed

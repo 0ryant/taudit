@@ -2,7 +2,7 @@
 
 Three horizons. Each is a superset of the previous.
 
-**Current state (v0.4.0):** 8 crates, 205 tests, ~9,200 LOC, 17 built-in analysis rules + custom YAML rule loading, 2 parsers (GHA + ADO), 6 commands (scan, map, diff, explain, version, completions), 4 output formats (terminal, JSON, CloudEvents JSONL, SARIF) + Graphviz DOT. Published to crates.io. AAA gate closed. Working toward Roadmap 3: Done.
+**Current state (v0.5.0):** 9 crates, 221 tests, ~10,800 LOC, 17 built-in analysis rules + custom YAML rule loading, 3 parsers (GHA + ADO + GitLab CI), 6 commands (scan, map, diff, explain, version, completions), 4 output formats (terminal, JSON, CloudEvents JSONL, SARIF) + Graphviz DOT. Published to crates.io. AAA gate closed. Working toward Roadmap 3: Done.
 
 **Effort key:** S = hours, M = days, L = week+
 
@@ -199,7 +199,7 @@ Identity modelling is the biggest long-term risk. Modern pipelines use OIDC toke
 
 **Third parser:**
 
-- [ ] **GitLab CI parser** (`taudit-parse-gitlab`) — stages, jobs, secrets, images
+- [x] **GitLab CI parser** (`taudit-parse-gitlab`) — stages, jobs, secrets, images — v0.5.0
 - [ ] `include:` template resolution (remote + local)
 - [ ] Protected branch rules as trust boundaries
 - [ ] GitLab CI/CD variables with scope (environment, group)
