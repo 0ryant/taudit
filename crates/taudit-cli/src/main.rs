@@ -46,7 +46,10 @@ enum Cli {
         #[arg(long)]
         severity_threshold: Option<SeverityLevel>,
 
-        /// Path to ignore file (default: .tauditignore in working directory)
+        /// Path to ignore file (default: .tauditignore in working directory).
+        /// File must be YAML with an `ignore:` list. Each entry requires a `category:`
+        /// field (snake_case rule id) and accepts optional `path:` (glob) and `reason:` fields.
+        /// Example: `ignore:\n  - category: unpinned_action\n    path: "*.yml"\n    reason: "legacy"`
         #[arg(long)]
         ignore_file: Option<PathBuf>,
 
@@ -932,8 +935,20 @@ fn load_ignore_config(explicit_path: Option<PathBuf>) -> Result<IgnoreConfig> {
         Some(p) => {
             let content = std::fs::read_to_string(&p)
                 .with_context(|| format!("Failed to read ignore file: {}", p.display()))?;
-            let config: IgnoreConfig = serde_yaml::from_str(&content)
-                .with_context(|| format!("Failed to parse ignore file: {}", p.display()))?;
+            let config: IgnoreConfig = serde_yaml::from_str(&content).with_context(|| {
+                format!(
+                    "Failed to parse ignore file: {}\n\n\
+                     Expected YAML format:\n\
+                     \n\
+                     ignore:\n\
+                     \x20 - category: unpinned_action\n\
+                     \x20   path: \".github/workflows/legacy.yml\"  # optional glob\n\
+                     \x20   reason: \"Accepted — migrating to pinned actions\"  # optional\n\
+                     \n\
+                     Valid category values: run `taudit explain` for the full list.",
+                    p.display()
+                )
+            })?;
             Ok(config)
         }
         None => Ok(IgnoreConfig::default()),
