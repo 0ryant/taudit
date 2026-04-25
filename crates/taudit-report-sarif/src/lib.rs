@@ -1,4 +1,5 @@
 use serde::Serialize;
+use taudit_core::custom_rules::CustomRule;
 use taudit_core::error::TauditError;
 use taudit_core::finding::{Finding, FindingCategory, Severity};
 use taudit_core::graph::{AuthorityGraph, NodeKind};
@@ -282,8 +283,8 @@ struct SarifDriver {
 
 #[derive(Serialize)]
 struct SarifRule {
-    id: &'static str,
-    name: &'static str,
+    id: String,
+    name: String,
     #[serde(rename = "shortDescription")]
     short_description: SarifMessage,
     #[serde(rename = "fullDescription")]
@@ -297,14 +298,14 @@ struct SarifRule {
 
 #[derive(Serialize)]
 struct SarifDefaultConfiguration {
-    level: &'static str,
+    level: String,
 }
 
 #[derive(Serialize)]
 struct SarifRuleProperties {
     #[serde(rename = "security-severity")]
-    security_severity: &'static str,
-    tags: Vec<&'static str>,
+    security_severity: String,
+    tags: Vec<String>,
 }
 
 #[derive(Serialize, Clone)]
@@ -368,13 +369,29 @@ impl SarifReportSink {
         w: &mut W,
         items: &[(&AuthorityGraph, &[Finding])],
     ) -> Result<(), TauditError> {
-        let rules = build_rules();
+        self.emit_multi_with_custom_rules(w, items, &[])
+    }
+
+    /// Like `emit_multi` but also injects entries for custom (user-defined)
+    /// rules into the SARIF driver's `rules` array. SARIF requires every
+    /// `result.ruleId` to resolve against a `rules[]` entry — without this
+    /// step custom rules would surface as "unknown rule" in viewers.
+    pub fn emit_multi_with_custom_rules<W: std::io::Write>(
+        &self,
+        w: &mut W,
+        items: &[(&AuthorityGraph, &[Finding])],
+        custom_rules: &[CustomRule],
+    ) -> Result<(), TauditError> {
+        let mut rules = build_rules();
+        rules.extend(build_custom_rules(custom_rules));
+        let custom_ids: std::collections::HashSet<&str> =
+            custom_rules.iter().map(|r| r.id.as_str()).collect();
         let results: Vec<SarifResult> = items
             .iter()
             .flat_map(|(graph, findings)| {
                 findings
                     .iter()
-                    .map(|f| finding_to_result(f, &graph.source.file, graph))
+                    .map(|f| finding_to_result(f, &graph.source.file, graph, &custom_ids))
             })
             .collect();
 
@@ -416,8 +433,8 @@ fn build_rules() -> Vec<SarifRule> {
     RULE_DEFS
         .iter()
         .map(|r| SarifRule {
-            id: r.id,
-            name: r.name,
+            id: r.id.to_string(),
+            name: r.name.to_string(),
             short_description: SarifMessage {
                 text: r.short_description.to_string(),
             },
@@ -425,20 +442,71 @@ fn build_rules() -> Vec<SarifRule> {
                 text: r.full_description.to_string(),
             },
             default_configuration: SarifDefaultConfiguration {
-                level: r.default_level,
+                level: r.default_level.to_string(),
             },
             help_uri: format!("{RULES_BASE_URI}/{}", r.id),
             properties: SarifRuleProperties {
-                security_severity: r.security_severity,
-                tags: r.tags.to_vec(),
+                security_severity: r.security_severity.to_string(),
+                tags: r.tags.iter().map(|t| (*t).to_string()).collect(),
             },
         })
         .collect()
 }
 
-/// Map a `Finding` to a SARIF `result` object.
-fn finding_to_result(finding: &Finding, source_file: &str, graph: &AuthorityGraph) -> SarifResult {
-    let rule_id = category_to_rule_id(&finding.category);
+fn build_custom_rules(rules: &[CustomRule]) -> Vec<SarifRule> {
+    rules
+        .iter()
+        .map(|r| {
+            let level = match r.severity {
+                Severity::Critical | Severity::High => "error",
+                Severity::Medium => "warning",
+                Severity::Low | Severity::Info => "note",
+            };
+            let security_severity = match r.severity {
+                Severity::Critical => "9.0",
+                Severity::High => "7.5",
+                Severity::Medium => "5.0",
+                Severity::Low => "2.0",
+                Severity::Info => "0.1",
+            };
+            let short = if r.description.is_empty() {
+                r.name.clone()
+            } else {
+                r.description.clone()
+            };
+            SarifRule {
+                id: r.id.clone(),
+                name: r.name.clone(),
+                short_description: SarifMessage {
+                    text: short.clone(),
+                },
+                full_description: SarifMessage { text: short },
+                default_configuration: SarifDefaultConfiguration {
+                    level: level.to_string(),
+                },
+                help_uri: format!("{RULES_BASE_URI}/{}", r.id),
+                properties: SarifRuleProperties {
+                    security_severity: security_severity.to_string(),
+                    tags: vec!["security".to_string(), "custom-rule".to_string()],
+                },
+            }
+        })
+        .collect()
+}
+
+/// Map a `Finding` to a SARIF `result` object. Custom-rule findings carry
+/// their rule id in the message as `[<id>] ...`; if `<id>` matches a known
+/// custom rule, the SARIF result uses the custom id so it links to the
+/// injected `rules[]` entry rather than the built-in category.
+fn finding_to_result(
+    finding: &Finding,
+    source_file: &str,
+    graph: &AuthorityGraph,
+    custom_ids: &std::collections::HashSet<&str>,
+) -> SarifResult {
+    let rule_id = extract_custom_rule_id(&finding.message)
+        .filter(|id| custom_ids.contains(id.as_str()))
+        .unwrap_or_else(|| category_to_rule_id(&finding.category));
     let level = severity_to_level(&finding.severity);
     let security_severity = severity_to_security_severity(&finding.severity);
 
@@ -494,6 +562,21 @@ fn finding_to_result(finding: &Finding, source_file: &str, graph: &AuthorityGrap
         partial_fingerprints: SarifPartialFingerprints {
             primary_location_line_hash: fingerprint,
         },
+    }
+}
+
+/// Pull a custom rule id out of a finding message of the form `[id] rest`.
+/// Returns None if the message does not start with a bracketed id.
+fn extract_custom_rule_id(message: &str) -> Option<String> {
+    if !message.starts_with('[') {
+        return None;
+    }
+    let end = message.find(']')?;
+    let id = &message[1..end];
+    if id.is_empty() {
+        None
+    } else {
+        Some(id.to_string())
     }
 }
 

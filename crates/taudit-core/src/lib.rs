@@ -1,3 +1,4 @@
+pub mod custom_rules;
 pub mod error;
 pub mod finding;
 pub mod graph;

@@ -116,6 +116,9 @@ impl PipelineParser for GhaParser {
                 let rw_id = graph.add_node(NodeKind::Image, uses, trust_zone);
                 // Synthetic step represents this job delegating to the called workflow
                 let job_step_id = graph.add_node(NodeKind::Step, job_name, TrustZone::FirstParty);
+                if let Some(node) = graph.nodes.get_mut(job_step_id) {
+                    node.metadata.insert(META_JOB_NAME.into(), job_name.clone());
+                }
                 graph.add_edge(job_step_id, rw_id, EdgeKind::DelegatesTo);
                 if let Some(tok_id) = job_token_id {
                     graph.add_edge(job_step_id, tok_id, EdgeKind::HasAccessTo);
@@ -195,6 +198,12 @@ impl PipelineParser for GhaParser {
 
                 let step_id = graph.add_node(NodeKind::Step, step_name, trust_zone);
 
+                // Stamp parent job name so consumers (e.g. `taudit map --job`)
+                // can attribute steps back to their containing job.
+                if let Some(node) = graph.nodes.get_mut(step_id) {
+                    node.metadata.insert(META_JOB_NAME.into(), job_name.clone());
+                }
+
                 // Link step to action image
                 if let Some(img_id) = image_node_id {
                     graph.add_edge(step_id, img_id, EdgeKind::UsesImage);
@@ -211,6 +220,7 @@ impl PipelineParser for GhaParser {
                             uses,
                             &source.file,
                             step_id,
+                            job_name,
                             job_token_id,
                             container_image_id,
                             is_pull_request_target,
@@ -513,6 +523,7 @@ fn try_inline_composite_action(
     uses_path: &str,
     pipeline_file: &str,
     calling_step_id: NodeId,
+    job_name: &str,
     job_token_id: Option<NodeId>,
     container_image_id: Option<NodeId>,
     is_pull_request_target: bool,
@@ -612,6 +623,9 @@ fn try_inline_composite_action(
                 .insert(META_COMPOSITE_STEP.into(), "true".into());
             node.metadata
                 .insert(META_COMPOSITE_SOURCE.into(), uses_path.into());
+            // Inlined sub-steps belong to the calling job — propagate parent
+            // job name so per-job filtering captures composite-action steps too.
+            node.metadata.insert(META_JOB_NAME.into(), job_name.into());
         }
 
         // DelegatesTo edge: calling step → inlined sub-step.
@@ -1977,5 +1991,29 @@ jobs:
             identities[0].metadata.get(META_PERMISSIONS).unwrap(),
             "write-all"
         );
+    }
+
+    #[test]
+    fn meta_job_name_set_on_step_nodes() {
+        let yaml = r#"
+jobs:
+  build:
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Compile
+        run: make build
+"#;
+        let graph = parse(yaml);
+        let steps: Vec<_> = graph.nodes_of_kind(NodeKind::Step).collect();
+        assert!(!steps.is_empty(), "expected at least one Step node");
+        for step in &steps {
+            assert_eq!(
+                step.metadata.get(META_JOB_NAME).map(String::as_str),
+                Some("build"),
+                "Step {:?} missing META_JOB_NAME=build",
+                step.name
+            );
+        }
     }
 }

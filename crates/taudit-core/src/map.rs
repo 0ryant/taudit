@@ -1,4 +1,7 @@
-use crate::graph::{AuthorityGraph, EdgeKind, NodeId, NodeKind, META_IDENTITY_SCOPE};
+use crate::graph::{
+    AuthorityGraph, EdgeKind, NodeId, NodeKind, TrustZone, META_IDENTITY_SCOPE, META_JOB_NAME,
+};
+use std::collections::{HashSet, VecDeque};
 
 /// A row in the authority map: one step and its authority grants.
 #[derive(Debug)]
@@ -269,6 +272,168 @@ pub fn render_map(map: &AuthorityMap, term_width: usize) -> String {
     out
 }
 
+// ── Graphviz DOT rendering ────────────────────────────────
+
+/// DOT shape for a node kind. Stable mapping — referenced by tests and docs.
+fn dot_shape(kind: NodeKind) -> &'static str {
+    match kind {
+        NodeKind::Step => "ellipse",
+        NodeKind::Secret => "box",
+        NodeKind::Identity => "diamond",
+        NodeKind::Artifact => "hexagon",
+        NodeKind::Image => "cylinder",
+    }
+}
+
+/// DOT color for a trust zone. Green/yellow/red ladder by descending trust.
+fn dot_color(zone: TrustZone) -> &'static str {
+    match zone {
+        TrustZone::FirstParty => "green",
+        TrustZone::ThirdParty => "yellow",
+        TrustZone::Untrusted => "red",
+    }
+}
+
+/// Snake-case label for an edge kind. Keeps DOT output grep-able and matches
+/// the constant names downstream tooling already understands.
+fn edge_label(kind: EdgeKind) -> &'static str {
+    match kind {
+        EdgeKind::HasAccessTo => "has_access_to",
+        EdgeKind::Produces => "produces",
+        EdgeKind::Consumes => "consumes",
+        EdgeKind::UsesImage => "uses_image",
+        EdgeKind::DelegatesTo => "delegates_to",
+        EdgeKind::PersistsTo => "persists_to",
+    }
+}
+
+/// Escape a string for safe inclusion inside a DOT double-quoted literal.
+/// DOT spec: backslash and double-quote must be escaped; newlines become `\n`.
+fn dot_escape(s: &str) -> String {
+    let mut out = String::with_capacity(s.len());
+    for c in s.chars() {
+        match c {
+            '\\' => out.push_str("\\\\"),
+            '"' => out.push_str("\\\""),
+            '\n' => out.push_str("\\n"),
+            _ => out.push(c),
+        }
+    }
+    out
+}
+
+/// Build the set of node ids reachable (in either direction) from any seed
+/// node, treating edges as undirected for the purpose of subgraph extraction.
+/// This is what `--job <name>` filtering uses: start from every Step in the
+/// requested job, then expand outward to capture every secret, identity,
+/// image, and artifact transitively connected to that job's authority surface.
+fn reachable_set(graph: &AuthorityGraph, seeds: &[NodeId]) -> HashSet<NodeId> {
+    let mut visited: HashSet<NodeId> = HashSet::new();
+    let mut queue: VecDeque<NodeId> = VecDeque::new();
+    for &s in seeds {
+        if visited.insert(s) {
+            queue.push_back(s);
+        }
+    }
+    while let Some(n) = queue.pop_front() {
+        for e in &graph.edges {
+            let next = if e.from == n {
+                Some(e.to)
+            } else if e.to == n {
+                Some(e.from)
+            } else {
+                None
+            };
+            if let Some(nx) = next {
+                if visited.insert(nx) {
+                    queue.push_back(nx);
+                }
+            }
+        }
+    }
+    visited
+}
+
+/// Render the authority graph as a Graphviz DOT digraph string.
+///
+/// When `filter_job` is `Some(name)`, restricts the output to the subgraph
+/// reachable (in either edge direction) from any Step node whose
+/// `META_JOB_NAME` metadata equals `name`. When `None`, includes every node
+/// and edge.
+///
+/// Output is deterministic — nodes and edges are emitted in their stored
+/// (insertion) order, which makes the result diff-friendly and testable.
+pub fn render_dot(graph: &AuthorityGraph, filter_job: Option<&str>) -> String {
+    let included: Option<HashSet<NodeId>> = match filter_job {
+        Some(name) => {
+            let seeds: Vec<NodeId> = graph
+                .nodes
+                .iter()
+                .filter(|n| {
+                    n.kind == NodeKind::Step
+                        && n.metadata.get(META_JOB_NAME).map(String::as_str) == Some(name)
+                })
+                .map(|n| n.id)
+                .collect();
+            Some(reachable_set(graph, &seeds))
+        }
+        None => None,
+    };
+
+    let mut out = String::new();
+    out.push_str("digraph taudit {\n");
+    out.push_str("    rankdir=LR;\n");
+    out.push_str("    node [fontname=\"Helvetica\"];\n");
+
+    for node in &graph.nodes {
+        if let Some(ref keep) = included {
+            if !keep.contains(&node.id) {
+                continue;
+            }
+        }
+        out.push_str(&format!(
+            "    \"n{}\" [label=\"{}\" shape={} color={}];\n",
+            node.id,
+            dot_escape(&node.name),
+            dot_shape(node.kind),
+            dot_color(node.trust_zone),
+        ));
+    }
+
+    for edge in &graph.edges {
+        if let Some(ref keep) = included {
+            if !keep.contains(&edge.from) || !keep.contains(&edge.to) {
+                continue;
+            }
+        }
+        out.push_str(&format!(
+            "    \"n{}\" -> \"n{}\" [label=\"{}\"];\n",
+            edge.from,
+            edge.to,
+            edge_label(edge.kind),
+        ));
+    }
+
+    out.push_str("}\n");
+    out
+}
+
+/// Distinct job names attached to Step nodes via `META_JOB_NAME`.
+/// Sorted alphabetically — used to render helpful error messages when a
+/// user passes `--job <name>` that doesn't match any step.
+pub fn job_names(graph: &AuthorityGraph) -> Vec<String> {
+    let mut names: Vec<String> = graph
+        .nodes
+        .iter()
+        .filter(|n| n.kind == NodeKind::Step)
+        .filter_map(|n| n.metadata.get(META_JOB_NAME).cloned())
+        .collect::<HashSet<_>>()
+        .into_iter()
+        .collect();
+    names.sort();
+    names
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -321,5 +486,91 @@ mod tests {
         assert!(table.contains("build"));
         assert!(table.contains("KEY"));
         assert!(table.contains('✓'));
+    }
+
+    #[test]
+    fn dot_output_contains_expected_node_and_edge() {
+        let mut g = AuthorityGraph::new(source("ci.yml"));
+        let secret = g.add_node(NodeKind::Secret, "API_KEY", TrustZone::FirstParty);
+        let step = g.add_node(NodeKind::Step, "build", TrustZone::FirstParty);
+        g.add_edge(step, secret, EdgeKind::HasAccessTo);
+
+        let dot = render_dot(&g, None);
+        assert!(dot.starts_with("digraph taudit"), "dot output: {dot}");
+        // Node lines for both endpoints with their kind-driven shapes.
+        assert!(
+            dot.contains(&format!("\"n{step}\" [label=\"build\" shape=ellipse")),
+            "missing step node line in: {dot}"
+        );
+        assert!(
+            dot.contains(&format!("\"n{secret}\" [label=\"API_KEY\" shape=box")),
+            "missing secret node line in: {dot}"
+        );
+        // Edge line with snake-case label.
+        assert!(
+            dot.contains(&format!(
+                "\"n{step}\" -> \"n{secret}\" [label=\"has_access_to\"]"
+            )),
+            "missing edge line in: {dot}"
+        );
+    }
+
+    #[test]
+    fn job_filter_produces_subset_of_full_map() {
+        // Construct two jobs by hand: `build` (step accesses BUILD_SECRET) and
+        // `deploy` (step accesses DEPLOY_SECRET). With no filter all 4 nodes
+        // appear; filtering to `build` should drop the deploy step + its secret.
+        let mut g = AuthorityGraph::new(source("ci.yml"));
+
+        let build_secret = g.add_node(NodeKind::Secret, "BUILD_SECRET", TrustZone::FirstParty);
+        let mut build_meta = std::collections::HashMap::new();
+        build_meta.insert(META_JOB_NAME.to_string(), "build".to_string());
+        let build_step =
+            g.add_node_with_metadata(NodeKind::Step, "compile", TrustZone::FirstParty, build_meta);
+        g.add_edge(build_step, build_secret, EdgeKind::HasAccessTo);
+
+        let deploy_secret = g.add_node(NodeKind::Secret, "DEPLOY_SECRET", TrustZone::FirstParty);
+        let mut deploy_meta = std::collections::HashMap::new();
+        deploy_meta.insert(META_JOB_NAME.to_string(), "deploy".to_string());
+        let deploy_step =
+            g.add_node_with_metadata(NodeKind::Step, "ship", TrustZone::FirstParty, deploy_meta);
+        g.add_edge(deploy_step, deploy_secret, EdgeKind::HasAccessTo);
+
+        let full = render_dot(&g, None);
+        let filtered = render_dot(&g, Some("build"));
+
+        // Full output names every node; filtered output drops the deploy job.
+        assert!(full.contains("BUILD_SECRET") && full.contains("DEPLOY_SECRET"));
+        assert!(filtered.contains("BUILD_SECRET"));
+        assert!(
+            !filtered.contains("DEPLOY_SECRET"),
+            "deploy-job nodes leaked into build filter: {filtered}"
+        );
+        assert!(!filtered.contains("\"ship\""));
+
+        // Subset by line count: filtered must be strictly smaller than full.
+        let full_lines = full.lines().count();
+        let filtered_lines = filtered.lines().count();
+        assert!(
+            filtered_lines < full_lines,
+            "filtered DOT ({filtered_lines} lines) not smaller than full ({full_lines})"
+        );
+    }
+
+    #[test]
+    fn job_names_lists_distinct_jobs_sorted() {
+        let mut g = AuthorityGraph::new(source("ci.yml"));
+        let mut a_meta = std::collections::HashMap::new();
+        a_meta.insert(META_JOB_NAME.to_string(), "deploy".to_string());
+        g.add_node_with_metadata(NodeKind::Step, "s1", TrustZone::FirstParty, a_meta);
+        let mut b_meta = std::collections::HashMap::new();
+        b_meta.insert(META_JOB_NAME.to_string(), "build".to_string());
+        g.add_node_with_metadata(NodeKind::Step, "s2", TrustZone::FirstParty, b_meta);
+        let mut c_meta = std::collections::HashMap::new();
+        c_meta.insert(META_JOB_NAME.to_string(), "build".to_string());
+        g.add_node_with_metadata(NodeKind::Step, "s3", TrustZone::FirstParty, c_meta);
+
+        let names = job_names(&g);
+        assert_eq!(names, vec!["build".to_string(), "deploy".to_string()]);
     }
 }

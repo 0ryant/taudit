@@ -45,6 +45,11 @@ pub const META_IMPLICIT: &str = "implicit";
 /// authority propagation. Findings whose path crosses such a node have their
 /// severity reduced by one step (Critical → High → Medium → Low).
 pub const META_ENV_APPROVAL: &str = "env_approval";
+/// Records the parent job name on every Step node, enabling per-job subgraph
+/// filtering (e.g. `taudit map --job build`) and downstream consumers that
+/// need to attribute steps back to their containing job. Set by both the GHA
+/// and ADO parsers on every Step they create within a job's scope.
+pub const META_JOB_NAME: &str = "job_name";
 
 // ── Shared helpers ─────────────────────────────────────
 

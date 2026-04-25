@@ -119,6 +119,12 @@ enum Cli {
         /// Write the report to this file instead of stdout.
         #[arg(long, short = 'o')]
         output: Option<PathBuf>,
+
+        /// Directory containing custom rule YAML files (`*.yml`, `*.yaml`).
+        /// Each file defines a single rule that fires on propagation paths
+        /// matching its source/sink/path predicates.
+        #[arg(long)]
+        rules_dir: Option<PathBuf>,
     },
 
     /// Show authority map — which steps access which secrets/identities
@@ -134,6 +140,17 @@ enum Cli {
         /// Disable ANSI color output
         #[arg(long, default_value_t = false)]
         no_color: bool,
+
+        /// Output format: `text` (default terminal table) or `dot` (Graphviz DOT).
+        /// Pipe DOT output to `dot -Tsvg -o map.svg` to render an authority graph.
+        #[arg(long, default_value = "text")]
+        format: MapFormat,
+
+        /// Restrict the output to the subgraph reachable from a single job.
+        /// Most useful with `--format dot`; for `--format text` the table is
+        /// filtered to steps belonging to the named job.
+        #[arg(long)]
+        job: Option<String>,
     },
 
     /// Generate shell completions and print them to stdout.
@@ -243,6 +260,12 @@ enum DiffOutputFormat {
     Json,
 }
 
+#[derive(Clone, Debug, PartialEq, Eq, clap::ValueEnum)]
+enum MapFormat {
+    Text,
+    Dot,
+}
+
 #[derive(Clone, clap::ValueEnum, Default, PartialEq, Eq, Debug)]
 enum Platform {
     /// Auto-detect platform per file by sniffing top-level YAML keys.
@@ -344,6 +367,7 @@ struct ScanOpts {
     log_dir: Option<PathBuf>,
     platform: Platform,
     output: Option<PathBuf>,
+    rules_dir: Option<PathBuf>,
 }
 
 #[derive(Clone)]
@@ -375,6 +399,7 @@ fn main() -> Result<()> {
             log_dir,
             platform,
             output,
+            rules_dir,
         } => {
             // Color is on by default — CI log viewers (GHA, ADO) render ANSI from piped stdout.
             // Disable only when --no-color is passed or the NO_COLOR env var is set (no-color.org).
@@ -401,6 +426,7 @@ fn main() -> Result<()> {
                 log_dir,
                 platform,
                 output,
+                rules_dir,
             })
         }
         Cli::Completions { shell } => {
@@ -431,7 +457,9 @@ fn main() -> Result<()> {
             paths,
             platform,
             no_color,
-        } => cmd_map(paths, platform, no_color),
+            format,
+            job,
+        } => cmd_map(paths, platform, no_color, format, job),
         Cli::Diff {
             before,
             after,
@@ -584,7 +612,24 @@ fn cmd_scan(opts: ScanOpts) -> Result<()> {
         log_dir,
         platform,
         output,
+        rules_dir,
     } = opts;
+
+    // Load custom rules up front so a bad --rules-dir fails before we touch
+    // any pipeline files. Errors are written to stderr in full and the process
+    // exits non-zero — never panic, and never silently ignore.
+    let custom_rules = match rules_dir.as_ref() {
+        Some(dir) => match taudit_core::custom_rules::load_rules_dir(dir) {
+            Ok(rules) => rules,
+            Err(errors) => {
+                for err in &errors {
+                    eprintln!("error: {err}");
+                }
+                std::process::exit(2);
+            }
+        },
+        None => Vec::new(),
+    };
 
     // Pre-build a parser for the explicit-platform case. When `--platform auto` is
     // used, parsers are built per-file inside the loop after detecting from content.
@@ -709,7 +754,16 @@ fn cmd_scan(opts: ScanOpts) -> Result<()> {
             terminal_partial_files += 1;
         }
 
-        let all_findings = rules::run_all_rules(&graph, max_hops);
+        let mut all_findings = rules::run_all_rules(&graph, max_hops);
+
+        if !custom_rules.is_empty() {
+            let paths = taudit_core::propagation::propagation_analysis(&graph, max_hops);
+            all_findings.extend(taudit_core::custom_rules::evaluate_custom_rules(
+                &graph,
+                &paths,
+                &custom_rules,
+            ));
+        }
 
         // Apply .tauditignore
         let ignore_result = ignore_config.apply(all_findings, &graph.source.file);
@@ -833,7 +887,7 @@ fn cmd_scan(opts: ScanOpts) -> Result<()> {
             .map(|(g, f)| (g, f.as_slice()))
             .collect();
         SarifReportSink
-            .emit_multi(&mut writer, &items)
+            .emit_multi_with_custom_rules(&mut writer, &items, &custom_rules)
             .with_context(|| "Failed to write SARIF report")?;
     }
 
@@ -1376,7 +1430,13 @@ impl SeverityCounts {
     }
 }
 
-fn cmd_map(paths: Vec<PathBuf>, platform: Platform, no_color: bool) -> Result<()> {
+fn cmd_map(
+    paths: Vec<PathBuf>,
+    platform: Platform,
+    no_color: bool,
+    format: MapFormat,
+    job: Option<String>,
+) -> Result<()> {
     if no_color || std::env::var_os("NO_COLOR").is_some() {
         colored::control::set_override(false);
     }
@@ -1429,11 +1489,32 @@ fn cmd_map(paths: Vec<PathBuf>, platform: Platform, no_color: bool) -> Result<()
                 },
             }
         };
-        let authority_map = map::authority_map(&graph);
+        // Validate `--job <name>` against the graph: a typo here would silently
+        // produce an empty subgraph, which is worse than an explicit error.
+        if let Some(ref name) = job {
+            let available = map::job_names(&graph);
+            if !available.iter().any(|n| n == name) {
+                let list = if available.is_empty() {
+                    "(none)".to_string()
+                } else {
+                    available.join(", ")
+                };
+                eprintln!("error: no job named '{name}' found in graph. Available jobs: {list}");
+                std::process::exit(2);
+            }
+        }
 
-        println!("Authority Map: {}\n", path.display());
-        print!("{}", map::render_map(&authority_map, term_width()));
-        println!();
+        match format {
+            MapFormat::Text => {
+                let authority_map = map::authority_map(&graph);
+                println!("Authority Map: {}\n", path.display());
+                print!("{}", map::render_map(&authority_map, term_width()));
+                println!();
+            }
+            MapFormat::Dot => {
+                println!("{}", map::render_dot(&graph, job.as_deref()));
+            }
+        }
     }
 
     Ok(())

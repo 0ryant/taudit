@@ -71,7 +71,7 @@ impl PipelineParser for AdoParser {
                 // Stage-level template reference — delegate and mark Partial
                 if let Some(ref tpl) = stage.template {
                     let stage_name = stage.stage.as_deref().unwrap_or("stage");
-                    add_template_delegation(stage_name, tpl, token_id, &mut graph);
+                    add_template_delegation(stage_name, tpl, token_id, None, &mut graph);
                     continue;
                 }
 
@@ -116,7 +116,13 @@ impl PipelineParser for AdoParser {
                     );
 
                     if let Some(ref tpl) = job.template {
-                        add_template_delegation(&job_name, tpl, token_id, &mut graph);
+                        add_template_delegation(
+                            &job_name,
+                            tpl,
+                            token_id,
+                            Some(&job_name),
+                            &mut graph,
+                        );
                     }
 
                     if job.has_environment_binding() {
@@ -156,7 +162,7 @@ impl PipelineParser for AdoParser {
                 );
 
                 if let Some(ref tpl) = job.template {
-                    add_template_delegation(&job_name, tpl, token_id, &mut graph);
+                    add_template_delegation(&job_name, tpl, token_id, Some(&job_name), &mut graph);
                 }
 
                 if job.has_environment_binding() {
@@ -305,7 +311,7 @@ fn process_steps(
                 .or(step.name.as_deref())
                 .map(|s| s.to_string())
                 .unwrap_or_else(|| format!("{job_name}[{idx}]"));
-            add_template_delegation(&step_name, tpl, token_id, graph);
+            add_template_delegation(&step_name, tpl, token_id, Some(job_name), graph);
             continue;
         }
 
@@ -313,6 +319,12 @@ fn process_steps(
         let (step_name, trust_zone, inline_script) = classify_step(step, job_name, idx);
 
         let step_id = graph.add_node(NodeKind::Step, &step_name, trust_zone);
+
+        // Stamp parent job name so consumers (e.g. `taudit map --job`) can
+        // attribute steps back to their containing job.
+        if let Some(node) = graph.nodes.get_mut(step_id) {
+            node.metadata.insert(META_JOB_NAME.into(), job_name.into());
+        }
 
         // Every step has access to System.AccessToken
         graph.add_edge(step_id, token_id, EdgeKind::HasAccessTo);
@@ -442,10 +454,15 @@ fn classify_step(
 /// pull code from an external repository and are Untrusted. Plain relative paths like
 /// `steps/deploy.yml` resolve within the same repo and are FirstParty — mirroring how GHA
 /// treats `./local-action`.
+///
+/// `job_name` is `Some` when the delegation is created inside a job's scope
+/// (job-level template, or template step inside `process_steps`); it is `None`
+/// for stage-level template delegations that don't belong to a specific job.
 fn add_template_delegation(
     step_name: &str,
     template_path: &str,
     token_id: NodeId,
+    job_name: Option<&str>,
     graph: &mut AuthorityGraph,
 ) {
     let tpl_trust_zone = if template_path.contains('@') {
@@ -454,6 +471,11 @@ fn add_template_delegation(
         TrustZone::FirstParty
     };
     let step_id = graph.add_node(NodeKind::Step, step_name, TrustZone::FirstParty);
+    if let Some(jn) = job_name {
+        if let Some(node) = graph.nodes.get_mut(step_id) {
+            node.metadata.insert(META_JOB_NAME.into(), jn.into());
+        }
+    }
     let tpl_id = graph.add_node(NodeKind::Image, template_path, tpl_trust_zone);
     graph.add_edge(step_id, tpl_id, EdgeKind::DelegatesTo);
     graph.add_edge(step_id, token_id, EdgeKind::HasAccessTo);
