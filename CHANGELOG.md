@@ -2,6 +2,25 @@
 
 All notable changes to this project will be documented in this file.
 
+## v0.4.0 — 2026-04-25
+
+### Added
+
+- **Custom YAML rule loading** — `taudit scan --rules-dir <path>` loads user-defined rules from a directory of YAML files at runtime. Each rule file specifies declarative `match` predicates on the propagation source node (node type, trust zone, metadata), sink node, and path (trust zones crossed). Matching rules produce `Finding` objects that appear in all output formats — terminal, JSON, CloudEvents JSONL, and SARIF. SARIF output dynamically registers custom rule IDs alongside the built-in rule catalog. Invalid rule files produce descriptive errors; the scanner never panics on bad input. This enables enterprise teams to add org-specific detection (e.g., "our production token must never reach an unpinned action") without recompiling. Rule format documentation in `docs/custom-rules.md`.
+
+- **`taudit map --format dot`** — outputs the authority graph as Graphviz DOT syntax. Pipe to `dot -Tsvg -o map.svg` or `dot -Tpng -o map.png` for visual rendering. Node shapes encode `NodeKind` (Secret=box, Identity=diamond, Step=ellipse, Image=cylinder); node colors encode `TrustZone` (FirstParty=green, ThirdParty=yellow, Untrusted=red); edge labels encode `EdgeKind`. Combine with `--job` for focused subgraph diagrams.
+
+- **`taudit map --job <name>`** — restricts the authority map to the subgraph reachable from a single job's steps (via BFS across all edge kinds). Pairs with `--format dot` to produce per-job authority diagrams in large mono-repo pipelines. Unknown job names produce a descriptive error listing all available job names.
+
+- **`META_JOB_NAME` node metadata** — all `Step` nodes now carry a `job_name` metadata key set by both the GHA and ADO parsers. This enables `--job` filtering and is visible in `--verbose` scan output and JSON/SARIF reports.
+
+### Behavioral changes (upgrade notes)
+
+Upgrading from v0.3.x is safe for existing workflows:
+
+- All existing `taudit scan` and `taudit map` invocations are unchanged — new flags are opt-in.
+- **`taudit-report-sarif` library users:** `emit_multi` is replaced by `emit_multi_with_custom_rules`. Pass an empty slice for `custom_rules` to get identical behavior. This is a minor API break for direct library consumers; the CLI handles it transparently.
+
 ## v0.3.0 — 2026-04-25
 
 ### Added
