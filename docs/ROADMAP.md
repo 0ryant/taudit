@@ -2,7 +2,7 @@
 
 Three horizons. Each is a superset of the previous.
 
-**Current state:** 8 crates, 186 tests, ~8,800 LOC, 17 analysis rules, 2 parsers (GHA + ADO), 6 commands (scan, map, diff, explain, version, completions), 4 output formats (terminal, JSON, CloudEvents JSONL, SARIF). MVP complete. Deep into AAA: Tier 1 done, Tier 2 mostly done, Tier 3 mostly done, Tier 4 partial, Tier 5 done, Tier 6 partial, Tier 7 mostly done.
+**Current state (v0.2.7):** 8 crates, 186 tests, ~8,800 LOC, 17 analysis rules, 2 parsers (GHA + ADO), 6 commands (scan, map, diff, explain, version, completions), 4 output formats (terminal, JSON, CloudEvents JSONL, SARIF). Published to crates.io. MVP complete. Deep into AAA: Tier 1 done, Tier 2 done, Tier 3 mostly done, Tier 4 partial, Tier 5 done, Tier 6 partial, Tier 7 mostly done.
 
 **Effort key:** S = hours, M = days, L = week+
 
@@ -59,7 +59,7 @@ Three horizons. Each is a superset of the previous.
 | # | Item | Effort | Status |
 |---|------|--------|--------|
 | **20** | README with install + quickstart + example output | S | Done |
-| **21** | `cargo install taudit` (publish to crates.io) | S | Ready — metadata set, `cargo publish` when ready |
+| **21** | `cargo install taudit` (publish to crates.io) | S | Done — v0.2.7 live on crates.io |
 
 ### MVP ship gate
 
@@ -71,7 +71,7 @@ Three horizons. Each is a superset of the previous.
 - [x] `.tauditignore` suppresses known-accepted risks
 - [x] `--severity-threshold` lets CI pass on medium/low
 - [x] README with sharp narrative
-- [ ] Available via `cargo install` (metadata ready, publish pending)
+- [x] Available via `cargo install` — v0.2.7 published to crates.io
 
 **Status: MVP complete.** `cargo publish` is the only remaining step.
 
@@ -185,7 +185,7 @@ Identity modelling is the biggest long-term risk. Modern pipelines use OIDC toke
 - [x] Available via Homebrew + cargo install + GitHub Action (v0.2.6)
 - [x] Release binaries for 5 targets (linux-x64, linux-arm64, macos-x64, macos-arm64, windows-x64)
 
-**Estimated effort: 2-4 weeks remaining to full AAA.** Tier 4 cloud identity scope-escalation, Tier 2 PR bot, and composite-action parsing are the highest remaining leverage.
+**Estimated effort: 1-3 weeks remaining to full AAA.** Composite-action parsing (T3), cloud OIDC scope-escalation nuance (T4), and EgressBlindspot rule (T6) are the highest remaining leverage.
 
 ---
 
@@ -329,7 +329,7 @@ MVP ═════════════════════════�
                               ↓
 AAA ══════════════════════════╪══════════════════════ YOU ARE HERE
   T1: noise elimination    ✅ DONE
-  T2: platform integration ◑ SARIF+fingerprint+diff+explain+stdin+omit-empty+collapse+PR-bot+GHA-action done; (complete)
+  T2: platform integration ✅ DONE — SARIF+fingerprint+diff+explain+stdin+omit-empty+collapse+PR-bot+GHA-action
   T3: parser precision     ◑ reusable/matrix/container/PRT done; composite pending
   T4: identity depth       ◑ OIDC tagging + cloud inference + container auth done; escalation nuance pending
   T5: Azure DevOps         ✅ DONE — v0.2.0 + v0.2.3 PR-boundary rules + v0.2.6 auto-detect
