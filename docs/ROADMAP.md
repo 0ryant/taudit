@@ -176,16 +176,16 @@ Identity modelling is the biggest long-term risk. Modern pipelines use OIDC toke
 
 - [x] Two CI platforms supported (GHA + ADO)
 - [x] `AuthorityCompleteness` propagated — parser marks Partial for reusable workflows, matrix, inferred secrets
-- [ ] Identity scope modelled with OIDC/cloud identity awareness
+- [x] Identity scope modelled with OIDC/cloud identity awareness — OIDC identity reaching ThirdParty sink escalates to Critical (v0.3.0)
 - [x] Findings appear in GitHub code scanning (SARIF)
 - [x] PR bot posts authority changes (v0.2.6)
 - [x] `.tauditignore` + `--baseline` eliminate known noise
-- [ ] Composite actions parsed correctly
+- [x] Composite actions parsed correctly — action.yml inlined as Step nodes with DelegatesTo edges (v0.3.0)
 - [x] 17 analysis rules covering propagation, identity, supply chain, artifact, trigger, delegation, attestation, mutation, ADO PR boundaries, and PR checkout exposure
 - [x] Available via Homebrew + cargo install + GitHub Action (v0.2.6)
 - [x] Release binaries for 5 targets (linux-x64, linux-arm64, macos-x64, macos-arm64, windows-x64)
 
-**Estimated effort: 1-3 weeks remaining to full AAA.** Composite-action parsing (T3), cloud OIDC scope-escalation nuance (T4), and EgressBlindspot rule (T6) are the highest remaining leverage.
+**AAA gate: ✅ CLOSED as of v0.3.0.** All gate criteria met. Remaining work (T8 graph power, custom rule loading) advances toward Roadmap 3: Done.
 
 ---
 
