@@ -324,8 +324,7 @@ impl PipelineParser for GhaParser {
                 // extremely rare in practice, making this an acceptable tradeoff for
                 // completeness.
                 if let Some(ref run) = step.run {
-                    let writes_gate =
-                        run.contains("GITHUB_ENV") || run.contains("GITHUB_PATH");
+                    let writes_gate = run.contains("GITHUB_ENV") || run.contains("GITHUB_PATH");
                     if writes_gate {
                         if let Some(node) = graph.nodes.get_mut(step_id) {
                             node.metadata

@@ -12,17 +12,23 @@ const RULES_BASE_URI: &str = "https://github.com/0ryant/taudit/blob/main/docs/ru
 
 // ── Static rule catalogue ───────────────────────────────
 
-struct RuleDef {
-    id: &'static str,
-    name: &'static str,
-    short_description: &'static str,
-    full_description: &'static str,
-    default_level: &'static str,
-    security_severity: &'static str,
-    tags: &'static [&'static str],
+pub struct RuleDef {
+    pub id: &'static str,
+    pub name: &'static str,
+    pub short_description: &'static str,
+    pub full_description: &'static str,
+    pub default_level: &'static str,
+    pub security_severity: &'static str,
+    pub tags: &'static [&'static str],
 }
 
-const RULE_DEFS: &[RuleDef] = &[
+/// Public accessor for the static rule catalogue. Used by `taudit explain`
+/// and any other consumer that needs to enumerate the built-in rules.
+pub fn all_rules() -> &'static [RuleDef] {
+    RULE_DEFS
+}
+
+pub const RULE_DEFS: &[RuleDef] = &[
     RuleDef {
         id: "authority_propagation",
         name: "AuthorityPropagation",
@@ -175,8 +181,7 @@ const RULE_DEFS: &[RuleDef] = &[
         name: "SelfMutatingPipeline",
         short_description:
             "Step writes to GITHUB_ENV or GITHUB_PATH, mutating the pipeline environment",
-        full_description:
-            "A step appends to GITHUB_ENV or GITHUB_PATH, injecting values into the \
+        full_description: "A step appends to GITHUB_ENV or GITHUB_PATH, injecting values into the \
              environment or PATH for all subsequent steps. An untrusted or compromised step \
              could use this to escalate privileges or hijack later execution.",
         default_level: "error",
@@ -187,8 +192,7 @@ const RULE_DEFS: &[RuleDef] = &[
         id: "variable_group_in_pr_job",
         name: "VariableGroupInPrJob",
         short_description: "PR-triggered job accesses ADO variable group secrets",
-        full_description:
-            "A PR-triggered pipeline job has access to variable group secrets. PR \
+        full_description: "A PR-triggered pipeline job has access to variable group secrets. PR \
              pipelines run in the context of untrusted contributor code — variable group \
              secrets crossing this boundary may be exfiltrated via log output, environment \
              variables, or network calls.",
@@ -200,8 +204,7 @@ const RULE_DEFS: &[RuleDef] = &[
         id: "self_hosted_pool_pr_hijack",
         name: "SelfHostedPoolPrHijack",
         short_description: "PR pipeline uses self-hosted pool with repository checkout",
-        full_description:
-            "A PR-triggered pipeline runs on a self-hosted agent and checks out the \
+        full_description: "A PR-triggered pipeline runs on a self-hosted agent and checks out the \
              repository. An attacker can inject malicious git hooks via the PR that persist \
              on the shared runner, executing with the pipeline's full authority on \
              subsequent runs.",

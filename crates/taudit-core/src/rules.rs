@@ -3,8 +3,8 @@ use crate::graph::{
     is_docker_digest_pinned, is_sha_pinned, AuthorityCompleteness, AuthorityGraph, EdgeKind,
     IdentityScope, NodeId, NodeKind, TrustZone, META_ATTESTS, META_CHECKOUT_SELF,
     META_CLI_FLAG_EXPOSED, META_CONTAINER, META_DIGEST, META_IDENTITY_SCOPE, META_OIDC,
-    META_PERMISSIONS, META_SELF_HOSTED, META_SERVICE_CONNECTION, META_TRIGGER,
-    META_VARIABLE_GROUP, META_WRITES_ENV_GATE,
+    META_PERMISSIONS, META_SELF_HOSTED, META_SERVICE_CONNECTION, META_TRIGGER, META_VARIABLE_GROUP,
+    META_WRITES_ENV_GATE,
 };
 use crate::propagation;
 
@@ -672,10 +672,8 @@ pub fn authority_cycle(graph: &AuthorityGraph) -> Vec<Finding> {
                     // (the cycle start) and `node_id` (the cycle end) along the
                     // current DFS stack. All stack entries are gray by construction,
                     // so we walk the stack from `neighbor` to the top.
-                    let cycle_start_idx = stack
-                        .iter()
-                        .position(|&(n, _)| n == neighbor)
-                        .unwrap_or(0);
+                    let cycle_start_idx =
+                        stack.iter().position(|&(n, _)| n == neighbor).unwrap_or(0);
                     for &(n, _) in &stack[cycle_start_idx..] {
                         cycle_nodes.insert(n);
                     }
@@ -884,7 +882,10 @@ pub fn variable_group_in_pr_job(graph: &AuthorityGraph) -> Vec<Finding> {
             .collect();
 
         if !accessed_var_groups.is_empty() {
-            let group_names: Vec<_> = accessed_var_groups.iter().map(|n| n.name.as_str()).collect();
+            let group_names: Vec<_> = accessed_var_groups
+                .iter()
+                .map(|n| n.name.as_str())
+                .collect();
             findings.push(Finding {
                 severity: Severity::Critical,
                 category: FindingCategory::VariableGroupInPrJob,

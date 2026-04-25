@@ -40,8 +40,7 @@ pub fn authority_map(graph: &AuthorityGraph) -> AuthorityMap {
         .collect();
 
     // Pass 1: count name occurrences to detect collisions.
-    let mut name_counts: std::collections::HashMap<&str, usize> =
-        std::collections::HashMap::new();
+    let mut name_counts: std::collections::HashMap<&str, usize> = std::collections::HashMap::new();
     for r in &raw {
         *name_counts.entry(r.name.as_str()).or_insert(0) += 1;
     }
@@ -71,8 +70,7 @@ pub fn authority_map(graph: &AuthorityGraph) -> AuthorityMap {
             } else {
                 let qualifier = r.scope.clone().unwrap_or_else(|| r.zone.clone());
                 let key = (r.name.clone(), qualifier.clone());
-                let total_with_qualifier =
-                    qualifier_counts.get(&key).copied().unwrap_or(1);
+                let total_with_qualifier = qualifier_counts.get(&key).copied().unwrap_or(1);
                 let idx = {
                     let entry = seen.entry(key).or_insert(0);
                     *entry += 1;
@@ -91,8 +89,7 @@ pub fn authority_map(graph: &AuthorityGraph) -> AuthorityMap {
 
     // `authorities` keeps the original node name for internal lookup;
     // `authority_names` holds the qualified display names used for rendering.
-    let authorities: Vec<(NodeId, String)> =
-        raw.iter().map(|r| (r.id, r.name.clone())).collect();
+    let authorities: Vec<(NodeId, String)> = raw.iter().map(|r| (r.id, r.name.clone())).collect();
 
     // Build rows for each step
     let mut rows = Vec::new();

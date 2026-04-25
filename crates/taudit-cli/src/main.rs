@@ -165,6 +165,19 @@ enum Cli {
         platform: Platform,
     },
 
+    /// List taudit's built-in rules, or show the full description for one rule.
+    ///
+    /// `taudit explain`            — list all rules with severity and short description.
+    /// `taudit explain <rule-id>`  — show the full description for one rule.
+    Explain {
+        /// Rule id to explain (e.g. `unpinned_action`). Omit to list all rules.
+        rule: Option<String>,
+
+        /// Disable ANSI color codes in output. Also honored via the NO_COLOR env var.
+        #[arg(long, default_value_t = false)]
+        no_color: bool,
+    },
+
     /// Diff findings between two pipeline versions
     Diff {
         /// Path to the "before" pipeline YAML file
@@ -349,7 +362,15 @@ fn main() -> Result<()> {
             quiet,
             output,
             platform,
-        } => cmd_emit_spec(target, id, ttl_seconds, severity_threshold, quiet, output, platform),
+        } => cmd_emit_spec(
+            target,
+            id,
+            ttl_seconds,
+            severity_threshold,
+            quiet,
+            output,
+            platform,
+        ),
         Cli::Map {
             paths,
             platform,
@@ -362,6 +383,14 @@ fn main() -> Result<()> {
             max_hops,
             platform,
         } => cmd_diff(before, after, format, max_hops, platform),
+        Cli::Explain { rule, no_color } => {
+            if no_color || std::env::var_os("NO_COLOR").is_some() {
+                colored::control::set_override(false);
+            } else {
+                colored::control::set_override(true);
+            }
+            cmd_explain(rule)
+        }
     }
 }
 
@@ -637,19 +666,19 @@ fn cmd_scan(opts: ScanOpts) -> Result<()> {
                     TerminalReport { verbose }
                         .emit(&mut writer, &graph, &findings)
                         .with_context(|| "Failed to write terminal report")?;
-                    if suppressed_ignore > 0 || suppressed_baseline > 0 || suppressed_threshold > 0 {
+                    if suppressed_ignore > 0 || suppressed_baseline > 0 || suppressed_threshold > 0
+                    {
                         use std::io::Write;
                         let mut notes = Vec::new();
                         if suppressed_ignore > 0 {
-                            notes.push(format!(
-                                "{suppressed_ignore} suppressed by .tauditignore"
-                            ));
+                            notes.push(format!("{suppressed_ignore} suppressed by .tauditignore"));
                         }
                         if suppressed_baseline > 0 {
                             notes.push(format!("{suppressed_baseline} suppressed by baseline"));
                         }
                         if suppressed_threshold > 0 {
-                            notes.push(format!("{suppressed_threshold} below --severity-threshold"));
+                            notes
+                                .push(format!("{suppressed_threshold} below --severity-threshold"));
                         }
                         writeln!(&mut writer, "  ({})", notes.join(", ")).ok();
                     }
@@ -721,8 +750,7 @@ fn cmd_scan(opts: ScanOpts) -> Result<()> {
         );
     }
 
-    let resolved_paths: Vec<PathBuf> =
-        resolved.iter().map(|p| p.path().clone()).collect();
+    let resolved_paths: Vec<PathBuf> = resolved.iter().map(|p| p.path().clone()).collect();
 
     let now_secs = now_unix_seconds();
     if let Err(err) = write_runtime_artifacts(
@@ -1115,6 +1143,122 @@ fn version_report() -> String {
 fn cmd_version() -> Result<()> {
     println!("{}", version_report());
     Ok(())
+}
+
+/// Map a rule's static `security_severity` (CVSS-style numeric string) to a
+/// human-friendly severity label for terminal display. Used only by `cmd_explain`.
+/// Falls back to "info" for unparseable values rather than panicking.
+fn severity_label_for_rule(security_severity: &str) -> &'static str {
+    let n: f32 = security_severity.parse().unwrap_or(0.0);
+    if n >= 9.0 {
+        "critical"
+    } else if n >= 7.0 {
+        "high"
+    } else if n >= 5.0 {
+        "medium"
+    } else if n >= 1.0 {
+        "low"
+    } else {
+        "info"
+    }
+}
+
+fn cmd_explain(rule: Option<String>) -> Result<()> {
+    use colored::Colorize;
+    use std::io::Write;
+
+    let rules = taudit_report_sarif::all_rules();
+    let stdout = std::io::stdout();
+    let mut out = stdout.lock();
+
+    match rule {
+        None => {
+            writeln!(out, "{} — {} rules\n", "taudit".bold(), rules.len()).ok();
+            // Two-column layout: left column is widest rule id + padding, then severity, then desc.
+            let id_width = rules.iter().map(|r| r.id.len()).max().unwrap_or(0);
+            for r in rules {
+                let sev = severity_label_for_rule(r.security_severity);
+                let sev_colored = match sev {
+                    "critical" => sev.red().bold(),
+                    "high" => sev.red(),
+                    "medium" => sev.yellow(),
+                    "low" => sev.cyan(),
+                    _ => sev.dimmed(),
+                };
+                writeln!(
+                    out,
+                    "  {:<id_width$}  {:<10}  {}",
+                    r.id.bold(),
+                    sev_colored,
+                    r.short_description,
+                    id_width = id_width,
+                )
+                .ok();
+            }
+            writeln!(out).ok();
+            writeln!(
+                out,
+                "Use '{}' for full description and remediation guidance.",
+                "taudit explain <rule>".bold()
+            )
+            .ok();
+            Ok(())
+        }
+        Some(id) => {
+            let Some(r) = rules.iter().find(|r| r.id == id) else {
+                eprintln!("error: unknown rule '{id}'");
+                eprintln!();
+                eprintln!("valid rule ids:");
+                for r in rules {
+                    eprintln!("  {}", r.id);
+                }
+                std::process::exit(2);
+            };
+
+            let sev = severity_label_for_rule(r.security_severity);
+            let sev_colored = match sev {
+                "critical" => sev.red().bold(),
+                "high" => sev.red(),
+                "medium" => sev.yellow(),
+                "low" => sev.cyan(),
+                _ => sev.dimmed(),
+            };
+
+            writeln!(out, "{} ({})  {}\n", r.id.bold(), r.name, sev_colored,).ok();
+            writeln!(out, "  {}\n", r.short_description).ok();
+            // Wrap the full description at ~76 cols with a 2-space indent.
+            for line in wrap_paragraph(r.full_description, 76) {
+                writeln!(out, "  {line}").ok();
+            }
+            writeln!(out).ok();
+            writeln!(out, "  Tags: {}", r.tags.join(", ")).ok();
+            Ok(())
+        }
+    }
+}
+
+/// Tiny word-wrap for `cmd_explain`'s full description block. Avoids pulling in
+/// a dep just for this one display path. Splits on ASCII whitespace and packs
+/// words greedily into lines no longer than `width`. A single word longer than
+/// `width` is emitted on its own line uncut.
+fn wrap_paragraph(text: &str, width: usize) -> Vec<String> {
+    let mut lines = Vec::new();
+    let mut current = String::new();
+    for word in text.split_whitespace() {
+        if current.is_empty() {
+            current.push_str(word);
+        } else if current.len() + 1 + word.len() <= width {
+            current.push(' ');
+            current.push_str(word);
+        } else {
+            lines.push(std::mem::take(&mut current));
+            current.push_str(word);
+        }
+    }
+    if !current.is_empty() {
+        lines.push(current);
+    }
+    lines
 }
 
 fn cmd_emit_spec(
