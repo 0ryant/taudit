@@ -75,6 +75,19 @@ enum Cli {
         #[arg(long, default_value_t = false)]
         verbose: bool,
 
+        /// In `--quiet` terminal mode, suppress the per-file line for files
+        /// with zero findings. No effect on non-quiet mode or other formats.
+        #[arg(long, default_value_t = false)]
+        omit_empty: bool,
+
+        /// Collapse multiple findings sharing the same category and root
+        /// authority node (first Secret/Identity in `nodes_involved`) into a
+        /// single summary finding per file. Useful when a templated pipeline
+        /// produces N near-duplicate findings — keeps the highest severity,
+        /// the first finding's location, and a count-prefixed message.
+        #[arg(long, default_value_t = false)]
+        collapse_template_instances: bool,
+
         /// Path to a JSON report from a prior scan. Findings whose
         /// (category, message) pair appears in the baseline are suppressed.
         /// Use this to surface only new findings since the last known-good scan.
@@ -289,6 +302,8 @@ struct ScanOpts {
     exclude: Vec<String>,
     quiet: bool,
     verbose: bool,
+    omit_empty: bool,
+    collapse_template_instances: bool,
     baseline: Option<PathBuf>,
     telemetry_dir: Option<PathBuf>,
     receipt_dir: Option<PathBuf>,
@@ -318,6 +333,8 @@ fn main() -> Result<()> {
             exclude,
             quiet,
             verbose,
+            omit_empty,
+            collapse_template_instances,
             baseline,
             telemetry_dir,
             receipt_dir,
@@ -342,6 +359,8 @@ fn main() -> Result<()> {
                 exclude,
                 quiet,
                 verbose,
+                omit_empty,
+                collapse_template_instances,
                 baseline,
                 telemetry_dir,
                 receipt_dir,
@@ -505,6 +524,8 @@ fn cmd_scan(opts: ScanOpts) -> Result<()> {
         exclude,
         quiet,
         verbose,
+        omit_empty,
+        collapse_template_instances: collapse_templates,
         baseline,
         telemetry_dir,
         receipt_dir,
@@ -631,6 +652,16 @@ fn cmd_scan(opts: ScanOpts) -> Result<()> {
             None => (findings, 0usize),
         };
 
+        // Collapse near-duplicate findings produced by templated pipelines into
+        // one summary finding per (category, root authority) group. Applied
+        // after threshold filtering so the collapsed view matches what the
+        // formatters would otherwise emit.
+        let findings = if collapse_templates {
+            collapse_template_instance_findings(findings, &graph)
+        } else {
+            findings
+        };
+
         findings_total += findings.len();
         suppressed_total += suppressed_ignore + suppressed_baseline + suppressed_threshold;
 
@@ -640,26 +671,28 @@ fn cmd_scan(opts: ScanOpts) -> Result<()> {
                     let counts = SeverityCounts::from_findings(&findings);
                     quiet_total.add(&counts);
                     let total = findings.len();
-                    let suppressed = suppressed_ignore + suppressed_baseline;
-                    let sup_note = if suppressed > 0 {
-                        format!(" ({suppressed} suppressed)")
-                    } else {
-                        String::new()
-                    };
-                    use std::io::Write;
-                    writeln!(
-                        &mut writer,
-                        "{}: {} finding{}{} — {} critical / {} high / {} medium / {} low",
-                        path.display(),
-                        total,
-                        if total == 1 { "" } else { "s" },
-                        sup_note,
-                        counts.critical,
-                        counts.high,
-                        counts.medium,
-                        counts.low,
-                    )
-                    .ok();
+                    if !(omit_empty && total == 0) {
+                        let suppressed = suppressed_ignore + suppressed_baseline;
+                        let sup_note = if suppressed > 0 {
+                            format!(" ({suppressed} suppressed)")
+                        } else {
+                            String::new()
+                        };
+                        use std::io::Write;
+                        writeln!(
+                            &mut writer,
+                            "{}: {} finding{}{} — {} critical / {} high / {} medium / {} low",
+                            path.display(),
+                            total,
+                            if total == 1 { "" } else { "s" },
+                            sup_note,
+                            counts.critical,
+                            counts.high,
+                            counts.medium,
+                            counts.low,
+                        )
+                        .ok();
+                    }
                 } else if findings.is_empty() {
                     terminal_clean += 1;
                 } else {
@@ -1081,6 +1114,138 @@ fn sort_findings(findings: &mut [taudit_core::finding::Finding]) {
             .then_with(|| finding_category(&a.category).cmp(&finding_category(&b.category)))
             .then_with(|| a.message.cmp(&b.message))
     });
+}
+
+/// Collapse near-duplicate findings produced by templated pipeline expansions.
+///
+/// Groups findings by `(category, root_authority_node_name)` where the root is
+/// the first `Secret` or `Identity` node in `nodes_involved`. When a group has
+/// more than one finding it is replaced by a single summary finding that keeps
+/// the highest severity, the first finding's location/category/nodes_involved/
+/// recommendation, and rewrites the message as
+/// `"N occurrences of <category>: [node1, node2, ...]"`.
+///
+/// Findings with no Secret/Identity in `nodes_involved` are keyed by their
+/// message (effectively never collapsed) so unrelated findings never merge.
+/// Group order is preserved by first-appearance to keep output deterministic.
+fn collapse_template_instance_findings(
+    findings: Vec<taudit_core::finding::Finding>,
+    graph: &taudit_core::graph::AuthorityGraph,
+) -> Vec<taudit_core::finding::Finding> {
+    use taudit_core::graph::NodeKind;
+
+    /// Cap on how many distinct node names to inline in the collapsed message.
+    const MAX_NODE_NAMES_IN_MESSAGE: usize = 8;
+
+    #[derive(PartialEq, Eq, Hash, Clone)]
+    enum GroupKey {
+        /// Collapsible: same category + same root authority node name.
+        Authority(taudit_core::finding::FindingCategory, String),
+        /// Non-collapsible: no authority root — keyed on the full message so
+        /// each finding lands in its own singleton group.
+        Unique(String),
+    }
+
+    fn root_authority_name(
+        f: &taudit_core::finding::Finding,
+        graph: &taudit_core::graph::AuthorityGraph,
+    ) -> Option<String> {
+        f.nodes_involved.iter().find_map(|id| {
+            graph.node(*id).and_then(|n| {
+                if matches!(n.kind, NodeKind::Secret | NodeKind::Identity) {
+                    Some(n.name.clone())
+                } else {
+                    None
+                }
+            })
+        })
+    }
+
+    // Preserve first-appearance order: track group keys in a Vec, indices in a
+    // parallel HashMap, and accumulate finding indices per group.
+    let mut group_order: Vec<GroupKey> = Vec::new();
+    let mut group_index: std::collections::HashMap<GroupKey, usize> =
+        std::collections::HashMap::new();
+    let mut groups: Vec<Vec<usize>> = Vec::new();
+
+    for (idx, f) in findings.iter().enumerate() {
+        let key = match root_authority_name(f, graph) {
+            Some(name) => GroupKey::Authority(f.category, name),
+            None => GroupKey::Unique(f.message.clone()),
+        };
+        match group_index.get(&key) {
+            Some(&gi) => groups[gi].push(idx),
+            None => {
+                let gi = groups.len();
+                group_index.insert(key.clone(), gi);
+                group_order.push(key);
+                groups.push(vec![idx]);
+            }
+        }
+    }
+
+    let mut out: Vec<taudit_core::finding::Finding> = Vec::with_capacity(group_order.len());
+    for indices in groups {
+        if indices.len() == 1 {
+            out.push(findings[indices[0]].clone());
+            continue;
+        }
+
+        // Highest severity wins (Severity::Critical < Severity::Info via rank).
+        let max_sev = indices
+            .iter()
+            .map(|&i| findings[i].severity)
+            .min()
+            .expect("group is non-empty");
+
+        // Collect unique node names from `nodes_involved` across all members,
+        // preserving first-seen order, capped for readability.
+        let mut seen: HashSet<String> = HashSet::new();
+        let mut names: Vec<String> = Vec::new();
+        for &i in &indices {
+            for nid in &findings[i].nodes_involved {
+                if let Some(node) = graph.node(*nid) {
+                    if seen.insert(node.name.clone()) {
+                        names.push(node.name.clone());
+                    }
+                }
+            }
+        }
+        let displayed_names: Vec<String> = if names.len() > MAX_NODE_NAMES_IN_MESSAGE {
+            let mut head: Vec<String> = names
+                .iter()
+                .take(MAX_NODE_NAMES_IN_MESSAGE)
+                .cloned()
+                .collect();
+            head.push(format!(
+                "... +{} more",
+                names.len() - MAX_NODE_NAMES_IN_MESSAGE
+            ));
+            head
+        } else {
+            names
+        };
+
+        let first = &findings[indices[0]];
+        let category_label = finding_category(&first.category);
+        let message = format!(
+            "{} occurrences of {}: [{}]",
+            indices.len(),
+            category_label,
+            displayed_names.join(", "),
+        );
+
+        out.push(taudit_core::finding::Finding {
+            severity: max_sev,
+            category: first.category,
+            path: first.path.clone(),
+            nodes_involved: first.nodes_involved.clone(),
+            message,
+            recommendation: first.recommendation.clone(),
+        });
+    }
+
+    out
 }
 
 /// Per-severity finding counts.

@@ -1,7 +1,7 @@
 use serde::Serialize;
 use taudit_core::error::TauditError;
 use taudit_core::finding::{Finding, FindingCategory, Severity};
-use taudit_core::graph::AuthorityGraph;
+use taudit_core::graph::{AuthorityGraph, NodeKind};
 use taudit_core::ports::ReportSink;
 
 const SARIF_SCHEMA: &str = "https://schemastore.azurewebsites.net/schemas/json/sarif-2.1.0.json";
@@ -358,7 +358,7 @@ impl SarifReportSink {
             .flat_map(|(graph, findings)| {
                 findings
                     .iter()
-                    .map(|f| finding_to_result(f, &graph.source.file))
+                    .map(|f| finding_to_result(f, &graph.source.file, graph))
             })
             .collect();
 
@@ -421,20 +421,42 @@ fn build_rules() -> Vec<SarifRule> {
 }
 
 /// Map a `Finding` to a SARIF `result` object.
-fn finding_to_result(finding: &Finding, source_file: &str) -> SarifResult {
+fn finding_to_result(finding: &Finding, source_file: &str, graph: &AuthorityGraph) -> SarifResult {
     let rule_id = category_to_rule_id(&finding.category);
     let level = severity_to_level(&finding.severity);
     let security_severity = severity_to_security_severity(&finding.severity);
 
     let uri = source_file.to_string();
 
+    // Prefer a fingerprint keyed on (rule_id, root_authority_node_name) so that
+    // every per-hop finding sourced from the same secret/identity collapses to
+    // a single GitHub Code Scanning alert. Fall back to the legacy
+    // (rule_id, uri, message) key when no authority node is involved
+    // (e.g. authority_cycle, floating_image, unpinned_action).
+    let root_authority_name: Option<&str> = finding
+        .nodes_involved
+        .iter()
+        .filter_map(|id| graph.node(*id))
+        .find(|n| matches!(n.kind, NodeKind::Secret | NodeKind::Identity))
+        .map(|n| n.name.as_str());
+
     let fingerprint = {
         use std::collections::hash_map::DefaultHasher;
         use std::hash::{Hash, Hasher};
         let mut h = DefaultHasher::new();
         rule_id.hash(&mut h);
-        uri.hash(&mut h);
-        finding.message.hash(&mut h);
+        match root_authority_name {
+            Some(name) => {
+                "::".hash(&mut h);
+                name.hash(&mut h);
+            }
+            None => {
+                "::".hash(&mut h);
+                uri.hash(&mut h);
+                "::".hash(&mut h);
+                finding.message.hash(&mut h);
+            }
+        }
         format!("{:016x}", h.finish())
     };
 
