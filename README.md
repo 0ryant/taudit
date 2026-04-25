@@ -108,6 +108,12 @@ taudit scan .pipelines/azure-pipelines.yml --platform azure-devops
 # CI-friendly summary counts only
 taudit scan .github/workflows/ --quiet
 
+# Quiet mode + skip files with zero findings (cleaner CI logs)
+taudit scan .github/workflows/ --quiet --omit-empty
+
+# Collapse repeated template-instance findings into one summary per file
+taudit scan .pipelines/ --platform azure-devops --collapse-template-instances
+
 # Show node metadata in propagation paths
 taudit scan .github/workflows/release.yml --verbose
 
@@ -243,7 +249,7 @@ taudit-sink-cloudevents findings → CloudEvents JSONL event stream
 taudit-cli              composition root (clap, file I/O, wiring)
 ```
 
-8 crates, 176 tests, ~9,800 LOC. Ports and adapters — core has zero I/O dependencies.
+8 crates, 181 tests, ~8,500 LOC. Ports and adapters — core has zero I/O dependencies.
 
 ## CI Integration
 

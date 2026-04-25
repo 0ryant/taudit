@@ -2,6 +2,17 @@
 
 All notable changes to this project will be documented in this file.
 
+## v0.2.5 — 2026-04-25
+
+### Changed
+
+- **`taudit map` layout rewrite** — table now fits the terminal window without wrapping:
+  - Zone column abbreviated: `FirstParty`→`1P`, `ThirdParty`→`3P`, `Untrusted`→`?` (saves 8+ chars per row)
+  - Step names capped at 28 chars with `…`; authority column names capped at 18 chars
+  - Authority columns paginate into labelled groups (`columns 1–4 of 12`) when the full table exceeds terminal width
+  - Terminal width read from `$COLUMNS` env var (set by interactive shells); falls back to 120
+  - Markers changed to `✓` (has access) and `·` (no access) for visual clarity
+
 ## v0.2.4 — 2026-04-25
 
 ### Added

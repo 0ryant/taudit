@@ -1,7 +1,7 @@
 [package]
 name = "taudit"
 description = "Pipeline authority scanner — models how secrets and permissions move through CI/CD pipelines"
-version = "0.2.4"
+version = "0.2.5"
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
@@ -16,13 +16,13 @@ name = "taudit"
 path = "src/main.rs"
 
 [dependencies]
-taudit-core = { version = "0.2.4", path = "../taudit-core" }
-taudit-parse-gha = { version = "0.2.4", path = "../taudit-parse-gha" }
-taudit-parse-ado = { version = "0.2.4", path = "../taudit-parse-ado" }
-taudit-report-terminal = { version = "0.2.4", path = "../taudit-report-terminal" }
-taudit-report-json = { version = "0.2.4", path = "../taudit-report-json" }
-taudit-report-sarif = { version = "0.2.4", path = "../taudit-report-sarif" }
-taudit-sink-cloudevents = { version = "0.2.4", path = "../taudit-sink-cloudevents" }
+taudit-core = { version = "0.2.5", path = "../taudit-core" }
+taudit-parse-gha = { version = "0.2.5", path = "../taudit-parse-gha" }
+taudit-parse-ado = { version = "0.2.5", path = "../taudit-parse-ado" }
+taudit-report-terminal = { version = "0.2.5", path = "../taudit-report-terminal" }
+taudit-report-json = { version = "0.2.5", path = "../taudit-report-json" }
+taudit-report-sarif = { version = "0.2.5", path = "../taudit-report-sarif" }
+taudit-sink-cloudevents = { version = "0.2.5", path = "../taudit-sink-cloudevents" }
 clap = { workspace = true }
 clap_complete = { workspace = true }
 anyhow = { workspace = true }

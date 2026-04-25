@@ -2,7 +2,7 @@
 
 Three horizons. Each is a superset of the previous.
 
-**Current state:** 7 crates, 112 tests, ~5,500 LOC, 7 analysis rules, 1 parser (GitHub Actions), 5 commands (scan, map, diff, completions, version), 4 output formats (terminal, JSON, CloudEvents JSONL, SARIF). MVP complete. Deep into AAA: Tier 1 done, Tier 2 partial, Tier 3 mostly done, Tier 4 partial, Tier 6 partial, Tier 7 partial.
+**Current state:** 8 crates, 181 tests, ~8,500 LOC, 16 analysis rules, 2 parsers (GHA + ADO), 6 commands (scan, map, diff, explain, version, completions), 4 output formats (terminal, JSON, CloudEvents JSONL, SARIF). MVP complete. Deep into AAA: Tier 1 done, Tier 2 mostly done, Tier 3 mostly done, Tier 4 partial, Tier 5 done, Tier 6 partial, Tier 7 mostly done.
 
 **Effort key:** S = hours, M = days, L = week+
 
@@ -20,15 +20,16 @@ Three horizons. Each is a superset of the previous.
 |---|------|--------|
 | 1 | Authority graph with typed nodes, edges, trust zones | Done |
 | 2 | BFS propagation engine with configurable depth | Done |
-| 3 | 7 analysis rules with severity graduation and deduplication | Done |
+| 3 | 16 analysis rules with severity graduation and deduplication | Done |
 | 4 | Finding model with path evidence and remediation routing | Done |
 | 5 | GitHub Actions parser with trust zone classification | Done |
+| 5b | Azure DevOps parser (stages/jobs/steps, service connections, variable groups, template references) | Done — v0.2.0 |
 | 6 | Terminal report with propagation path visualization | Done |
 | 7 | JSON report with JSON Schema contract | Done |
 | 8 | CloudEvents JSONL sink with schema | Done |
 | 9 | Authority map command | Done |
 | 10 | CI pipeline (fmt, clippy, test, deny, dependabot) | Done |
-| 11 | 112 tests (unit + integration + sink) | Done |
+| 11 | 181 tests (unit + integration + sink) | Done |
 
 ### Precision (do first — the credibility layer)
 
@@ -95,7 +96,11 @@ Organized by impact tier. Each tier unlocks a class of adoption.
 Put findings where engineers already look.
 
 - [x] **SARIF output adapter** — findings appear in GitHub code scanning tab
+- [x] **SARIF fingerprint collapse** — `partialFingerprints` keys on `rule_id + root authority node name` so per-hop findings group into single alerts (v0.2.4)
 - [x] **`taudit diff`** — before/after authority graph diff between pipeline versions
+- [x] **`taudit explain`** — list all 16 rules with severity, or get full description and remediation for one rule (v0.2.3)
+- [x] **`--omit-empty`** — `--quiet` mode silently skips files with zero findings (v0.2.4)
+- [x] **`--collapse-template-instances`** — groups findings sharing `(category, root authority node)` into one summary finding per file (v0.2.4)
 - [x] **Stdin pipe support** — `cat workflow.yml | taudit scan -`
 - [ ] **PR comment bot** — `taudit diff base..head` posts authority changes to PR
 - [ ] **GitHub Action** — `uses: taudit-dev/taudit-action@sha` with configurable severity gate
@@ -122,16 +127,25 @@ Identity modelling is the biggest long-term risk. Modern pipelines use OIDC toke
 - [ ] **Scope propagation escalation** — cloud OIDC identity reaching a pinned ThirdParty sink: currently High; could escalate given the cloud blast radius
 - [ ] **FederateIdentity recommendation refinement** — OIDC-tagged identities suggest specific provider (`actions/oidc-federation` vs. cloud-native)
 
-### Tier 5: Second Platform (L, unlocks enterprise)
+### Tier 5: Second Platform ✅ Done — v0.2.0
 
-Don't rush this. Depth + correctness on GHA first.
-
-- [ ] **Azure DevOps parser** (`taudit-parse-ado`) — stages, jobs, steps, service connections, variable groups
+- [x] **Azure DevOps parser** (`taudit-parse-ado`) — stages, jobs, steps, `System.AccessToken`, service connections, variable groups, template references, pool tagging (`self_hosted`), `checkout: self`, `META_IMPLICIT` for platform-injected identities (v0.2.0)
+- [x] **`--platform azure-devops` CLI flag** — selects parser per scan (v0.2.0)
+- [x] **Three ADO PR-boundary rules** — `variable_group_in_pr_job`, `self_hosted_pool_pr_hijack`, `service_connection_scope_mismatch` (v0.2.3)
 - [ ] Environment approvals as isolation boundaries
 
 ### Tier 6: Rule Depth (S-M each, deeper analysis)
 
 - [x] **FloatingImage** — container images without digest pinning (Medium severity)
+- [x] **PersistedCredential** — `persistCredentials: true` writes token to disk (v0.2.0)
+- [x] **TriggerContextMismatch** — `pull_request_target` / ADO `pr:` with authority-bearing steps
+- [x] **CrossWorkflowAuthorityChain** — authority-bearing step delegates to external/untrusted workflow
+- [x] **AuthorityCycle** — workflow delegation graph contains a cycle
+- [x] **UpliftWithoutAttestation** — OIDC-privileged build produces no signed provenance
+- [x] **SelfMutatingPipeline** — step writes `GITHUB_ENV` / `GITHUB_PATH` to inject into later steps
+- [x] **VariableGroupInPrJob** (ADO) — variable-group secrets reachable from PR-triggered job
+- [x] **SelfHostedPoolPrHijack** (ADO) — PR pipeline runs on self-hosted agent and checks out repo
+- [x] **ServiceConnectionScopeMismatch** (ADO) — broad-scope service connection reachable from PR job
 - [ ] **EgressBlindspot** — steps with secrets + network access + no egress constraint
 - [ ] **MissingAuditTrail** — authority-bearing steps with no logging
 - [x] **Confidence scoring** — severity modulated by `AuthorityCompleteness` (Partial graph → cap max severity at High)
@@ -147,6 +161,7 @@ Don't rush this. Depth + correctness on GHA first.
 - [x] JSON Schema CI validation in quality.yml
 - [x] `cargo-audit` in CI
 - [x] Homebrew formula / nix package
+- [x] **`taudit map` layout** — terminal-width-aware column pagination, zone abbreviation (`1P` / `3P` / `?`), `✓` / `·` access markers, step/authority name capping
 
 ### Tier 8: Graph Power (M-L each, differentiation)
 
@@ -157,18 +172,18 @@ Don't rush this. Depth + correctness on GHA first.
 
 ### AAA completion gate
 
-- [ ] Two CI platforms supported (GHA + ADO)
+- [x] Two CI platforms supported (GHA + ADO)
 - [x] `AuthorityCompleteness` propagated — parser marks Partial for reusable workflows, matrix, inferred secrets
 - [ ] Identity scope modelled with OIDC/cloud identity awareness
 - [x] Findings appear in GitHub code scanning (SARIF)
 - [ ] PR bot posts authority changes
 - [x] `.tauditignore` + `--baseline` eliminate known noise
 - [ ] Composite actions parsed correctly
-- [ ] All 9 finding categories implemented (7/9 done)
+- [x] 16 analysis rules covering propagation, identity, supply chain, artifact, trigger, delegation, attestation, mutation, and ADO PR boundaries
 - [ ] Available via Homebrew + cargo install + GitHub Action
 - [x] Release binaries for 5 targets (linux-x64, linux-arm64, macos-x64, macos-arm64, windows-x64)
 
-**Estimated effort: 4-7 weeks remaining to full AAA.** Tier 4 cloud identity inference and Tier 2 PR bot are the highest remaining leverage.
+**Estimated effort: 2-4 weeks remaining to full AAA.** Tier 4 cloud identity scope-escalation, Tier 2 PR bot, and composite-action parsing are the highest remaining leverage.
 
 ---
 
@@ -312,12 +327,12 @@ MVP ═════════════════════════�
                               ↓
 AAA ══════════════════════════╪══════════════════════ YOU ARE HERE
   T1: noise elimination    ✅ DONE
-  T2: platform integration ◑ SARIF+diff+stdin done; PR bot+GHA pending
+  T2: platform integration ◑ SARIF+fingerprint+diff+explain+stdin+omit-empty+collapse done; PR bot+GHA pending
   T3: parser precision     ◑ reusable/matrix/container/PRT done; composite pending
   T4: identity depth       ◑ OIDC tagging + cloud inference + container auth done; escalation nuance pending
-  T5: Azure DevOps         ○ not started
-  T6: rule depth           ◑ FloatingImage done; Egress/Audit pending
-  T7: enterprise polish    ◑ completions+release+color+verbose done
+  T5: Azure DevOps         ✅ DONE — v0.2.0 + v0.2.3 PR-boundary rules
+  T6: rule depth           ◑ 10 rules done (FloatingImage, PersistedCredential, TriggerCtx, CrossWorkflow, Cycle, Uplift, SelfMutating, 3 ADO PR rules); Egress/Audit/custom pending
+  T7: enterprise polish    ◑ completions+release+color+verbose+map-layout done
   T8: graph power          ○ not started
                               |
 DONE ═════════════════════════╪═════════════════════════════════ future
