@@ -2,6 +2,24 @@
 
 All notable changes to this project will be documented in this file.
 
+## v0.3.0 — 2026-04-25
+
+### Added
+
+- **Composite action inlining** — local composite actions (`uses: ./path/to/action`) are now parsed end-to-end. The GHA parser loads `action.yml` relative to the repository root, inlines each composite step as a proper `Step` node in the authority graph, and adds `DelegatesTo` edges from the calling step. Previously, local composite actions were classified as FirstParty but their sub-steps were hidden — any secrets or identities flowing through them were invisible to the graph. Pipelines using composite actions will see more complete finding coverage. When `action.yml` is missing or `using:` is not `composite`, the graph is marked `Partial` with a descriptive reason.
+
+- **OIDC severity escalation** — OIDC cloud identities (`META_OIDC = "true"`, e.g. AWS `role-to-assume`, GCP workload identity federation, Azure federated credentials) propagating to any third-party sink are now **Critical**, regardless of whether the sink is SHA-pinned. Previously, an OIDC identity reaching a SHA-pinned third-party action was scored High. Cloud identity tokens carry direct blast radius to the cloud role — no further credential is needed — so SHA pinning does not bound the impact. Non-OIDC propagation to SHA-pinned actions remains High.
+
+- **ADO environment approval boundaries** — Azure DevOps deployment jobs with an `environment:` key and required approvals now create an explicit propagation boundary in the graph. Findings that cross an environment-gated boundary are reduced one severity step (Critical→High, High→Medium, Medium→Low). Non-gated ADO jobs are unaffected.
+
+### Behavioral changes (upgrade notes)
+
+Upgrading from v0.2.x may change findings on existing pipelines:
+
+1. **New findings** — pipelines using local composite actions will produce findings for previously hidden sub-steps.
+2. **Severity increases** — OIDC-sourced propagation to SHA-pinned third-party actions is now Critical (was High). CI gates checking `--severity-threshold critical` will see new failures on unchanged pipeline YAML.
+3. **Severity decreases** — ADO pipelines with environment approval gates will see some findings downgraded by one step.
+
 ## v0.2.7 — 2026-04-25
 
 ### Fixed
