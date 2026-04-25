@@ -213,8 +213,7 @@ pub fn render_map(map: &AuthorityMap) -> String {
 
     if any_truncated {
         out.push_str(&format!(
-            "\nNote: column names truncated to {} chars.\n",
-            MAX_COL
+            "\nNote: column names truncated to {MAX_COL} chars.\n"
         ));
     }
 
