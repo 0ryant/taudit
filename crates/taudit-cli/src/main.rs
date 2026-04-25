@@ -1444,6 +1444,9 @@ fn cmd_map(
     let parser_box = make_parser(&platform);
     let parser = parser_box.as_ref();
 
+    // Track whether --job matched any file so we can give a useful error at the end.
+    let mut job_matched_any = false;
+
     for tagged_path in resolve_paths_tagged(&paths)? {
         let path = tagged_path.path().clone();
         let graph = if platform == Platform::Auto {
@@ -1489,19 +1492,15 @@ fn cmd_map(
                 },
             }
         };
-        // Validate `--job <name>` against the graph: a typo here would silently
-        // produce an empty subgraph, which is worse than an explicit error.
+        // When --job is specified, skip files that don't contain the job. This makes
+        // directory scans work correctly: each file is checked independently, and
+        // only files that have the named job produce output. Error at the end if
+        // no file in the set contained the job.
         if let Some(ref name) = job {
-            let available = map::job_names(&graph);
-            if !available.iter().any(|n| n == name) {
-                let list = if available.is_empty() {
-                    "(none)".to_string()
-                } else {
-                    available.join(", ")
-                };
-                eprintln!("error: no job named '{name}' found in graph. Available jobs: {list}");
-                std::process::exit(2);
+            if !map::job_names(&graph).iter().any(|n| n == name) {
+                continue;
             }
+            job_matched_any = true;
         }
 
         match format {
@@ -1514,6 +1513,13 @@ fn cmd_map(
             MapFormat::Dot => {
                 println!("{}", map::render_dot(&graph, job.as_deref()));
             }
+        }
+    }
+
+    if let Some(ref name) = job {
+        if !job_matched_any {
+            eprintln!("error: no job named '{name}' found in any scanned file");
+            std::process::exit(2);
         }
     }
 
