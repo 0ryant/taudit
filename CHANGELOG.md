@@ -2,6 +2,12 @@
 
 All notable changes to this project will be documented in this file.
 
+## v0.2.7 — 2026-04-25
+
+### Fixed
+
+- **`taudit explain` missing rule** — `checkout_self_pr_exposure` was not registered in the SARIF rule catalog (`taudit-report-sarif::all_rules()`), so `taudit explain` listed 16 rules and `taudit explain checkout_self_pr_exposure` returned an error. Rule definition added with full description, severity (High), and tags.
+
 ## v0.2.6 — 2026-04-25
 
 ### Added

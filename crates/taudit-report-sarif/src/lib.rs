@@ -232,6 +232,22 @@ pub const RULE_DEFS: &[RuleDef] = &[
         security_severity: "7.5",
         tags: &["security", "privilege-escalation"],
     },
+    RuleDef {
+        id: "checkout_self_pr_exposure",
+        name: "CheckoutSelfPrExposure",
+        short_description: "PR-triggered pipeline checks out attacker-controlled repository code",
+        full_description:
+            "A PR-triggered pipeline job (pull_request_target or ADO pr: trigger) performs \
+             a checkout of the repository. Attacker-controlled code from a forked PR lands on \
+             the runner's workspace and is readable by all subsequent steps. Any step that \
+             reads workspace files — scripts, configs, test fixtures — is a potential \
+             exfiltration or injection vector. This is distinct from trigger_context_mismatch \
+             which fires on authority access; this rule fires whenever code from an untrusted \
+             source lands on a privileged runner, regardless of explicit secret access.",
+        default_level: "warning",
+        security_severity: "7.0",
+        tags: &["security", "supply-chain", "pull-request"],
+    },
 ];
 
 // ── SARIF 2.1.0 schema structs ──────────────────────────
