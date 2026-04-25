@@ -2,6 +2,12 @@
 
 All notable changes to this project will be documented in this file.
 
+## v0.4.1 — 2026-04-26
+
+### Changed
+
+- **`taudit explain <rule>` now links to the rule documentation page** — output ends with `See: https://github.com/0ryant/taudit/blob/main/docs/rules/{id}.md`. Users running `taudit explain trigger_context_mismatch` will see a direct link to the full remediation guide with examples and context. No behavioral change to scanning.
+
 ## v0.4.0 — 2026-04-25
 
 ### Added
