@@ -2,6 +2,22 @@
 
 All notable changes to this project will be documented in this file.
 
+## v0.2.4 — 2026-04-25
+
+### Added
+
+- **SARIF fingerprint collapse** — `partialFingerprints.primaryLocationLineHash` now keys on `rule_id + "::" + root_authority_node_name` so GitHub Code Scanning groups all per-hop propagation findings from the same secret or identity into a single alert. Findings without a Secret/Identity node (e.g. `authority_cycle`, `floating_image`) fall back to the prior `rule_id + uri + message` hash.
+
+- **`--omit-empty` flag** — in `--quiet` mode, files with zero findings are silently skipped. Previously every scanned file appeared in the output even when clean.
+
+- **`--collapse-template-instances` flag** — groups findings sharing the same `(category, root authority node)` within a file into one summary finding. The highest severity is kept; the message becomes `"N occurrences of <category>: [node1, node2, ...]"`. On a 276-file ADO corpus this cuts raw output from 1 364 findings to 754 (45% reduction for pipelines that reference shared templates multiple times).
+
+### Fixed
+
+- **`--ignore-file` error message** — the serde_yaml error for a plain-text ignore file now shows the expected YAML format and directs users to `taudit explain` for rule IDs.
+
+- **`untrusted_with_authority` ADO noise** — `System.AccessToken` is tagged `implicit: true` in the ADO parser. The rule downgrades to Info severity with a note explaining that this token is platform-injected and structurally available to all tasks by design. Explicit secrets remain Critical.
+
 ## v0.2.3 — 2026-04-25
 
 ### Added
