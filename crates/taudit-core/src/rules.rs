@@ -234,6 +234,15 @@ pub fn untrusted_with_authority(graph: &AuthorityGraph) -> Vec<Finding> {
                         .map(|v| v == "true")
                         .unwrap_or(false);
 
+                    // Platform-implicit tokens (e.g. ADO System.AccessToken) are structurally
+                    // accessible to all tasks by design. Flag at Info — real but not actionable
+                    // as a misconfiguration. Explicit secrets/service connections stay Critical.
+                    let is_implicit = target
+                        .metadata
+                        .get(META_IMPLICIT)
+                        .map(|v| v == "true")
+                        .unwrap_or(false);
+
                     let recommendation = if target.kind == NodeKind::Secret {
                         if cli_flag_exposed {
                             Recommendation::Manual {
@@ -256,13 +265,21 @@ pub fn untrusted_with_authority(graph: &AuthorityGraph) -> Vec<Finding> {
                             }
                         }
                     } else {
+                        // Identity branch — for implicit platform tokens, add a CellOS
+                        // compensating-control note since the token cannot be un-injected
+                        // at the platform layer.
+                        let minimum = if is_implicit {
+                            "minimal required scope — or use CellOS deny-all egress as a compensating control to limit exfiltration of the injected token".into()
+                        } else {
+                            "minimal required scope".into()
+                        };
                         Recommendation::ReducePermissions {
                             current: target
                                 .metadata
                                 .get(META_PERMISSIONS)
                                 .cloned()
                                 .unwrap_or_else(|| "unknown".into()),
-                            minimum: "minimal required scope".into(),
+                            minimum,
                         }
                     };
 
@@ -272,25 +289,17 @@ pub fn untrusted_with_authority(graph: &AuthorityGraph) -> Vec<Finding> {
                         ""
                     };
 
-                    // Platform-implicit tokens (e.g. ADO System.AccessToken) are structurally
-                    // accessible to all tasks by design. Flag at Info — real but not actionable
-                    // as a misconfiguration. Explicit secrets/service connections stay Critical.
-                    let is_implicit = target
-                        .metadata
-                        .get(META_IMPLICIT)
-                        .map(|v| v == "true")
-                        .unwrap_or(false);
-
                     let (severity, message) =
                         if is_implicit {
                             (
                                 Severity::Info,
                                 format!(
                                 "Untrusted step '{}' has structural access to implicit {} '{}' \
-                                 (platform-injected — all tasks receive this token by design)",
+                                 (platform-injected — all tasks receive this token by design){}",
                                 step.name,
                                 if target.kind == NodeKind::Secret { "secret" } else { "identity" },
                                 target.name,
+                                log_exposure_note,
                             ),
                             )
                         } else {
@@ -926,8 +935,12 @@ pub fn variable_group_in_pr_job(graph: &AuthorityGraph) -> Vec<Finding> {
                     step.name,
                     group_names.join(", ")
                 ),
-                recommendation: Recommendation::Manual {
-                    action: "Move variable group consumption into a workflow triggered by a trusted event (e.g. merge to main), or gate PR pipelines behind explicit environment approvals".into(),
+                recommendation: Recommendation::CellosRemediation {
+                    reason: format!(
+                        "PR-triggered step '{}' can exfiltrate variable group secrets via untrusted code",
+                        step.name
+                    ),
+                    spec_hint: "cellos run --network deny-all --policy requireEgressDeclared,requireRuntimeSecretDelivery".into(),
                 },
             });
         }
@@ -1057,9 +1070,9 @@ pub fn service_connection_scope_mismatch(graph: &AuthorityGraph) -> Vec<Finding>
                     "PR-triggered step '{}' accesses service connection '{}' with broad/unknown scope and no OIDC federation — static credential may have subscription-wide Azure RBAC",
                     step.name, sc.name
                 ),
-                recommendation: Recommendation::FederateIdentity {
-                    static_secret: sc.name.clone(),
-                    oidc_provider: "Azure DevOps workload identity federation (OIDC)".into(),
+                recommendation: Recommendation::CellosRemediation {
+                    reason: "Broad-scope service connection reachable from PR code — CellOS egress isolation limits lateral movement even when connection cannot be immediately rescoped".into(),
+                    spec_hint: "cellos run --network deny-all --policy requireEgressDeclared".into(),
                 },
             });
         }
@@ -1935,6 +1948,62 @@ mod tests {
         assert!(
             findings.is_empty(),
             "no PR trigger → service_connection_scope_mismatch must not fire"
+        );
+    }
+
+    #[test]
+    fn variable_group_in_pr_job_uses_cellos_remediation() {
+        let mut g = AuthorityGraph::new(source("azure-pipelines.yml"));
+        g.metadata.insert(META_TRIGGER.into(), "pr".into());
+
+        let mut secret_meta = std::collections::HashMap::new();
+        secret_meta.insert(META_VARIABLE_GROUP.into(), "true".into());
+        let secret = g.add_node_with_metadata(
+            NodeKind::Secret,
+            "prod-secret",
+            TrustZone::FirstParty,
+            secret_meta,
+        );
+        let step = g.add_node(NodeKind::Step, "deploy step", TrustZone::Untrusted);
+        g.add_edge(step, secret, EdgeKind::HasAccessTo);
+
+        let findings = variable_group_in_pr_job(&g);
+        assert!(!findings.is_empty());
+        assert!(
+            matches!(
+                findings[0].recommendation,
+                Recommendation::CellosRemediation { .. }
+            ),
+            "variable_group_in_pr_job must recommend CellosRemediation"
+        );
+    }
+
+    #[test]
+    fn service_connection_scope_mismatch_uses_cellos_remediation() {
+        let mut g = AuthorityGraph::new(source("azure-pipelines.yml"));
+        g.metadata.insert(META_TRIGGER.into(), "pr".into());
+
+        let mut id_meta = std::collections::HashMap::new();
+        id_meta.insert(META_SERVICE_CONNECTION.into(), "true".into());
+        id_meta.insert(META_IDENTITY_SCOPE.into(), "broad".into());
+        // No META_OIDC → treated as not OIDC-federated
+        let identity = g.add_node_with_metadata(
+            NodeKind::Identity,
+            "sub-conn",
+            TrustZone::FirstParty,
+            id_meta,
+        );
+        let step = g.add_node(NodeKind::Step, "azure deploy", TrustZone::Untrusted);
+        g.add_edge(step, identity, EdgeKind::HasAccessTo);
+
+        let findings = service_connection_scope_mismatch(&g);
+        assert!(!findings.is_empty());
+        assert!(
+            matches!(
+                findings[0].recommendation,
+                Recommendation::CellosRemediation { .. }
+            ),
+            "service_connection_scope_mismatch must recommend CellosRemediation"
         );
     }
 }
