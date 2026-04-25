@@ -2,6 +2,14 @@
 
 All notable changes to this project will be documented in this file.
 
+## v0.2.2 — 2026-04-25
+
+### Fixed
+
+- **Multi-document YAML** — pipeline files using `---` document separators now parse correctly. Both the GHA and ADO parsers use `serde_yaml::Deserializer` to read the first document cleanly; if additional documents are present the graph is marked partial with an explanatory gap note. Previously taudit errored out immediately on any `---`-separated file.
+- **`cargo deny` Zlib license** — `foldhash v0.2.0` (transitive via `jsonschema → reqwest → hashbrown`) was rejected by the licence allowlist. `Zlib` added to `deny.toml`.
+- **`rustls-webpki` security advisory** — updated `rustls-webpki` from `0.103.12` to `0.103.13` to resolve RUSTSEC-2026-0104 (reachable panic in CRL parsing, transitive via `reqwest`).
+
 ## v0.2.1 — 2026-04-25
 
 ### Fixed
