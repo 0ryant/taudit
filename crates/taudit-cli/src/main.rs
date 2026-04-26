@@ -154,6 +154,38 @@ enum Cli {
         job: Option<String>,
     },
 
+    /// Emit the canonical authority graph as a versioned, machine-readable export.
+    ///
+    /// Unlike `taudit map` (human-readable table), `taudit graph` produces the
+    /// full graph as JSON conforming to `schemas/authority-graph.v1.json`,
+    /// or as Graphviz DOT for visualization. Designed for downstream
+    /// consumers (tsign, axiom, runtime cells) that build on the graph.
+    Graph {
+        /// Path to pipeline YAML file(s) or directory.
+        #[arg(required = true)]
+        paths: Vec<PathBuf>,
+
+        /// CI/CD platform. Default: auto (detects from YAML content)
+        #[arg(long, default_value = "auto")]
+        platform: Platform,
+
+        /// Output format: `json` (default, schema-validated) or `dot` (Graphviz DOT).
+        #[arg(long, default_value = "json")]
+        format: GraphFormat,
+
+        /// Restrict the output to the subgraph reachable from a single job.
+        /// For `--format json` the graph is emitted unfiltered; the flag only
+        /// affects `--format dot` (matching `taudit map --job` semantics).
+        #[arg(long)]
+        job: Option<String>,
+
+        /// Directory containing custom rule YAML files (`*.yml`, `*.yaml`).
+        /// Accepted for symmetry with `taudit scan`; rules do not currently
+        /// alter the emitted graph but the flag is reserved for future use.
+        #[arg(long)]
+        rules_dir: Option<PathBuf>,
+    },
+
     /// Generate shell completions and print them to stdout.
     /// Source or eval the output in your shell config to enable tab completion.
     ///
@@ -264,6 +296,12 @@ enum DiffOutputFormat {
 #[derive(Clone, Debug, PartialEq, Eq, clap::ValueEnum)]
 enum MapFormat {
     Text,
+    Dot,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, clap::ValueEnum)]
+enum GraphFormat {
+    Json,
     Dot,
 }
 
@@ -482,6 +520,13 @@ fn main() -> Result<()> {
             format,
             job,
         } => cmd_map(paths, platform, no_color, format, job),
+        Cli::Graph {
+            paths,
+            platform,
+            format,
+            job,
+            rules_dir,
+        } => cmd_graph(paths, platform, format, job, rules_dir),
         Cli::Diff {
             before,
             after,
@@ -1533,6 +1578,118 @@ fn cmd_map(
                 println!();
             }
             MapFormat::Dot => {
+                println!("{}", map::render_dot(&graph, job.as_deref()));
+            }
+        }
+    }
+
+    if let Some(ref name) = job {
+        if !job_matched_any {
+            eprintln!("error: no job named '{name}' found in any scanned file");
+            std::process::exit(2);
+        }
+    }
+
+    Ok(())
+}
+
+/// `taudit graph` — emit the canonical authority graph as a versioned,
+/// machine-readable export. Mirrors `cmd_map`'s file-resolution and
+/// per-file platform sniffing, but produces the graph itself rather than
+/// the human-readable map. Default format is JSON conforming to
+/// `schemas/authority-graph.v1.json`; `--format dot` reuses the same
+/// Graphviz renderer as `taudit map --format dot`.
+fn cmd_graph(
+    paths: Vec<PathBuf>,
+    platform: Platform,
+    format: GraphFormat,
+    job: Option<String>,
+    rules_dir: Option<PathBuf>,
+) -> Result<()> {
+    // Validate `--rules-dir` early so a bad directory fails fast, even
+    // though custom rules don't currently affect the emitted graph
+    // (kept for symmetry with `taudit scan`).
+    if let Some(dir) = rules_dir.as_ref() {
+        if let Err(errors) = taudit_core::custom_rules::load_rules_dir(dir) {
+            for err in &errors {
+                eprintln!("error: {err}");
+            }
+            std::process::exit(2);
+        }
+    }
+
+    let parser_box = make_parser(&platform);
+    let parser = parser_box.as_ref();
+
+    let mut job_matched_any = false;
+
+    for tagged_path in resolve_paths_tagged(&paths)? {
+        let path = tagged_path.path().clone();
+        let graph = if platform == Platform::Auto {
+            let content = match std::fs::read_to_string(&path) {
+                Ok(c) => c,
+                Err(err) => match &tagged_path {
+                    ResolvedPath::Discovered(_) => {
+                        eprintln!("warning: skipping {}: {err:#}", path.display());
+                        continue;
+                    }
+                    ResolvedPath::Explicit(_) => {
+                        return Err(anyhow::Error::new(err)
+                            .context(format!("Failed to read {}", path.display())));
+                    }
+                },
+            };
+            let resolved_platform = resolve_platform(&platform, &content);
+            let per_file_parser = make_parser(&resolved_platform);
+            match parse_content(
+                per_file_parser.as_ref(),
+                content,
+                path.display().to_string(),
+            ) {
+                Ok(g) => g,
+                Err(err) => match &tagged_path {
+                    ResolvedPath::Discovered(_) => {
+                        eprintln!("warning: skipping {}: {err:#}", path.display());
+                        continue;
+                    }
+                    ResolvedPath::Explicit(_) => return Err(err),
+                },
+            }
+        } else {
+            match parse_file(parser, &path) {
+                Ok(g) => g,
+                Err(err) => match &tagged_path {
+                    ResolvedPath::Discovered(_) => {
+                        eprintln!("warning: skipping {}: {err:#}", path.display());
+                        continue;
+                    }
+                    ResolvedPath::Explicit(_) => return Err(err),
+                },
+            }
+        };
+
+        // For `--job` filtering: skip files that don't contain the named job.
+        // Same semantics as `taudit map --job`.
+        if let Some(ref name) = job {
+            if !map::job_names(&graph).iter().any(|n| n == name) {
+                continue;
+            }
+            job_matched_any = true;
+        }
+
+        match format {
+            GraphFormat::Json => {
+                // Note: --job currently only filters DOT output; the JSON
+                // export emits the full graph for every matched file. This
+                // matches user expectation that the schema-validated JSON
+                // is a faithful, lossless dump.
+                let export = taudit_report_json::GraphExport::new(&graph);
+                let json = export
+                    .to_json_pretty()
+                    .map_err(|e| anyhow::anyhow!("{e}"))?;
+                println!("{json}");
+            }
+            GraphFormat::Dot => {
                 println!("{}", map::render_dot(&graph, job.as_deref()));
             }
         }

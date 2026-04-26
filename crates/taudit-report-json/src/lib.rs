@@ -6,14 +6,58 @@ use taudit_core::ports::ReportSink;
 use serde::Serialize;
 
 const JSON_REPORT_SCHEMA_VERSION: &str = "v1";
+const JSON_REPORT_SCHEMA_URI: &str = "https://taudit.dev/schemas/taudit-report.schema.json";
+
+/// Schema version of the standalone authority-graph export
+/// (`taudit graph --format json`). Semver-stable: 1.x.y additions are
+/// non-breaking; 2.0.0 means breaking changes.
+pub const AUTHORITY_GRAPH_SCHEMA_VERSION: &str = "1.0.0";
+
+/// Canonical URI of the authority-graph JSON Schema.
+pub const AUTHORITY_GRAPH_SCHEMA_URI: &str =
+    "https://github.com/0ryant/taudit/schemas/authority-graph.v1.json";
 
 /// JSON report containing the full authority graph and all findings.
 #[derive(Serialize)]
 pub struct JsonReport<'a> {
     pub schema_version: &'static str,
+    /// Canonical URI of the JSON Schema this report conforms to.
+    /// Non-breaking addition (1.x consumers ignore unknown fields).
+    pub schema_uri: &'static str,
     pub graph: &'a AuthorityGraph,
     pub findings: &'a [Finding],
     pub summary: Summary,
+}
+
+/// Standalone authority-graph export — the document emitted by
+/// `taudit graph --format json`. Versioned independently from the scan
+/// report because downstream tools (tsign, axiom, runtime cells)
+/// consume the graph without caring about findings.
+#[derive(Serialize)]
+pub struct GraphExport<'a> {
+    /// Semver of the authority-graph schema. See `AUTHORITY_GRAPH_SCHEMA_VERSION`.
+    pub schema_version: &'static str,
+    /// Canonical URI of the schema this document conforms to.
+    pub schema_uri: &'static str,
+    /// The authority graph itself.
+    pub graph: &'a AuthorityGraph,
+}
+
+impl<'a> GraphExport<'a> {
+    /// Wrap a graph reference in a versioned export envelope.
+    pub fn new(graph: &'a AuthorityGraph) -> Self {
+        Self {
+            schema_version: AUTHORITY_GRAPH_SCHEMA_VERSION,
+            schema_uri: AUTHORITY_GRAPH_SCHEMA_URI,
+            graph,
+        }
+    }
+
+    /// Serialize to pretty-printed JSON.
+    pub fn to_json_pretty(&self) -> Result<String, TauditError> {
+        serde_json::to_string_pretty(self)
+            .map_err(|e| TauditError::Report(format!("graph JSON serialization error: {e}")))
+    }
 }
 
 #[derive(Serialize)]
@@ -44,6 +88,7 @@ impl<W: std::io::Write> ReportSink<W> for JsonReportSink {
 
         let report = JsonReport {
             schema_version: JSON_REPORT_SCHEMA_VERSION,
+            schema_uri: JSON_REPORT_SCHEMA_URI,
             graph,
             findings,
             summary: Summary {
@@ -171,6 +216,63 @@ mod tests {
         assert_schema_validates_instance(
             "contracts/schemas/taudit-report.schema.json",
             "contracts/examples/over-privileged-report.json",
+        );
+    }
+
+    /// End-to-end: build a graph that exercises every NodeKind, every
+    /// TrustZone, and every EdgeKind, emit it through the standalone
+    /// GraphExport envelope, then validate the JSON against the
+    /// authority-graph v1 schema. Catches drift between the Rust types
+    /// and the published schema before downstream consumers do.
+    #[test]
+    fn authority_graph_export_matches_v1_schema() {
+        use taudit_core::graph::{AuthorityGraph, EdgeKind, NodeKind, PipelineSource, TrustZone};
+
+        let mut graph = AuthorityGraph::new(PipelineSource {
+            file: "tests/fixtures/over-privileged.yml".into(),
+            repo: Some("0ryant/taudit".into()),
+            git_ref: Some("main".into()),
+        });
+        graph.mark_partial("inline shell scripts not fully resolved");
+
+        let secret = graph.add_node(NodeKind::Secret, "AWS_KEY", TrustZone::FirstParty);
+        let identity = graph.add_node(NodeKind::Identity, "GITHUB_TOKEN", TrustZone::FirstParty);
+        let image = graph.add_node(NodeKind::Image, "ubuntu-latest", TrustZone::ThirdParty);
+        let step_build = graph.add_node(NodeKind::Step, "build", TrustZone::FirstParty);
+        let artifact = graph.add_node(NodeKind::Artifact, "dist.tar.gz", TrustZone::FirstParty);
+        let step_deploy = graph.add_node(NodeKind::Step, "deploy", TrustZone::Untrusted);
+
+        graph.add_edge(step_build, secret, EdgeKind::HasAccessTo);
+        graph.add_edge(step_build, identity, EdgeKind::HasAccessTo);
+        graph.add_edge(step_build, image, EdgeKind::UsesImage);
+        graph.add_edge(step_build, artifact, EdgeKind::Produces);
+        graph.add_edge(artifact, step_deploy, EdgeKind::Consumes);
+        graph.add_edge(step_build, step_deploy, EdgeKind::DelegatesTo);
+        graph.add_edge(step_build, secret, EdgeKind::PersistsTo);
+
+        let export = crate::GraphExport::new(&graph);
+        let json = export.to_json_pretty().expect("export serializes");
+        let value: serde_json::Value =
+            serde_json::from_str(&json).expect("export round-trips through serde_json");
+
+        assert_eq!(
+            value["schema_version"],
+            crate::AUTHORITY_GRAPH_SCHEMA_VERSION
+        );
+        assert_eq!(value["schema_uri"], crate::AUTHORITY_GRAPH_SCHEMA_URI);
+
+        let schema = read_json("schemas/authority-graph.v1.json");
+        let validator =
+            jsonschema::validator_for(&schema).expect("authority-graph schema should compile");
+        let errors: Vec<String> = validator
+            .iter_errors(&value)
+            .map(|err| err.to_string())
+            .collect();
+
+        assert!(
+            errors.is_empty(),
+            "graph export does not match authority-graph.v1.json:\n{}",
+            errors.join("\n")
         );
     }
 }
