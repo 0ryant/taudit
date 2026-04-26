@@ -161,6 +161,15 @@ enum Cli {
         /// trusted.
         #[arg(long, default_value_t = false)]
         invariants_allow_external_symlinks: bool,
+
+        /// Override the dense-graph safety guard. By default `taudit scan`
+        /// refuses graphs with more than 50 000 nodes AND an edge-to-node
+        /// ratio above 5x — at that scale the BFS propagation engine has
+        /// pathological worst-case behaviour and a crafted input can stall
+        /// the scan. Pass `--force-scan-dense` only if you've inspected
+        /// the input and are willing to accept the wall-clock cost.
+        #[arg(long, default_value_t = false)]
+        force_scan_dense: bool,
     },
 
     /// Show authority map — which steps access which secrets/identities
@@ -678,6 +687,7 @@ struct ScanOpts {
     output: Option<PathBuf>,
     invariants_dir: Option<PathBuf>,
     invariants_allow_external_symlinks: bool,
+    force_scan_dense: bool,
 }
 
 #[derive(Clone)]
@@ -728,6 +738,7 @@ fn run() -> Result<()> {
             output,
             invariants_dir,
             invariants_allow_external_symlinks,
+            force_scan_dense,
         } => {
             // Color is on by default — CI log viewers (GHA, ADO) render ANSI from piped stdout.
             // Disable only when --no-color is passed or the NO_COLOR env var is set (no-color.org).
@@ -757,6 +768,7 @@ fn run() -> Result<()> {
                 output,
                 invariants_dir,
                 invariants_allow_external_symlinks,
+                force_scan_dense,
             })
         }
         Cli::Completions { shell } => {
@@ -992,6 +1004,7 @@ fn cmd_scan(opts: ScanOpts) -> Result<()> {
         output,
         invariants_dir,
         invariants_allow_external_symlinks,
+        force_scan_dense,
     } = opts;
 
     // Deprecation warning: --rules-dir was renamed to --invariants-dir as
@@ -1190,6 +1203,19 @@ fn cmd_scan(opts: ScanOpts) -> Result<()> {
             || graph.completeness == taudit_core::graph::AuthorityCompleteness::Unknown
         {
             terminal_partial_files += 1;
+        }
+
+        // Dense-graph safety guard: refuse to run BFS on graphs whose size
+        // and edge density combine to push the propagation engine into the
+        // O(V·E) corner. The override flag (`--force-scan-dense`) is the
+        // escape hatch for callers who have inspected the input.
+        if !force_scan_dense && taudit_core::propagation::is_dense_graph(&graph) {
+            let err = taudit_core::propagation::DenseGraphError {
+                nodes: graph.nodes.len(),
+                edges: graph.edges.len(),
+            };
+            eprintln!("ERROR: {} ({})", err, graph.source.file);
+            return Err(anyhow::anyhow!("{}", err));
         }
 
         let mut all_findings = rules::run_all_rules(&graph, max_hops);
