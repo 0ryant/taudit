@@ -1,0 +1,53 @@
+# Authority Invariant: every first-party Identity in the pipeline must be
+# OIDC-capable (federated). Static, long-lived secrets are forbidden.
+#
+# WHY
+# ---
+# OIDC tokens are short-lived, audience-scoped, and revocable by the issuer.
+# Static service-principal secrets / PATs are the opposite of all three —
+# and almost every CI/CD compromise of the last five years (Codecov, SolarWinds
+# build chain, Circle CI) traces back to a static credential leaked from
+# pipeline state.
+#
+# This rule fires on every first-party Identity node that does NOT carry the
+# `oidc: true` marker. The GHA parser stamps `oidc: true` when the workflow
+# (or job) has `permissions: id-token: write`; the ADO parser stamps it on
+# federated workload-identity service connections. Anything else — a static
+# PAT, a username/password service connection — fires.
+#
+# Scoped to `trust_zone: first_party` to skip platform-implicit tokens
+# (System.AccessToken on ADO carries `implicit: true`, which is a separate
+# structural concern handled by the built-in `over_privileged_identity` rule).
+#
+# DSL FEATURES DEMONSTRATED
+# -------------------------
+# * `standalone:` — node-shape-only match, no propagation walk needed.
+# * `not:` (NodeMatcher level) — fires on identities WITHOUT the OIDC marker.
+# * Bare-string metadata predicate (`oidc: "true"`) — equivalent to
+#   `equals: "true"`, kept as bare for v0.4.x compatibility.
+# * Single-value `trust_zone:` (back-compat with pre-v0.9.0 starters).
+#
+# CORPUS EXAMPLE
+# --------------
+# MEMORY/WORK/20260425-230443_taudit-gitlab-parser/corpus-results/gha-corpus/
+#   django__django__check_pr_quality.yml
+# (Has `permissions: contents: read, pull-requests: write` but no
+# `id-token: write` → GITHUB_TOKEN identity has no `oidc: true` marker → fires.)
+
+id: only_oidc_identities
+name: Identity is not OIDC-capable
+description: >
+  Migrate this identity to OIDC / workload identity federation. On GitHub
+  Actions, add `permissions: id-token: write` to the workflow or job and use
+  `aws-actions/configure-aws-credentials@v4` (or equivalent) with `role-to-assume`.
+  On Azure DevOps, convert the service connection to a Workload Identity
+  Federation connection.
+severity: high
+category: authority_propagation
+match:
+  standalone:
+    node_type: identity
+    trust_zone: first_party
+    not:
+      metadata:
+        oidc: "true"

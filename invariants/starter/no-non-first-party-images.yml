@@ -1,0 +1,45 @@
+# Authority Invariant: every Image (action or container) must be first-party.
+# Both Untrusted (unpinned) AND ThirdParty (pinned-but-external) images fire.
+#
+# WHY
+# ---
+# A SHA-pinned third-party action is an improvement over a tag-pinned one,
+# but it is not the same as code you wrote. The pinned SHA still points at a
+# build artefact authored by someone outside your trust boundary; if it has
+# a vulnerability, you inherit it. Strict orgs enforce a vendoring policy:
+# all reusable workflows / actions / images live under your org's namespace,
+# either authored locally or mirrored from a vetted upstream.
+#
+# This rule asserts "no Image node is in trust_zone third_party OR untrusted"
+# in a single match — demonstrating multi-value `trust_zone:` lists.
+#
+# Pair this with a vendoring CI step that mirrors `actions/checkout@<sha>`
+# into your org as `myorg/checkout@<sha>` and rewrites references.
+#
+# DSL FEATURES DEMONSTRATED
+# -------------------------
+# * `standalone:` — node-shape-only match.
+# * Multi-value `trust_zone:` list (`[third_party, untrusted]`) — express
+#   "any of these zones" without writing two rules. New in v0.9.0.
+# * Bare `node_type:` (single value, back-compat form).
+#
+# CORPUS EXAMPLE
+# --------------
+# MEMORY/WORK/20260425-230443_taudit-gitlab-parser/corpus-results/gha-corpus/
+#   django__django__check_pr_quality.yml
+# (`actions/checkout@v6` and `actions/setup-python@v6` are external →
+# fires regardless of whether they were tag-pinned or SHA-pinned.)
+
+id: no_non_first_party_images
+name: Image (action or container) is not first-party
+description: >
+  Vendor this action or image into your own namespace. Mirror the upstream
+  SHA-pinned reference to `your-org/<name>@<sha>`, build it from a Dockerfile
+  in your own registry, or use a workspace-local composite action. Pinned
+  third-party code still belongs to someone else.
+severity: medium
+category: floating_image
+match:
+  standalone:
+    node_type: image
+    trust_zone: [third_party, untrusted]

@@ -1,0 +1,58 @@
+# Authority Invariant (ADO): every Step that contains an inline script body
+# must run inside a deployment job whose `environment:` is configured with
+# required approvals.
+#
+# WHY
+# ---
+# Inline scripts are the highest-authority surface in a pipeline: they can
+# read every variable in scope, exfiltrate secrets, and mutate cluster /
+# subscription state. ADO's `environment:` with required approvers is the
+# only out-of-band human gate the platform offers; in a regulated org it is
+# the merge-gate that auditors look for.
+#
+# This rule walks every Step node and fires when:
+#   * the step has a non-empty `script_body` metadata field, AND
+#   * the step does NOT have `env_approval: true`.
+#
+# Note: `env_approval` is currently stamped by the ADO parser only. On GHA
+# the equivalent (manual-approval `environment:`) is parsed but not yet
+# stamped with the same marker — this rule will be silent on GHA pipelines
+# until that parity ships. (See ROADMAP for the GHA env-gate work.)
+#
+# DSL FEATURES DEMONSTRATED
+# -------------------------
+# * `standalone:` — single-node match.
+# * Typed metadata predicate `contains: ""` — exists-style check. The
+#   parser stamps `script_body` only on steps that actually have one;
+#   `contains: ""` succeeds against any present string (every string
+#   contains the empty string) and fails against an absent key. Pair it
+#   with `node_type: step` to keep the surface tight.
+# * Typed metadata predicate `not_equals: "true"` — fires when the
+#   `env_approval` field is absent OR set to anything other than `"true"`.
+#   This is the cleanest way to assert "must NOT have this gate" without
+#   needing a nested `not:` block.
+# * Operator-form metadata predicates (not bare-string) — new in v0.9.0.
+#
+# CORPUS EXAMPLE
+# --------------
+# MEMORY/WORK/20260425-230443_taudit-gitlab-parser/corpus-results/ado-corpus/
+#   msig-europe-adh/msig-europe-tyche/pipelines/azure-pipelines-build.yml
+# (Several inline PowerShell/script steps with no `environment:` gate at the
+# job level — fires on every step that has a script body.)
+
+id: no_script_step_without_env_approval
+name: Script step runs without an environment approval gate
+description: >
+  Wrap this step in an ADO `deployment:` job and configure the `environment:`
+  with required approvers. Inline scripts that mutate state must not run on
+  pipeline trigger alone — a human must approve each run.
+severity: high
+category: authority_propagation
+match:
+  standalone:
+    node_type: step
+    metadata:
+      script_body:
+        contains: ""
+      env_approval:
+        not_equals: "true"

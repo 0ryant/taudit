@@ -1,0 +1,52 @@
+# Authority Invariant: a PR-triggered pipeline must not carry an Identity
+# whose permissions string contains any `write` scope.
+#
+# WHY
+# ---
+# This is the same family as `no-pr-trigger-with-broad-identity.yml` but
+# uses a substring match instead of a derived-classification check. It fires
+# on `contents: write`, `pull-requests: write`, `actions: write`,
+# `packages: write`, etc. — anything with the literal word "write" in the
+# permissions string. The complementary form `identity_scope: broad`
+# normalises across platforms but loses the specific scope; sometimes you
+# want both rules so you can grep findings for the exact write surface.
+#
+# Why the duplication? `identity_scope` is taudit's classification (Broad /
+# Constrained / Unknown). The raw `permissions:` string is what the parser
+# saw. A fork-PR contributor reading a SARIF report wants the raw string;
+# a security platform aggregating across pipelines wants the classification.
+# Ship both — they answer different questions.
+#
+# DSL FEATURES DEMONSTRATED
+# -------------------------
+# * `graph_metadata:` with `in:` operator — gates on PR triggers across
+#   GHA / ADO / GitLab.
+# * `contains:` operator on node metadata — substring match against the raw
+#   `permissions` field. New in v0.9.0.
+# * Conjunction of graph-level and node-level predicates.
+#
+# CORPUS EXAMPLE
+# --------------
+# MEMORY/WORK/20260425-230443_taudit-gitlab-parser/corpus-results/gha-corpus/
+#   django__django__check_pr_quality.yml
+# (`on: pull_request_target` + `permissions: pull-requests: write` →
+# graph_metadata gate matches → permissions string contains "write" → fires.)
+
+id: no_write_permissions_on_pr
+name: Identity with write-scoped permissions in a PR-triggered pipeline
+description: >
+  Remove every `write` scope from this identity, or move the privileged work
+  to a non-PR trigger. Permissions strings containing `write` (contents,
+  pull-requests, actions, packages, etc.) all give a fork-PR author the
+  ability to mutate state on merge of this workflow's outputs.
+severity: high
+category: authority_propagation
+match:
+  graph_metadata:
+    trigger:
+      in: [pull_request_target, pr, merge_request]
+  source:
+    node_type: identity
+    metadata:
+      permissions:
+        contains: "write"
