@@ -2,7 +2,7 @@
 
 Three horizons. Each is a superset of the previous.
 
-**Current state (v0.5.0):** 9 crates, 221 tests, ~10,800 LOC, 17 built-in authority invariants + custom YAML invariant loading, 3 parsers (GHA + ADO + GitLab CI), 6 commands (scan, map, diff, explain, version, completions), 4 output formats (terminal, JSON, CloudEvents JSONL, SARIF) + Graphviz DOT graph export. Published to crates.io. AAA gate closed. Working toward Roadmap 3: Done.
+**Current state (v0.9.0):** 9 crates, ~300 tests, 27 built-in authority invariants + custom YAML invariant DSL (negation, typed metadata predicates, multi-value selectors), 3 parsers (GHA + ADO + GitLab CI), 9 commands (scan, verify, graph, map, diff, invariants, explain, version, completions), 4 output formats (terminal, JSON, CloudEvents JSONL, SARIF) + Graphviz DOT. v0.9.0 ships as the v1.0 release candidate — CLI contract, graph schema (`schemas/authority-graph.v1.json`), and invariant DSL are intended to be stable. Published to crates.io.
 
 **Effort key:** S = hours, M = days, L = week+
 

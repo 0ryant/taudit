@@ -2,6 +2,145 @@
 
 All notable changes to this project will be documented in this file.
 
+## v0.9.0 — 2026-04-26 (release candidate for v1.0)
+
+> v0.9.0 is the v1.0 release candidate. The CLI contract, graph schema, and
+> invariant DSL are intended to be stable, but we're holding the v1.0 stamp
+> until the full corpus + early-customer feedback validates them. Breaking
+> changes between v0.9.x and v1.0.0 are possible if we find a defect.
+
+> **Tagline:** *CI/CD is an untyped authority system. taudit makes it explicit, inspectable, and enforceable.*
+
+### Breaking changes
+
+- **`taudit scan` is now informational.** It always exits `0` unless a
+  structural error occurs (file not found, parse failure → exit `2`).
+  Findings are reported but never fail the process. Migration: move any
+  pipeline gate that depended on `scan`'s non-zero exit to `taudit verify
+  --policy <policy.yml>`, which is the new policy-driven enforcement
+  entrypoint with deterministic exit codes (`0` clean, `1` violation,
+  `2` structural error).
+- **`--rules-dir` is deprecated** in favor of `--invariants-dir`. The
+  old flag still works as an alias and emits a one-shot stderr
+  deprecation warning. The alias is slated for removal in a future
+  major.
+- **No rule ID renames.** A v1 rule-ID sweep concluded all 26 IDs lock
+  as-is — customer suppressions and SARIF baselines remain valid.
+
+### New features
+
+- **`taudit verify --policy <path>`** — policy-driven enforcement
+  entrypoint. Runs only the user-supplied invariants in `--policy`
+  unless `--include-builtin` is set. Deterministic exit codes (0/1/2),
+  optional `--severity-threshold`, text/json output.
+- **`taudit graph` command** — emits the authority graph as a
+  first-class artifact in JSON or Graphviz DOT format. Backed by
+  [`schemas/authority-graph.v1.json`](schemas/authority-graph.v1.json)
+  (`schema_version: "1.0.0"`).
+- **`taudit invariants list`** — prints every loaded invariant
+  (built-in + custom) with id, severity, and source.
+- **`--invariants-dir` flag** — canonical name for loading custom
+  invariant YAML files.
+- **Starter invariant library** at [`invariants/starter/`](invariants/starter/)
+  with five copy-and-edit examples (`no-broad-identity-to-untrusted`,
+  `no-third-party-step-with-identity`, `no-untrusted-image-with-secret`,
+  `no-untrusted-with-prod-secret`, `prefer-oidc-over-static-secrets`).
+- **CLI startup framing** — `taudit --help` now leads with the v1.0
+  positioning line and points at `taudit verify --help` /
+  `docs/positioning.md`.
+
+### New rules — 10 ADO-only authority invariants
+
+- **`template_extends_unpinned_branch`** (High, Supply Chain) — flags
+  `resources.repositories[]` aliases that resolve to a default branch
+  or `refs/heads/<branch>` (mutable) when consumed via `extends:`,
+  `template: x@alias`, or `checkout: alias`.
+- **`vm_remote_exec_via_pipeline_secret`** (High, Credentials) —
+  pipeline step uses `Set-AzVMExtension` / `Invoke-AzVMRunCommand` /
+  `az vm run-command` / `az vm extension set` with a pipeline secret
+  or freshly-minted SAS in the executed command line.
+- **`short_lived_sas_in_command_line`** (Medium, Credentials) — a
+  SAS token minted in-pipeline is interpolated into
+  `commandToExecute` / `scriptArguments` / `--arguments` / `-ArgumentList`
+  rather than passed via env var or stdin.
+- **`secret_to_inline_script_env_export`** (High, Credentials) — a
+  pipeline secret is assigned to a shell variable inside an inline
+  script (`export FOO=$(SECRET)`, `$X = "$(SECRET)"`), bypassing ADO's
+  `$(SECRET)` log mask.
+- **`secret_materialised_to_workspace_file`** (High, Credentials) — a
+  pipeline secret is written to a workspace-relative file (`.tfvars`,
+  `.env`, `.kubeconfig`, etc.) that persists for the rest of the job.
+- **`keyvault_secret_to_plaintext`** (Medium, Credentials) — inline
+  PowerShell pulls a Key Vault secret with `-AsPlainText` /
+  `ConvertFrom-SecureString -AsPlainText` / `.SecretValueText`,
+  bypassing variable-group masking.
+- **`terraform_auto_approve_in_prod`** (Critical, Configuration) —
+  `terraform apply -auto-approve` runs against a production-named
+  service connection without an environment approval gate.
+- **`add_spn_with_inline_script`** (High, Credentials) — `AzureCLI@2`
+  task with `addSpnToEnvironment: true` plus an inline script —
+  federated SPN material can be laundered into pipeline variables via
+  `##vso[task.setvariable]`.
+- **`parameter_interpolation_into_shell`** (Medium, Injection) — a
+  free-form `type: string` pipeline parameter (no `values:` allowlist)
+  is interpolated via `${{ parameters.X }}` directly into an inline
+  shell or PowerShell script — shell-injection vector.
+
+### DSL enhancements
+
+- **Negation** (`not:`) on source / sink sub-matchers and inside metadata.
+- **Typed metadata predicates**: `equals`, `not_equals`, `contains`
+  (substring), `in` (any-of). Bare-string form preserved as `equals`
+  for back-compat.
+- **Multi-value `node_type` / `trust_zone`** — accepts either a single
+  value or a list (any-of). Single-value form preserved.
+- All grammar additions are backward-compatible with v0.4.x simple-form
+  rule files. Unknown operator names produce a parse error so typos do
+  not silently match nothing.
+
+### Added (schema)
+
+- `schemas/authority-graph.v1.json` now describes the `parameters` field
+  on `AuthorityGraph` (`{param_type, has_values_allowlist}` per name).
+- `PipelineSource` gains an optional `commit_sha` field (additive — CI
+  integrations can populate this for reproducibility).
+- Schema `description` notes that `$id` is a logical identifier
+  (namespace, not a fetch endpoint).
+- `docs/authority-graph.md` documents `META_JOB_NAME` (key `job_name`)
+  as the only publicly stable node-metadata key.
+
+### Strategic repositioning
+
+- README, ROADMAP, and `docs/positioning.md` reframe taudit around
+  authority invariants rather than rule-engine semantics.
+- `docs/custom-rules.md` renamed to "Authority Invariants" framing
+  (file kept as alias).
+
+### Bug fixes (no prior release — bundled here)
+
+- **GHA parser**: tolerates `env:` template expressions
+  (`env: ${{ matrix }}`) instead of crashing — promotes to a Partial
+  graph (commit `b5b33e2`).
+- **ADO parser**: tolerates root-level parameter conditional templates
+  (`- ${{ if eq(parameters.X, true) }}:`) — promotes to a Partial
+  graph instead of failing the scan (commit `30fc274`). Now also
+  catches the "invalid type: map" variant introduced by the rule-9
+  parameter parsing.
+
+### Migration guide
+
+If you were depending on `taudit scan` exit code in CI:
+
+1. Add a policy file under `invariants/` (or copy from `invariants/starter/`).
+2. Replace `taudit scan <files>` (used as a gate) with `taudit verify
+   --policy <path-or-dir> <files>`.
+3. Optionally add `--include-builtin` to also count built-in invariant
+   violations toward the gate.
+4. Use `--severity-threshold critical|high|medium|low` to scope what
+   counts as a failure.
+5. The deprecated `--rules-dir` still works but logs a one-shot
+   warning; switch to `--invariants-dir` at your convenience.
+
 ## v0.5.0 — 2026-04-26
 
 ### Added
