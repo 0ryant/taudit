@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://taudit.dev/schemas/taudit-report.schema.json",
   "title": "taudit Report",
-  "description": "JSON output from `taudit scan --format json`. Contains the authority graph, all findings, and a summary.",
+  "description": "JSON output from `taudit scan --format json`. Contains the authority graph, all findings, and a summary. Each finding carries a stable `fingerprint` (16 hex chars, SHA-256-derived) byte-identical to the value emitted in SARIF `partialFingerprints[primaryLocationLineHash]` and the CloudEvents extension attribute `tauditfindingfingerprint`. SIEMs key on the fingerprint to deduplicate findings across re-runs.",
   "type": "object",
   "required": ["schema_version", "graph", "findings", "summary"],
   "additionalProperties": false,
@@ -133,7 +133,12 @@
           "items": { "type": "integer", "minimum": 0 }
         },
         "message": { "type": "string" },
-        "recommendation": { "$ref": "#/$defs/Recommendation" }
+        "recommendation": { "$ref": "#/$defs/Recommendation" },
+        "fingerprint": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{16}$",
+          "description": "Stable cross-run identifier for the finding (16 hex chars, SHA-256-derived). Byte-identical to the value emitted in SARIF `partialFingerprints[primaryLocationLineHash]` and CloudEvents `tauditfindingfingerprint`. Use for SIEM dedup and suppression. Optional in v1 for backward-compat; always emitted by current taudit. See docs/finding-fingerprint.md."
+        }
       }
     },
     "PropagationPath": {

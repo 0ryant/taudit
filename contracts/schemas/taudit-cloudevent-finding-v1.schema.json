@@ -52,6 +52,11 @@
       "enum": ["complete", "partial", "unknown"],
       "description": "Authority graph completeness extension attribute"
     },
+    "tauditfindingfingerprint": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{16}$",
+      "description": "Stable cross-run finding fingerprint (16 hex chars, SHA-256-derived). Byte-identical to SARIF `partialFingerprints[primaryLocationLineHash]` and JSON `findings[].fingerprint`. Use for SIEM dedup. Optional in v1 for backward-compat; always emitted by current taudit. See docs/finding-fingerprint.md."
+    },
     "correlationid": {
       "type": "string",
       "minLength": 1,

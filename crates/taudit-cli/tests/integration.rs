@@ -150,6 +150,84 @@ fn json_output_round_trips() {
     assert!(json.get("summary").is_some());
 }
 
+/// Parity check: a single finding's fingerprint is byte-identical across
+/// the SARIF, JSON, and CloudEvents emitters. This is the contract SIEMs
+/// rely on when joining alerts emitted from different sinks.
+#[test]
+fn fingerprint_is_identical_across_sarif_json_and_cloudevents() {
+    use taudit_core::ports::ReportSink;
+
+    let yaml = std::fs::read_to_string(fixture("propagation-leaky.yml")).unwrap();
+    let graph = parse(&yaml);
+    let findings = rules::run_all_rules(&graph, DEFAULT_MAX_HOPS);
+    assert!(
+        !findings.is_empty(),
+        "fixture must produce at least one finding"
+    );
+
+    // ── SARIF
+    let mut sarif_buf = Vec::new();
+    taudit_report_sarif::SarifReportSink
+        .emit(&mut sarif_buf, &graph, &findings)
+        .unwrap();
+    let sarif: serde_json::Value = serde_json::from_slice(&sarif_buf).unwrap();
+    let sarif_fps: Vec<String> = sarif["runs"][0]["results"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|r| {
+            r["partialFingerprints"]["primaryLocationLineHash"]
+                .as_str()
+                .unwrap()
+                .to_string()
+        })
+        .collect();
+
+    // ── JSON
+    let mut json_buf = Vec::new();
+    taudit_report_json::JsonReportSink
+        .emit(&mut json_buf, &graph, &findings)
+        .unwrap();
+    let json: serde_json::Value = serde_json::from_slice(&json_buf).unwrap();
+    let json_fps: Vec<String> = json["findings"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|f| f["fingerprint"].as_str().unwrap().to_string())
+        .collect();
+
+    // ── CloudEvents
+    let mut ce_buf = Vec::new();
+    taudit_sink_cloudevents::CloudEventsJsonlSink
+        .emit(&mut ce_buf, &graph, &findings)
+        .unwrap();
+    let ce_str = String::from_utf8(ce_buf).unwrap();
+    let ce_fps: Vec<String> = ce_str
+        .lines()
+        .map(|l| {
+            let v: serde_json::Value = serde_json::from_str(l).unwrap();
+            v["tauditfindingfingerprint"].as_str().unwrap().to_string()
+        })
+        .collect();
+
+    assert_eq!(sarif_fps.len(), json_fps.len());
+    assert_eq!(json_fps.len(), ce_fps.len());
+    assert_eq!(
+        sarif_fps, json_fps,
+        "SARIF and JSON fingerprints must match per finding (in order)"
+    );
+    assert_eq!(
+        json_fps, ce_fps,
+        "JSON and CloudEvents fingerprints must match per finding (in order)"
+    );
+
+    // Sanity: every fingerprint is the canonical 16-hex form.
+    for fp in &sarif_fps {
+        assert_eq!(fp.len(), 16);
+        assert!(fp.chars().all(|c| c.is_ascii_hexdigit()));
+    }
+}
+
 #[test]
 fn pull_request_target_detected() {
     let yaml = r#"

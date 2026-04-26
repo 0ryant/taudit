@@ -1,5 +1,5 @@
 use taudit_core::error::TauditError;
-use taudit_core::finding::Finding;
+use taudit_core::finding::{compute_fingerprint, Finding};
 use taudit_core::graph::{AuthorityCompleteness, AuthorityGraph};
 use taudit_core::ports::ReportSink;
 
@@ -25,8 +25,21 @@ pub struct JsonReport<'a> {
     /// Non-breaking addition (1.x consumers ignore unknown fields).
     pub schema_uri: &'static str,
     pub graph: &'a AuthorityGraph,
-    pub findings: &'a [Finding],
+    pub findings: Vec<FindingWithFingerprint<'a>>,
     pub summary: Summary,
+}
+
+/// Per-finding wrapper that flattens the upstream `Finding` fields and
+/// appends a stable `fingerprint`. The fingerprint matches the value
+/// surfaced by SARIF `partialFingerprints[primaryLocationLineHash]` and
+/// CloudEvents extension attribute `tauditfindingfingerprint`, so a SIEM
+/// keying on any of the three sees the same identifier per finding.
+/// See `docs/finding-fingerprint.md` for the contract.
+#[derive(Serialize)]
+pub struct FindingWithFingerprint<'a> {
+    #[serde(flatten)]
+    pub finding: &'a Finding,
+    pub fingerprint: String,
 }
 
 /// Standalone authority-graph export — the document emitted by
@@ -86,11 +99,19 @@ impl<W: std::io::Write> ReportSink<W> for JsonReportSink {
     ) -> Result<(), TauditError> {
         use taudit_core::finding::Severity;
 
+        let findings_with_fp: Vec<FindingWithFingerprint<'_>> = findings
+            .iter()
+            .map(|f| FindingWithFingerprint {
+                finding: f,
+                fingerprint: compute_fingerprint(f, graph),
+            })
+            .collect();
+
         let report = JsonReport {
             schema_version: JSON_REPORT_SCHEMA_VERSION,
             schema_uri: JSON_REPORT_SCHEMA_URI,
             graph,
-            findings,
+            findings: findings_with_fp,
             summary: Summary {
                 total_findings: findings.len(),
                 critical: findings
