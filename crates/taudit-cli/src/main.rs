@@ -465,7 +465,20 @@ enum Cli {
     /// v1 is intentionally conservative: only low-risk, high-confidence
     /// transforms run by default. `apply` writes backups to
     /// `.taudit/backups/<backup-id>/` and auto-restores on validation failure.
+    ///
+    /// Write-path subcommands (`apply`, `rollback`) require `--unstable` because
+    /// the remediation engine is still maturing. Read-only subcommands (`suggest`,
+    /// `diff`, `list-backups`) are stable and never require the flag.
     Remediate {
+        /// Opt in to write-path operations (`apply`, `rollback`).
+        ///
+        /// These subcommands modify files on disk and are gated behind this flag
+        /// because the remediation engine may change its transform set or backup
+        /// schema in a future minor release. Once the engine stabilises the flag
+        /// will be removed and the subcommands will become unconditionally stable.
+        #[arg(long, global = false, default_value_t = false)]
+        unstable: bool,
+
         #[command(subcommand)]
         action: RemediateAction,
     },
@@ -1311,7 +1324,7 @@ fn run() -> Result<()> {
             }
         },
         Cli::Baseline { action } => cmd_baseline(action),
-        Cli::Remediate { action } => match action {
+        Cli::Remediate { unstable, action } => match action {
             RemediateAction::Suggest { paths, format } => {
                 remediate::cmd_suggest(remediate::SuggestOpts {
                     paths,
@@ -1330,24 +1343,46 @@ fn run() -> Result<()> {
                 min_confidence,
                 force,
                 backup_root,
-            } => remediate::cmd_apply(remediate::ApplyOpts {
-                paths,
-                format: format.to_module(),
-                policy,
-                allow_risky,
-                min_confidence,
-                force,
-                backup_root,
-            }),
+            } => {
+                if !unstable {
+                    eprintln!(
+                        "error: `taudit remediate apply` is an unstable write-path operation.\n\
+                         Pass --unstable to confirm you accept that the remediation engine\n\
+                         may change its transform set or backup schema in a future release.\n\n\
+                         Example: taudit remediate --unstable apply --policy <policy> <paths>"
+                    );
+                    std::process::exit(2);
+                }
+                remediate::cmd_apply(remediate::ApplyOpts {
+                    paths,
+                    format: format.to_module(),
+                    policy,
+                    allow_risky,
+                    min_confidence,
+                    force,
+                    backup_root,
+                })
+            }
             RemediateAction::Rollback {
                 backup_id,
                 backup_root,
                 force,
-            } => remediate::cmd_rollback(remediate::RollbackOpts {
-                backup_id,
-                backup_root,
-                force,
-            }),
+            } => {
+                if !unstable {
+                    eprintln!(
+                        "error: `taudit remediate rollback` is an unstable write-path operation.\n\
+                         Pass --unstable to confirm you accept that the backup schema\n\
+                         may change in a future release.\n\n\
+                         Example: taudit remediate --unstable rollback --backup-id <id>"
+                    );
+                    std::process::exit(2);
+                }
+                remediate::cmd_rollback(remediate::RollbackOpts {
+                    backup_id,
+                    backup_root,
+                    force,
+                })
+            }
             RemediateAction::ListBackups {
                 backup_root,
                 format,

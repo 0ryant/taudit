@@ -6851,10 +6851,7 @@ mod tests {
             NodeKind::Step,
             "pr-build",
             TrustZone::Untrusted,
-            [
-                (META_JOB_NAME.to_string(), "build".to_string()),
-            ]
-            .into(),
+            [(META_JOB_NAME.to_string(), "build".to_string())].into(),
         );
         let artifact = g.add_node(NodeKind::Artifact, "dist.zip", TrustZone::Untrusted);
         let deploy = g.add_node_with_metadata(

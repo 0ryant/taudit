@@ -78,6 +78,7 @@ fn apply_creates_backup_and_writes_index() {
         &dir,
         &[
             "remediate",
+            "--unstable",
             "apply",
             wf.to_str().expect("path"),
             "--policy",
@@ -125,6 +126,7 @@ fn apply_validation_failure_auto_restores() {
         &dir,
         &[
             "remediate",
+            "--unstable",
             "apply",
             wf.to_str().expect("path"),
             "--policy",
@@ -156,6 +158,7 @@ fn rollback_restores_original_content() {
         &dir,
         &[
             "remediate",
+            "--unstable",
             "apply",
             wf.to_str().expect("path"),
             "--policy",
@@ -177,7 +180,16 @@ fn rollback_restores_original_content() {
         .and_then(|v| v.as_str())
         .expect("backup id present");
 
-    let rollback = taudit_in(&dir, &["remediate", "rollback", "--backup-id", backup_id]);
+    let rollback = taudit_in(
+        &dir,
+        &[
+            "remediate",
+            "--unstable",
+            "rollback",
+            "--backup-id",
+            backup_id,
+        ],
+    );
     assert_eq!(
         rollback.status.code(),
         Some(0),

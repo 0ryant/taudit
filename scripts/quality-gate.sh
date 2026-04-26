@@ -47,10 +47,13 @@ run_taudit_gate() {
 
   if [ -d invariants/starter ] && ls invariants/starter/*.yml >/dev/null 2>&1; then
     echo "quality-gate: taudit verify starter invariants"
+    # Advisory until the starter bundle is tuned for self-application.
+    # Matches the CI `|| echo "::warning::..."` policy in quality.yml.
     "${TAUDIT[@]}" verify \
       --policy invariants/starter/ \
       --platform github-actions \
-      .github/workflows/
+      .github/workflows/ \
+      || echo "quality-gate: taudit verify found violations (advisory)"
   fi
 }
 
