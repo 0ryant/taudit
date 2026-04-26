@@ -31,6 +31,21 @@ pub struct MatchSpec {
     pub sink: NodeMatcher,
     #[serde(default)]
     pub path: PathMatcher,
+    /// Graph-level metadata predicate. Applied to `AuthorityGraph::metadata`
+    /// (e.g. `META_TRIGGER`, `META_REPOSITORIES`). When present, ALL conditions
+    /// must hold *in addition to* source/sink/path. Reuses the same typed
+    /// predicate language as node-level metadata (`equals`, `not_equals`,
+    /// `contains`, `in`, plus `not:` negation).
+    #[serde(default)]
+    pub graph_metadata: MetadataMatcher,
+    /// Standalone node predicate. When present, the matcher iterates every
+    /// node in the graph and emits one finding per matching node — the
+    /// source/sink/path fields are ignored, but `graph_metadata:` still
+    /// applies as a graph-wide gate. This is the node-shape-only mode used
+    /// for invariants like "any floating Image" where there is no
+    /// propagation chain to walk.
+    #[serde(default)]
+    pub standalone: Option<NodeMatcher>,
 }
 
 /// A scalar-or-list helper. Lets YAML write `node_type: secret` (single value)
@@ -277,8 +292,8 @@ pub fn load_rules_dir(dir: &Path) -> Result<Vec<CustomRule>, Vec<CustomRuleError
     let mut errors = Vec::new();
     for path in entries {
         match fs::read_to_string(&path) {
-            Ok(content) => match serde_yaml::from_str::<CustomRule>(&content) {
-                Ok(rule) => rules.push(rule),
+            Ok(content) => match parse_rules_multi_doc(&content) {
+                Ok(mut parsed) => rules.append(&mut parsed),
                 Err(err) => errors.push(CustomRuleError::YamlParse(path, err)),
             },
             Err(err) => errors.push(CustomRuleError::FileRead(path, err)),
@@ -290,6 +305,25 @@ pub fn load_rules_dir(dir: &Path) -> Result<Vec<CustomRule>, Vec<CustomRuleError
     } else {
         Err(errors)
     }
+}
+
+/// Parse a YAML string containing one or more `CustomRule` documents (separated
+/// by `---`). Single-doc files behave identically to the legacy
+/// `serde_yaml::from_str::<CustomRule>` path. Empty/whitespace-only documents
+/// (e.g. a leading `---` followed by a real doc) are skipped.
+pub fn parse_rules_multi_doc(content: &str) -> Result<Vec<CustomRule>, serde_yaml::Error> {
+    let mut rules = Vec::new();
+    for doc in serde_yaml::Deserializer::from_str(content) {
+        // An empty document deserializes as `Value::Null`; skip those so a
+        // leading `---` or trailing separator doesn't break the load.
+        let value = serde_yaml::Value::deserialize(doc)?;
+        if value.is_null() {
+            continue;
+        }
+        let rule: CustomRule = serde_yaml::from_value(value)?;
+        rules.push(rule);
+    }
+    Ok(rules)
 }
 
 impl NodeMatcher {
@@ -348,6 +382,45 @@ pub fn evaluate_custom_rules(
     let mut findings = Vec::new();
 
     for rule in rules {
+        // Standalone (node-shape-only) mode: when `standalone:` is present,
+        // walk every node in the graph and emit one finding per match. The
+        // source/sink/path fields are ignored, but `graph_metadata:` still
+        // gates whether the rule runs at all — that's how PR-context
+        // assertions on node shape work.
+        if let Some(matcher) = &rule.match_spec.standalone {
+            if !rule.match_spec.graph_metadata.matches(&graph.metadata) {
+                continue;
+            }
+            for node in &graph.nodes {
+                if !matcher.matches(node) {
+                    continue;
+                }
+                findings.push(Finding {
+                    severity: rule.severity,
+                    category: rule.category,
+                    nodes_involved: vec![node.id],
+                    message: format!("[{}] {}: {}", rule.id, rule.name, node.name),
+                    recommendation: Recommendation::Manual {
+                        action: if rule.description.is_empty() {
+                            format!("Review custom rule '{}'", rule.id)
+                        } else {
+                            rule.description.clone()
+                        },
+                    },
+                    path: None,
+                });
+            }
+            continue;
+        }
+
+        // Graph-level metadata gate: if the predicate doesn't hold against
+        // `graph.metadata`, no path in this graph can match this rule. Skip
+        // the path loop entirely. An empty `graph_metadata:` (the common case
+        // for rules that don't care about graph-level state) trivially matches.
+        if !rule.match_spec.graph_metadata.matches(&graph.metadata) {
+            continue;
+        }
+
         for path in paths {
             let source_node = match graph.node(path.source) {
                 Some(n) => n,
@@ -447,6 +520,8 @@ mod tests {
                     not: None,
                 },
                 path: PathMatcher::default(),
+                graph_metadata: MetadataMatcher::default(),
+                standalone: None,
             },
         };
 
@@ -475,6 +550,8 @@ mod tests {
                 },
                 sink: NodeMatcher::default(),
                 path: PathMatcher::default(),
+                graph_metadata: MetadataMatcher::default(),
+                standalone: None,
             },
         };
 
@@ -551,6 +628,8 @@ match:
                 },
                 sink: NodeMatcher::default(),
                 path: PathMatcher::default(),
+                graph_metadata: MetadataMatcher::default(),
+                standalone: None,
             },
         };
         assert_eq!(evaluate_custom_rules(&g, &paths, &[hit]).len(), 1);
@@ -578,6 +657,8 @@ match:
                 },
                 sink: NodeMatcher::default(),
                 path: PathMatcher::default(),
+                graph_metadata: MetadataMatcher::default(),
+                standalone: None,
             },
         };
         assert!(evaluate_custom_rules(&g, &paths, &[miss]).is_empty());
@@ -896,6 +977,399 @@ match:
         }
         let (graph, paths) = simple_first_to_untrusted_graph();
         assert_eq!(evaluate_custom_rules(&graph, &paths, &[rule]).len(), 1);
+    }
+
+    // ── Gap B: graph-level metadata predicates ──────────────
+
+    /// Builds a graph with one PR-context source/sink path and lets tests set
+    /// graph-level metadata to pressure-test the new predicate.
+    fn pr_context_graph_with_meta(meta: &[(&str, &str)]) -> (AuthorityGraph, Vec<PropagationPath>) {
+        let mut g = AuthorityGraph::new(source());
+        let mut secret_meta = HashMap::new();
+        secret_meta.insert("variable_group".to_string(), "true".to_string());
+        let secret = g.add_node_with_metadata(
+            NodeKind::Secret,
+            "VG_SECRET",
+            TrustZone::FirstParty,
+            secret_meta,
+        );
+        let step = g.add_node(NodeKind::Step, "use", TrustZone::FirstParty);
+        let untrusted = g.add_node(NodeKind::Step, "third-party", TrustZone::Untrusted);
+        g.add_edge(step, secret, crate::graph::EdgeKind::HasAccessTo);
+        g.add_edge(step, untrusted, crate::graph::EdgeKind::DelegatesTo);
+        for (k, v) in meta {
+            g.metadata.insert((*k).to_string(), (*v).to_string());
+        }
+        let paths = propagation_analysis(&g, DEFAULT_MAX_HOPS);
+        (g, paths)
+    }
+
+    #[test]
+    fn graph_metadata_equals_matches_when_value_present() {
+        let (graph, paths) = pr_context_graph_with_meta(&[("trigger", "pr")]);
+        let yaml = r#"
+id: r
+name: r
+severity: high
+category: authority_propagation
+match:
+  graph_metadata:
+    trigger:
+      equals: pr
+  source:
+    metadata:
+      variable_group: "true"
+"#;
+        let rule: CustomRule = serde_yaml::from_str(yaml).expect("yaml parses");
+        assert_eq!(evaluate_custom_rules(&graph, &paths, &[rule]).len(), 1);
+    }
+
+    #[test]
+    fn graph_metadata_in_matches_any_of_listed_values() {
+        let (graph, paths) = pr_context_graph_with_meta(&[("trigger", "merge_request_event")]);
+        let yaml = r#"
+id: r
+name: r
+severity: high
+category: authority_propagation
+match:
+  graph_metadata:
+    trigger:
+      in: [pull_request_target, pr, merge_request_event]
+"#;
+        let rule: CustomRule = serde_yaml::from_str(yaml).expect("yaml parses");
+        assert!(!evaluate_custom_rules(&graph, &paths, &[rule]).is_empty());
+    }
+
+    #[test]
+    fn graph_metadata_negation_excludes_unwanted_trigger() {
+        // graph trigger=push, rule wants "not push" → must NOT fire.
+        let (graph, paths) = pr_context_graph_with_meta(&[("trigger", "push")]);
+        let yaml = r#"
+id: r
+name: r
+severity: high
+category: authority_propagation
+match:
+  graph_metadata:
+    not:
+      trigger:
+        equals: push
+"#;
+        let rule: CustomRule = serde_yaml::from_str(yaml).expect("yaml parses");
+        assert!(evaluate_custom_rules(&graph, &paths, &[rule]).is_empty());
+
+        // Inverse: trigger=pr, rule wants "not push" → fires.
+        let (graph2, paths2) = pr_context_graph_with_meta(&[("trigger", "pr")]);
+        let rule2: CustomRule = serde_yaml::from_str(yaml).expect("yaml parses");
+        assert!(!evaluate_custom_rules(&graph2, &paths2, &[rule2]).is_empty());
+    }
+
+    #[test]
+    fn graph_metadata_missing_key_does_not_match_no_crash() {
+        // Graph has no `trigger` metadata at all. `equals: pr` requires the key
+        // to be present with that value → no findings, no panic.
+        let (graph, paths) = pr_context_graph_with_meta(&[]);
+        assert!(!graph.metadata.contains_key("trigger"));
+        let yaml = r#"
+id: r
+name: r
+severity: high
+category: authority_propagation
+match:
+  graph_metadata:
+    trigger:
+      equals: pr
+"#;
+        let rule: CustomRule = serde_yaml::from_str(yaml).expect("yaml parses");
+        let findings = evaluate_custom_rules(&graph, &paths, &[rule]);
+        assert!(findings.is_empty(), "missing key must yield no findings");
+    }
+
+    #[test]
+    fn rules_without_graph_metadata_remain_backward_compatible() {
+        // No `graph_metadata:` block → trivially matches regardless of graph
+        // state. This is the v0.4-v0.9 behaviour and must keep working.
+        let (graph, paths) = pr_context_graph_with_meta(&[("trigger", "anything")]);
+        let yaml = r#"
+id: r
+name: r
+severity: high
+category: authority_propagation
+match:
+  source:
+    metadata:
+      variable_group: "true"
+"#;
+        let rule: CustomRule = serde_yaml::from_str(yaml).expect("yaml parses");
+        assert_eq!(evaluate_custom_rules(&graph, &paths, &[rule]).len(), 1);
+    }
+
+    // ── Gap C: image sinks + standalone node predicates ─────
+
+    /// Builds a graph with one Identity → Step → Image (Untrusted) chain.
+    /// The Image node is reached via `UsesImage` so propagation_analysis
+    /// produces a path whose sink is the Image — this is what lets custom
+    /// rules use `sink: { node_type: image }`.
+    fn graph_with_image_sink() -> (AuthorityGraph, Vec<PropagationPath>) {
+        let mut g = AuthorityGraph::new(source());
+        let identity = g.add_node(NodeKind::Identity, "GH_TOKEN", TrustZone::FirstParty);
+        let step = g.add_node(NodeKind::Step, "publish", TrustZone::FirstParty);
+        let image = g.add_node(
+            NodeKind::Image,
+            "third-party/deploy@v1",
+            TrustZone::Untrusted,
+        );
+        g.add_edge(step, identity, crate::graph::EdgeKind::HasAccessTo);
+        g.add_edge(step, image, crate::graph::EdgeKind::UsesImage);
+        let paths = propagation_analysis(&g, DEFAULT_MAX_HOPS);
+        (g, paths)
+    }
+
+    #[test]
+    fn sink_node_type_image_matches_image_path_endpoint() {
+        let (graph, paths) = graph_with_image_sink();
+        let yaml = r#"
+id: r
+name: r
+severity: high
+category: untrusted_with_authority
+match:
+  sink:
+    node_type: image
+    trust_zone: untrusted
+"#;
+        let rule: CustomRule = serde_yaml::from_str(yaml).expect("yaml parses");
+        let findings = evaluate_custom_rules(&graph, &paths, &[rule]);
+        assert!(
+            !findings.is_empty(),
+            "Image-as-sink must produce at least one finding"
+        );
+    }
+
+    #[test]
+    fn standalone_matches_every_floating_image_in_graph() {
+        // Two Image nodes: one floating (no `digest` metadata), one digest-pinned.
+        let mut g = AuthorityGraph::new(source());
+        let _step = g.add_node(NodeKind::Step, "build", TrustZone::FirstParty);
+        let _floating1 = g.add_node(NodeKind::Image, "alpine:latest", TrustZone::ThirdParty);
+        let _floating2 = g.add_node(NodeKind::Image, "ubuntu:22.04", TrustZone::ThirdParty);
+        let mut pinned_meta = HashMap::new();
+        pinned_meta.insert("digest".to_string(), "sha256:abc".to_string());
+        let _pinned = g.add_node_with_metadata(
+            NodeKind::Image,
+            "alpine@sha256:abc",
+            TrustZone::ThirdParty,
+            pinned_meta,
+        );
+        // Propagation paths irrelevant for standalone mode.
+        let paths: Vec<PropagationPath> = Vec::new();
+
+        let yaml = r#"
+id: floating_image_standalone
+name: Floating image
+severity: medium
+category: unpinned_action
+match:
+  standalone:
+    node_type: image
+    not:
+      metadata:
+        digest:
+          contains: "sha256:"
+"#;
+        let rule: CustomRule = serde_yaml::from_str(yaml).expect("yaml parses");
+        let findings = evaluate_custom_rules(&g, &paths, &[rule]);
+        assert_eq!(
+            findings.len(),
+            2,
+            "standalone must fire once per floating Image node"
+        );
+    }
+
+    #[test]
+    fn standalone_supports_in_operator() {
+        let mut g = AuthorityGraph::new(source());
+        let mut self_hosted_meta = HashMap::new();
+        self_hosted_meta.insert("self_hosted".to_string(), "true".to_string());
+        let _pool = g.add_node_with_metadata(
+            NodeKind::Image,
+            "self-pool",
+            TrustZone::FirstParty,
+            self_hosted_meta,
+        );
+        let _hosted = g.add_node(NodeKind::Image, "ubuntu-latest", TrustZone::ThirdParty);
+        let paths: Vec<PropagationPath> = Vec::new();
+
+        let yaml = r#"
+id: r
+name: r
+severity: high
+category: authority_propagation
+match:
+  standalone:
+    node_type: image
+    metadata:
+      self_hosted:
+        in: ["true", "yes"]
+"#;
+        let rule: CustomRule = serde_yaml::from_str(yaml).expect("yaml parses");
+        let findings = evaluate_custom_rules(&g, &paths, &[rule]);
+        assert_eq!(findings.len(), 1, "in:[\"true\",\"yes\"] matches one node");
+    }
+
+    #[test]
+    fn standalone_still_honors_graph_metadata_gate() {
+        // Standalone bypasses source/sink/path but `graph_metadata:` remains
+        // a precondition — that's how PR-context node-shape rules work.
+        let mut g_pr = AuthorityGraph::new(source());
+        g_pr.metadata.insert("trigger".into(), "pr".into());
+        g_pr.add_node(NodeKind::Image, "alpine:latest", TrustZone::ThirdParty);
+
+        let mut g_push = AuthorityGraph::new(source());
+        g_push.metadata.insert("trigger".into(), "push".into());
+        g_push.add_node(NodeKind::Image, "alpine:latest", TrustZone::ThirdParty);
+
+        let yaml = r#"
+id: r
+name: r
+severity: low
+category: unpinned_action
+match:
+  graph_metadata:
+    trigger:
+      equals: pr
+  standalone:
+    node_type: image
+"#;
+        let rule: CustomRule = serde_yaml::from_str(yaml).expect("yaml parses");
+        assert_eq!(
+            evaluate_custom_rules(&g_pr, &[], std::slice::from_ref(&rule)).len(),
+            1,
+            "fires on PR graph"
+        );
+        assert!(
+            evaluate_custom_rules(&g_push, &[], std::slice::from_ref(&rule)).is_empty(),
+            "graph_metadata gate must suppress on push graph"
+        );
+    }
+
+    #[test]
+    fn standalone_ignores_source_sink_path_fields() {
+        // Even when source/sink would never match (no propagation paths exist),
+        // standalone fires per node-shape match. Documents the precedence rule.
+        let mut g = AuthorityGraph::new(source());
+        let _img = g.add_node(NodeKind::Image, "alpine:latest", TrustZone::ThirdParty);
+        let paths: Vec<PropagationPath> = Vec::new();
+
+        let yaml = r#"
+id: r
+name: r
+severity: low
+category: unpinned_action
+match:
+  source:
+    node_type: secret    # would never match anything in this graph
+  standalone:
+    node_type: image
+"#;
+        let rule: CustomRule = serde_yaml::from_str(yaml).expect("yaml parses");
+        let findings = evaluate_custom_rules(&g, &paths, &[rule]);
+        assert_eq!(findings.len(), 1);
+    }
+
+    // ── Gap A: multi-doc YAML loading ───────────────────────
+
+    #[test]
+    fn multi_doc_yaml_loads_each_document_as_separate_rule() {
+        let yaml = r#"
+id: rule_a
+name: First rule
+severity: high
+category: authority_propagation
+match:
+  source:
+    node_type: secret
+---
+id: rule_b
+name: Second rule
+severity: critical
+category: untrusted_with_authority
+match:
+  sink:
+    trust_zone: untrusted
+---
+id: rule_c
+name: Third rule
+severity: medium
+category: unpinned_action
+"#;
+        let rules = parse_rules_multi_doc(yaml).expect("multi-doc must parse");
+        assert_eq!(rules.len(), 3, "expected 3 rules from 3-doc YAML");
+        assert_eq!(rules[0].id, "rule_a");
+        assert_eq!(rules[1].id, "rule_b");
+        assert_eq!(rules[2].id, "rule_c");
+        assert_eq!(rules[1].severity, Severity::Critical);
+    }
+
+    #[test]
+    fn single_doc_yaml_still_loads_identically() {
+        let yaml = r#"
+id: solo
+name: Solo rule
+severity: high
+category: authority_propagation
+"#;
+        let rules = parse_rules_multi_doc(yaml).expect("single-doc must parse");
+        assert_eq!(rules.len(), 1);
+        assert_eq!(rules[0].id, "solo");
+    }
+
+    #[test]
+    fn multi_doc_with_empty_leading_document_is_skipped() {
+        let yaml = r#"---
+---
+id: only
+name: only
+severity: low
+category: authority_propagation
+"#;
+        let rules = parse_rules_multi_doc(yaml).expect("must parse");
+        assert_eq!(rules.len(), 1);
+        assert_eq!(rules[0].id, "only");
+    }
+
+    #[test]
+    fn load_rules_dir_loads_multi_doc_files() {
+        let tmp =
+            std::env::temp_dir().join(format!("taudit-custom-rules-multi-{}", std::process::id()));
+        fs::create_dir_all(&tmp).unwrap();
+        let path = tmp.join("bundle.yml");
+        fs::write(
+            &path,
+            r#"
+id: a
+name: a
+severity: high
+category: authority_propagation
+---
+id: b
+name: b
+severity: medium
+category: unpinned_action
+---
+id: c
+name: c
+severity: low
+category: authority_propagation
+"#,
+        )
+        .unwrap();
+
+        let rules = load_rules_dir(&tmp).expect("multi-doc file must load");
+        assert_eq!(rules.len(), 3, "expected 3 rules from one bundled file");
+
+        let _ = fs::remove_dir_all(&tmp);
     }
 
     #[test]

@@ -1428,17 +1428,16 @@ fn load_policy(
             Err(errors) => Err(errors.iter().map(|e| e.to_string()).collect()),
         }
     } else {
-        // Single file. Reuse the YAML schema by reading + parsing one file.
+        // Single file. Supports multi-doc YAML: a file may contain one or more
+        // `CustomRule` documents separated by `---`.
         let content = std::fs::read_to_string(policy)
             .map_err(|err| vec![format!("failed to read policy {}: {err}", policy.display())])?;
-        let rule: taudit_core::custom_rules::CustomRule =
-            serde_yaml::from_str(&content).map_err(|err| {
-                vec![format!(
-                    "failed to parse policy {}: {err}",
-                    policy.display()
-                )]
-            })?;
-        Ok(vec![rule])
+        taudit_core::custom_rules::parse_rules_multi_doc(&content).map_err(|err| {
+            vec![format!(
+                "failed to parse policy {}: {err}",
+                policy.display()
+            )]
+        })
     }
 }
 
