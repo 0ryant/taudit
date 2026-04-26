@@ -278,6 +278,59 @@ enum Cli {
         #[command(subcommand)]
         action: InvariantsAction,
     },
+
+    /// Enforce policy invariants — exit non-zero on any violation.
+    ///
+    /// `verify` is the policy-driven enforcement entrypoint for CI required
+    /// checks and merge gates. Unlike `scan` (which always runs the 17
+    /// built-in rules), `verify` runs ONLY the user-supplied invariants in
+    /// `--policy` unless `--include-builtin` is set.
+    ///
+    /// Exit codes are deterministic:
+    ///   0 — no policy violations
+    ///   1 — at least one policy violation
+    ///   2 — usage error / file not found / parse error
+    Verify {
+        /// Path to pipeline YAML file(s) or directory.
+        #[arg(required = true)]
+        paths: Vec<PathBuf>,
+
+        /// Policy source. Either a single `.yml`/`.yaml` invariant file or a
+        /// directory containing one or more invariant files. Required.
+        #[arg(long, required = true)]
+        policy: PathBuf,
+
+        /// Output format for violations.
+        #[arg(long, default_value = "text")]
+        format: VerifyFormat,
+
+        /// CI/CD platform. Default: auto (detects from YAML content)
+        #[arg(long, default_value = "auto")]
+        platform: Platform,
+
+        /// Maximum propagation depth for BFS analysis.
+        #[arg(long, default_value_t = DEFAULT_MAX_HOPS)]
+        max_hops: usize,
+
+        /// Also run the 17 built-in rules. Their findings count toward
+        /// violations alongside the `--policy` invariants. Default: false
+        /// (verify is policy-only).
+        #[arg(long, default_value_t = false)]
+        include_builtin: bool,
+
+        /// Only count violations at or above this severity. When omitted,
+        /// every violation counts regardless of severity.
+        #[arg(long)]
+        severity_threshold: Option<SeverityLevel>,
+
+        /// Disable ANSI color codes in text output. Also honored via NO_COLOR.
+        #[arg(long, default_value_t = false)]
+        no_color: bool,
+
+        /// Write the report to this file instead of stdout.
+        #[arg(long, short = 'o')]
+        output: Option<PathBuf>,
+    },
 }
 
 #[derive(clap::Subcommand)]
@@ -323,6 +376,16 @@ impl OutputFormat {
 enum DiffOutputFormat {
     Terminal,
     Json,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, clap::ValueEnum)]
+enum VerifyFormat {
+    /// Human-readable list: `path: invariant_id: message [severity]`
+    Text,
+    /// Structured JSON: `{schema_version, violations, summary}`
+    Json,
+    /// SARIF 2.1.0
+    Sarif,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, clap::ValueEnum)]
@@ -587,6 +650,33 @@ fn main() -> Result<()> {
                 cmd_invariants_list(invariants_dir)
             }
         },
+        Cli::Verify {
+            paths,
+            policy,
+            format,
+            platform,
+            max_hops,
+            include_builtin,
+            severity_threshold,
+            no_color,
+            output,
+        } => {
+            if no_color || std::env::var_os("NO_COLOR").is_some() {
+                colored::control::set_override(false);
+            } else {
+                colored::control::set_override(true);
+            }
+            cmd_verify(VerifyOpts {
+                paths,
+                policy,
+                format,
+                platform,
+                max_hops,
+                include_builtin,
+                severity_threshold,
+                output,
+            })
+        }
     }
 }
 
@@ -1065,6 +1155,316 @@ fn cmd_scan(opts: ScanOpts) -> Result<()> {
     drop(writer);
 
     std::process::exit(exit_code);
+}
+
+/// Options for `taudit verify`. Mirrors the `Verify` CLI variant fields.
+struct VerifyOpts {
+    paths: Vec<PathBuf>,
+    policy: PathBuf,
+    format: VerifyFormat,
+    platform: Platform,
+    max_hops: usize,
+    include_builtin: bool,
+    severity_threshold: Option<SeverityLevel>,
+    output: Option<PathBuf>,
+}
+
+/// One policy violation surfaced by `verify`. Carries enough detail for the
+/// three output formats to render without re-running rule evaluation.
+#[derive(Debug, Clone)]
+struct Violation {
+    path: String,
+    invariant_id: String,
+    severity: Severity,
+    category: String,
+    message: String,
+}
+
+/// `taudit verify` entrypoint. Computes the exit code via `run_verify_io`
+/// (which is `cfg(test)`-friendly) then `process::exit`s with it.
+///
+/// Exit codes are part of the contract:
+///   0 — no policy violations
+///   1 — at least one policy violation
+///   2 — usage / file-not-found / parse error
+fn cmd_verify(opts: VerifyOpts) -> Result<()> {
+    let stdout_handle = std::io::stdout();
+    let mut writer: Box<dyn std::io::Write> = match opts.output.as_ref() {
+        Some(path) => Box::new(std::io::BufWriter::new(
+            std::fs::File::create(path)
+                .with_context(|| format!("Failed to open output file {}", path.display()))?,
+        )),
+        None => Box::new(stdout_handle.lock()),
+    };
+
+    let exit_code = run_verify_io(&opts, &mut writer);
+
+    use std::io::Write;
+    let _ = writer.flush();
+    drop(writer);
+
+    std::process::exit(exit_code);
+}
+
+/// Run `verify` against `opts`, writing the report into `writer`. Returns the
+/// process exit code (0 / 1 / 2). Never panics — every error path is mapped
+/// to exit 2 with a stderr line. This is the testable entrypoint.
+fn run_verify_io<W: std::io::Write>(opts: &VerifyOpts, writer: &mut W) -> i32 {
+    // Step 1: load custom rules. Bad path / parse error => exit 2 (usage).
+    let custom_rules = match load_policy(&opts.policy) {
+        Ok(rules) => rules,
+        Err(errors) => {
+            for err in &errors {
+                eprintln!("error: {err}");
+            }
+            return 2;
+        }
+    };
+
+    // An empty policy file/dir is almost certainly a misconfiguration in CI —
+    // surface it loudly rather than silently exiting 0 on every input.
+    if custom_rules.is_empty() && !opts.include_builtin {
+        eprintln!(
+            "error: no invariants loaded from {} (use --include-builtin to run only built-in rules)",
+            opts.policy.display()
+        );
+        return 2;
+    }
+
+    // Step 2: resolve pipeline paths. Missing path => exit 2.
+    let resolved = match resolve_paths_tagged(&opts.paths) {
+        Ok(p) => p,
+        Err(err) => {
+            eprintln!("error: {err:#}");
+            return 2;
+        }
+    };
+
+    let parser_box = make_parser(&opts.platform);
+    let parser = parser_box.as_ref();
+    let threshold = opts.severity_threshold.as_ref().map(|s| s.to_severity());
+
+    let mut violations: Vec<Violation> = Vec::new();
+    let mut sarif_buffer: Vec<(
+        taudit_core::graph::AuthorityGraph,
+        Vec<taudit_core::finding::Finding>,
+    )> = Vec::new();
+
+    // Step 3: parse each pipeline file and evaluate the loaded invariants.
+    // For explicitly-named files a parse error is fatal (exit 2). For files
+    // discovered via directory walk we warn-and-skip (matches `scan`).
+    for tagged_path in &resolved {
+        let path = tagged_path.path();
+        let content = match std::fs::read_to_string(path) {
+            Ok(c) => c,
+            Err(err) => match tagged_path {
+                ResolvedPath::Explicit(_) => {
+                    eprintln!("error: failed to read {}: {err}", path.display());
+                    return 2;
+                }
+                ResolvedPath::Discovered(_) => {
+                    eprintln!("warning: skipping {}: {err}", path.display());
+                    continue;
+                }
+            },
+        };
+
+        let parse_result = if opts.platform == Platform::Auto {
+            let resolved_platform = resolve_platform(&opts.platform, &content);
+            let per_file_parser = make_parser(&resolved_platform);
+            parse_content(
+                per_file_parser.as_ref(),
+                content,
+                path.display().to_string(),
+            )
+        } else {
+            parse_content(parser, content, path.display().to_string())
+        };
+
+        let graph = match parse_result {
+            Ok(g) => g,
+            Err(err) => match tagged_path {
+                ResolvedPath::Explicit(_) => {
+                    eprintln!("error: {err:#}");
+                    return 2;
+                }
+                ResolvedPath::Discovered(_) => {
+                    eprintln!("warning: skipping {}: {err:#}", path.display());
+                    continue;
+                }
+            },
+        };
+
+        let propagation_paths =
+            taudit_core::propagation::propagation_analysis(&graph, opts.max_hops);
+
+        // Custom (policy) findings.
+        let mut findings = taudit_core::custom_rules::evaluate_custom_rules(
+            &graph,
+            &propagation_paths,
+            &custom_rules,
+        );
+
+        // Optionally fold in the 17 built-in rules.
+        if opts.include_builtin {
+            findings.extend(rules::run_all_rules(&graph, opts.max_hops));
+        }
+
+        // Apply the severity threshold (Severity orders Critical < Info).
+        if let Some(ref t) = threshold {
+            findings.retain(|f| f.severity <= *t);
+        }
+
+        // Project Findings into Violations and stash for SARIF emission.
+        for f in &findings {
+            violations.push(Violation {
+                path: graph.source.file.clone(),
+                invariant_id: extract_invariant_id(&f.message),
+                severity: f.severity,
+                category: finding_category(&f.category),
+                message: f.message.clone(),
+            });
+        }
+        sarif_buffer.push((graph, findings));
+    }
+
+    // Step 4: emit the report in the requested format.
+    let render_result = match opts.format {
+        VerifyFormat::Text => render_verify_text(writer, &violations),
+        VerifyFormat::Json => render_verify_json(writer, &violations),
+        VerifyFormat::Sarif => {
+            let items: Vec<_> = sarif_buffer
+                .iter()
+                .map(|(g, f)| (g, f.as_slice()))
+                .collect();
+            SarifReportSink
+                .emit_multi_with_custom_rules(writer, &items, &custom_rules)
+                .map_err(|e| anyhow::anyhow!("Failed to write SARIF report: {e}"))
+        }
+    };
+    if let Err(err) = render_result {
+        eprintln!("error: {err:#}");
+        return 2;
+    }
+
+    if violations.is_empty() {
+        0
+    } else {
+        1
+    }
+}
+
+/// Load policy invariants from a file or directory. Returns rules on success,
+/// a list of errors otherwise. Errors map to exit 2 in `run_verify_io`.
+fn load_policy(
+    policy: &std::path::Path,
+) -> Result<Vec<taudit_core::custom_rules::CustomRule>, Vec<String>> {
+    if !policy.exists() {
+        return Err(vec![format!("policy path not found: {}", policy.display())]);
+    }
+
+    if policy.is_dir() {
+        match taudit_core::custom_rules::load_rules_dir(policy) {
+            Ok(rules) => Ok(rules),
+            Err(errors) => Err(errors.iter().map(|e| e.to_string()).collect()),
+        }
+    } else {
+        // Single file. Reuse the YAML schema by reading + parsing one file.
+        let content = std::fs::read_to_string(policy)
+            .map_err(|err| vec![format!("failed to read policy {}: {err}", policy.display())])?;
+        let rule: taudit_core::custom_rules::CustomRule =
+            serde_yaml::from_str(&content).map_err(|err| {
+                vec![format!(
+                    "failed to parse policy {}: {err}",
+                    policy.display()
+                )]
+            })?;
+        Ok(vec![rule])
+    }
+}
+
+/// Custom-rule findings are formatted as `[<id>] <name>: <src> -> <sink>` by
+/// `evaluate_custom_rules`. Pull the id out of the leading `[...]` so it can
+/// surface in text/JSON output without re-evaluating the rules.
+fn extract_invariant_id(message: &str) -> String {
+    if let Some(rest) = message.strip_prefix('[') {
+        if let Some(end) = rest.find(']') {
+            return rest[..end].to_string();
+        }
+    }
+    // Built-in rule findings (when --include-builtin is set) don't carry a
+    // leading [id] prefix; fall back to "builtin" so downstream consumers
+    // always see a non-empty invariant id.
+    "builtin".to_string()
+}
+
+/// Render the human-readable text format. One line per violation:
+/// `path: invariant_id: message [severity]`. Includes a final summary line
+/// even when there are zero violations so CI logs always show the verdict.
+fn render_verify_text<W: std::io::Write>(w: &mut W, violations: &[Violation]) -> Result<()> {
+    for v in violations {
+        writeln!(
+            w,
+            "{}: {}: {} [{:?}]",
+            v.path, v.invariant_id, v.message, v.severity
+        )?;
+    }
+    let summary = severity_summary(violations);
+    writeln!(
+        w,
+        "verify: {} violation{} ({} critical / {} high / {} medium / {} low / {} info)",
+        violations.len(),
+        if violations.len() == 1 { "" } else { "s" },
+        summary.critical,
+        summary.high,
+        summary.medium,
+        summary.low,
+        summary.info,
+    )?;
+    Ok(())
+}
+
+/// Render the structured JSON format with stable field names and a versioned
+/// schema marker. `summary.by_severity` is a fixed-key object so consumers
+/// can index without checking for missing keys.
+fn render_verify_json<W: std::io::Write>(w: &mut W, violations: &[Violation]) -> Result<()> {
+    let summary = severity_summary(violations);
+    let json = serde_json::json!({
+        "schema_version": "taudit.verify.v1",
+        "violations": violations.iter().map(|v| serde_json::json!({
+            "path": v.path,
+            "invariant_id": v.invariant_id,
+            "severity": format!("{:?}", v.severity).to_lowercase(),
+            "category": v.category,
+            "message": v.message,
+        })).collect::<Vec<_>>(),
+        "summary": {
+            "total": violations.len(),
+            "by_severity": {
+                "critical": summary.critical,
+                "high": summary.high,
+                "medium": summary.medium,
+                "low": summary.low,
+                "info": summary.info,
+            }
+        }
+    });
+    serde_json::to_writer_pretty(w, &json).with_context(|| "Failed to write verify JSON report")?;
+    Ok(())
+}
+
+fn severity_summary(violations: &[Violation]) -> SeverityCounts {
+    let mut c = SeverityCounts::default();
+    for v in violations {
+        match v.severity {
+            Severity::Critical => c.critical += 1,
+            Severity::High => c.high += 1,
+            Severity::Medium => c.medium += 1,
+            Severity::Low => c.low += 1,
+            Severity::Info => c.info += 1,
+        }
+    }
+    c
 }
 
 fn now_unix_seconds() -> u64 {
@@ -2424,5 +2824,182 @@ mod tests {
         // GitLab CI with image: at top level but no stages:
         let yaml = "image: alpine:latest\n\nbuild:\n  script:\n    - make\n";
         assert_eq!(detect_platform(yaml), Platform::GitLab);
+    }
+
+    // -------- verify command tests --------
+    //
+    // The three tests below pin the exit-code contract for `taudit verify`:
+    //
+    //   exit 0 — no policy violations
+    //   exit 1 — at least one policy violation
+    //   exit 2 — usage / file-not-found / parse error
+    //
+    // They drive `run_verify_io` directly (not via subprocess) so the assertions
+    // are deterministic and don't depend on a built binary.
+
+    fn write_tmp(name: &str, content: &str) -> PathBuf {
+        // PID + nanos-since-epoch keeps fixtures unique even when tests run
+        // in parallel inside the same temp dir.
+        let nanos = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .map(|d| d.subsec_nanos())
+            .unwrap_or(0);
+        let dir = std::env::temp_dir().join(format!(
+            "taudit-verify-{}-{nanos}-{name}",
+            std::process::id()
+        ));
+        std::fs::create_dir_all(&dir).expect("tmp dir create");
+        let path = dir.join(name);
+        std::fs::write(&path, content).expect("tmp write");
+        path
+    }
+
+    /// A pipeline with no propagation — no invariant should fire.
+    fn clean_pipeline_yaml() -> &'static str {
+        "name: ci\non: push\npermissions:\n  contents: read\njobs:\n  test:\n    runs-on: ubuntu-latest\n    steps:\n      - uses: actions/checkout@a5ac7e51b41094c92402da3b24376905380afc29\n      - run: cargo test\n"
+    }
+
+    /// A pipeline that puts a secret on a step and delegates to an untrusted
+    /// third-party action — guaranteed to produce an authority propagation
+    /// path that any "secret -> untrusted" invariant will catch.
+    fn leaky_pipeline_yaml() -> &'static str {
+        "name: release\non:\n  push:\n    tags: ['v*']\npermissions: write-all\njobs:\n  publish:\n    runs-on: ubuntu-latest\n    steps:\n      - uses: actions/checkout@a5ac7e51b41094c92402da3b24376905380afc29\n      - uses: untrusted-org/publish-action@main\n        with:\n          api-key: \"${{ secrets.PUBLISH_API_KEY }}\"\n"
+    }
+
+    /// "Any first-party authority that crosses into an untrusted zone."
+    /// The clean fixture has no untrusted sinks (no third-party `@main`
+    /// actions, no untrusted steps), so this never fires there. The leaky
+    /// fixture delegates to `untrusted-org/publish-action@main` which lands
+    /// in the Untrusted trust zone — this invariant catches it.
+    fn untrusted_sink_invariant_yaml() -> &'static str {
+        "id: any_to_untrusted\nname: Authority reaches untrusted sink\ndescription: catch-all for untrusted propagation\nseverity: high\ncategory: authority_propagation\nmatch:\n  sink:\n    trust_zone: untrusted\n"
+    }
+
+    #[test]
+    fn verify_clean_fixture_exits_zero() {
+        let pipeline = write_tmp("clean.yml", clean_pipeline_yaml());
+        let policy = write_tmp("policy.yml", untrusted_sink_invariant_yaml());
+
+        let opts = VerifyOpts {
+            paths: vec![pipeline],
+            policy,
+            format: VerifyFormat::Text,
+            platform: Platform::GithubActions,
+            max_hops: DEFAULT_MAX_HOPS,
+            include_builtin: false,
+            severity_threshold: None,
+            output: None,
+        };
+
+        let mut buf = Vec::new();
+        let code = run_verify_io(&opts, &mut buf);
+        let output = String::from_utf8_lossy(&buf);
+        assert_eq!(
+            code, 0,
+            "expected clean fixture to exit 0, output: {output}"
+        );
+        assert!(
+            output.contains("verify: 0 violations"),
+            "missing summary: {output}"
+        );
+    }
+
+    #[test]
+    fn verify_violating_fixture_exits_one() {
+        let pipeline = write_tmp("leaky.yml", leaky_pipeline_yaml());
+        let policy = write_tmp("policy.yml", untrusted_sink_invariant_yaml());
+
+        let opts = VerifyOpts {
+            paths: vec![pipeline],
+            policy,
+            format: VerifyFormat::Text,
+            platform: Platform::GithubActions,
+            max_hops: DEFAULT_MAX_HOPS,
+            include_builtin: false,
+            severity_threshold: None,
+            output: None,
+        };
+
+        let mut buf = Vec::new();
+        let code = run_verify_io(&opts, &mut buf);
+        let output = String::from_utf8_lossy(&buf);
+        assert_eq!(
+            code, 1,
+            "expected leaky fixture to exit 1, output: {output}"
+        );
+        assert!(
+            output.contains("any_to_untrusted"),
+            "expected invariant id in output: {output}"
+        );
+    }
+
+    #[test]
+    fn verify_missing_policy_exits_two() {
+        let pipeline = write_tmp("any.yml", clean_pipeline_yaml());
+        let opts = VerifyOpts {
+            paths: vec![pipeline],
+            policy: PathBuf::from("/nonexistent/path/policy.yml"),
+            format: VerifyFormat::Text,
+            platform: Platform::GithubActions,
+            max_hops: DEFAULT_MAX_HOPS,
+            include_builtin: false,
+            severity_threshold: None,
+            output: None,
+        };
+
+        let mut buf = Vec::new();
+        let code = run_verify_io(&opts, &mut buf);
+        assert_eq!(code, 2, "expected missing policy to exit 2");
+    }
+
+    #[test]
+    fn verify_json_format_emits_schema_and_summary() {
+        let pipeline = write_tmp("leaky.yml", leaky_pipeline_yaml());
+        let policy = write_tmp("policy.yml", untrusted_sink_invariant_yaml());
+
+        let opts = VerifyOpts {
+            paths: vec![pipeline],
+            policy,
+            format: VerifyFormat::Json,
+            platform: Platform::GithubActions,
+            max_hops: DEFAULT_MAX_HOPS,
+            include_builtin: false,
+            severity_threshold: None,
+            output: None,
+        };
+
+        let mut buf = Vec::new();
+        let code = run_verify_io(&opts, &mut buf);
+        assert_eq!(code, 1);
+        let parsed: serde_json::Value =
+            serde_json::from_slice(&buf).expect("verify json must be valid");
+        assert_eq!(parsed["schema_version"], "taudit.verify.v1");
+        assert!(parsed["summary"]["total"].as_u64().unwrap() >= 1);
+        assert!(parsed["summary"]["by_severity"].is_object());
+    }
+
+    #[test]
+    fn verify_severity_threshold_filters_low_violations() {
+        // Wildcard invariant emits at `info` — the lowest severity. With a
+        // `--severity-threshold critical` only Critical-or-higher counts, so
+        // an info-severity violation is filtered out and the verdict is 0.
+        let info_invariant = "id: info_only\nname: info-only invariant\nseverity: info\ncategory: authority_propagation\n";
+        let pipeline = write_tmp("leaky.yml", leaky_pipeline_yaml());
+        let policy = write_tmp("policy.yml", info_invariant);
+
+        let opts = VerifyOpts {
+            paths: vec![pipeline],
+            policy,
+            format: VerifyFormat::Text,
+            platform: Platform::GithubActions,
+            max_hops: DEFAULT_MAX_HOPS,
+            include_builtin: false,
+            severity_threshold: Some(SeverityLevel::Critical),
+            output: None,
+        };
+
+        let mut buf = Vec::new();
+        let code = run_verify_io(&opts, &mut buf);
+        assert_eq!(code, 0, "info-severity violation should be filtered out");
     }
 }
