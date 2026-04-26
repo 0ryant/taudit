@@ -106,6 +106,13 @@ case "$STAGE" in
     run_trivy_config
     run_checkov
     run_taudit_gate
+
+    # cargo clippy regenerates Cargo.lock when Cargo.toml versions change.
+    # Stage it automatically so it is never left as a dirty unstaged file
+    # after a version-bump commit.
+    if ! git diff --quiet Cargo.lock 2>/dev/null; then
+      git add Cargo.lock
+    fi
     ;;
 
   pre-push|quality-gate)

@@ -38,3 +38,6 @@ mutants.out.old/
 
 # insta snapshot review files (do not commit these)
 crates/*/tests/snapshots/*.snap.new
+
+# cargo-fuzz build output (separate workspace per parser)
+crates/*/fuzz/target/
