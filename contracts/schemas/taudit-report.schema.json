@@ -134,6 +134,11 @@
         },
         "message": { "type": "string" },
         "recommendation": { "$ref": "#/$defs/Recommendation" },
+        "rule_id": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Snake_case rule identifier — custom-rule id when the finding came from a YAML rule with a `[id] ...` message prefix, otherwise the snake_case form of `category`. Byte-identical to SARIF `result.ruleId` and CloudEvents `taudit.rule_id`. JSON consumers filter and group by this field. Optional in v1 for backward-compat; always emitted by current taudit."
+        },
         "fingerprint": {
           "type": "string",
           "pattern": "^[0-9a-f]{16}$",

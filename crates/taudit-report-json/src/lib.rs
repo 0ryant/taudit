@@ -1,5 +1,5 @@
 use taudit_core::error::TauditError;
-use taudit_core::finding::{compute_fingerprint, Finding};
+use taudit_core::finding::{compute_fingerprint, rule_id_for, Finding};
 use taudit_core::graph::{AuthorityCompleteness, AuthorityGraph};
 use taudit_core::ports::ReportSink;
 
@@ -35,8 +35,16 @@ pub struct JsonReport<'a> {
 /// CloudEvents extension attribute `tauditfindingfingerprint`, so a SIEM
 /// keying on any of the three sees the same identifier per finding.
 /// See `docs/finding-fingerprint.md` for the contract.
+///
+/// The `rule_id` field carries the snake_case rule identifier (custom-rule
+/// id when the finding came from a YAML rule with a `[id] …` message
+/// prefix, otherwise the snake_case form of the category enum). This is
+/// the same id surfaced in SARIF `result.ruleId` and CloudEvents
+/// `taudit.rule_id`, so JSON consumers can filter/group by rule without
+/// re-deriving it from the category serialization.
 #[derive(Serialize)]
 pub struct FindingWithFingerprint<'a> {
+    pub rule_id: String,
     #[serde(flatten)]
     pub finding: &'a Finding,
     pub fingerprint: String,
@@ -102,6 +110,7 @@ impl<W: std::io::Write> ReportSink<W> for JsonReportSink {
         let findings_with_fp: Vec<FindingWithFingerprint<'_>> = findings
             .iter()
             .map(|f| FindingWithFingerprint {
+                rule_id: rule_id_for(f),
                 finding: f,
                 fingerprint: compute_fingerprint(f, graph),
             })
@@ -297,5 +306,71 @@ mod tests {
             "graph export does not match authority-graph.v1.json:\n{}",
             errors.join("\n")
         );
+    }
+
+    /// Regression for the post-v0.9.1 self-hosting-scan finding: every
+    /// `findings[].rule_id` was `null` in the JSON sink output, even though
+    /// SARIF and the text formatter surfaced rule names correctly. JSON
+    /// consumers (SIEMs, suppression DBs, dashboards) couldn't filter by
+    /// rule. Each finding must now carry a non-null `rule_id` string equal
+    /// to the snake_case form of the category — and a custom-rule message
+    /// prefix `[id]` must override the category id.
+    #[test]
+    fn each_finding_has_non_null_snake_case_rule_id() {
+        let graph = taudit_core::graph::AuthorityGraph::new(PipelineSource {
+            file: ".github/workflows/ci.yml".into(),
+            repo: None,
+            git_ref: None,
+            commit_sha: None,
+        });
+        let findings = vec![
+            Finding {
+                severity: Severity::High,
+                category: taudit_core::finding::FindingCategory::AuthorityPropagation,
+                path: None,
+                nodes_involved: vec![],
+                message: "GITHUB_TOKEN propagated".into(),
+                recommendation: Recommendation::Manual {
+                    action: "scope it".into(),
+                },
+            },
+            Finding {
+                severity: Severity::Medium,
+                category: taudit_core::finding::FindingCategory::UnpinnedAction,
+                path: None,
+                nodes_involved: vec![],
+                message: "[my_custom_rule] custom rule fired".into(),
+                recommendation: Recommendation::Manual {
+                    action: "pin it".into(),
+                },
+            },
+        ];
+
+        let mut buf = Vec::new();
+        JsonReportSink.emit(&mut buf, &graph, &findings).unwrap();
+        let report: serde_json::Value = serde_json::from_slice(&buf).unwrap();
+
+        let findings_arr = report["findings"].as_array().expect("findings is an array");
+        assert_eq!(findings_arr.len(), 2);
+
+        // Each finding has a non-null rule_id string.
+        for f in findings_arr {
+            let id = f["rule_id"].as_str();
+            assert!(
+                id.is_some(),
+                "every finding must have a string rule_id, got: {:?}",
+                f["rule_id"]
+            );
+            assert!(
+                !id.unwrap().is_empty(),
+                "rule_id must be non-empty, got: {:?}",
+                f["rule_id"]
+            );
+        }
+
+        // Category-derived id: snake_case form of FindingCategory.
+        assert_eq!(findings_arr[0]["rule_id"], "authority_propagation");
+        // Custom-rule prefix wins over the category id.
+        assert_eq!(findings_arr[1]["rule_id"], "my_custom_rule");
     }
 }
