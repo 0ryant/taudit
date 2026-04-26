@@ -105,8 +105,9 @@ impl PipelineParser for AdoParser {
 
                     let steps_start = graph.nodes.len();
 
+                    let job_steps = job.all_steps();
                     process_steps(
-                        job.steps.as_deref().unwrap_or(&[]),
+                        &job_steps,
                         &job_name,
                         token_id,
                         &all_secrets,
@@ -151,8 +152,9 @@ impl PipelineParser for AdoParser {
 
                 let steps_start = graph.nodes.len();
 
+                let job_steps = job.all_steps();
                 process_steps(
-                    job.steps.as_deref().unwrap_or(&[]),
+                    &job_steps,
                     &job_name,
                     token_id,
                     &all_secrets,
@@ -324,6 +326,13 @@ fn process_steps(
         // attribute steps back to their containing job.
         if let Some(node) = graph.nodes.get_mut(step_id) {
             node.metadata.insert(META_JOB_NAME.into(), job_name.into());
+            // Stamp the raw inline script body so script-aware rules
+            // (env-export of secrets, secret materialisation to files,
+            // Key Vault → plaintext) can pattern-match on the actual
+            // command text the agent will run.
+            if let Some(ref body) = inline_script {
+                node.metadata.insert(META_SCRIPT_BODY.into(), body.clone());
+            }
         }
 
         // Every step has access to System.AccessToken
@@ -419,6 +428,13 @@ fn process_steps(
 }
 
 /// Classify an ADO step, returning (name, trust_zone, inline_script_text).
+///
+/// `inline_script_text` is populated whenever the step has script content —
+/// either as a top-level `script:`/`bash:`/`powershell:`/`pwsh:` key, or as a
+/// task input (`Bash@3.inputs.script`, `PowerShell@2.inputs.script`,
+/// `AzureCLI@2.inputs.inlineScript`, `AzurePowerShell@5.inputs.Inline`, …).
+/// Task-input keys are matched case-insensitively because the ADO YAML schema
+/// is itself case-insensitive on input names.
 fn classify_step(
     step: &AdoStep,
     job_name: &str,
@@ -434,7 +450,9 @@ fn classify_step(
         .unwrap_or_else(default_name);
 
     if step.task.is_some() {
-        (name, TrustZone::Untrusted, None)
+        // Task step — script body may live in inputs.{script,inlineScript,Inline}.
+        let inline = extract_task_inline_script(step.inputs.as_ref());
+        (name, TrustZone::Untrusted, inline)
     } else if let Some(ref s) = step.script {
         (name, TrustZone::FirstParty, Some(s.clone()))
     } else if let Some(ref s) = step.bash {
@@ -446,6 +464,32 @@ fn classify_step(
     } else {
         (name, TrustZone::FirstParty, None)
     }
+}
+
+/// Pull an inline script body out of a task step's `inputs:` mapping.
+/// Recognises the three common conventions:
+///   - `inputs.script` (Bash@3, PowerShell@2 — when targetType: inline)
+///   - `inputs.inlineScript` (AzureCLI@2)
+///   - `inputs.Inline` (AzurePowerShell@5 — note the capital I)
+///
+/// Match is case-insensitive so a hand-written pipeline using `Script:` or
+/// `INLINESCRIPT:` is still picked up.
+fn extract_task_inline_script(
+    inputs: Option<&HashMap<String, serde_yaml::Value>>,
+) -> Option<String> {
+    let inputs = inputs?;
+    const KEYS: &[&str] = &["script", "inlinescript", "inline"];
+    for (raw_key, val) in inputs {
+        let lower = raw_key.to_lowercase();
+        if KEYS.contains(&lower.as_str()) {
+            if let Some(s) = val.as_str() {
+                if !s.is_empty() {
+                    return Some(s.to_string());
+                }
+            }
+        }
+    }
+    None
 }
 
 /// Add a DelegatesTo edge from a synthetic step node to a template image node.
@@ -638,6 +682,11 @@ pub struct AdoJob {
     pub variables: Option<AdoVariables>,
     #[serde(default)]
     pub steps: Option<Vec<AdoStep>>,
+    /// Deployment-job nested strategy: runOnce/rolling/canary all share the
+    /// shape `strategy.{runOnce,rolling,canary}.deploy.steps`. We only need
+    /// the steps — the strategy choice itself doesn't change authority flow.
+    #[serde(default)]
+    pub strategy: Option<AdoStrategy>,
     #[serde(default)]
     pub pool: Option<serde_yaml::Value>,
     /// Job-level template reference
@@ -667,6 +716,29 @@ impl AdoJob {
             .to_string()
     }
 
+    /// Returns the effective step list for this job.
+    ///
+    /// Regular jobs put steps under `steps:` directly. Deployment jobs nest
+    /// them under `strategy.{runOnce,rolling,canary}.{deploy,preDeploy,
+    /// postDeploy,routeTraffic,onSuccess,onFailure}.steps`. We merge all
+    /// strategy-nested step lists into a single sequence so downstream rules
+    /// see them as part of the job. Order: regular `steps:` first, then any
+    /// strategy-nested steps in deterministic phase order.
+    pub fn all_steps(&self) -> Vec<AdoStep> {
+        let mut out: Vec<AdoStep> = Vec::new();
+        if let Some(ref s) = self.steps {
+            out.extend(s.iter().cloned());
+        }
+        if let Some(ref strat) = self.strategy {
+            for phase in strat.phases() {
+                if let Some(ref s) = phase.steps {
+                    out.extend(s.iter().cloned());
+                }
+            }
+        }
+        out
+    }
+
     /// Returns true when the job is bound to an `environment:` — either the
     /// string form (`environment: production`) or the mapping form with a
     /// non-empty `name:` field. An empty mapping or empty string is ignored.
@@ -684,7 +756,85 @@ impl AdoJob {
     }
 }
 
-#[derive(Debug, Deserialize)]
+/// Deployment-job `strategy:` block. ADO ships three strategies — runOnce,
+/// rolling, canary — each with multiple lifecycle phases that may carry
+/// their own step list. We capture all of them; the AdoJob::all_steps
+/// helper flattens them into one sequence.
+#[derive(Debug, Default, Deserialize, Clone)]
+pub struct AdoStrategy {
+    #[serde(default, rename = "runOnce")]
+    pub run_once: Option<AdoStrategyRunOnce>,
+    #[serde(default)]
+    pub rolling: Option<AdoStrategyRunOnce>,
+    #[serde(default)]
+    pub canary: Option<AdoStrategyRunOnce>,
+}
+
+impl AdoStrategy {
+    /// Iterate over every populated lifecycle phase across all strategies.
+    pub fn phases(&self) -> Vec<&AdoStrategyPhase> {
+        let mut out: Vec<&AdoStrategyPhase> = Vec::new();
+        for runner in [&self.run_once, &self.rolling, &self.canary]
+            .iter()
+            .copied()
+            .flatten()
+        {
+            for phase in [
+                &runner.deploy,
+                &runner.pre_deploy,
+                &runner.post_deploy,
+                &runner.route_traffic,
+            ]
+            .into_iter()
+            .flatten()
+            {
+                out.push(phase);
+            }
+            if let Some(ref on) = runner.on {
+                if let Some(ref s) = on.success {
+                    out.push(s);
+                }
+                if let Some(ref f) = on.failure {
+                    out.push(f);
+                }
+            }
+        }
+        out
+    }
+}
+
+/// Lifecycle phases carried by every deployment strategy. Each phase may
+/// have its own `steps:`. Covering all six avoids silently dropping
+/// privileged setup/teardown steps from the authority graph.
+#[derive(Debug, Default, Deserialize, Clone)]
+pub struct AdoStrategyRunOnce {
+    #[serde(default)]
+    pub deploy: Option<AdoStrategyPhase>,
+    #[serde(default, rename = "preDeploy")]
+    pub pre_deploy: Option<AdoStrategyPhase>,
+    #[serde(default, rename = "postDeploy")]
+    pub post_deploy: Option<AdoStrategyPhase>,
+    #[serde(default, rename = "routeTraffic")]
+    pub route_traffic: Option<AdoStrategyPhase>,
+    #[serde(default)]
+    pub on: Option<AdoStrategyOn>,
+}
+
+#[derive(Debug, Default, Deserialize, Clone)]
+pub struct AdoStrategyOn {
+    #[serde(default)]
+    pub success: Option<AdoStrategyPhase>,
+    #[serde(default)]
+    pub failure: Option<AdoStrategyPhase>,
+}
+
+#[derive(Debug, Default, Deserialize, Clone)]
+pub struct AdoStrategyPhase {
+    #[serde(default)]
+    pub steps: Option<Vec<AdoStep>>,
+}
+
+#[derive(Debug, Deserialize, Clone)]
 pub struct AdoStep {
     /// Task reference e.g. `AzureCLI@2`
     #[serde(default)]

@@ -50,6 +50,14 @@ pub const META_ENV_APPROVAL: &str = "env_approval";
 /// need to attribute steps back to their containing job. Set by both the GHA
 /// and ADO parsers on every Step they create within a job's scope.
 pub const META_JOB_NAME: &str = "job_name";
+/// Records the raw inline script body of a Step so script-aware rules
+/// (secret_to_inline_script_env_export, secret_materialised_to_workspace_file,
+/// keyvault_secret_to_plaintext) can inspect what the step actually executes.
+/// Set by the ADO parser on every Step that has an inline `script:`,
+/// `bash:`, `powershell:`, `pwsh:`, or task `inputs.script`/`inputs.Inline`/
+/// `inputs.inlineScript` body. Stored verbatim — rules apply their own
+/// pattern matching.
+pub const META_SCRIPT_BODY: &str = "script_body";
 
 // ── Shared helpers ─────────────────────────────────────
 

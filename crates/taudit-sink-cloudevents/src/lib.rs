@@ -67,6 +67,11 @@ fn event_type(category: FindingCategory) -> String {
         FindingCategory::VariableGroupInPrJob => "variable_group_in_pr_job",
         FindingCategory::SelfHostedPoolPrHijack => "self_hosted_pool_pr_hijack",
         FindingCategory::ServiceConnectionScopeMismatch => "service_connection_scope_mismatch",
+        FindingCategory::SecretToInlineScriptEnvExport => "secret_to_inline_script_env_export",
+        FindingCategory::SecretMaterialisedToWorkspaceFile => {
+            "secret_materialised_to_workspace_file"
+        }
+        FindingCategory::KeyVaultSecretToPlaintext => "keyvault_secret_to_plaintext",
         #[allow(deprecated)]
         FindingCategory::EgressBlindspot => "egress_blindspot",
         #[allow(deprecated)]

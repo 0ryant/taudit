@@ -1,6 +1,6 @@
 # taudit Rule Reference
 
-17 built-in rules. Run `taudit explain <rule-id>` for a description in the terminal.
+20 built-in rules. Run `taudit explain <rule-id>` for a description in the terminal.
 
 Platforms: **GHA** = GitHub Actions · **ADO** = Azure DevOps · **GL** = GitLab CI
 
@@ -23,6 +23,9 @@ Platforms: **GHA** = GitHub Actions · **ADO** = Azure DevOps · **GL** = GitLab
 | [variable_group_in_pr_job](variable_group_in_pr_job.md) | Critical | Privilege | ADO only |
 | [self_hosted_pool_pr_hijack](self_hosted_pool_pr_hijack.md) | Critical | Injection | ADO only |
 | [service_connection_scope_mismatch](service_connection_scope_mismatch.md) | High | Privilege | ADO only |
+| [secret_to_inline_script_env_export](secret_to_inline_script_env_export.md) | High | Credentials | ADO only |
+| [secret_materialised_to_workspace_file](secret_materialised_to_workspace_file.md) | High | Credentials | ADO only |
+| [keyvault_secret_to_plaintext](keyvault_secret_to_plaintext.md) | Medium | Credentials | ADO only |
 
 ## Severity key
 
