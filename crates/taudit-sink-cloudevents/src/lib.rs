@@ -161,6 +161,7 @@ mod tests {
             file: ".github/workflows/ci.yml".into(),
             repo: None,
             git_ref: None,
+            commit_sha: None,
         }
     }
 

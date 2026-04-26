@@ -773,6 +773,7 @@ mod tests {
             file: ".github/workflows/ci.yml".into(),
             repo: None,
             git_ref: None,
+            commit_sha: None,
         }
     }
 
@@ -954,11 +955,13 @@ mod tests {
             file: ".github/workflows/ci.yml".into(),
             repo: None,
             git_ref: None,
+            commit_sha: None,
         };
         let source_b = PipelineSource {
             file: ".github/workflows/deploy.yml".into(),
             repo: None,
             git_ref: None,
+            commit_sha: None,
         };
         let graph_a = AuthorityGraph::new(source_a);
         let graph_b = AuthorityGraph::new(source_b);

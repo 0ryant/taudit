@@ -449,6 +449,7 @@ mod tests {
             file: ".gitlab-ci.yml".into(),
             repo: None,
             git_ref: None,
+            commit_sha: None,
         };
         parser.parse(yaml, &source).unwrap()
     }

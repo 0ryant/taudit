@@ -249,6 +249,10 @@ pub struct PipelineSource {
     pub repo: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub git_ref: Option<String>,
+    /// SHA of the commit being analyzed; reproducibility hint when set.
+    /// Parsers leave None; CI integrations populate this from the build env.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub commit_sha: Option<String>,
 }
 
 // ── The graph ───────────────────────────────────────────
@@ -402,6 +406,7 @@ mod tests {
             file: "deploy.yml".into(),
             repo: None,
             git_ref: None,
+            commit_sha: None,
         });
 
         let secret = g.add_node(NodeKind::Secret, "AWS_KEY", TrustZone::FirstParty);
@@ -426,6 +431,7 @@ mod tests {
             file: "test.yml".into(),
             repo: None,
             git_ref: None,
+            commit_sha: None,
         });
         assert_eq!(g.completeness, AuthorityCompleteness::Complete);
         assert!(g.completeness_gaps.is_empty());
@@ -437,6 +443,7 @@ mod tests {
             file: "test.yml".into(),
             repo: None,
             git_ref: None,
+            commit_sha: None,
         });
         g.mark_partial("secrets in run: block inferred, not precisely mapped");
         assert_eq!(g.completeness, AuthorityCompleteness::Partial);

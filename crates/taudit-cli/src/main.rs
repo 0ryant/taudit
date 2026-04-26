@@ -23,6 +23,10 @@ use taudit_sink_cloudevents::CloudEventsJsonlSink;
 #[command(
     name = "taudit",
     about = "Pipeline authority scanner — models how authority propagates through CI/CD pipelines",
+    long_about = "CI/CD is an untyped authority system. taudit makes it explicit, inspectable, and enforceable.\n\n\
+                  v0.9.0 is the v1.0 release candidate — the CLI contract, graph schema, and invariant DSL\n\
+                  are intended to be stable, but breaking changes are still possible until v1.0 lands.\n\n\
+                  Start with `taudit verify --help` for policy enforcement, or see docs/positioning.md.",
     version
 )]
 enum Cli {
@@ -2601,6 +2605,7 @@ fn parse_content(
         file: source_file.clone(),
         repo: None,
         git_ref: None,
+        commit_sha: None,
     };
     parser
         .parse(&content, &source)

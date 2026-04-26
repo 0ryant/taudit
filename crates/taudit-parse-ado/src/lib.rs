@@ -1347,6 +1347,7 @@ mod tests {
             file: "azure-pipelines.yml".into(),
             repo: None,
             git_ref: None,
+            commit_sha: None,
         };
         parser.parse(yaml, &source).unwrap()
     }
@@ -1949,6 +1950,7 @@ parameters:
             file: "fragment.yml".into(),
             repo: None,
             git_ref: None,
+            commit_sha: None,
         };
         let result = parser.parse(yaml, &source);
         let graph = result.expect("template fragment must not crash the parser");

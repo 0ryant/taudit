@@ -171,6 +171,7 @@ mod tests {
             file: ".github/workflows/ci.yml".into(),
             repo: None,
             git_ref: None,
+            commit_sha: None,
         });
         let findings = vec![Finding {
             severity: Severity::Medium,
@@ -232,6 +233,7 @@ mod tests {
             file: "tests/fixtures/over-privileged.yml".into(),
             repo: Some("0ryant/taudit".into()),
             git_ref: Some("main".into()),
+            commit_sha: None,
         });
         graph.mark_partial("inline shell scripts not fully resolved");
 

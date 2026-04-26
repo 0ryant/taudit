@@ -444,6 +444,7 @@ mod tests {
             file: file.into(),
             repo: None,
             git_ref: None,
+            commit_sha: None,
         }
     }
 

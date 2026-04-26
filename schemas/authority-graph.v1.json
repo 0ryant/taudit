@@ -2,7 +2,7 @@
   "$schema": "http://json-schema.org/draft-07/schema#",
   "$id": "https://github.com/0ryant/taudit/schemas/authority-graph.v1.json",
   "title": "taudit Authority Graph",
-  "description": "Standalone, versioned authority-graph export from `taudit graph --format json`. Models how authority (secrets, identities) propagates through a CI/CD pipeline. Stable contract — additive changes ship under 1.x.y; breaking changes ship under 2.0.0.",
+  "description": "Standalone, versioned authority-graph export from `taudit graph --format json`. Models how authority (secrets, identities) propagates through a CI/CD pipeline. Stable contract — additive changes ship under 1.x.y; breaking changes ship under 2.0.0. The $id is a logical identifier; the URL may not resolve. Treat as schema namespace, not as a content fetch endpoint.",
   "version": "1.0.0",
   "type": "object",
   "required": ["schema_version", "schema_uri", "graph"],
@@ -58,6 +58,23 @@
           "type": "object",
           "description": "Graph-level metadata set by parsers (e.g. trigger type, platform-specific flags). Omitted when empty.",
           "additionalProperties": { "type": "string" }
+        },
+        "parameters": {
+          "type": "object",
+          "description": "Top-level pipeline parameters (ADO) used for parameter-interpolation analysis. Keys are parameter names.",
+          "additionalProperties": {
+            "type": "object",
+            "properties": {
+              "param_type": {
+                "type": "string",
+                "description": "Declared parameter type (string, number, boolean, object, etc.). Empty when omitted (defaults to string)."
+              },
+              "has_values_allowlist": {
+                "type": "boolean",
+                "description": "True when the parameter declares a values: allowlist that constrains acceptable inputs."
+              }
+            }
+          }
         }
       }
     },
@@ -78,6 +95,10 @@
         "git_ref": {
           "type": "string",
           "description": "Optional git ref (branch, tag, or SHA) the file was read from."
+        },
+        "commit_sha": {
+          "type": ["string", "null"],
+          "description": "SHA of the commit being analyzed; reproducibility hint when set."
         }
       }
     },

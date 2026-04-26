@@ -402,6 +402,7 @@ mod tests {
             file: "test.yml".into(),
             repo: None,
             git_ref: None,
+            commit_sha: None,
         }
     }
 

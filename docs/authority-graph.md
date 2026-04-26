@@ -172,6 +172,17 @@ findings, no rule output, no remediation. Tools that want findings
 should keep using `taudit scan --format json` (which now also includes
 `schema_version` and `schema_uri` for the report contract).
 
+## Public metadata keys
+
+Most `META_*` keys on nodes are parser-private — they're internal hints
+for the rule engine and may change shape between minor versions. One key
+is publicly stable and part of the schema contract:
+
+- **`job_name`** (constant `META_JOB_NAME`) — populated on every Step
+  node by all 3 parsers (GHA, ADO, GitLab CI). Records the parent job
+  name. Downstream consumers can rely on it for per-job filtering and
+  attribution. Other `META_*` keys remain implementation details.
+
 ## See also
 
 - [`schemas/authority-graph.v1.json`](../schemas/authority-graph.v1.json) — the schema itself
