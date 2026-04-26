@@ -2,6 +2,71 @@
 
 All notable changes to this project will be documented in this file.
 
+## v0.9.2 — 2026-04-26
+
+> Patch release focused on correctness, integration readiness, and operator
+> workflow. Ships 8 merged bundles since v0.9.1: parser/data-integrity fixes,
+> security hardening, SOC outputs, major propagation performance gains,
+> stability/provenance improvements, blue-team positive invariants,
+> suppressions, and baseline-driven adoption.
+
+### Added — Baselines feature (`.taudit/baselines/`)
+
+- **Per-pipeline baselines** keyed by content hash at `.taudit/baselines/<hash>.json`.
+- **`taudit baseline {init, accept, diff, review}`** command group for establishing and maintaining accepted finding state.
+- **`scan` + `verify` baseline-aware by default** with diff-shaped output and the critical-always-fails contract.
+
+### Added — Suppressions feature (`.taudit-suppressions.yml`)
+
+- **Per-finding waivers with audit trail** via `.taudit-suppressions.yml`.
+- **`taudit suppressions {list, add, review}`** command group.
+- **Finding model expansion** with six operator fields including grouping, time-to-fix context, compensating controls, and suppression metadata.
+
+### Added — Blue-team defensive signal
+
+- **5 positive invariants** from corpus defense work.
+- **4 compensating-control suppressions** tied to platform and repository guardrail metadata.
+
+### Added — SOC and ecosystem integrations
+
+- **`tauditplatform` CloudEvents extension** for downstream routing/attribution.
+- **`scan --dedupe-against`** for incremental SIEM ingest workflows.
+- **`schemas/finding.v1.json`** standalone finding schema for external validators.
+- **SARIF partial fingerprints** published under `partialFingerprints["taudit/v1"]`.
+
+### Changed — Stability and provenance
+
+- **`FindingSource` provenance** now distinguishes built-in vs custom-rule findings.
+- **Fingerprint v2** now includes all canonical components deterministically.
+- **New composition rule**: `secret_via_env_gate_to_untrusted_consumer`.
+
+### Fixed — Bug bundle and security hardening
+
+- **GHA parser regression fixed** (EnvSpec edge case impacting 206 files).
+- **ADO parser regression fixed** (37-file regression set).
+- **JSON output integrity**: `rule_id` now populated and output ordering stabilized for byte-deterministic JSON.
+- **`detect_platform()` now path-aware** with mismatch warning behavior.
+- **Pin validation hardened**: rejects all-zero SHA and truncated digest forms.
+- **`--invariants-dir` hardening**: rejects unsafe symlink traversal by default.
+- **Cross-platform completeness guard**: parsers mark `Partial` when zero step nodes are produced.
+
+### Performance
+
+- **Propagation engine rewrite** reduced dense-case scan latency from ~1.08 s to ~15.3 ms (~70x in benchmark scenario).
+- **Authority propagation clustering** reduced large hit sets (example: 6,565 to 1,145 findings).
+- **`unpinned_action` severity tiering** improves signal quality by trust zone.
+
+### Release delta summary (v0.9.1..v0.9.2)
+
+- 37 commits grouped into 8 merge bundles.
+- 41 files changed, 12,393 insertions(+), 1,985 deletions(-).
+- Built-in invariants increased from 32 to 38.
+
+### Known issues
+
+- **Flaky test:** `verify_violating_fixture_exits_one` may fail in full-suite execution but passes on isolated re-run. Suspected shared temporary-directory coupling; tracked as a v0.9.3 follow-up.
+- **Deferred rules batch:** the 21 council/redteam GHA+GitLab additive rules from deferred worktree `af68e4b6acd4e6bdd` are intentionally not included in v0.9.2.
+
 ## v0.9.1 — 2026-04-26
 
 > Patch release. Same RC-for-v1.0 framing as v0.9.0. Adds 5 new authority

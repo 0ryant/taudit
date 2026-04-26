@@ -1842,7 +1842,7 @@ dependencies = [
 
 [[package]]
 name = "taudit"
-version = "0.9.1"
+version = "0.9.2"
 dependencies = [
  "anyhow",
  "chrono",
@@ -1864,7 +1864,7 @@ dependencies = [
 
 [[package]]
 name = "taudit-core"
-version = "0.9.1"
+version = "0.9.2"
 dependencies = [
  "chrono",
  "criterion",
@@ -1878,7 +1878,7 @@ dependencies = [
 
 [[package]]
 name = "taudit-parse-ado"
-version = "0.9.1"
+version = "0.9.2"
 dependencies = [
  "criterion",
  "serde",
@@ -1890,7 +1890,7 @@ dependencies = [
 
 [[package]]
 name = "taudit-parse-gha"
-version = "0.9.1"
+version = "0.9.2"
 dependencies = [
  "criterion",
  "serde",
@@ -1901,7 +1901,7 @@ dependencies = [
 
 [[package]]
 name = "taudit-parse-gitlab"
-version = "0.9.1"
+version = "0.9.2"
 dependencies = [
  "criterion",
  "serde",
@@ -1912,7 +1912,7 @@ dependencies = [
 
 [[package]]
 name = "taudit-report-json"
-version = "0.9.1"
+version = "0.9.2"
 dependencies = [
  "jsonschema",
  "serde",
@@ -1922,7 +1922,7 @@ dependencies = [
 
 [[package]]
 name = "taudit-report-sarif"
-version = "0.9.1"
+version = "0.9.2"
 dependencies = [
  "serde",
  "serde_json",
@@ -1931,7 +1931,7 @@ dependencies = [
 
 [[package]]
 name = "taudit-report-terminal"
-version = "0.9.1"
+version = "0.9.2"
 dependencies = [
  "colored",
  "taudit-core",
@@ -1939,7 +1939,7 @@ dependencies = [
 
 [[package]]
 name = "taudit-sink-cloudevents"
-version = "0.9.1"
+version = "0.9.2"
 dependencies = [
  "chrono",
  "jsonschema",
