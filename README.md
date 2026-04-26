@@ -62,6 +62,18 @@ Run `taudit explain` to list all invariants, or `taudit explain <rule>` for full
 
 Severity is graduated from real-world signal: constrained identity to SHA-pinned action = Medium. Broad identity to unpinned action = Critical. The tool handles unknowns honestly — if it can't fully resolve the authority graph, it marks it `Partial`, tells you why, and caps findings at High until the graph is complete.
 
+## Adopting on existing repos: per-pipeline baselines
+
+Rolling taudit onto a repo with hundreds of historical findings shouldn't mean "fix 200 things before your first PR turns green." Capture a baseline once, and `verify` only fails on **NEW** findings from that point forward:
+
+```bash
+taudit baseline init .github/workflows/   # one-time snapshot
+git add .taudit/baselines/                # commit the contract
+taudit verify --policy invariants/ .github/workflows/   # exits 0 unless a NEW finding lands
+```
+
+Baselines are opt-in (no `.taudit/` directory ⇒ today's behaviour, byte-identical), per-pipeline (one file per workflow keyed by content hash, so merge conflicts touch at most one file), and the fingerprint is the same as in SARIF/JSON/CloudEvents output. **Critical findings always count toward exit 1** unless explicitly waived with a 90-day-bounded justification — a security analyst's non-negotiable. See [`docs/baselines.md`](docs/baselines.md).
+
 ## Stack positioning
 
 taudit is **the graph layer** of a small, composable stack. It is meant to be combined with sibling projects, not extended into them:
