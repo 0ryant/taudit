@@ -1,6 +1,6 @@
 # taudit Rule Reference
 
-28 built-in rules. Run `taudit explain <rule-id>` for a description in the terminal.
+33 built-in rules. Run `taudit explain <rule-id>` for a description in the terminal.
 
 ## Top-level commands
 
@@ -44,6 +44,11 @@ Platforms: **GHA** = GitHub Actions · **ADO** = Azure DevOps · **GL** = GitLab
 | [add_spn_with_inline_script](add_spn_with_inline_script.md) | High | Credentials | ADO only |
 | [parameter_interpolation_into_shell](parameter_interpolation_into_shell.md) | Medium | Injection | ADO only |
 | [terraform_output_via_setvariable_shell_expansion](terraform_output_via_setvariable_shell_expansion.md) | High | Injection | ADO only |
+| [no_workflow_level_permissions_block](no_workflow_level_permissions_block.md) | Medium | Configuration | GHA only |
+| [prod_deploy_job_no_environment_gate](prod_deploy_job_no_environment_gate.md) | High | Privilege | ADO only |
+| [long_lived_secret_without_oidc_recommendation](long_lived_secret_without_oidc_recommendation.md) | Info | Credentials | GHA, ADO, GL |
+| [pull_request_workflow_inconsistent_fork_check](pull_request_workflow_inconsistent_fork_check.md) | High / Medium | Privilege | GHA only |
+| [gitlab_deploy_job_missing_protected_branch_only](gitlab_deploy_job_missing_protected_branch_only.md) | Medium | Configuration | GitLab only |
 
 ## Severity key
 
@@ -67,7 +72,11 @@ Several rules graduate severity based on context rather than emitting a fixed le
 - **trigger_context_mismatch** — Critical for `pull_request_target`; High for ADO `pr:` trigger.
 - **self_mutating_pipeline** — Critical for untrusted steps; High when the step also holds secrets or identity; Medium otherwise.
 - **cross_workflow_authority_chain** — Critical for Untrusted target workflows; High for ThirdParty.
-- **over_privileged_identity** — High for Broad scope; Medium for Unknown scope.
+- **over_privileged_identity** — High for Broad scope; Medium for Unknown scope. Suppressed to Info when the workflow's broad GITHUB_TOKEN is narrowed by a per-job `permissions:` override (the runtime identity is the narrower one).
+- **terraform_auto_approve_in_prod** — Critical when no environment gate; downgraded to Medium when the job has any `environment:` binding (gate's approver list is invisible from YAML, so the finding stays visible at lower severity).
+- **checkout_self_pr_exposure** — High when the same job has any privileged step (secret/identity access or env-gate write); downgraded to Info when the job has none (checkout is read-only for lint/test/analysis).
+- **trigger_context_mismatch** — Critical for `pull_request_target` and High for ADO `pr:` (as above), then downgraded one tier when every privileged step in the workflow carries the standard fork-check `if:`.
+- **pull_request_workflow_inconsistent_fork_check** — High when 2+ privileged jobs are unguarded; Medium when only one is.
 
 ---
 

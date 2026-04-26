@@ -94,6 +94,17 @@ fn event_type(category: FindingCategory) -> String {
         FindingCategory::PrBuildPushesImageWithFloatingCredentials => {
             "pr_build_pushes_image_with_floating_credentials"
         }
+        FindingCategory::NoWorkflowLevelPermissionsBlock => "no_workflow_level_permissions_block",
+        FindingCategory::ProdDeployJobNoEnvironmentGate => "prod_deploy_job_no_environment_gate",
+        FindingCategory::LongLivedSecretWithoutOidcRecommendation => {
+            "long_lived_secret_without_oidc_recommendation"
+        }
+        FindingCategory::PullRequestWorkflowInconsistentForkCheck => {
+            "pull_request_workflow_inconsistent_fork_check"
+        }
+        FindingCategory::GitlabDeployJobMissingProtectedBranchOnly => {
+            "gitlab_deploy_job_missing_protected_branch_only"
+        }
         #[allow(deprecated)]
         FindingCategory::EgressBlindspot => "egress_blindspot",
         #[allow(deprecated)]

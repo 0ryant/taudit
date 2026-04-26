@@ -148,6 +148,31 @@ pub enum FindingCategory {
     /// OIDC tokens or registry credentials, and the workflow then pushes a
     /// PR-controlled image to a shared registry.
     PrBuildPushesImageWithFloatingCredentials,
+    /// Positive-invariant rule (GHA): the workflow declares neither a
+    /// top-level nor a per-job `permissions:` block, leaving GITHUB_TOKEN at
+    /// its broad platform default. Fires once per workflow file.
+    NoWorkflowLevelPermissionsBlock,
+    /// Positive-invariant rule (ADO): a job referencing a production-named
+    /// service connection has no `environment:` binding, so it bypasses the
+    /// only ADO-side approval gate regardless of whether `-auto-approve` is
+    /// present. Strictly broader than `terraform_auto_approve_in_prod`.
+    ProdDeployJobNoEnvironmentGate,
+    /// Positive-invariant rule (cross-platform): a long-lived static
+    /// credential is in scope but the workflow does not currently use any
+    /// OIDC identity even though the target cloud supports federation.
+    /// Advisory uplift on top of `long_lived_credential` that wires the
+    /// existing `Recommendation::FederateIdentity` variant.
+    LongLivedSecretWithoutOidcRecommendation,
+    /// Positive-invariant rule (GHA): a PR-triggered workflow has multiple
+    /// privileged jobs where SOME have the standard fork-check `if:` and
+    /// OTHERS do not. Detects an intra-file inconsistency in defensive
+    /// posture — the org has the right instinct but applied it unevenly.
+    PullRequestWorkflowInconsistentForkCheck,
+    /// Positive-invariant rule (GitLab): a job with a production-named
+    /// `environment:` binding has no `rules:` / `only:` clause restricting
+    /// it to protected branches. Deploy job runs (or attempts to run) on
+    /// every pipeline trigger.
+    GitlabDeployJobMissingProtectedBranchOnly,
     // Reserved — requires ADO/GH API enrichment beyond pipeline YAML
     /// Requires runtime network telemetry or policy enrichment — not detectable from YAML alone.
     #[doc(hidden)]

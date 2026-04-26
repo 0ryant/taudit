@@ -496,6 +496,94 @@ pub const RULE_DEFS: &[RuleDef] = &[
         security_severity: "7.5",
         tags: &["security", "supply-chain", "credentials", "github-actions"],
     },
+    // ── Blue-team positive invariants ───────────────────────
+    RuleDef {
+        id: "no_workflow_level_permissions_block",
+        name: "NoWorkflowLevelPermissionsBlock",
+        short_description:
+            "GitHub Actions workflow declares no top-level or per-job `permissions:` block.",
+        full_description:
+            "The workflow declares neither a top-level `permissions:` block nor a per-job \
+             `permissions:` block. Without an explicit declaration, `GITHUB_TOKEN` falls back to \
+             the broad GitHub default scope (`contents: write`, `packages: write`, metadata \
+             read, etc.) on every trigger. The blast radius cannot be determined by reading the \
+             workflow file alone — making both review and incident triage harder. Add \
+             `permissions: {}` at the top level (strips all defaults), then narrow per-job to \
+             the minimum each job needs.",
+        default_level: "warning",
+        security_severity: "5.0",
+        tags: &["security", "configuration", "github-actions"],
+    },
+    RuleDef {
+        id: "prod_deploy_job_no_environment_gate",
+        name: "ProdDeployJobNoEnvironmentGate",
+        short_description:
+            "ADO production deployment job has no `environment:` binding (no approval gate).",
+        full_description:
+            "An ADO step targets a service connection whose name matches a production pattern \
+             (`prod`, `production`, `prd`) but the enclosing job carries no `environment:` \
+             binding. Strictly broader than `terraform_auto_approve_in_prod` — fires on any \
+             prod-SC operation (Terraform apply, ARM/Bicep deployment, AzureCLI/AzurePowerShell \
+             custom step) regardless of whether `-auto-approve` is present. Without an \
+             environment binding the step bypasses the only ADO-side approval gate, runs on \
+             every trigger, and produces no entry in the ADO Environments audit trail.",
+        default_level: "error",
+        security_severity: "7.5",
+        tags: &["security", "privilege-escalation", "azure-devops"],
+    },
+    RuleDef {
+        id: "long_lived_secret_without_oidc_recommendation",
+        name: "LongLivedSecretWithoutOidcRecommendation",
+        short_description:
+            "Long-lived cloud credential in scope; provider supports OIDC and no OIDC identity exists.",
+        full_description:
+            "A long-lived static credential is in scope (name matches an AWS / GCP / Azure \
+             pattern such as `AWS_*`, `GCP_*`, `GOOGLE_*`, `AZURE_*`, `ARM_*`) AND no OIDC \
+             identity is present in the workflow's authority graph. The named cloud supports \
+             OIDC federation, so the static credential could be replaced with a short-lived \
+             token issued at runtime. Advisory uplift on top of `long_lived_credential` — does \
+             not double-flag the underlying credential, only adds the migration recommendation. \
+             Wires the existing `Recommendation::FederateIdentity` enum variant.",
+        default_level: "note",
+        security_severity: "0.1",
+        tags: &["security", "credentials"],
+    },
+    RuleDef {
+        id: "pull_request_workflow_inconsistent_fork_check",
+        name: "PullRequestWorkflowInconsistentForkCheck",
+        short_description:
+            "Some privileged jobs in this PR workflow guard with a fork-check `if:`; others do not.",
+        full_description:
+            "A `pull_request` / `pull_request_target` workflow has multiple privileged jobs \
+             (jobs with steps that hold secrets or identity authority). At least one job's \
+             privileged steps are guarded by the standard fork-check `if:` \
+             (`github.event.pull_request.head.repo.fork == false` or the equivalent \
+             `head.repo.full_name == github.repository`) — but at least one OTHER privileged \
+             job is unguarded. The org has the right defensive instinct (some jobs have the \
+             check) but applied it inconsistently. The unguarded jobs hold authority that \
+             fork-PR code can reach. Add the same fork-check to every privileged job in the \
+             workflow.",
+        default_level: "error",
+        security_severity: "7.5",
+        tags: &["security", "privilege-escalation", "github-actions"],
+    },
+    RuleDef {
+        id: "gitlab_deploy_job_missing_protected_branch_only",
+        name: "GitlabDeployJobMissingProtectedBranchOnly",
+        short_description:
+            "GitLab deploy job targets a production environment but has no protected-branch restriction.",
+        full_description:
+            "A GitLab CI job has an `environment:` binding whose name matches a production \
+             pattern (`prod`, `production`, `prd`) but no `rules:` / `only:` clause restricts \
+             execution to protected branches. The job runs (or attempts to run) on every \
+             pipeline trigger — every MR, every push. If branch protection is later relaxed \
+             the deploy silently becomes runnable from unprotected branches. Add \
+             `rules: - if: '$CI_COMMIT_REF_PROTECTED == \"true\"'`, or `only: [main]` for the \
+             simplest case — both survive future changes to branch-protection settings.",
+        default_level: "warning",
+        security_severity: "5.0",
+        tags: &["security", "configuration", "gitlab"],
+    },
 ];
 
 // ── SARIF 2.1.0 schema structs ──────────────────────────
