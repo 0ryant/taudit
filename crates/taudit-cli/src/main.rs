@@ -1,7 +1,7 @@
 use anyhow::{Context, Result};
 use clap::{CommandFactory, Parser};
 use std::collections::HashSet;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use taudit_core::finding::Severity;
@@ -433,14 +433,62 @@ impl Platform {
     }
 }
 
-/// Detect the CI/CD platform from YAML content by inspecting top-level mapping keys.
+/// Path-based platform hint. Returns `Some(platform)` when the file path
+/// strongly indicates a specific CI platform; `None` when the path is
+/// uninformative.
 ///
-/// - Top-level `on:` → `GithubActions`.
-/// - `stages:` as flat string list (e.g. `["build", "test"]`) → `GitLab`.
-/// - `stages:` as list of objects (e.g. `[{stage: build, jobs: [...]}]`) → `AzureDevOps`.
-/// - `trigger:`, `pr:`, or `jobs:` (without `on:`) → `AzureDevOps`.
-/// - Else → `GithubActions` (safe fallback).
-fn detect_platform(content: &str) -> Platform {
+/// Hints (case-sensitive against forward-slash-normalised path):
+/// - `.gitlab-ci.yml`, `*-gitlab-ci.yml`, `gitlab-ci.yml` → GitLab
+/// - `azure-pipelines*.yml`, `*.azure-pipelines.yml`, files under
+///   `.azuredevops/` or `.pipelines/` → ADO
+/// - Files under `.github/workflows/` → GHA
+fn platform_from_path(path: &Path) -> Option<Platform> {
+    // Normalize separators so the substring checks below work on Windows too.
+    let path_str = path.to_string_lossy().replace('\\', "/");
+    let lower = path_str.to_ascii_lowercase();
+
+    let file_name = path
+        .file_name()
+        .and_then(|s| s.to_str())
+        .map(|s| s.to_ascii_lowercase())
+        .unwrap_or_default();
+
+    // GitLab — most distinctive name pattern. Match the bare filename so we
+    // don't trip on a directory called "gitlab-ci.yml".
+    if file_name == ".gitlab-ci.yml"
+        || file_name == "gitlab-ci.yml"
+        || file_name.ends_with("-gitlab-ci.yml")
+        || file_name.ends_with(".gitlab-ci.yml")
+    {
+        return Some(Platform::GitLab);
+    }
+
+    // ADO — `azure-pipelines.yml`, `azure-pipelines-prod.yml`, `release.azure-pipelines.yml`,
+    // or any file under `.azuredevops/` / `.pipelines/`.
+    if file_name.starts_with("azure-pipelines") && file_name.ends_with(".yml")
+        || file_name.ends_with(".azure-pipelines.yml")
+        || lower.contains("/.azuredevops/")
+        || lower.starts_with(".azuredevops/")
+        || lower.contains("/.pipelines/")
+        || lower.starts_with(".pipelines/")
+    {
+        return Some(Platform::AzureDevOps);
+    }
+
+    // GHA — anything under `.github/workflows/`.
+    if lower.contains("/.github/workflows/") || lower.starts_with(".github/workflows/") {
+        return Some(Platform::GithubActions);
+    }
+
+    None
+}
+
+/// Detect platform from YAML content alone (no path hint).
+///
+/// Caller should usually use [`detect_platform`] instead, which combines a
+/// path hint with the content sniff. This function is exposed for tests and
+/// for the stdin path where no filename is available.
+fn detect_platform_from_content(content: &str) -> Platform {
     let parsed: Result<serde_yaml::Value, _> = serde_yaml::from_str(content);
     let Ok(value) = parsed else {
         return Platform::GithubActions;
@@ -479,6 +527,65 @@ fn detect_platform(content: &str) -> Platform {
     }
 
     Platform::GithubActions
+}
+
+/// Detect platform from YAML content, optionally biased by the source file
+/// path. The filename is treated as a strong hint and **wins** over
+/// content-based detection for unambiguous patterns (e.g. `.gitlab-ci.yml`
+/// containing a stray top-level `on:`). When the two disagree, a stderr
+/// warning is emitted so the user can pass `--platform` explicitly if the
+/// filename is misleading. Pass `None` for stdin / inputs without a path.
+///
+/// Fuzz B2 reproducer: `.gitlab-ci.yml` containing `on:` previously parsed
+/// as GHA and silently dropped GitLab `test:` jobs from the graph.
+fn detect_platform(content: &str, path: Option<&Path>) -> Platform {
+    let content_guess = detect_platform_from_content(content);
+
+    let Some(path) = path else {
+        return content_guess;
+    };
+
+    let Some(path_guess) = platform_from_path(path) else {
+        return content_guess;
+    };
+
+    if path_guess != content_guess {
+        let path_str = path.display();
+        // Surface the GHA `on:` mismatch case explicitly because that's the
+        // documented attacker primitive (single stray top-level key flips the
+        // analyser). Other mismatch shapes get the generic message.
+        let parsed_top: Result<serde_yaml::Value, _> = serde_yaml::from_str(content);
+        let has_on = parsed_top
+            .ok()
+            .and_then(|v| v.as_mapping().cloned())
+            .map(|m| m.contains_key(serde_yaml::Value::String("on".into())))
+            .unwrap_or(false);
+
+        let kind_label = match path_guess {
+            Platform::GitLab => "GitLab CI",
+            Platform::AzureDevOps => "Azure DevOps",
+            Platform::GithubActions => "GitHub Actions",
+            Platform::Auto => "auto",
+        };
+        let cli_value = match path_guess {
+            Platform::GitLab => "gitlab",
+            Platform::AzureDevOps => "azure-devops",
+            Platform::GithubActions => "github-actions",
+            Platform::Auto => "auto",
+        };
+
+        if path_guess == Platform::GitLab && has_on {
+            eprintln!(
+                "WARNING: {path_str} looks like {kind_label} by name but contains GHA-only syntax (on:); parsing as {kind_label}. If this is wrong, use --platform <X> explicitly."
+            );
+        } else {
+            eprintln!(
+                "WARNING: {path_str} looks like {kind_label} by name but content suggests another platform; parsing as {kind_label}. If this is wrong, use --platform {cli_value} (or another value) explicitly."
+            );
+        }
+    }
+
+    path_guess
 }
 
 /// Severity levels for the threshold flag.
@@ -721,7 +828,7 @@ fn cmd_diff(
         if platform == Platform::Auto {
             let content = std::fs::read_to_string(path)
                 .with_context(|| format!("Failed to read {}", path.display()))?;
-            let resolved_platform = resolve_platform(&platform, &content);
+            let resolved_platform = resolve_platform(&platform, &content, Some(path.as_path()));
             let per_file_parser = make_parser(&resolved_platform);
             parse_content(
                 per_file_parser.as_ref(),
@@ -946,9 +1053,9 @@ fn cmd_scan(opts: ScanOpts) -> Result<()> {
                 .read_to_string(&mut content)
                 .with_context(|| "Failed to read from stdin")?;
             // Resolve `Auto` against the stdin content; otherwise reuse the
-            // pre-built parser without re-allocating.
+            // pre-built parser without re-allocating. No path hint for stdin.
             if platform == Platform::Auto {
-                let resolved_platform = resolve_platform(&platform, &content);
+                let resolved_platform = resolve_platform(&platform, &content, None);
                 let per_file_parser = make_parser(&resolved_platform);
                 parse_content(per_file_parser.as_ref(), content, "<stdin>".to_string())?
             } else {
@@ -973,7 +1080,7 @@ fn cmd_scan(opts: ScanOpts) -> Result<()> {
                 },
             };
             let parse_result = if platform == Platform::Auto {
-                let resolved_platform = resolve_platform(&platform, &content);
+                let resolved_platform = resolve_platform(&platform, &content, Some(path.as_path()));
                 let per_file_parser = make_parser(&resolved_platform);
                 parse_content(
                     per_file_parser.as_ref(),
@@ -1329,7 +1436,8 @@ fn run_verify_io<W: std::io::Write>(opts: &VerifyOpts, writer: &mut W) -> i32 {
         };
 
         let parse_result = if opts.platform == Platform::Auto {
-            let resolved_platform = resolve_platform(&opts.platform, &content);
+            let resolved_platform =
+                resolve_platform(&opts.platform, &content, Some(path.as_path()));
             let per_file_parser = make_parser(&resolved_platform);
             parse_content(
                 per_file_parser.as_ref(),
@@ -2034,7 +2142,7 @@ fn cmd_map(
                     }
                 },
             };
-            let resolved_platform = resolve_platform(&platform, &content);
+            let resolved_platform = resolve_platform(&platform, &content, Some(path.as_path()));
             let per_file_parser = make_parser(&resolved_platform);
             match parse_content(
                 per_file_parser.as_ref(),
@@ -2142,7 +2250,7 @@ fn cmd_graph(
                     }
                 },
             };
-            let resolved_platform = resolve_platform(&platform, &content);
+            let resolved_platform = resolve_platform(&platform, &content, Some(path.as_path()));
             let per_file_parser = make_parser(&resolved_platform);
             match parse_content(
                 per_file_parser.as_ref(),
@@ -2590,10 +2698,11 @@ fn make_parser(platform: &Platform) -> Box<dyn taudit_core::ports::PipelineParse
 }
 
 /// Resolve `Platform::Auto` against a YAML body. Returns the platform unchanged
-/// when it's already concrete.
-fn resolve_platform(platform: &Platform, content: &str) -> Platform {
+/// when it's already concrete. The optional `path` is used as a strong filename
+/// hint when present (see [`detect_platform`]).
+fn resolve_platform(platform: &Platform, content: &str, path: Option<&Path>) -> Platform {
     match platform {
-        Platform::Auto => detect_platform(content),
+        Platform::Auto => detect_platform(content, path),
         Platform::GithubActions => Platform::GithubActions,
         Platform::AzureDevOps => Platform::AzureDevOps,
         Platform::GitLab => Platform::GitLab,
@@ -2848,46 +2957,127 @@ mod tests {
     fn auto_detects_github_actions() {
         // Top-level `on:` is the GHA-only trigger key.
         let yaml = "name: ci\non:\n  push:\n    branches: [main]\njobs:\n  build:\n    runs-on: ubuntu-latest\n    steps:\n      - run: echo hi\n";
-        assert_eq!(detect_platform(yaml), Platform::GithubActions);
+        assert_eq!(detect_platform_from_content(yaml), Platform::GithubActions);
     }
 
     #[test]
     fn auto_detects_azure_devops() {
         // ADO uses `trigger:` / `pr:` / `stages:` / `jobs:` without `on:`.
         let yaml = "trigger:\n  branches:\n    include: [main]\nstages:\n  - stage: build\n    jobs:\n      - job: compile\n        steps:\n          - script: echo hi\n";
-        assert_eq!(detect_platform(yaml), Platform::AzureDevOps);
+        assert_eq!(detect_platform_from_content(yaml), Platform::AzureDevOps);
     }
 
     #[test]
     fn auto_falls_back_to_github_actions_when_yaml_unparseable() {
         let yaml = "::: this is not yaml :::\n  - and: [oops";
-        assert_eq!(detect_platform(yaml), Platform::GithubActions);
+        assert_eq!(detect_platform_from_content(yaml), Platform::GithubActions);
     }
 
     #[test]
     fn auto_falls_back_to_github_actions_when_no_markers() {
         let yaml = "name: hello\nversion: 1\n";
-        assert_eq!(detect_platform(yaml), Platform::GithubActions);
+        assert_eq!(detect_platform_from_content(yaml), Platform::GithubActions);
     }
 
     #[test]
     fn auto_detects_gitlab_ci_by_stages_string_list() {
         let yaml = "stages:\n  - build\n  - test\n  - deploy\n\nbuild-job:\n  stage: build\n  script:\n    - make\n";
-        assert_eq!(detect_platform(yaml), Platform::GitLab);
+        assert_eq!(detect_platform_from_content(yaml), Platform::GitLab);
     }
 
     #[test]
     fn stages_object_list_still_detects_ado_not_gitlab() {
         // ADO stages: is a list of objects, not strings
         let yaml = "trigger:\n  - main\nstages:\n  - stage: build\n    jobs:\n      - job: compile\n        steps:\n          - script: echo hi\n";
-        assert_eq!(detect_platform(yaml), Platform::AzureDevOps);
+        assert_eq!(detect_platform_from_content(yaml), Platform::AzureDevOps);
     }
 
     #[test]
     fn auto_detects_gitlab_ci_by_image_key() {
         // GitLab CI with image: at top level but no stages:
         let yaml = "image: alpine:latest\n\nbuild:\n  script:\n    - make\n";
-        assert_eq!(detect_platform(yaml), Platform::GitLab);
+        assert_eq!(detect_platform_from_content(yaml), Platform::GitLab);
+    }
+
+    // -------- path-based detection (fuzz B2 regression) --------
+
+    #[test]
+    fn path_hint_gitlab_overrides_gha_content() {
+        // Fuzz B2 reproducer: a `.gitlab-ci.yml` file containing a stray
+        // top-level `on:` previously routed through the GHA parser and
+        // dropped the gitlab `test:` job. Filename now wins.
+        let yaml =
+            "on:\n  push:\nstages:\n  - test\n\ntest:\n  stage: test\n  script:\n    - make test\n";
+        let path = Path::new(".gitlab-ci.yml");
+        assert_eq!(detect_platform(yaml, Some(path)), Platform::GitLab);
+    }
+
+    #[test]
+    fn path_hint_gitlab_suffix_variant() {
+        let yaml = "stages:\n  - build\nbuild:\n  script:\n    - make\n";
+        let path = Path::new("backend/release-gitlab-ci.yml");
+        assert_eq!(detect_platform(yaml, Some(path)), Platform::GitLab);
+    }
+
+    #[test]
+    fn path_hint_ado_filename() {
+        let yaml = "trigger:\n  - main\nstages:\n  - stage: build\n    jobs:\n      - job: c\n        steps:\n          - script: echo\n";
+        let path = Path::new("azure-pipelines.yml");
+        assert_eq!(detect_platform(yaml, Some(path)), Platform::AzureDevOps);
+    }
+
+    #[test]
+    fn path_hint_ado_pipelines_dir() {
+        let yaml = "trigger:\n  - main\nstages:\n  - stage: build\n    jobs:\n      - job: c\n        steps:\n          - script: echo\n";
+        let path = Path::new(".pipelines/build.yml");
+        assert_eq!(detect_platform(yaml, Some(path)), Platform::AzureDevOps);
+    }
+
+    #[test]
+    fn path_hint_gha_workflows_dir() {
+        let yaml = "name: ci\non:\n  push:\njobs:\n  build:\n    runs-on: ubuntu-latest\n    steps:\n      - run: echo\n";
+        let path = Path::new(".github/workflows/ci.yml");
+        assert_eq!(detect_platform(yaml, Some(path)), Platform::GithubActions);
+    }
+
+    #[test]
+    fn path_hint_no_filename_falls_back_to_content() {
+        // No path → pure content sniff (GHA via `on:`).
+        let yaml = "name: ci\non:\n  push:\njobs:\n  build:\n    runs-on: ubuntu-latest\n    steps:\n      - run: echo\n";
+        assert_eq!(detect_platform(yaml, None), Platform::GithubActions);
+    }
+
+    #[test]
+    fn path_hint_uninformative_path_falls_back_to_content() {
+        // `pipeline.yml` in the repo root is not a recognised pattern.
+        let yaml = "name: ci\non:\n  push:\njobs:\n  build:\n    runs-on: ubuntu-latest\n    steps:\n      - run: echo\n";
+        let path = Path::new("pipeline.yml");
+        assert_eq!(detect_platform(yaml, Some(path)), Platform::GithubActions);
+    }
+
+    #[test]
+    fn path_from_path_helper_unambiguous_cases() {
+        assert_eq!(
+            platform_from_path(Path::new(".gitlab-ci.yml")),
+            Some(Platform::GitLab)
+        );
+        assert_eq!(
+            platform_from_path(Path::new("a/b/.gitlab-ci.yml")),
+            Some(Platform::GitLab)
+        );
+        assert_eq!(
+            platform_from_path(Path::new("azure-pipelines-prod.yml")),
+            Some(Platform::AzureDevOps)
+        );
+        assert_eq!(
+            platform_from_path(Path::new(".azuredevops/build.yml")),
+            Some(Platform::AzureDevOps)
+        );
+        assert_eq!(
+            platform_from_path(Path::new("repo/.github/workflows/x.yml")),
+            Some(Platform::GithubActions)
+        );
+        assert_eq!(platform_from_path(Path::new("misc.yml")), None);
     }
 
     // -------- verify command tests --------
