@@ -68,6 +68,7 @@ fn event_type(category: FindingCategory) -> String {
         FindingCategory::SelfHostedPoolPrHijack => "self_hosted_pool_pr_hijack",
         FindingCategory::ServiceConnectionScopeMismatch => "service_connection_scope_mismatch",
         FindingCategory::TemplateExtendsUnpinnedBranch => "template_extends_unpinned_branch",
+        FindingCategory::TemplateRepoRefIsFeatureBranch => "template_repo_ref_is_feature_branch",
         FindingCategory::VmRemoteExecViaPipelineSecret => "vm_remote_exec_via_pipeline_secret",
         FindingCategory::ShortLivedSasInCommandLine => "short_lived_sas_in_command_line",
         FindingCategory::SecretToInlineScriptEnvExport => "secret_to_inline_script_env_export",
