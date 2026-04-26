@@ -120,7 +120,8 @@
             "egress_blindspot",
             "missing_audit_trail",
             "floating_image",
-            "long_lived_credential"
+            "long_lived_credential",
+            "secret_via_env_gate_to_untrusted_consumer"
           ]
         },
         "path": {
@@ -139,6 +140,27 @@
           "type": "string",
           "minLength": 1,
           "description": "Snake_case rule identifier — custom-rule id when the finding came from a YAML rule with a `[id] ...` message prefix, otherwise the snake_case form of `category`. Byte-identical to SARIF `result.ruleId` and CloudEvents `taudit.rule_id`. JSON consumers filter and group by this field. Optional in v1 for backward-compat; always emitted by current taudit."
+        },
+        "source": {
+          "description": "Provenance of the finding. `\"built-in\"` (string) means the finding was emitted by a rule shipped in the taudit binary. An object `{\"custom\": {\"source_file\": \"<path>\"}}` means the finding came from a custom invariant YAML loaded via `--invariants-dir`; the path is the file the rule was loaded from. Optional in v1 for backward-compat; always emitted by current taudit. SIEMs / triage tooling should treat any non-`built-in` source as untrusted-by-default and surface the originating path in alerts.",
+          "oneOf": [
+            { "type": "string", "enum": ["built-in"] },
+            {
+              "type": "object",
+              "required": ["custom"],
+              "additionalProperties": false,
+              "properties": {
+                "custom": {
+                  "type": "object",
+                  "required": ["source_file"],
+                  "additionalProperties": false,
+                  "properties": {
+                    "source_file": { "type": "string" }
+                  }
+                }
+              }
+            }
+          ]
         },
         "fingerprint": {
           "type": "string",

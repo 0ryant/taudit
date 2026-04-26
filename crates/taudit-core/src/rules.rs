@@ -1,11 +1,12 @@
-use crate::finding::{Finding, FindingCategory, Recommendation, Severity};
+use crate::finding::{Finding, FindingCategory, FindingSource, Recommendation, Severity};
 use crate::graph::{
     is_docker_digest_pinned, is_sha_pinned, AuthorityCompleteness, AuthorityGraph, EdgeKind,
     IdentityScope, NodeId, NodeKind, TrustZone, META_ADD_SPN_TO_ENV, META_ATTESTS,
     META_CHECKOUT_SELF, META_CLI_FLAG_EXPOSED, META_CONTAINER, META_DIGEST, META_ENV_APPROVAL,
-    META_IDENTITY_SCOPE, META_IMPLICIT, META_OIDC, META_PERMISSIONS, META_REPOSITORIES,
-    META_SCRIPT_BODY, META_SELF_HOSTED, META_SERVICE_CONNECTION, META_SERVICE_CONNECTION_NAME,
-    META_TERRAFORM_AUTO_APPROVE, META_TRIGGER, META_VARIABLE_GROUP, META_WRITES_ENV_GATE,
+    META_IDENTITY_SCOPE, META_IMPLICIT, META_JOB_NAME, META_OIDC, META_PERMISSIONS, META_READS_ENV,
+    META_REPOSITORIES, META_SCRIPT_BODY, META_SELF_HOSTED, META_SERVICE_CONNECTION,
+    META_SERVICE_CONNECTION_NAME, META_TERRAFORM_AUTO_APPROVE, META_TRIGGER, META_VARIABLE_GROUP,
+    META_WRITES_ENV_GATE,
 };
 use crate::propagation;
 
@@ -189,6 +190,7 @@ pub fn authority_propagation(graph: &AuthorityGraph, max_hops: usize) -> Vec<Fin
                 explanation: format!("Scope {source_name} to only the steps that need it"),
             },
             path: best_path,
+            source: FindingSource::BuiltIn,
         });
     }
 
@@ -299,6 +301,7 @@ pub fn over_privileged_identity(graph: &AuthorityGraph) -> Vec<Finding> {
                     current: granted_scope.clone(),
                     minimum: "{ contents: read }".into(),
                 },
+                source: FindingSource::BuiltIn,
             });
         }
     }
@@ -400,6 +403,7 @@ pub fn unpinned_action(graph: &AuthorityGraph) -> Vec<Finding> {
                     image.name.split('@').next().unwrap_or(&image.name)
                 ),
             },
+            source: FindingSource::BuiltIn,
         });
     }
 
@@ -533,6 +537,7 @@ pub fn untrusted_with_authority(graph: &AuthorityGraph) -> Vec<Finding> {
                         nodes_involved: vec![step.id, target.id],
                         message,
                         recommendation,
+                        source: FindingSource::BuiltIn,
                     });
                 }
             }
@@ -600,6 +605,7 @@ pub fn artifact_boundary_crossing(graph: &AuthorityGraph) -> Vec<Finding> {
                                 producer.name, artifact.name
                             ),
                         },
+                        source: FindingSource::BuiltIn,
                     });
                 }
             }
@@ -647,6 +653,7 @@ pub fn long_lived_credential(graph: &AuthorityGraph) -> Vec<Finding> {
                     static_secret: secret.name.clone(),
                     oidc_provider: "GitHub Actions OIDC (id-token: write)".into(),
                 },
+                source: FindingSource::BuiltIn,
             });
         }
     }
@@ -692,6 +699,7 @@ pub fn floating_image(graph: &AuthorityGraph) -> Vec<Finding> {
                         image.name.split(':').next().unwrap_or(&image.name)
                     ),
                 },
+                source: FindingSource::BuiltIn,
             });
         }
     }
@@ -734,6 +742,7 @@ pub fn persisted_credential(graph: &AuthorityGraph) -> Vec<Finding> {
                          Pass credentials explicitly only to steps that need them."
                     .into(),
             },
+            source: FindingSource::BuiltIn,
         });
     }
 
@@ -799,6 +808,7 @@ pub fn trigger_context_mismatch(graph: &AuthorityGraph) -> Vec<Finding> {
         recommendation: Recommendation::Manual {
             action: "Use a separate workflow triggered by workflow_run (not pull_request_target) for privileged operations, or ensure no checkout of the PR head ref occurs before secret use".into(),
         },
+        source: FindingSource::BuiltIn,
     }]
 }
 
@@ -866,6 +876,7 @@ pub fn cross_workflow_authority_chain(graph: &AuthorityGraph) -> Vec<Finding> {
                         target.name
                     ),
                 },
+                source: FindingSource::BuiltIn,
             });
         }
     }
@@ -947,6 +958,7 @@ pub fn authority_cycle(graph: &AuthorityGraph) -> Vec<Finding> {
         recommendation: Recommendation::Manual {
             action: "Break the delegation cycle — a workflow must not directly or transitively call itself".into(),
         },
+        source: FindingSource::BuiltIn,
     }]
 }
 
@@ -1013,6 +1025,7 @@ pub fn uplift_without_attestation(graph: &AuthorityGraph) -> Vec<Finding> {
         recommendation: Recommendation::Manual {
             action: "Add 'actions/attest-build-provenance' after your build step (GHA) to provide SLSA provenance. See https://docs.github.com/en/actions/security-guides/using-artifact-attestations".into(),
         },
+        source: FindingSource::BuiltIn,
     }]
 }
 
@@ -1087,6 +1100,7 @@ pub fn self_mutating_pipeline(graph: &AuthorityGraph) -> Vec<Finding> {
             recommendation: Recommendation::Manual {
                 action: "Avoid writing secrets or attacker-controlled values to $GITHUB_ENV / $GITHUB_PATH / pipeline variables. Use explicit step outputs with narrow scoping instead.".into(),
             },
+            source: FindingSource::BuiltIn,
         });
     }
 
@@ -1134,6 +1148,7 @@ pub fn checkout_self_pr_exposure(graph: &AuthorityGraph) -> Vec<Finding> {
                          for jobs that only need pipeline config, not source code."
                     .into(),
             },
+            source: FindingSource::BuiltIn,
         });
     }
     findings
@@ -1195,6 +1210,7 @@ pub fn variable_group_in_pr_job(graph: &AuthorityGraph) -> Vec<Finding> {
                     ),
                     spec_hint: "cellos run --network deny-all --policy requireEgressDeclared,requireRuntimeSecretDelivery".into(),
                 },
+                source: FindingSource::BuiltIn,
             });
         }
     }
@@ -1270,6 +1286,7 @@ pub fn self_hosted_pool_pr_hijack(graph: &AuthorityGraph) -> Vec<Finding> {
         recommendation: Recommendation::Manual {
             action: "Run PR pipelines on Microsoft-hosted (ephemeral) agents, or disable checkout:self for PR-triggered jobs on self-hosted pools".into(),
         },
+        source: FindingSource::BuiltIn,
     }]
 }
 
@@ -1327,6 +1344,7 @@ pub fn service_connection_scope_mismatch(graph: &AuthorityGraph) -> Vec<Finding>
                     reason: "Broad-scope service connection reachable from PR code — CellOS egress isolation limits lateral movement even when connection cannot be immediately rescoped".into(),
                     spec_hint: "cellos run --network deny-all --policy requireEgressDeclared".into(),
                 },
+                source: FindingSource::BuiltIn,
             });
         }
     }
@@ -1411,6 +1429,7 @@ pub fn template_extends_unpinned_branch(graph: &AuthorityGraph) -> Vec<Finding> 
                 current: ref_value.unwrap_or("(default branch)").to_string(),
                 pinned: pinned_example,
             },
+            source: FindingSource::BuiltIn,
         });
     }
 
@@ -1496,6 +1515,7 @@ pub fn template_repo_ref_is_feature_branch(graph: &AuthorityGraph) -> Vec<Findin
                 current: ref_value.unwrap_or("(default branch)").to_string(),
                 pinned: pinned_example,
             },
+            source: FindingSource::BuiltIn,
         });
     }
 
@@ -1830,6 +1850,7 @@ pub fn vm_remote_exec_via_pipeline_secret(graph: &AuthorityGraph) -> Vec<Finding
             recommendation: Recommendation::Manual {
                 action: "Stage the script on the VM and pass the SAS via env var or protectedSettings (encrypted, not logged); avoid embedding secrets in commandToExecute".into(),
             },
+            source: FindingSource::BuiltIn,
         });
     }
 
@@ -1947,6 +1968,7 @@ pub fn secret_to_inline_script_env_export(graph: &AuthorityGraph) -> Vec<Finding
                 command: "tsafe exec --ns <scoped-namespace> -- <command>".to_string(),
                 explanation: "Inject the secret as an env var on the step itself (ADO `env:` block) instead of materialising it inside the script body. The value still reaches the process but never travels through a shell variable assignment that transcripts can capture.".to_string(),
             },
+            source: FindingSource::BuiltIn,
         });
     }
 
@@ -2058,6 +2080,7 @@ pub fn short_lived_sas_in_command_line(graph: &AuthorityGraph) -> Vec<Finding> {
             recommendation: Recommendation::Manual {
                 action: "Pass the SAS via env var, stdin, or VM-extension protectedSettings; never put SAS tokens in commandToExecute / --arguments / -ArgumentList".into(),
             },
+            source: FindingSource::BuiltIn,
         });
     }
 
@@ -2231,6 +2254,7 @@ pub fn secret_materialised_to_workspace_file(graph: &AuthorityGraph) -> Vec<Find
             recommendation: Recommendation::Manual {
                 action: "Replace inline secret materialisation with the `secureFile` task (downloaded to a temp dir with 0600 perms and auto-deleted), or pass the secret to the consuming tool over stdin / an env var instead of via a workspace file. If a file is unavoidable, write under `$(Agent.TempDirectory)` and `chmod 600` immediately.".into(),
             },
+            source: FindingSource::BuiltIn,
         });
     }
 
@@ -2295,6 +2319,7 @@ pub fn keyvault_secret_to_plaintext(graph: &AuthorityGraph) -> Vec<Finding> {
             recommendation: Recommendation::Manual {
                 action: "Keep the secret as a `SecureString`: drop `-AsPlainText`, pass the SecureString directly to cmdlets that accept it (e.g. `New-PSCredential`, `Connect-AzAccount -ServicePrincipal -Credential ...`), and only convert to plaintext at the moment of consumption, scoped to a single expression. For values that must be plaintext (REST calls, env vars) prefer ADO variable groups linked to Key Vault — the value then participates in pipeline log masking.".into(),
             },
+            source: FindingSource::BuiltIn,
         });
     }
 
@@ -2420,6 +2445,7 @@ pub fn terraform_auto_approve_in_prod(graph: &AuthorityGraph) -> Vec<Finding> {
             recommendation: Recommendation::Manual {
                 action: "Move the apply step into a deployment job whose `environment:` is configured with required approvers in ADO, OR remove `-auto-approve` and run apply behind a manual checkpoint task. Combine with a non-shared agent pool so committers cannot pre-stage payloads.".into(),
             },
+            source: FindingSource::BuiltIn,
         });
     }
 
@@ -2472,6 +2498,7 @@ pub fn addspn_with_inline_script(graph: &AuthorityGraph) -> Vec<Finding> {
             recommendation: Recommendation::Manual {
                 action: "Replace the inline script with `scriptPath:` pointing to a reviewed file in-repo, OR drop `addSpnToEnvironment: true` and use the task's first-class auth surface. Never emit federated token material via `##vso[task.setvariable]` — those values are inherited by every downstream task and may appear in logs.".into(),
             },
+            source: FindingSource::BuiltIn,
         });
     }
 
@@ -2548,6 +2575,7 @@ pub fn parameter_interpolation_into_shell(graph: &AuthorityGraph) -> Vec<Finding
             recommendation: Recommendation::Manual {
                 action: "Add a `values:` allowlist to the parameter declaration to constrain accepted inputs, OR pass the parameter through the step's `env:` block so the runtime quotes it as a shell variable instead of YAML-interpolating raw text.".into(),
             },
+            source: FindingSource::BuiltIn,
         });
     }
 
@@ -2662,6 +2690,7 @@ pub fn runtime_script_fetched_from_floating_url(graph: &AuthorityGraph) -> Vec<F
             recommendation: Recommendation::Manual {
                 action: "Pin the URL to a release tag or commit SHA (e.g. .../v1.2.3/install.sh) and verify the download against a known checksum before executing it. Avoid `curl … | bash` entirely where possible — fetch to a file, inspect, then run.".into(),
             },
+            source: FindingSource::BuiltIn,
         });
     }
 
@@ -2743,6 +2772,7 @@ pub fn pr_trigger_with_floating_action_ref(graph: &AuthorityGraph) -> Vec<Findin
                     image.name.split('@').next().unwrap_or(&image.name)
                 ),
             },
+            source: FindingSource::BuiltIn,
         });
     }
 
@@ -2873,6 +2903,7 @@ pub fn untrusted_api_response_to_env_sink(graph: &AuthorityGraph) -> Vec<Finding
             recommendation: Recommendation::Manual {
                 action: "Validate the API field with a strict regex before redirecting (e.g. only `[0-9]+` for a PR number), or write only known-numeric fields. Never pipe free-form fields like branch name or PR title directly into $GITHUB_ENV.".into(),
             },
+            source: FindingSource::BuiltIn,
         });
     }
 
@@ -2965,6 +2996,178 @@ pub fn pr_build_pushes_image_with_floating_credentials(graph: &AuthorityGraph) -
                     image.name.split('@').next().unwrap_or(&image.name)
                 ),
             },
+            source: FindingSource::BuiltIn,
+        });
+    }
+
+    findings
+}
+
+/// Rule: secret laundered through `$GITHUB_ENV` reaches an untrusted consumer
+/// in the same job — composition gap between `self_mutating_pipeline` (the
+/// gate-write detector) and `untrusted_with_authority` (the direct-access
+/// detector).
+///
+/// **Pattern (R2 attack #3):**
+/// ```yaml
+/// jobs:
+///   build:
+///     steps:
+///       - name: setup
+///         run: echo "CLOUD_KEY=${{ secrets.CLOUD_KEY }}" >> $GITHUB_ENV   # writer
+///       - uses: some-org/deploy@main                                        # untrusted
+///         with:
+///           key: ${{ env.CLOUD_KEY }}                                       # consumer
+/// ```
+/// The writer trips `self_mutating_pipeline`. The consumer never gets a
+/// `HasAccessTo` edge to `CLOUD_KEY` (the value is sourced from the runner
+/// env, not the secrets store) so neither `untrusted_with_authority` nor
+/// `authority_propagation` fire — the env-gate launders the trust zone.
+///
+/// **Detection:** for every Step in the same job:
+///   - Writer: `META_WRITES_ENV_GATE = "true"` AND has `HasAccessTo` to a
+///     Secret/Identity (the value being laundered must derive from authority)
+///   - Consumer: appears later in the job (NodeId order tracks declaration
+///     order), trust zone is `Untrusted` or `ThirdParty`, and carries
+///     `META_READS_ENV = "true"` (stamped by the parser when the step
+///     references `${{ env.X }}` in `with:` / `run:`)
+///
+/// Same-job constraint enforced via `META_JOB_NAME` — the env gate only
+/// propagates within a job, so cross-job pairs are not flagged.
+pub fn secret_via_env_gate_to_untrusted_consumer(graph: &AuthorityGraph) -> Vec<Finding> {
+    let mut findings = Vec::new();
+
+    // Step 1: enumerate writer-with-secret nodes, paired with the laundered
+    // authority names so the finding message can name them. We capture the
+    // node id in declaration order so the same-job ordering check below is a
+    // simple comparison rather than an O(n²) scan.
+    struct Writer<'a> {
+        id: NodeId,
+        job: &'a str,
+        name: &'a str,
+        secrets: Vec<&'a str>,
+    }
+    let writers: Vec<Writer<'_>> = graph
+        .nodes_of_kind(NodeKind::Step)
+        .filter(|step| {
+            step.metadata
+                .get(META_WRITES_ENV_GATE)
+                .map(|v| v == "true")
+                .unwrap_or(false)
+        })
+        .filter_map(|step| {
+            let job = step.metadata.get(META_JOB_NAME)?.as_str();
+            // Must hold authority — collect Secret/Identity names reachable
+            // via HasAccessTo. An env-gate write that doesn't carry any
+            // authority is the harmless "ECHO ROUTE=/api >> $GITHUB_ENV"
+            // case; not in scope for this rule.
+            let secrets: Vec<&str> = graph
+                .edges_from(step.id)
+                .filter(|e| e.kind == EdgeKind::HasAccessTo)
+                .filter_map(|e| graph.node(e.to))
+                .filter(|n| matches!(n.kind, NodeKind::Secret | NodeKind::Identity))
+                .map(|n| n.name.as_str())
+                .collect();
+            if secrets.is_empty() {
+                return None;
+            }
+            Some(Writer {
+                id: step.id,
+                job,
+                name: step.name.as_str(),
+                secrets,
+            })
+        })
+        .collect();
+
+    if writers.is_empty() {
+        return findings;
+    }
+
+    // Step 2: for every consumer step that reads env, find the writer(s) it
+    // could be laundering from.
+    for consumer in graph.nodes_of_kind(NodeKind::Step) {
+        // Consumer must read the runner env.
+        let reads_env = consumer
+            .metadata
+            .get(META_READS_ENV)
+            .map(|v| v == "true")
+            .unwrap_or(false);
+        if !reads_env {
+            continue;
+        }
+
+        // Consumer must run with reduced trust — first-party readers are
+        // already accounted for elsewhere and would be a high-FP class.
+        if !matches!(
+            consumer.trust_zone,
+            TrustZone::Untrusted | TrustZone::ThirdParty
+        ) {
+            continue;
+        }
+
+        let consumer_job = match consumer.metadata.get(META_JOB_NAME) {
+            Some(j) => j.as_str(),
+            None => continue,
+        };
+
+        // Find writers in the same job that appear earlier (NodeId order
+        // mirrors declaration order — see GHA parser, ADO parser).
+        let upstream: Vec<&Writer<'_>> = writers
+            .iter()
+            .filter(|w| w.job == consumer_job && w.id < consumer.id)
+            .collect();
+
+        if upstream.is_empty() {
+            continue;
+        }
+
+        // Aggregate the laundered authority names across all writers so
+        // operators see the full set of credentials potentially reaching
+        // the untrusted step. Stable ordering, dedup'd.
+        let mut secret_labels: Vec<&str> = upstream
+            .iter()
+            .flat_map(|w| w.secrets.iter().copied())
+            .collect();
+        secret_labels.sort_unstable();
+        secret_labels.dedup();
+        let writer_names: Vec<&str> = upstream.iter().map(|w| w.name).collect();
+
+        let mut nodes_involved = vec![consumer.id];
+        nodes_involved.extend(upstream.iter().map(|w| w.id));
+        // Include the laundered Secret/Identity nodes themselves so the
+        // fingerprint and downstream consumers can attribute the finding
+        // to a specific credential.
+        for w in &upstream {
+            for e in graph.edges_from(w.id) {
+                if e.kind == EdgeKind::HasAccessTo
+                    && graph
+                        .node(e.to)
+                        .map(|n| matches!(n.kind, NodeKind::Secret | NodeKind::Identity))
+                        .unwrap_or(false)
+                    && !nodes_involved.contains(&e.to)
+                {
+                    nodes_involved.push(e.to);
+                }
+            }
+        }
+
+        findings.push(Finding {
+            severity: Severity::Critical,
+            category: FindingCategory::SecretViaEnvGateToUntrustedConsumer,
+            path: None,
+            nodes_involved,
+            message: format!(
+                "Untrusted consumer '{}' in job '{}' reads from $GITHUB_ENV after step(s) [{}] laundered authority [{}] through the env gate — secret reaches untrusted code without ever appearing in a HasAccessTo edge",
+                consumer.name,
+                consumer_job,
+                writer_names.join(", "),
+                secret_labels.join(", "),
+            ),
+            recommendation: Recommendation::Manual {
+                action: "Pass the secret to the consuming step via an explicit `env:` mapping on that step (so the relationship is graph-visible) instead of writing it to `$GITHUB_ENV` for ambient pickup. If the consumer is a third-party action, pin it to a 40-char SHA before exposing any secret-derived value to it.".into(),
+            },
+            source: FindingSource::BuiltIn,
         });
     }
 
@@ -3008,6 +3211,8 @@ pub fn run_all_rules(graph: &AuthorityGraph, max_hops: usize) -> Vec<Finding> {
     findings.extend(pr_trigger_with_floating_action_ref(graph));
     findings.extend(untrusted_api_response_to_env_sink(graph));
     findings.extend(pr_build_pushes_image_with_floating_credentials(graph));
+    // Composition-gap rule: env-gate laundering into untrusted consumer.
+    findings.extend(secret_via_env_gate_to_untrusted_consumer(graph));
 
     apply_confidence_cap(graph, &mut findings);
 
@@ -5457,5 +5662,225 @@ mod tests {
         assert!(sources.contains(&s1));
         assert!(sources.contains(&s2));
         assert!(sources.contains(&s3));
+    }
+
+    // ── secret_via_env_gate_to_untrusted_consumer ──────────────────────
+
+    /// Build a graph with one job containing a configurable sequence of
+    /// steps. Each tuple is (name, trust_zone, writes_env_gate, reads_env,
+    /// secret_to_link). Returns the graph plus the assigned NodeIds in
+    /// declaration order so tests can assert on specific nodes.
+    fn job_with_steps(
+        job: &str,
+        steps: &[(&str, TrustZone, bool, bool, Option<&str>)],
+    ) -> (AuthorityGraph, Vec<NodeId>) {
+        let mut g = AuthorityGraph::new(source("ci.yml"));
+        let mut secret_ids: std::collections::HashMap<String, NodeId> =
+            std::collections::HashMap::new();
+        let mut step_ids = Vec::new();
+        for (name, zone, writes, reads, secret) in steps {
+            let mut meta = std::collections::HashMap::new();
+            meta.insert(META_JOB_NAME.into(), job.into());
+            if *writes {
+                meta.insert(META_WRITES_ENV_GATE.into(), "true".into());
+            }
+            if *reads {
+                meta.insert(META_READS_ENV.into(), "true".into());
+            }
+            let id = g.add_node_with_metadata(NodeKind::Step, *name, *zone, meta);
+            if let Some(sname) = secret {
+                let secret_id = *secret_ids
+                    .entry((*sname).to_string())
+                    .or_insert_with(|| g.add_node(NodeKind::Secret, *sname, TrustZone::FirstParty));
+                g.add_edge(id, secret_id, EdgeKind::HasAccessTo);
+            }
+            step_ids.push(id);
+        }
+        (g, step_ids)
+    }
+
+    #[test]
+    fn env_gate_writer_then_untrusted_reader_fires() {
+        let (g, _ids) = job_with_steps(
+            "build",
+            &[
+                (
+                    "setup",
+                    TrustZone::FirstParty,
+                    true,
+                    false,
+                    Some("CLOUD_KEY"),
+                ),
+                ("deploy", TrustZone::Untrusted, false, true, None),
+            ],
+        );
+        let findings = secret_via_env_gate_to_untrusted_consumer(&g);
+        assert_eq!(findings.len(), 1, "writer + untrusted reader must fire");
+        assert_eq!(findings[0].severity, Severity::Critical);
+        assert!(
+            findings[0].message.contains("CLOUD_KEY"),
+            "message must name the laundered secret"
+        );
+        assert!(
+            findings[0].message.contains("deploy"),
+            "message must name the consumer step"
+        );
+    }
+
+    #[test]
+    fn env_gate_writer_then_first_party_reader_does_not_fire() {
+        // First-party consumer is the legitimate use of $GITHUB_ENV — the
+        // entire point of the gate. Only flagged when the consumer's trust
+        // zone is reduced.
+        let (g, _) = job_with_steps(
+            "build",
+            &[
+                (
+                    "setup",
+                    TrustZone::FirstParty,
+                    true,
+                    false,
+                    Some("CLOUD_KEY"),
+                ),
+                ("use-it", TrustZone::FirstParty, false, true, None),
+            ],
+        );
+        let findings = secret_via_env_gate_to_untrusted_consumer(&g);
+        assert!(
+            findings.is_empty(),
+            "first-party reader is the intended use; must not fire"
+        );
+    }
+
+    #[test]
+    fn env_gate_write_of_non_secret_value_does_not_fire() {
+        // Writer step doesn't hold any Secret/Identity — it's writing a
+        // benign value (build version, config flag) into the env. Out of
+        // scope: the env gate isn't laundering authority across a trust
+        // boundary because there's no authority to launder.
+        let (g, _) = job_with_steps(
+            "build",
+            &[
+                ("setup", TrustZone::FirstParty, true, false, None),
+                ("deploy", TrustZone::Untrusted, false, true, None),
+            ],
+        );
+        let findings = secret_via_env_gate_to_untrusted_consumer(&g);
+        assert!(
+            findings.is_empty(),
+            "env-gate write of non-authority value must not fire"
+        );
+    }
+
+    #[test]
+    fn writer_in_different_job_does_not_fire() {
+        // The env gate only propagates within a job — a writer in job A
+        // cannot reach a consumer in job B even if both jobs run on the
+        // same runner. Same-job constraint enforced via META_JOB_NAME.
+        let mut g = AuthorityGraph::new(source("ci.yml"));
+        let secret = g.add_node(NodeKind::Secret, "CLOUD_KEY", TrustZone::FirstParty);
+
+        let mut writer_meta = std::collections::HashMap::new();
+        writer_meta.insert(META_JOB_NAME.into(), "build".into());
+        writer_meta.insert(META_WRITES_ENV_GATE.into(), "true".into());
+        let writer =
+            g.add_node_with_metadata(NodeKind::Step, "setup", TrustZone::FirstParty, writer_meta);
+        g.add_edge(writer, secret, EdgeKind::HasAccessTo);
+
+        let mut consumer_meta = std::collections::HashMap::new();
+        consumer_meta.insert(META_JOB_NAME.into(), "deploy".into()); // DIFFERENT job
+        consumer_meta.insert(META_READS_ENV.into(), "true".into());
+        g.add_node_with_metadata(
+            NodeKind::Step,
+            "remote-deploy",
+            TrustZone::Untrusted,
+            consumer_meta,
+        );
+
+        let findings = secret_via_env_gate_to_untrusted_consumer(&g);
+        assert!(
+            findings.is_empty(),
+            "cross-job writer/consumer pair must not fire — same-job constraint"
+        );
+    }
+
+    #[test]
+    fn writer_after_consumer_in_same_job_does_not_fire() {
+        // Declaration order matters: a writer that comes AFTER the
+        // consumer can't have populated the env the consumer read. Without
+        // this ordering check the rule would over-fire on any same-job
+        // write/read pair.
+        let (g, _) = job_with_steps(
+            "build",
+            &[
+                ("deploy", TrustZone::Untrusted, false, true, None),
+                (
+                    "setup",
+                    TrustZone::FirstParty,
+                    true,
+                    false,
+                    Some("CLOUD_KEY"),
+                ),
+            ],
+        );
+        let findings = secret_via_env_gate_to_untrusted_consumer(&g);
+        assert!(
+            findings.is_empty(),
+            "writer that runs after the consumer cannot launder into it"
+        );
+    }
+
+    #[test]
+    fn third_party_consumer_also_fires() {
+        // ThirdParty (SHA-pinned marketplace action) is still in scope —
+        // the action's code is immutable but it can still receive and
+        // exfiltrate the laundered secret.
+        let (g, _) = job_with_steps(
+            "build",
+            &[
+                (
+                    "setup",
+                    TrustZone::FirstParty,
+                    true,
+                    false,
+                    Some("CLOUD_KEY"),
+                ),
+                (
+                    "third-party-deploy",
+                    TrustZone::ThirdParty,
+                    false,
+                    true,
+                    None,
+                ),
+            ],
+        );
+        let findings = secret_via_env_gate_to_untrusted_consumer(&g);
+        assert_eq!(findings.len(), 1);
+    }
+
+    #[test]
+    fn rule_appears_in_run_all_rules() {
+        // run_all_rules wires every rule in the catalogue — assert the
+        // new one is hooked up so it actually fires from the CLI scan path.
+        let (g, _) = job_with_steps(
+            "build",
+            &[
+                (
+                    "setup",
+                    TrustZone::FirstParty,
+                    true,
+                    false,
+                    Some("CLOUD_KEY"),
+                ),
+                ("deploy", TrustZone::Untrusted, false, true, None),
+            ],
+        );
+        let findings = run_all_rules(&g, 4);
+        assert!(
+            findings
+                .iter()
+                .any(|f| f.category == FindingCategory::SecretViaEnvGateToUntrustedConsumer),
+            "secret_via_env_gate_to_untrusted_consumer must run via run_all_rules"
+        );
     }
 }

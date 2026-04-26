@@ -1,6 +1,6 @@
 # taudit Rule Reference
 
-28 built-in rules. Run `taudit explain <rule-id>` for a description in the terminal.
+29 built-in rules. Run `taudit explain <rule-id>` for a description in the terminal.
 
 ## Top-level commands
 
@@ -44,6 +44,7 @@ Platforms: **GHA** = GitHub Actions · **ADO** = Azure DevOps · **GL** = GitLab
 | [add_spn_with_inline_script](add_spn_with_inline_script.md) | High | Credentials | ADO only |
 | [parameter_interpolation_into_shell](parameter_interpolation_into_shell.md) | Medium | Injection | ADO only |
 | [terraform_output_via_setvariable_shell_expansion](terraform_output_via_setvariable_shell_expansion.md) | High | Injection | ADO only |
+| [secret_via_env_gate_to_untrusted_consumer](secret_via_env_gate_to_untrusted_consumer.md) | Critical | Propagation | GHA |
 
 ## Severity key
 

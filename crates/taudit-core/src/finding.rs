@@ -2,6 +2,7 @@ use crate::graph::{AuthorityGraph, NodeId, NodeKind};
 use crate::propagation::PropagationPath;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
+use std::path::PathBuf;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -148,6 +149,15 @@ pub enum FindingCategory {
     /// OIDC tokens or registry credentials, and the workflow then pushes a
     /// PR-controlled image to a shared registry.
     PrBuildPushesImageWithFloatingCredentials,
+    /// First-party step writes a Secret/Identity-derived value into the
+    /// `$GITHUB_ENV` gate (or pipeline-variable equivalent) and a *later*
+    /// step in the same job that runs in `Untrusted` or `ThirdParty` trust
+    /// zone reads from the runner-managed env (`${{ env.X }}`). The two
+    /// component rules — `self_mutating_pipeline` (writer) and
+    /// `untrusted_with_authority` (consumer) — each see only half the
+    /// chain and emit no finding for the laundered consumer; this rule
+    /// closes the composition gap that R2 attack #3 exploited.
+    SecretViaEnvGateToUntrustedConsumer,
     // Reserved — requires ADO/GH API enrichment beyond pipeline YAML
     /// Requires runtime network telemetry or policy enrichment — not detectable from YAML alone.
     #[doc(hidden)]
@@ -186,6 +196,37 @@ pub enum Recommendation {
     },
 }
 
+/// Provenance of a finding — distinguishes findings emitted by built-in
+/// taudit rules from findings emitted by user-loaded custom invariant YAML
+/// (`--invariants-dir`). Custom rules can emit arbitrarily-worded findings
+/// at any severity, so an operator piping output into a JIRA workflow or
+/// SARIF upload needs a non-spoofable signal of which file the rule came
+/// from. Serializes as `"built-in"` (string) for built-in findings and
+/// `{"custom": "<path>"}` for custom-rule findings — see
+/// `docs/finding-fingerprint.md` for the contract.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum FindingSource {
+    /// Emitted by a built-in rule defined in `taudit-core::rules`. The
+    /// authoritative trust anchor — the binary's release commit defines the
+    /// rule logic. Serialises as the kebab-case string `"built-in"` to match
+    /// `schemas/finding.v1.json`.
+    #[default]
+    #[serde(rename = "built-in")]
+    BuiltIn,
+    /// Emitted by a custom invariant rule loaded from the given YAML file.
+    /// The path is the file the rule was loaded from, retained so operators
+    /// can audit which file produced any given finding.
+    Custom { source_file: PathBuf },
+}
+
+impl FindingSource {
+    /// True for findings emitted by built-in rules.
+    pub fn is_built_in(&self) -> bool {
+        matches!(self, FindingSource::BuiltIn)
+    }
+}
+
 /// A finding is a concrete, actionable authority issue.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Finding {
@@ -196,6 +237,12 @@ pub struct Finding {
     pub nodes_involved: Vec<NodeId>,
     pub message: String,
     pub recommendation: Recommendation,
+    /// Provenance of this finding. Defaults to `BuiltIn` for backward
+    /// compatibility with code/JSON that predates the field — every
+    /// in-tree built-in rule sets this explicitly. Deserialization of older
+    /// JSON without the field treats the finding as built-in.
+    #[serde(default)]
+    pub source: FindingSource,
 }
 
 // ── Finding fingerprint ────────────────────────────────────
@@ -261,16 +308,27 @@ pub fn rule_id_for(finding: &Finding) -> String {
 /// underlying issue makes the fingerprint disappear; a tweak to the
 /// finding's user-facing message does NOT change the fingerprint.
 ///
+/// **Algorithm version `v2`** (replaces v1 from v0.9.1).
+///
+/// v1 collapsed every per-hop finding against the same root Secret/Identity
+/// onto a single fingerprint. That hides genuinely distinct issues — two
+/// untrusted steps reaching the same secret are two separate
+/// remediation-distinct findings, not one. v2 makes every component of the
+/// finding contribute to the hash so unrelated findings cannot alias.
+///
 /// **Inputs (sensitive to):**
 ///   * Rule id — either a custom rule id parsed from a `[id] …` message
 ///     prefix, or the snake_case form of `finding.category`
-///   * Source file path (`graph.source.file`)
+///   * Source file path (`graph.source.file`) — verbatim, never normalised
+///     to a basename, so two pipelines named the same file in different
+///     directories never collide
 ///   * Finding category (snake_case)
-///   * Identifying node names. Where the finding involves a `Secret` or
-///     `Identity` node, the root authority name is used (collapses many
-///     per-hop findings against one secret to a single fingerprint —
-///     matches the existing SARIF dedup behaviour). Otherwise the names
-///     of all involved nodes, sorted, are used.
+///   * Root-authority node name — Secret/Identity name when one is
+///     involved, empty string otherwise. Surfaces the credential identity
+///     in the SIEM context column without being the only differentiator.
+///   * Ordered involved-node names — every node in `nodes_involved`,
+///     joined in original order (preserves caller intent so per-hop
+///     findings against the same secret produce distinct fingerprints).
 ///
 /// **Inputs (insensitive to):**
 ///   * Wall-clock time
@@ -280,9 +338,10 @@ pub fn rule_id_for(finding: &Finding) -> String {
 ///   * Environment / host / cwd
 ///   * Pipeline file content hash — only the path matters
 ///
-/// Stability guarantee: the format is stable within a major version
-/// (1.x.y). A 2.0.0 release may change the algorithm; the JSON / SARIF
-/// schemas surface the current major in their respective version fields.
+/// Stability guarantee: the v2 algorithm is stable for the v0.10+ line.
+/// Pre-v0.10 (v1 algorithm) suppressions DO NOT carry forward — a one-time
+/// re-baselining is required when upgrading. CHANGELOG and
+/// `docs/finding-fingerprint.md` flag the break explicitly.
 ///
 /// Output: SHA-256 of the canonical input string, truncated to the first
 /// 16 hex characters (64 bits — collision-resistant enough for finding
@@ -295,36 +354,39 @@ pub fn compute_fingerprint(finding: &Finding, graph: &AuthorityGraph) -> String 
     let category = category_rule_id(&finding.category);
     let file = graph.source.file.as_str();
 
-    // Prefer a single root authority (Secret / Identity) so per-hop
-    // findings collapse to one fingerprint per underlying credential.
-    let root_authority: Option<&str> = finding
+    // Root authority name (if any) — always emitted as its own component,
+    // empty string when no Secret/Identity is involved. Distinct field so
+    // a finding whose root_authority differs from a sibling's is
+    // recognisably different even when the involved-node list happens to
+    // overlap.
+    let root_authority: String = finding
         .nodes_involved
         .iter()
         .filter_map(|id| graph.node(*id))
         .find(|n| matches!(n.kind, NodeKind::Secret | NodeKind::Identity))
-        .map(|n| n.name.as_str());
+        .map(|n| n.name.clone())
+        .unwrap_or_default();
 
-    let node_segment: String = match root_authority {
-        Some(name) => name.to_string(),
-        None => {
-            let mut names: Vec<&str> = finding
-                .nodes_involved
-                .iter()
-                .filter_map(|id| graph.node(*id))
-                .map(|n| n.name.as_str())
-                .collect();
-            names.sort_unstable();
-            names.dedup();
-            names.join(",")
-        }
-    };
+    // Ordered involved-node names. Order is preserved (NOT sorted) — for
+    // authority_propagation findings the convention is `[source, sink]`,
+    // so two findings hitting the same secret but reaching different
+    // untrusted steps produce different fingerprints (the v1 collision
+    // class). Empty string when no nodes are involved.
+    let nodes_ordered: String = finding
+        .nodes_involved
+        .iter()
+        .filter_map(|id| graph.node(*id))
+        .map(|n| n.name.as_str())
+        .collect::<Vec<_>>()
+        .join(",");
 
-    // Canonical encoding: each component prefixed with a tag and joined
+    // Canonical encoding: every component prefixed with a tag and joined
     // by `\x1f` (ASCII unit separator) so component boundaries cannot
-    // alias across inputs (e.g. node name containing the literal
-    // separator string used between fields).
+    // alias across inputs. Algorithm version baked into the prefix so a
+    // future change to the contract is detectable from the canonical
+    // string alone.
     let canonical = format!(
-        "v1\x1frule={rule_id}\x1ffile={file}\x1fcategory={category}\x1fnodes={node_segment}"
+        "v2\x1frule={rule_id}\x1ffile={file}\x1fcategory={category}\x1froot={root_authority}\x1fnodes={nodes_ordered}"
     );
 
     let digest = Sha256::digest(canonical.as_bytes());
@@ -361,6 +423,7 @@ mod fingerprint_tests {
             recommendation: Recommendation::Manual {
                 action: "fix it".to_string(),
             },
+            source: FindingSource::BuiltIn,
         }
     }
 
@@ -429,9 +492,12 @@ mod fingerprint_tests {
     }
 
     #[test]
-    fn per_hop_findings_against_same_authority_collapse() {
-        // A single secret reaching N untrusted steps must yield the
-        // SAME fingerprint each time so SIEM rolls up to one ticket.
+    fn per_hop_findings_against_same_authority_are_distinct() {
+        // v2 contract: a single secret reaching N distinct untrusted steps
+        // produces N distinct fingerprints. Each (secret, step) pair is its
+        // own remediation-distinct finding — collapsing them (the v1
+        // behaviour) hid genuinely different exposure surfaces. SIEMs that
+        // want a per-secret rollup can group on root_authority client-side.
         let mut graph = AuthorityGraph::new(source(".github/workflows/ci.yml"));
         let secret = graph.add_node(NodeKind::Secret, "DEPLOY_TOKEN", TrustZone::FirstParty);
         let step_a = graph.add_node(NodeKind::Step, "deploy[0]", TrustZone::Untrusted);
@@ -447,10 +513,108 @@ mod fingerprint_tests {
             "DEPLOY_TOKEN reaches deploy[1]",
             vec![secret, step_b],
         );
-        assert_eq!(
+        assert_ne!(
             compute_fingerprint(&f_a, &graph),
             compute_fingerprint(&f_b, &graph),
-            "per-hop findings against one secret must share a fingerprint"
+            "per-hop findings against one secret must produce distinct \
+             fingerprints — sink identity is part of the issue"
+        );
+    }
+
+    #[test]
+    fn same_secret_same_sink_remains_stable_across_calls() {
+        // Re-running the SAME finding (same secret, same sink, same file)
+        // must still produce the same fingerprint — that is the entire
+        // point of cross-run dedup. The v2 change adds inputs but does not
+        // introduce non-determinism.
+        let mut graph = AuthorityGraph::new(source(".github/workflows/ci.yml"));
+        let secret = graph.add_node(NodeKind::Secret, "DEPLOY_TOKEN", TrustZone::FirstParty);
+        let step = graph.add_node(NodeKind::Step, "deploy[0]", TrustZone::Untrusted);
+        let f = make_finding(
+            FindingCategory::AuthorityPropagation,
+            "msg",
+            vec![secret, step],
+        );
+        assert_eq!(
+            compute_fingerprint(&f, &graph),
+            compute_fingerprint(&f, &graph)
+        );
+    }
+
+    #[test]
+    fn r2_attack2_two_files_same_secret_name_distinct_fingerprints() {
+        // R2 attack #2 reproducer: two genuinely different findings in two
+        // different pipeline files that share a secret NAME must produce
+        // different fingerprints. The earlier (pre-v0.9.1) algorithm could
+        // collide here; the v2 algorithm explicitly includes file path so
+        // the names cannot alias across files.
+        let mut g_a = AuthorityGraph::new(source("workflows/a.yml"));
+        let mut g_b = AuthorityGraph::new(source("workflows/b.yml"));
+        let s_a = g_a.add_node(NodeKind::Secret, "MY_SECRET", TrustZone::FirstParty);
+        let sink_a = g_a.add_node(NodeKind::Step, "evil/action", TrustZone::Untrusted);
+        let s_b = g_b.add_node(NodeKind::Secret, "MY_SECRET", TrustZone::FirstParty);
+        let sink_b = g_b.add_node(
+            NodeKind::Step,
+            "different-evil/action",
+            TrustZone::Untrusted,
+        );
+
+        let f_a = make_finding(
+            FindingCategory::AuthorityPropagation,
+            "MY_SECRET reaches evil/action",
+            vec![s_a, sink_a],
+        );
+        let f_b = make_finding(
+            FindingCategory::AuthorityPropagation,
+            "MY_SECRET reaches different-evil/action",
+            vec![s_b, sink_b],
+        );
+        assert_ne!(
+            compute_fingerprint(&f_a, &g_a),
+            compute_fingerprint(&f_b, &g_b),
+            "two genuinely different findings must not share a fingerprint \
+             just because the secret name overlaps"
+        );
+    }
+
+    #[test]
+    fn root_authority_segment_is_always_present_even_when_empty() {
+        // Findings without any Secret/Identity (e.g. floating_image) MUST
+        // still produce a stable fingerprint. The empty-root case is its
+        // own equivalence class — two such findings with the same node
+        // list collapse to the same fingerprint; differing node lists
+        // produce different fingerprints.
+        let mut g = AuthorityGraph::new(source(".github/workflows/ci.yml"));
+        let img_a = g.add_node(NodeKind::Image, "alpine:latest", TrustZone::ThirdParty);
+        let img_b = g.add_node(NodeKind::Image, "ubuntu:22.04", TrustZone::ThirdParty);
+        let f_a = make_finding(FindingCategory::FloatingImage, "msg-a", vec![img_a]);
+        let f_b = make_finding(FindingCategory::FloatingImage, "msg-b", vec![img_b]);
+        let fp_a = compute_fingerprint(&f_a, &g);
+        let fp_b = compute_fingerprint(&f_b, &g);
+        assert_ne!(
+            fp_a, fp_b,
+            "two distinct floating-image findings must not collide"
+        );
+        assert_eq!(fp_a.len(), 16);
+        assert_eq!(fp_b.len(), 16);
+    }
+
+    #[test]
+    fn node_order_is_significant() {
+        // The fingerprint preserves caller order in nodes_involved. A
+        // finding emitted as [secret, step] is semantically different from
+        // [step, secret] (source vs sink role) and produces a different
+        // fingerprint. Rules must therefore stay consistent in the order
+        // they push nodes — every built-in does today.
+        let mut g = AuthorityGraph::new(source(".github/workflows/ci.yml"));
+        let s = g.add_node(NodeKind::Secret, "K", TrustZone::FirstParty);
+        let step = g.add_node(NodeKind::Step, "use", TrustZone::Untrusted);
+        let forward = make_finding(FindingCategory::AuthorityPropagation, "x", vec![s, step]);
+        let reverse = make_finding(FindingCategory::AuthorityPropagation, "x", vec![step, s]);
+        assert_ne!(
+            compute_fingerprint(&forward, &g),
+            compute_fingerprint(&reverse, &g),
+            "node order must influence the fingerprint so role swap is detectable"
         );
     }
 
@@ -482,5 +646,102 @@ mod fingerprint_tests {
         let fp = compute_fingerprint(&f, &graph);
         assert_eq!(fp.len(), 16);
         assert!(fp.chars().all(|c| c.is_ascii_hexdigit()));
+    }
+}
+
+#[cfg(test)]
+mod source_tests {
+    use super::*;
+
+    #[test]
+    fn built_in_serializes_as_string() {
+        let s = FindingSource::BuiltIn;
+        let v = serde_json::to_value(&s).unwrap();
+        assert_eq!(v, serde_json::json!("built-in"));
+    }
+
+    #[test]
+    fn custom_serializes_with_path_payload() {
+        let s = FindingSource::Custom {
+            source_file: PathBuf::from("/policies/no_prod_pat.yml"),
+        };
+        let v = serde_json::to_value(&s).unwrap();
+        assert_eq!(
+            v,
+            serde_json::json!({"custom": {"source_file": "/policies/no_prod_pat.yml"}})
+        );
+    }
+
+    #[test]
+    fn finding_round_trip_preserves_built_in_source() {
+        let f = Finding {
+            severity: Severity::High,
+            category: FindingCategory::AuthorityPropagation,
+            path: None,
+            nodes_involved: vec![],
+            message: "x".into(),
+            recommendation: Recommendation::Manual {
+                action: "fix".into(),
+            },
+            source: FindingSource::BuiltIn,
+        };
+        let s = serde_json::to_string(&f).unwrap();
+        // Encoded as the literal `"source":"built-in"` — operators eyeballing
+        // raw JSON immediately see "this is a shipped rule".
+        assert!(
+            s.contains("\"source\":\"built-in\""),
+            "built-in source must serialise as \"built-in\": {s}"
+        );
+        let f2: Finding = serde_json::from_str(&s).unwrap();
+        assert_eq!(f2.source, FindingSource::BuiltIn);
+    }
+
+    #[test]
+    fn finding_round_trip_preserves_custom_source_with_path() {
+        let path = PathBuf::from("/work/invariants/no_prod_pat.yml");
+        let f = Finding {
+            severity: Severity::Critical,
+            category: FindingCategory::AuthorityPropagation,
+            path: None,
+            nodes_involved: vec![],
+            message: "[no_prod_pat] hit".into(),
+            recommendation: Recommendation::Manual {
+                action: "fix".into(),
+            },
+            source: FindingSource::Custom {
+                source_file: path.clone(),
+            },
+        };
+        let s = serde_json::to_string(&f).unwrap();
+        assert!(
+            s.contains("\"custom\""),
+            "custom source must serialise with `custom` key: {s}"
+        );
+        assert!(
+            s.contains("/work/invariants/no_prod_pat.yml"),
+            "custom source must include the loader path: {s}"
+        );
+        let f2: Finding = serde_json::from_str(&s).unwrap();
+        assert_eq!(
+            f2.source,
+            FindingSource::Custom { source_file: path },
+            "round-trip must preserve custom source path"
+        );
+    }
+
+    #[test]
+    fn missing_source_field_deserializes_as_built_in() {
+        // Backward-compat: pre-provenance JSON omits the field entirely; the
+        // serde default makes it `BuiltIn`. Without this, every old
+        // suppression DB would fail to parse on upgrade.
+        let json = r#"{
+            "severity": "high",
+            "category": "authority_propagation",
+            "nodes_involved": [],
+            "message": "old-format finding",
+            "recommendation": {"type": "manual", "action": "review"}
+        }"#;
+        let f: Finding = serde_json::from_str(json).expect("legacy JSON must parse");
+        assert_eq!(f.source, FindingSource::BuiltIn);
     }
 }

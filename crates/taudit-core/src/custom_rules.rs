@@ -1,4 +1,4 @@
-use crate::finding::{Finding, FindingCategory, Recommendation, Severity};
+use crate::finding::{Finding, FindingCategory, FindingSource, Recommendation, Severity};
 use crate::graph::{AuthorityGraph, NodeKind, TrustZone};
 use crate::propagation::PropagationPath;
 use serde::de::{self, MapAccess, Visitor};
@@ -21,6 +21,15 @@ pub struct CustomRule {
     pub category: FindingCategory,
     #[serde(rename = "match", default)]
     pub match_spec: MatchSpec,
+    /// Path of the YAML file this rule was loaded from. Set by
+    /// `load_rules_dir` / `parse_rules_multi_doc_with_source`. Threaded into
+    /// every `Finding` this rule emits (`FindingSource::Custom`) so an
+    /// operator inspecting JSON / SARIF output can distinguish authentic
+    /// built-in findings from any rule that may have been planted in a
+    /// shared `--invariants-dir`. Defaults to `None` for rules constructed
+    /// in tests or in code paths that didn't go through the loader.
+    #[serde(default, skip)]
+    pub source_file: Option<PathBuf>,
 }
 
 #[derive(Debug, Clone, Default, Deserialize)]
@@ -390,7 +399,7 @@ pub fn load_rules_dir_with_opts(
     let mut rules = Vec::new();
     for path in entries {
         match fs::read_to_string(&path) {
-            Ok(content) => match parse_rules_multi_doc(&content) {
+            Ok(content) => match parse_rules_multi_doc_with_source(&content, Some(&path)) {
                 Ok(mut parsed) => rules.append(&mut parsed),
                 Err(err) => errors.push(CustomRuleError::YamlParse(path, err)),
             },
@@ -409,7 +418,22 @@ pub fn load_rules_dir_with_opts(
 /// by `---`). Single-doc files behave identically to the legacy
 /// `serde_yaml::from_str::<CustomRule>` path. Empty/whitespace-only documents
 /// (e.g. a leading `---` followed by a real doc) are skipped.
+///
+/// Equivalent to `parse_rules_multi_doc_with_source(content, None)` — provenance
+/// stamping is opt-in via the `_with_source` variant so callers that don't
+/// know the originating path (tests, stdin) keep working unchanged.
 pub fn parse_rules_multi_doc(content: &str) -> Result<Vec<CustomRule>, serde_yaml::Error> {
+    parse_rules_multi_doc_with_source(content, None)
+}
+
+/// Parse one or more `CustomRule` documents from `content` and stamp every
+/// produced rule with `source_file = source` so downstream finding emission
+/// can attribute authority back to the originating YAML file. Used by
+/// `load_rules_dir` to thread file paths through into `FindingSource::Custom`.
+pub fn parse_rules_multi_doc_with_source(
+    content: &str,
+    source: Option<&Path>,
+) -> Result<Vec<CustomRule>, serde_yaml::Error> {
     let mut rules = Vec::new();
     for doc in serde_yaml::Deserializer::from_str(content) {
         // An empty document deserializes as `Value::Null`; skip those so a
@@ -418,7 +442,8 @@ pub fn parse_rules_multi_doc(content: &str) -> Result<Vec<CustomRule>, serde_yam
         if value.is_null() {
             continue;
         }
-        let rule: CustomRule = serde_yaml::from_value(value)?;
+        let mut rule: CustomRule = serde_yaml::from_value(value)?;
+        rule.source_file = source.map(|p| p.to_path_buf());
         rules.push(rule);
     }
     Ok(rules)
@@ -506,6 +531,7 @@ pub fn evaluate_custom_rules(
                         },
                     },
                     path: None,
+                    source: custom_source(rule),
                 });
             }
             continue;
@@ -555,11 +581,22 @@ pub fn evaluate_custom_rules(
                     },
                 },
                 path: Some(path.clone()),
+                source: custom_source(rule),
             });
         }
     }
 
     findings
+}
+
+/// Build a `FindingSource::Custom` from the rule's tracked YAML path. Falls
+/// back to an empty path when the rule was constructed in-memory (test,
+/// stdin) and never carried provenance — those callers already know the
+/// finding is custom; the empty path just makes that obvious.
+fn custom_source(rule: &CustomRule) -> FindingSource {
+    FindingSource::Custom {
+        source_file: rule.source_file.clone().unwrap_or_default(),
+    }
 }
 
 #[cfg(test)]
@@ -621,6 +658,7 @@ mod tests {
                 graph_metadata: MetadataMatcher::default(),
                 standalone: None,
             },
+            source_file: None,
         };
 
         let findings = evaluate_custom_rules(&graph, &paths, &[rule]);
@@ -651,6 +689,7 @@ mod tests {
                 graph_metadata: MetadataMatcher::default(),
                 standalone: None,
             },
+            source_file: None,
         };
 
         let findings = evaluate_custom_rules(&graph, &paths, &[rule]);
@@ -729,6 +768,7 @@ match:
                 graph_metadata: MetadataMatcher::default(),
                 standalone: None,
             },
+            source_file: None,
         };
         assert_eq!(evaluate_custom_rules(&g, &paths, &[hit]).len(), 1);
 
@@ -758,6 +798,7 @@ match:
                 graph_metadata: MetadataMatcher::default(),
                 standalone: None,
             },
+            source_file: None,
         };
         assert!(evaluate_custom_rules(&g, &paths, &[miss]).is_empty());
     }
@@ -1468,6 +1509,84 @@ category: authority_propagation
         assert_eq!(rules.len(), 3, "expected 3 rules from one bundled file");
 
         let _ = fs::remove_dir_all(&tmp);
+    }
+
+    // ── Provenance: every custom-rule finding carries source path ────────
+
+    #[test]
+    fn loaded_rule_threads_source_file_into_findings() {
+        let tmp = std::env::temp_dir().join(format!("taudit-custom-prov-{}", std::process::id()));
+        fs::create_dir_all(&tmp).unwrap();
+        let path = tmp.join("provenance.yml");
+        fs::write(
+            &path,
+            r#"
+id: from_disk
+name: From disk
+description: planted invariant
+severity: critical
+category: authority_propagation
+match:
+  source:
+    trust_zone: first_party
+  sink:
+    trust_zone: untrusted
+"#,
+        )
+        .unwrap();
+
+        let rules = load_rules_dir(&tmp).expect("rules load");
+        assert_eq!(rules.len(), 1);
+        // The loader stamps source_file on the rule itself.
+        assert_eq!(rules[0].source_file.as_deref(), Some(path.as_path()));
+
+        let (graph, paths) = build_graph_with_paths();
+        let findings = evaluate_custom_rules(&graph, &paths, &rules);
+        assert_eq!(findings.len(), 1);
+        match &findings[0].source {
+            FindingSource::Custom { source_file } => {
+                assert_eq!(
+                    source_file, &path,
+                    "custom finding must carry the YAML path it was loaded from"
+                );
+            }
+            other => panic!("expected FindingSource::Custom, got {other:?}"),
+        }
+
+        let _ = fs::remove_dir_all(&tmp);
+    }
+
+    #[test]
+    fn in_memory_custom_rule_emits_custom_source_with_empty_path() {
+        // Rules constructed in-memory (tests, stdin pipelines) never go
+        // through the loader and therefore have no source path — the finding
+        // must still be tagged as Custom (not silently mistakable for built-in)
+        // so any operator inspecting a SIEM alert immediately sees provenance.
+        let (graph, paths) = build_graph_with_paths();
+        let rule = CustomRule {
+            id: "in_mem".into(),
+            name: "in-memory".into(),
+            description: String::new(),
+            severity: Severity::High,
+            category: FindingCategory::AuthorityPropagation,
+            match_spec: MatchSpec::default(),
+            source_file: None,
+        };
+        let findings = evaluate_custom_rules(&graph, &paths, &[rule]);
+        assert!(!findings.is_empty(), "in-mem rule must still match");
+        for f in &findings {
+            match &f.source {
+                FindingSource::Custom { source_file } => {
+                    assert!(
+                        source_file.as_os_str().is_empty(),
+                        "in-mem custom rule emits Custom with empty path, not BuiltIn"
+                    );
+                }
+                other => {
+                    panic!("in-memory custom rule must still produce Custom source, got {other:?}")
+                }
+            }
+        }
     }
 
     #[test]

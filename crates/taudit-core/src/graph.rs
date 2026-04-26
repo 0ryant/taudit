@@ -26,6 +26,15 @@ pub const META_CLI_FLAG_EXPOSED: &str = "cli_flag_exposed";
 pub const META_TRIGGER: &str = "trigger";
 /// Marks a Step that writes to the environment gate (`$GITHUB_ENV`, ADO `##vso[task.setvariable]`).
 pub const META_WRITES_ENV_GATE: &str = "writes_env_gate";
+/// Marks a Step that reads from the runner-managed environment via an
+/// `env.<NAME>` template reference — `${{ env.X }}` in a `with:` value,
+/// inline script body, or step `env:` mapping. Distinct from `secrets.X`
+/// references (which produce a HasAccessTo edge to a Secret node) — `env.X`
+/// references can be sourced from the ambient runner environment, including
+/// values laundered through `$GITHUB_ENV` by an earlier step. Stamped by
+/// the GHA parser so `secret_via_env_gate_to_untrusted_consumer` can find
+/// the gate-laundering chain that the explicit-secret rules miss.
+pub const META_READS_ENV: &str = "reads_env";
 /// Marks a Step that performs cryptographic provenance attestation (e.g. `actions/attest-build-provenance`).
 pub const META_ATTESTS: &str = "attests";
 /// Marks a Secret node sourced from an ADO variable group (vs inline pipeline variable).
