@@ -661,11 +661,12 @@ fn process_steps(
                     let mut meta = HashMap::new();
                     meta.insert(META_SERVICE_CONNECTION.into(), "true".into());
                     meta.insert(META_IDENTITY_SCOPE.into(), "broad".into());
-                    // ADO service connections are the platform's federated-identity equivalent
-                    // (modern Azure service connections use workload identity federation /
-                    // OIDC). Tag them so uplift_without_attestation treats ADO pipelines with
-                    // the same OIDC-parity logic applied to GHA.
-                    meta.insert(META_OIDC.into(), "true".into());
+                    // ADO pipeline YAML does not embed the authentication scheme
+                    // of the service endpoint (WorkloadIdentityFederation vs.
+                    // ServicePrincipal), so we cannot reliably determine whether a
+                    // connection uses OIDC.  Leave META_OIDC unset -- the safe
+                    // default -- so that rules like service_connection_scope_mismatch
+                    // can fire on classic SPN connections.
                     let conn_id = graph.add_node_with_metadata(
                         NodeKind::Identity,
                         conn_name,
@@ -1668,6 +1669,29 @@ steps:
         assert_eq!(
             conn.metadata.get(META_IDENTITY_SCOPE),
             Some(&"broad".to_string())
+        );
+    }
+
+    #[test]
+    fn service_connection_does_not_get_unconditional_oidc_tag() {
+        let yaml = r#"
+steps:
+  - task: AzureCLI@2
+    displayName: Deploy to Azure
+    inputs:
+      azureSubscription: MyClassicSpnConnection
+      scriptType: bash
+      inlineScript: az group list
+"#;
+        let graph = parse(yaml);
+        let conn = graph
+            .nodes_of_kind(NodeKind::Identity)
+            .find(|i| i.name == "MyClassicSpnConnection")
+            .expect("service connection identity should exist");
+        assert_eq!(
+            conn.metadata.get(META_OIDC),
+            None,
+            "service connections must not be tagged META_OIDC without a clear OIDC signal"
         );
     }
 
