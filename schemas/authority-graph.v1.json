@@ -1,0 +1,160 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://github.com/0ryant/taudit/schemas/authority-graph.v1.json",
+  "title": "taudit Authority Graph",
+  "description": "Standalone, versioned authority-graph export from `taudit graph --format json`. Models how authority (secrets, identities) propagates through a CI/CD pipeline. Stable contract — additive changes ship under 1.x.y; breaking changes ship under 2.0.0.",
+  "version": "1.0.0",
+  "type": "object",
+  "required": ["schema_version", "schema_uri", "graph"],
+  "additionalProperties": false,
+  "properties": {
+    "schema_version": {
+      "type": "string",
+      "const": "1.0.0",
+      "description": "Semver of this schema. 1.x.y additions are non-breaking; 2.0.0 means breaking changes."
+    },
+    "schema_uri": {
+      "type": "string",
+      "format": "uri",
+      "const": "https://github.com/0ryant/taudit/schemas/authority-graph.v1.json",
+      "description": "Canonical URI for the schema this document conforms to."
+    },
+    "graph": {
+      "$ref": "#/definitions/AuthorityGraph",
+      "description": "The authority graph for a single pipeline file."
+    }
+  },
+  "definitions": {
+    "AuthorityGraph": {
+      "type": "object",
+      "description": "Directed authority graph. Nodes are pipeline elements (steps, secrets, artifacts, identities, images). Edges model authority/data flow.",
+      "required": ["source", "nodes", "edges", "completeness"],
+      "additionalProperties": false,
+      "properties": {
+        "source": {
+          "$ref": "#/definitions/PipelineSource",
+          "description": "Where the pipeline definition came from."
+        },
+        "nodes": {
+          "type": "array",
+          "description": "All nodes in the graph. Node ids are dense integers (0..nodes.length).",
+          "items": { "$ref": "#/definitions/Node" }
+        },
+        "edges": {
+          "type": "array",
+          "description": "All directed edges in the graph. Edge ids are dense integers (0..edges.length).",
+          "items": { "$ref": "#/definitions/Edge" }
+        },
+        "completeness": {
+          "$ref": "#/definitions/AuthorityCompleteness",
+          "description": "How complete is this graph? Set by the parser."
+        },
+        "completeness_gaps": {
+          "type": "array",
+          "description": "Human-readable reasons why the graph is partial (omitted when empty).",
+          "items": { "type": "string" }
+        },
+        "metadata": {
+          "type": "object",
+          "description": "Graph-level metadata set by parsers (e.g. trigger type, platform-specific flags). Omitted when empty.",
+          "additionalProperties": { "type": "string" }
+        }
+      }
+    },
+    "PipelineSource": {
+      "type": "object",
+      "description": "The on-disk (or in-VCS) location the graph was built from.",
+      "required": ["file"],
+      "additionalProperties": false,
+      "properties": {
+        "file": {
+          "type": "string",
+          "description": "Path to the pipeline file as taudit observed it."
+        },
+        "repo": {
+          "type": "string",
+          "description": "Optional repository URL or slug, when known."
+        },
+        "git_ref": {
+          "type": "string",
+          "description": "Optional git ref (branch, tag, or SHA) the file was read from."
+        }
+      }
+    },
+    "AuthorityCompleteness": {
+      "type": "string",
+      "description": "How completely the parser was able to model authority relationships.",
+      "enum": ["complete", "partial", "unknown"]
+    },
+    "NodeKind": {
+      "type": "string",
+      "description": "Semantic kind of a graph node. step = a runnable instruction; secret = a sensitive value; identity = a token or principal; image = an action/container reference; artifact = data crossing step boundaries.",
+      "enum": ["step", "secret", "artifact", "identity", "image"]
+    },
+    "TrustZone": {
+      "type": "string",
+      "description": "Explicit trust classification on every node. first_party = code/config you own; third_party = pinned external action or image; untrusted = unpinned action, fork PR input, or otherwise unverified source.",
+      "enum": ["first_party", "third_party", "untrusted"]
+    },
+    "EdgeKind": {
+      "type": "string",
+      "description": "Edge semantics model authority/data flow, not syntactic YAML relations. has_access_to = step reads a secret/identity at runtime; produces = step writes an artifact; consumes = artifact flows into a step; uses_image = step delegates execution to an image/action; delegates_to = step hands control to another step (cross-job or composite); persists_to = step writes a credential to disk, outliving the step's lifetime.",
+      "enum": [
+        "has_access_to",
+        "produces",
+        "consumes",
+        "uses_image",
+        "delegates_to",
+        "persists_to"
+      ]
+    },
+    "Node": {
+      "type": "object",
+      "description": "A node in the authority graph.",
+      "required": ["id", "kind", "name", "trust_zone", "metadata"],
+      "additionalProperties": false,
+      "properties": {
+        "id": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "Dense integer id; matches the index of this node in graph.nodes."
+        },
+        "kind": { "$ref": "#/definitions/NodeKind" },
+        "name": {
+          "type": "string",
+          "description": "Display name (step name, secret name, action ref, etc.)."
+        },
+        "trust_zone": { "$ref": "#/definitions/TrustZone" },
+        "metadata": {
+          "type": "object",
+          "description": "Flexible string-keyed metadata: pinning status, digest, identity scope, permissions, container/oidc/self-hosted markers, parent job_name, etc. Keys are documented in crates/taudit-core/src/graph.rs (META_* constants).",
+          "additionalProperties": { "type": "string" }
+        }
+      }
+    },
+    "Edge": {
+      "type": "object",
+      "description": "A directed edge in the authority graph.",
+      "required": ["id", "from", "to", "kind"],
+      "additionalProperties": false,
+      "properties": {
+        "id": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "Dense integer id; matches the index of this edge in graph.edges."
+        },
+        "from": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "Source node id."
+        },
+        "to": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "Target node id."
+        },
+        "kind": { "$ref": "#/definitions/EdgeKind" }
+      }
+    }
+  }
+}

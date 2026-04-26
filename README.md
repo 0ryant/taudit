@@ -146,6 +146,28 @@ clippy                   FirstParty       X
 test                     FirstParty       X
 ```
 
+### Authority Graph export (machine-readable)
+
+```bash
+# Emit the canonical authority graph as versioned JSON (default format)
+taudit graph .github/workflows/ci.yml
+
+# Graphviz DOT for visualization
+taudit graph .github/workflows/ci.yml --format dot | dot -Tsvg -o graph.svg
+
+# Restrict DOT to a single job's reachable subgraph
+taudit graph .github/workflows/ci.yml --format dot --job build
+```
+
+The JSON document conforms to [`schemas/authority-graph.v1.json`](schemas/authority-graph.v1.json)
+and includes a top-level `schema_version` (`"1.0.0"`) and `schema_uri`
+so downstream consumers (tsign, axiom, runtime cells, custom auditors)
+can pin to a major version. See [docs/authority-graph.md](docs/authority-graph.md)
+for the data model, the semver guarantee, and the integration playbook.
+
+`taudit map` (the human-readable table above) is unchanged — `taudit graph`
+is the machine-readable counterpart.
+
 ### Diff
 
 ```bash
@@ -235,6 +257,25 @@ Trust zones are explicit on every node:
 - **FirstParty** — code you own (`run:` steps, local actions)
 - **ThirdParty** — SHA-pinned external actions (immutable code)
 - **Untrusted** — tag-pinned actions, fork PRs, user input
+
+## Outputs
+
+taudit emits four kinds of output, all backed by stable, versioned contracts:
+
+| Output             | Command                            | Schema / contract                                                              | Purpose |
+| ------------------ | ---------------------------------- | ------------------------------------------------------------------------------ | ------- |
+| **Findings (terminal)** | `taudit scan ... --format terminal` | colored, human-readable                                                        | day-to-day reading in shells and CI logs |
+| **Findings (JSON)**     | `taudit scan ... --format json`     | [`contracts/schemas/taudit-report.schema.json`](contracts/schemas/taudit-report.schema.json) (`schema_version: "v1"`) | full report: graph + findings + summary |
+| **Findings (SARIF)**    | `taudit scan ... --format sarif`    | SARIF 2.1.0                                                                    | code-scanning ingestion (GitHub, Azure DevOps, IDE plugins) |
+| **Findings (CloudEvents)** | `taudit scan ... --format cloudevents` | [`contracts/schemas/taudit-cloudevent-finding-v1.schema.json`](contracts/schemas/taudit-cloudevent-finding-v1.schema.json) | one CloudEvent JSONL per finding for event-driven sinks |
+| **Authority graph (JSON)** | `taudit graph ... --format json`   | [`schemas/authority-graph.v1.json`](schemas/authority-graph.v1.json) (`schema_version: "1.0.0"`) | the canonical authority graph as a first-class artifact for downstream tools (tsign, axiom, runtime cells) — see [docs/authority-graph.md](docs/authority-graph.md) |
+| **Authority graph (DOT)**  | `taudit graph ... --format dot`    | Graphviz DOT                                                                   | render to SVG/PNG for docs, slides, and incident reports |
+| **Authority map (text)**   | `taudit map ...`                   | human-readable table                                                           | quick "which step touches which secret" view |
+| **Diff (terminal/JSON)**   | `taudit diff before after`         | n/a (terminal) / inline JSON shape                                             | compare two pipeline revisions |
+
+Every JSON-shaped output carries a top-level `schema_version` (and, for
+new outputs, `schema_uri`) so consumers can pin to a major version and
+fail loudly on a breaking change.
 
 ## Architecture
 
