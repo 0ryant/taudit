@@ -3046,4 +3046,57 @@ jobs:
         assert_eq!(produces[0].to, artifacts[0].id);
         assert_eq!(consumes[0].from, artifacts[0].id);
     }
+
+    #[test]
+    fn upload_artifact_without_name_creates_no_edge() {
+        // A-1 regression guard: upload-artifact with no `name:` must not create
+        // an Artifact node or Produces edge (anonymous uploads can't be correlated
+        // and would silently merge unrelated jobs).
+        let yaml = r#"
+jobs:
+  build:
+    steps:
+      - uses: actions/upload-artifact@v4
+        with:
+          path: ./dist
+"#;
+        let graph = parse(yaml);
+        let artifacts: Vec<_> = graph.nodes_of_kind(NodeKind::Artifact).collect();
+        assert!(
+            artifacts.is_empty(),
+            "upload-artifact without name: must not create an Artifact node; got: {artifacts:#?}"
+        );
+        let produces: Vec<_> = graph
+            .edges
+            .iter()
+            .filter(|e| e.kind == EdgeKind::Produces)
+            .collect();
+        assert!(
+            produces.is_empty(),
+            "upload-artifact without name: must not create a Produces edge"
+        );
+    }
+
+    #[test]
+    fn download_artifact_without_name_creates_no_edge() {
+        // A-3 regression guard: download-artifact with no `name:` means "download
+        // all" (wildcard) — we can't correlate it to a specific producer, so no
+        // Consumes edge should be created.
+        let yaml = r#"
+jobs:
+  deploy:
+    steps:
+      - uses: actions/download-artifact@v4
+"#;
+        let graph = parse(yaml);
+        let consumes: Vec<_> = graph
+            .edges
+            .iter()
+            .filter(|e| e.kind == EdgeKind::Consumes)
+            .collect();
+        assert!(
+            consumes.is_empty(),
+            "download-artifact without name: must not create a Consumes edge"
+        );
+    }
 }

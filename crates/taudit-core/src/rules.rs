@@ -3442,7 +3442,8 @@ pub fn setvariable_issecret_false(graph: &AuthorityGraph) -> Vec<Finding> {
         "key",
         "credential",
         "cert",
-        "api_key",
+        // "api_key" omitted: tokenizer splits on '_', so this keyword can never
+        // match a single token — "key" already covers AZURE_API_KEY etc.
         "apikey",
         "auth",
     ];
