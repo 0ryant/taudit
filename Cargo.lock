@@ -1853,6 +1853,7 @@ dependencies = [
 name = "taudit-core"
 version = "0.9.1"
 dependencies = [
+ "chrono",
  "criterion",
  "serde",
  "serde_json",
