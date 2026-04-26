@@ -1,0 +1,193 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/0ryant/taudit/schemas/finding.v1.json",
+  "title": "taudit Finding v1",
+  "description": "Standalone schema for a single taudit Finding object. Published separately from the wrapping report (`taudit-report.schema.json`) and the CloudEvents envelope (`contracts/schemas/taudit-cloudevent-finding-v1.schema.json`) so SIEM teams can validate finding payloads without loading the report wrapper or the CloudEvents envelope. The same Finding shape appears verbatim in three places: as an entry in `findings[]` of the JSON report, as the `data` payload of a `taudit-cloudevent-finding-v1` envelope, and in any external store that round-trips taudit findings (suppression DB, ticket sync, etc.). Schema is `1.x.y` — additive changes only; breaking changes require a `2.0.0` bump.",
+  "type": "object",
+  "required": ["severity", "category", "nodes_involved", "message", "recommendation"],
+  "additionalProperties": false,
+  "properties": {
+    "severity": {
+      "$ref": "#/$defs/Severity"
+    },
+    "category": {
+      "$ref": "#/$defs/FindingCategory"
+    },
+    "path": {
+      "description": "Propagation path evidence when the finding involves a chain of nodes (e.g. authority_propagation). Absent for single-node findings.",
+      "oneOf": [
+        { "$ref": "#/$defs/PropagationPath" },
+        { "type": "null" }
+      ]
+    },
+    "nodes_involved": {
+      "type": "array",
+      "items": { "type": "integer", "minimum": 0 },
+      "description": "IDs of authority graph nodes referenced by the finding. Resolves against the same scan's graph; opaque to consumers that only see the Finding."
+    },
+    "message": {
+      "type": "string",
+      "description": "Human-readable message. Custom rules prefix with `[<rule_id>] ` so the rule id can be recovered without the schema field. The message is INSENSITIVE for fingerprint computation (operators tweak phrasing without breaking SIEM suppressions)."
+    },
+    "recommendation": {
+      "$ref": "#/$defs/Recommendation"
+    },
+    "fingerprint": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{16}$",
+      "description": "Stable cross-run finding fingerprint (16 lowercase hex chars, SHA-256-derived). Byte-identical to SARIF `partialFingerprints[primaryLocationLineHash]` and CloudEvents `tauditfindingfingerprint`. Use for SIEM dedup and suppression. Optional in v1 for backward-compat; always emitted by current taudit. See docs/finding-fingerprint.md."
+    },
+    "finding_group_id": {
+      "type": "string",
+      "description": "Optional group identifier when multiple findings share a logical advisory (e.g. authority_propagation hops sharing a root authority). Reserved for the upcoming clustering work; producers MAY omit it. When present, consumers SHOULD treat findings with the same group id as one advisory in summary views.",
+      "minLength": 1
+    },
+    "source": {
+      "type": "string",
+      "enum": ["built-in", "custom"],
+      "description": "Provenance of the rule that emitted this finding: `built-in` (one of the rules shipped with taudit) or `custom` (an authority invariant loaded via `--invariants-dir`). Reserved for the provenance work being landed in parallel; producers MAY omit it. When present, dashboards can filter built-ins from custom invariants."
+    }
+  },
+  "$defs": {
+    "Severity": {
+      "type": "string",
+      "enum": ["critical", "high", "medium", "low", "info"],
+      "description": "Severity tiers. Order is meaningful: critical > high > medium > low > info. `--severity-threshold` keeps findings at or above the named tier."
+    },
+    "FindingCategory": {
+      "type": "string",
+      "description": "Snake_case rule identifier. The list is the union of every `FindingCategory` variant emitted by built-in rules. Custom rules carry their id in the `message` `[<id>] …` prefix and reuse one of these category values for routing.",
+      "enum": [
+        "authority_propagation",
+        "over_privileged_identity",
+        "unpinned_action",
+        "untrusted_with_authority",
+        "artifact_boundary_crossing",
+        "floating_image",
+        "long_lived_credential",
+        "persisted_credential",
+        "trigger_context_mismatch",
+        "cross_workflow_authority_chain",
+        "authority_cycle",
+        "uplift_without_attestation",
+        "self_mutating_pipeline",
+        "checkout_self_pr_exposure",
+        "variable_group_in_pr_job",
+        "self_hosted_pool_pr_hijack",
+        "service_connection_scope_mismatch",
+        "template_extends_unpinned_branch",
+        "template_repo_ref_is_feature_branch",
+        "vm_remote_exec_via_pipeline_secret",
+        "short_lived_sas_in_command_line",
+        "secret_to_inline_script_env_export",
+        "secret_materialised_to_workspace_file",
+        "keyvault_secret_to_plaintext",
+        "terraform_auto_approve_in_prod",
+        "add_spn_with_inline_script",
+        "parameter_interpolation_into_shell",
+        "runtime_script_fetched_from_floating_url",
+        "pr_trigger_with_floating_action_ref",
+        "untrusted_api_response_to_env_sink",
+        "pr_build_pushes_image_with_floating_credentials",
+        "egress_blindspot",
+        "missing_audit_trail"
+      ]
+    },
+    "PropagationPath": {
+      "type": "object",
+      "required": ["source", "sink", "edges", "crossed_boundary"],
+      "additionalProperties": false,
+      "properties": {
+        "source": { "type": "integer", "minimum": 0 },
+        "sink": { "type": "integer", "minimum": 0 },
+        "edges": {
+          "type": "array",
+          "items": { "type": "integer", "minimum": 0 }
+        },
+        "crossed_boundary": { "type": "boolean" },
+        "boundary_crossing": {
+          "type": "array",
+          "prefixItems": [
+            { "type": "string", "enum": ["first_party", "third_party", "untrusted"] },
+            { "type": "string", "enum": ["first_party", "third_party", "untrusted"] }
+          ],
+          "items": false,
+          "minItems": 2,
+          "maxItems": 2
+        }
+      }
+    },
+    "Recommendation": {
+      "description": "Internally-tagged union (serde `tag = \"type\"`). The `type` discriminator picks the variant; remaining fields are variant-specific. New variants are added as additive changes within the v1 major.",
+      "type": "object",
+      "required": ["type"],
+      "oneOf": [
+        {
+          "title": "tsafe_remediation",
+          "description": "Routes a credential-scope finding to the tsafe vault remediation flow.",
+          "properties": {
+            "type": { "const": "tsafe_remediation" },
+            "command": { "type": "string" },
+            "explanation": { "type": "string" }
+          },
+          "required": ["type", "command", "explanation"],
+          "additionalProperties": false
+        },
+        {
+          "title": "cellos_remediation",
+          "description": "Routes an isolation-scope finding to a CellOS execution-cell spec.",
+          "properties": {
+            "type": { "const": "cellos_remediation" },
+            "reason": { "type": "string" },
+            "spec_hint": { "type": "string" }
+          },
+          "required": ["type", "reason", "spec_hint"],
+          "additionalProperties": false
+        },
+        {
+          "title": "pin_action",
+          "description": "Replace a floating action ref (`@main`, `@v1`) with a pinned 40-char SHA.",
+          "properties": {
+            "type": { "const": "pin_action" },
+            "current": { "type": "string" },
+            "pinned": { "type": "string" }
+          },
+          "required": ["type", "current", "pinned"],
+          "additionalProperties": false
+        },
+        {
+          "title": "reduce_permissions",
+          "description": "Narrow a `permissions:` block (or equivalent) from `current` to `minimum`.",
+          "properties": {
+            "type": { "const": "reduce_permissions" },
+            "current": { "type": "string" },
+            "minimum": { "type": "string" }
+          },
+          "required": ["type", "current", "minimum"],
+          "additionalProperties": false
+        },
+        {
+          "title": "federate_identity",
+          "description": "Replace a long-lived static secret with an OIDC / workload-identity federation.",
+          "properties": {
+            "type": { "const": "federate_identity" },
+            "static_secret": { "type": "string" },
+            "oidc_provider": { "type": "string" }
+          },
+          "required": ["type", "static_secret", "oidc_provider"],
+          "additionalProperties": false
+        },
+        {
+          "title": "manual",
+          "description": "Catch-all when the remediation requires human judgement (e.g. \"split this workflow into two\").",
+          "properties": {
+            "type": { "const": "manual" },
+            "action": { "type": "string" }
+          },
+          "required": ["type", "action"],
+          "additionalProperties": false
+        }
+      ]
+    }
+  }
+}

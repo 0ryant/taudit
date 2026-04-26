@@ -592,3 +592,163 @@ fn baseline_empty_suppresses_nothing() {
     assert_eq!(suppressed, 0);
     assert_eq!(kept.len(), total);
 }
+
+// ── schemas/finding.v1.json validation ──────────────
+//
+// The standalone Finding schema (separate from the JSON report wrapper)
+// MUST match the actual shape taudit emits. This test scans a fixture
+// that exercises the full propagation rule path, then validates each
+// emitted finding against the schema. Catches drift between code and
+// schema (new Recommendation variant, new FindingCategory) at test time
+// rather than at SIEM-ingest time.
+
+#[test]
+fn every_emitted_finding_validates_against_finding_v1_schema() {
+    let schema_path =
+        PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../schemas/finding.v1.json");
+    let schema_text = std::fs::read_to_string(&schema_path).unwrap_or_else(|err| {
+        panic!(
+            "schemas/finding.v1.json must exist at {}: {err}",
+            schema_path.display()
+        )
+    });
+    let schema: serde_json::Value =
+        serde_json::from_str(&schema_text).expect("finding.v1.json must be parseable JSON");
+    let validator =
+        jsonschema::validator_for(&schema).expect("finding.v1.json must compile as a JSON Schema");
+
+    // propagation-leaky.yml is the canonical multi-rule fixture and produces
+    // findings across multiple categories and recommendation variants.
+    let yaml = std::fs::read_to_string(fixture("propagation-leaky.yml")).unwrap();
+    let graph = parse(&yaml);
+    let findings = rules::run_all_rules(&graph, DEFAULT_MAX_HOPS);
+    assert!(
+        !findings.is_empty(),
+        "fixture must produce at least one finding to validate"
+    );
+
+    let mut failures: Vec<String> = Vec::new();
+    for (i, finding) in findings.iter().enumerate() {
+        let value = serde_json::to_value(finding)
+            .unwrap_or_else(|err| panic!("finding {i} must serialize: {err}"));
+        let errors: Vec<String> = validator
+            .iter_errors(&value)
+            .map(|e| e.to_string())
+            .collect();
+        if !errors.is_empty() {
+            failures.push(format!(
+                "finding {i} ({:?}/{:?}) failed schema:\n  {}\n  payload: {}",
+                finding.severity,
+                finding.category,
+                errors.join("\n  "),
+                value
+            ));
+        }
+    }
+
+    assert!(
+        failures.is_empty(),
+        "{} of {} findings failed finding.v1.json validation:\n\n{}",
+        failures.len(),
+        findings.len(),
+        failures.join("\n\n")
+    );
+}
+
+#[test]
+fn finding_v1_schema_covers_every_severity_level() {
+    // Quick sanity check: every Severity variant must serialize to a value
+    // the schema's `Severity` enum accepts. Catches drift if a new severity
+    // is added in code without updating the schema.
+    let schema_path =
+        PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../schemas/finding.v1.json");
+    let schema: serde_json::Value =
+        serde_json::from_str(&std::fs::read_to_string(&schema_path).unwrap()).unwrap();
+    let allowed: std::collections::HashSet<&str> = schema["$defs"]["Severity"]["enum"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|v| v.as_str().unwrap())
+        .collect();
+
+    for sev in [
+        Severity::Critical,
+        Severity::High,
+        Severity::Medium,
+        Severity::Low,
+        Severity::Info,
+    ] {
+        let serialized = serde_json::to_value(sev).unwrap();
+        let s = serialized.as_str().unwrap();
+        assert!(
+            allowed.contains(s),
+            "Severity::{sev:?} serializes to {s:?} which is not in the schema enum"
+        );
+    }
+}
+
+#[test]
+fn finding_v1_schema_covers_every_finding_category() {
+    // Same drift check for FindingCategory. If a new variant is added to
+    // the enum without updating the schema, this test fails loudly.
+    use taudit_core::finding::FindingCategory as FC;
+
+    let schema_path =
+        PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../schemas/finding.v1.json");
+    let schema: serde_json::Value =
+        serde_json::from_str(&std::fs::read_to_string(&schema_path).unwrap()).unwrap();
+    let allowed: std::collections::HashSet<String> = schema["$defs"]["FindingCategory"]["enum"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|v| v.as_str().unwrap().to_string())
+        .collect();
+
+    // Enumerate every variant. New variants added in code MUST be added
+    // here AND to the schema; the test catches the schema half.
+    #[allow(deprecated)]
+    let all_variants = [
+        FC::AuthorityPropagation,
+        FC::OverPrivilegedIdentity,
+        FC::UnpinnedAction,
+        FC::UntrustedWithAuthority,
+        FC::ArtifactBoundaryCrossing,
+        FC::FloatingImage,
+        FC::LongLivedCredential,
+        FC::PersistedCredential,
+        FC::TriggerContextMismatch,
+        FC::CrossWorkflowAuthorityChain,
+        FC::AuthorityCycle,
+        FC::UpliftWithoutAttestation,
+        FC::SelfMutatingPipeline,
+        FC::CheckoutSelfPrExposure,
+        FC::VariableGroupInPrJob,
+        FC::SelfHostedPoolPrHijack,
+        FC::ServiceConnectionScopeMismatch,
+        FC::TemplateExtendsUnpinnedBranch,
+        FC::TemplateRepoRefIsFeatureBranch,
+        FC::VmRemoteExecViaPipelineSecret,
+        FC::ShortLivedSasInCommandLine,
+        FC::SecretToInlineScriptEnvExport,
+        FC::SecretMaterialisedToWorkspaceFile,
+        FC::KeyVaultSecretToPlaintext,
+        FC::TerraformAutoApproveInProd,
+        FC::AddSpnWithInlineScript,
+        FC::ParameterInterpolationIntoShell,
+        FC::RuntimeScriptFetchedFromFloatingUrl,
+        FC::PrTriggerWithFloatingActionRef,
+        FC::UntrustedApiResponseToEnvSink,
+        FC::PrBuildPushesImageWithFloatingCredentials,
+        FC::EgressBlindspot,
+        FC::MissingAuditTrail,
+    ];
+
+    for variant in all_variants {
+        let serialized = serde_json::to_value(variant).unwrap();
+        let s = serialized.as_str().unwrap().to_string();
+        assert!(
+            allowed.contains(&s),
+            "FindingCategory::{variant:?} serializes to {s:?} which is missing from schemas/finding.v1.json"
+        );
+    }
+}

@@ -1837,6 +1837,7 @@ dependencies = [
  "clap",
  "clap_complete",
  "colored",
+ "jsonschema",
  "serde_json",
  "serde_yaml",
  "taudit-core",
