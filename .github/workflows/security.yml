@@ -1,0 +1,78 @@
+name: security
+
+# Dedicated security workflow — runs on every PR/push to main and on a
+# weekly schedule so a freshly-published advisory hits CI even without
+# a pending change. Kept separate from quality.yml so a vulnerable
+# transitive dep doesn't block unrelated work without surfacing as its
+# own clearly-named failure.
+on:
+  push:
+    branches: [main]
+  pull_request:
+  schedule:
+    # Mondays 09:00 UTC — pick up a week's worth of advisory-db churn.
+    - cron: '0 9 * * 1'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  cargo-deny:
+    name: cargo-deny (advisories, bans, licenses, sources)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+
+      - name: Rust toolchain
+        uses: dtolnay/rust-toolchain@98e1b82157cd469e843cb7f524c1313b4ad9492c # 1.88
+
+      - uses: Swatinem/rust-cache@9d47c6ad4b02e050fd481d890b2ea34778fd09d6 # v2.7.8
+
+      - name: Install cargo-deny
+        run: cargo install cargo-deny --locked
+
+      # Run all four checks. `advisories` is the new piece relative to
+      # quality.yml (which runs licenses+bans+sources). Surfacing it
+      # here on a weekly cron is the whole point of this workflow.
+      - name: cargo deny check
+        run: cargo deny check advisories bans licenses sources
+
+  taudit-self-scan:
+    name: taudit scans taudit
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+
+      - name: Rust toolchain
+        uses: dtolnay/rust-toolchain@98e1b82157cd469e843cb7f524c1313b4ad9492c # 1.88
+
+      - uses: Swatinem/rust-cache@9d47c6ad4b02e050fd481d890b2ea34778fd09d6 # v2.7.8
+
+      - name: Build taudit (release)
+        run: cargo build --release -p taudit
+
+      # Hard-fail variant — security workflow treats high+ findings in
+      # our own workflows as blocking. quality.yml keeps the advisory
+      # SARIF upload; this job is the gate.
+      - name: taudit scan (high+ severity, hard fail)
+        run: |
+          ./target/release/taudit scan .github/workflows/ \
+            --platform github-actions \
+            --severity-threshold high \
+            --quiet \
+            --format sarif \
+            > taudit-security-scan.sarif \
+            || (echo "::error::taudit scan failed against own workflows" && exit 1)
+
+      - name: Upload security-scan SARIF
+        if: always()
+        uses: actions/upload-artifact@65c4c4a1ddee5b72f698fdd19549f0f0fb45cf08 # v4.6.0
+        with:
+          name: taudit-security-scan-sarif
+          path: taudit-security-scan.sarif
+          if-no-files-found: warn
+          retention-days: 90

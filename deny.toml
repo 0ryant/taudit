@@ -1,4 +1,21 @@
 # cargo-deny — https://embarkstudios.github.io/cargo-deny/
+#
+# Run locally:
+#   cargo deny check                    # everything
+#   cargo deny check bans licenses sources
+#   cargo deny check advisories         # requires fresh advisory-db
+#
+# Hardening rationale:
+#   - wildcards = "deny"        — no `foo = "*"` in our own manifests
+#   - multiple-versions = "warn" — transitive duplicates are warned
+#                                  (denying would break on common
+#                                  ecosystem churn like windows-sys)
+#   - unknown-git = "deny"       — every dep must come from crates.io
+#   - unknown-registry = "deny"  — no alternate registries
+#   - yanked = "deny"            — never depend on a yanked crate
+#   - SPDX allow-list is closed  — anything outside MIT / Apache /
+#                                  ISC / BSD / Zlib / MPL / Unicode-3.0
+#                                  is rejected at build time
 
 [graph]
 targets = []
@@ -8,16 +25,41 @@ version = 2
 db-path = "~/.cargo/advisory-db"
 db-urls = ["https://github.com/rustsec/advisory-db"]
 yanked = "deny"
+ignore = []
 
 [bans]
+# Tightened from "warn"/"allow" — wildcards in our own manifests are
+# never acceptable; transitive duplicates remain a warning so we can
+# triage churn without blocking unrelated PRs.
 multiple-versions = "warn"
-wildcards = "allow"
+wildcards = "deny"
+allow-wildcard-paths = true
+deny = []
+skip = []
+skip-tree = []
 
 [sources]
+# Hardened: no anonymous git deps, no alternate registries.
 unknown-registry = "deny"
-unknown-git = "warn"
+unknown-git = "deny"
+allow-registry = ["https://github.com/rust-lang/crates.io-index"]
+allow-git = []
 
 [licenses]
 version = 2
-allow = ["MIT", "Apache-2.0", "BSD-3-Clause", "ISC", "Unicode-3.0", "MPL-2.0", "Zlib"]
+# Closed allow-list — adding a crate with any other SPDX expression
+# fails the build. Add new entries here only after confirming the
+# license is compatible with downstream redistribution.
+allow = [
+    "Apache-2.0",
+    "Apache-2.0 WITH LLVM-exception",
+    "BSD-2-Clause",
+    "BSD-3-Clause",
+    "ISC",
+    "MIT",
+    "MPL-2.0",
+    "Unicode-3.0",
+    "Unicode-DFS-2016",
+    "Zlib",
+]
 confidence-threshold = 0.8
