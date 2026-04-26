@@ -244,31 +244,39 @@ jobs:
 // ── Severity threshold tests ──────────────────────────
 
 #[test]
-fn severity_threshold_filters_exit_code_logic() {
+fn severity_threshold_filters_findings() {
+    // v0.7+: scan is informational and always exits 0 unless a structural
+    // error occurs. --severity-threshold is now a *display filter*; the
+    // logic below verifies which findings would survive the filter (and
+    // would historically have triggered the v0.6 migration warning).
     let yaml = std::fs::read_to_string(fixture("over-privileged.yml")).unwrap();
     let graph = parse(&yaml);
     let findings = rules::run_all_rules(&graph, DEFAULT_MAX_HOPS);
 
-    // Without threshold: has Critical findings -> would exit 1
+    // Without threshold: has Critical findings -> warning would fire
     assert!(findings.iter().any(|f| f.severity == Severity::Critical));
 
-    // With threshold=Critical: only Critical findings trigger exit 1
+    // With threshold=Critical: at least one finding survives the filter
     let has_critical = findings.iter().any(|f| f.severity <= Severity::Critical);
-    assert!(has_critical, "Critical findings should trigger exit");
+    assert!(has_critical, "Critical findings survive critical threshold");
 
-    // With threshold=Info (most permissive): any finding triggers exit
+    // With threshold=Info (most permissive): any finding survives
     let has_any = findings.iter().any(|f| f.severity <= Severity::Info);
     assert!(has_any);
 
-    // All findings still present regardless of threshold
+    // All findings still present in the rule output regardless of threshold
     assert!(
         !findings.is_empty(),
-        "threshold doesn't remove findings from report"
+        "threshold doesn't remove findings from rule output"
     );
 }
 
 #[test]
-fn threshold_high_skips_medium_and_low() {
+fn threshold_critical_excludes_lower_severities() {
+    // v0.7+: see comment on severity_threshold_filters_findings above.
+    // This test verifies the display filter excludes findings below the
+    // chosen threshold — and that no critical findings exist on a clean
+    // workflow, so the v0.7 migration warning would NOT fire here.
     let yaml = std::fs::read_to_string(fixture("clean.yml")).unwrap();
     let graph = parse(&yaml);
     let findings = rules::run_all_rules(&graph, DEFAULT_MAX_HOPS);
@@ -276,11 +284,11 @@ fn threshold_high_skips_medium_and_low() {
     // Clean workflow should have no Critical findings
     assert!(!findings.iter().any(|f| f.severity == Severity::Critical));
 
-    // With threshold=Critical: only critical matters -> no trigger
-    let would_exit = findings.iter().any(|f| f.severity <= Severity::Critical);
+    // With threshold=Critical: nothing survives -> no warning would fire
+    let exceeds_threshold = findings.iter().any(|f| f.severity <= Severity::Critical);
     assert!(
-        !would_exit,
-        "no critical findings -> exit 0 with critical threshold"
+        !exceeds_threshold,
+        "no critical findings -> threshold not exceeded -> no v0.7 warning"
     );
 }
 

@@ -41,9 +41,11 @@ enum Cli {
         #[arg(long, default_value_t = DEFAULT_MAX_HOPS)]
         max_hops: usize,
 
-        /// Minimum severity to cause non-zero exit code.
-        /// Findings below this threshold still appear in the report
-        /// but don't fail the scan.
+        /// Filter findings shown in output to this severity or higher.
+        /// As of v0.7, `scan` is informational and always exits 0 unless a
+        /// structural error occurs — use `taudit verify` to gate CI.
+        /// When this flag is passed and findings still exceed the threshold,
+        /// scan prints a one-time stderr migration warning.
         #[arg(long)]
         severity_threshold: Option<SeverityLevel>,
 
@@ -399,7 +401,23 @@ struct RuntimeArtifactPaths {
     log_dir: Option<PathBuf>,
 }
 
-fn main() -> Result<()> {
+fn main() {
+    let result = run();
+    match result {
+        Ok(()) => {}
+        Err(err) => {
+            // Structural error path. v0.7 contract: exit 2 for structural
+            // errors (file missing, parse failure, etc.) so callers can
+            // distinguish "tool broke" from "scan ran clean" (0). Note:
+            // clap surfaces invalid-flag failures with its own exit code (2)
+            // before we get here, which already matches this contract.
+            eprintln!("error: {err:#}");
+            std::process::exit(2);
+        }
+    }
+}
+
+fn run() -> Result<()> {
     let cli = Cli::parse();
 
     match cli {
@@ -665,7 +683,17 @@ fn cmd_scan(opts: ScanOpts) -> Result<()> {
         )),
         None => Box::new(stdout_handle.lock()),
     };
-    let mut exit_code = 0;
+    // As of v0.7, `scan` is informational: it always exits 0 unless a
+    // structural error (file missing, parse failure, bad flag) occurs.
+    // Gating moved to `taudit verify`. We retain `exit_code` only as a
+    // value reported to telemetry/receipts.
+    let exit_code = 0;
+
+    // Track whether any file produced findings at or above the user's
+    // requested severity threshold. Used solely to drive the one-shot
+    // migration-warning printed at end-of-run when --severity-threshold
+    // is passed (preserves the v0.6 contract semantics for one release).
+    let mut threshold_exceeded_anywhere = false;
 
     // Load ignore config
     let ignore_config = load_ignore_config(ignore_file)?;
@@ -795,13 +823,14 @@ fn cmd_scan(opts: ScanOpts) -> Result<()> {
         // Apply baseline suppression
         let (findings, suppressed_baseline) = apply_baseline(after_ignore, &baseline_fingerprints);
 
-        // Exit code uses unfiltered findings (semantics must not change with display filter).
-        let has_actionable = match threshold {
-            Some(ref thresh) => findings.iter().any(|f| f.severity <= *thresh),
-            None => !findings.is_empty(),
-        };
-        if has_actionable {
-            exit_code = 1;
+        // v0.7: scan no longer gates on findings. We still observe whether
+        // the user-supplied threshold would have triggered the legacy v0.6
+        // exit-1 contract — but only to drive the one-shot stderr migration
+        // warning printed at end-of-run. The exit code itself stays 0.
+        if let Some(ref thresh) = threshold {
+            if findings.iter().any(|f| f.severity <= *thresh) {
+                threshold_exceeded_anywhere = true;
+            }
         }
 
         // Display filter: only show findings at or above the threshold.
@@ -949,6 +978,16 @@ fn cmd_scan(opts: ScanOpts) -> Result<()> {
         eprintln!(
             "note: {skipped_total} file{} skipped (parse error — check --platform)",
             if skipped_total == 1 { "" } else { "s" }
+        );
+    }
+
+    // v0.7 migration warning: when --severity-threshold was passed AND
+    // findings still exceed it, alert users whose CI relied on v0.6's
+    // exit-1 gating that the contract has changed. Targeted for removal
+    // once the transition window closes.
+    if threshold.is_some() && threshold_exceeded_anywhere {
+        eprintln!(
+            "WARNING: in v0.6 and earlier, taudit scan exited 1 when severity threshold was exceeded. As of v0.7, scan is informational; use 'taudit verify' to gate CI. See https://github.com/0ryant/taudit/blob/main/CHANGELOG.md for migration."
         );
     }
 
