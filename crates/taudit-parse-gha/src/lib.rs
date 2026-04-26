@@ -943,11 +943,52 @@ pub enum Permissions {
 ///
 /// When the value is a template string, downstream code must mark the graph
 /// Partial — environment variable shape is unknown to static analysis.
+///
+/// The map variant uses a custom deserializer (`deserialize_env_map`) that
+/// stringifies scalar values. GHA accepts non-string scalars in env values
+/// (`COVERAGE: false`, `RUST_BACKTRACE: 1`, `TARGET_FLAGS:` (null)); a strict
+/// `HashMap<String, String>` rejects them and breaks 200+ real-world workflows.
 #[derive(Debug, Clone, Deserialize)]
 #[serde(untagged)]
 pub enum EnvSpec {
+    #[serde(deserialize_with = "deserialize_env_map")]
     Map(HashMap<String, String>),
     Template(String),
+}
+
+/// Deserialize a GHA `env:` map, stringifying scalar values so that
+/// non-string scalars (booleans, numbers, null, YAML anchors resolving
+/// to scalars) round-trip into `HashMap<String, String>`.
+///
+/// Rejects nested mappings/sequences — those would indicate the value
+/// is not a real env value and we should fall through to the `Template`
+/// variant or fail loudly. Null values become the empty string, matching
+/// how GHA itself surfaces an unset env var.
+fn deserialize_env_map<'de, D>(deserializer: D) -> Result<HashMap<String, String>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    use serde::de::Error;
+    let raw: HashMap<String, serde_yaml::Value> = HashMap::deserialize(deserializer)?;
+    let mut out = HashMap::with_capacity(raw.len());
+    for (k, v) in raw {
+        let s = match v {
+            serde_yaml::Value::String(s) => s,
+            serde_yaml::Value::Bool(b) => b.to_string(),
+            serde_yaml::Value::Number(n) => n.to_string(),
+            serde_yaml::Value::Null => String::new(),
+            // Mappings / sequences in env values are not legal GHA — but
+            // rather than crash the whole workflow, fail this variant so
+            // the untagged enum can try `Template` next.
+            other => {
+                return Err(D::Error::custom(format!(
+                    "env value for `{k}` is not a scalar: {other:?}"
+                )))
+            }
+        };
+        out.insert(k, s);
+    }
+    Ok(out)
 }
 
 impl EnvSpec {
@@ -2180,6 +2221,59 @@ jobs:
         // Steps still parsed normally.
         let steps: Vec<_> = graph.nodes_of_kind(NodeKind::Step).collect();
         assert_eq!(steps.len(), 1, "the single step must still be parsed");
+    }
+
+    #[test]
+    fn env_with_non_string_scalar_values_parses() {
+        // Real-world repro from BurntSushi/ripgrep ci.yml and many others:
+        // GHA env values can be booleans (`COVERAGE: false`), integers
+        // (`RUST_BACKTRACE: 1`), or null (`TARGET_FLAGS:`). A naive
+        // HashMap<String, String> deserializer rejects these. After the fix,
+        // they round-trip — booleans/numbers as their textual form,
+        // null as the empty string.
+        let yaml = r#"
+jobs:
+  test:
+    env:
+      RUST_BACKTRACE: 1
+      COVERAGE: false
+      TARGET_FLAGS:
+      CARGO: cargo
+    steps:
+      - run: cargo test
+"#;
+        let graph = parse(yaml);
+        // Parse must succeed and produce the step node.
+        let steps: Vec<_> = graph.nodes_of_kind(NodeKind::Step).collect();
+        assert_eq!(steps.len(), 1, "expected the single step to parse");
+        // Graph stays Complete — env: is a real map, not a template.
+        assert!(
+            !matches!(graph.completeness, AuthorityCompleteness::Partial)
+                || !graph
+                    .completeness_gaps
+                    .iter()
+                    .any(|g| g.contains("env:") && g.contains("template")),
+            "non-string env values must not mark the graph Partial via the env-template path"
+        );
+    }
+
+    #[test]
+    fn step_env_with_boolean_and_integer_values_parses() {
+        // Same regression class but at step-level env: instead of job-level.
+        let yaml = r#"
+jobs:
+  build:
+    steps:
+      - name: build
+        run: make
+        env:
+          DEBUG: true
+          RETRIES: 3
+          OPTIONAL_FLAG:
+"#;
+        let graph = parse(yaml);
+        let steps: Vec<_> = graph.nodes_of_kind(NodeKind::Step).collect();
+        assert_eq!(steps.len(), 1);
     }
 
     #[test]
