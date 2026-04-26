@@ -67,6 +67,8 @@ fn event_type(category: FindingCategory) -> String {
         FindingCategory::VariableGroupInPrJob => "variable_group_in_pr_job",
         FindingCategory::SelfHostedPoolPrHijack => "self_hosted_pool_pr_hijack",
         FindingCategory::ServiceConnectionScopeMismatch => "service_connection_scope_mismatch",
+        FindingCategory::VmRemoteExecViaPipelineSecret => "vm_remote_exec_via_pipeline_secret",
+        FindingCategory::ShortLivedSasInCommandLine => "short_lived_sas_in_command_line",
         #[allow(deprecated)]
         FindingCategory::EgressBlindspot => "egress_blindspot",
         #[allow(deprecated)]

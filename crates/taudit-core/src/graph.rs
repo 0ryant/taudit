@@ -50,6 +50,12 @@ pub const META_ENV_APPROVAL: &str = "env_approval";
 /// need to attribute steps back to their containing job. Set by both the GHA
 /// and ADO parsers on every Step they create within a job's scope.
 pub const META_JOB_NAME: &str = "job_name";
+/// Records the raw inline script body of a Step (the text from
+/// `script:` / `bash:` / `powershell:` / `pwsh:` / `run:`). Stamped by parsers
+/// when the step has an inline script. Used by command-line-leakage rules
+/// (`vm_remote_exec_via_pipeline_secret`, `short_lived_sas_in_command_line`)
+/// to inspect what the step actually shells out.
+pub const META_SCRIPT_BODY: &str = "script_body";
 
 // ── Shared helpers ─────────────────────────────────────
 

@@ -72,6 +72,15 @@ pub enum FindingCategory {
     SelfHostedPoolPrHijack,
     /// Broad-scope ADO service connection reachable from a PR-triggered job without OIDC.
     ServiceConnectionScopeMismatch,
+    /// Pipeline step uses an Azure VM remote-exec primitive (Set-AzVMExtension /
+    /// CustomScriptExtension, Invoke-AzVMRunCommand, az vm run-command, az vm extension set)
+    /// where the executed command line interpolates a pipeline secret or a SAS token —
+    /// pipeline-to-VM lateral movement primitive logged in plaintext to the VM and ARM.
+    VmRemoteExecViaPipelineSecret,
+    /// A SAS token freshly minted in-pipeline is interpolated into a CLI argument
+    /// (commandToExecute / scriptArguments / --arguments / -ArgumentList) instead of
+    /// passed via env var or stdin — argv ends up in /proc/*/cmdline, ETW, ARM status.
+    ShortLivedSasInCommandLine,
     // Reserved — requires ADO/GH API enrichment beyond pipeline YAML
     /// Requires runtime network telemetry or policy enrichment — not detectable from YAML alone.
     #[doc(hidden)]
