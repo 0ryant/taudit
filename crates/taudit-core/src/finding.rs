@@ -280,16 +280,27 @@ fn category_rule_id(category: &FindingCategory) -> String {
 /// underlying issue makes the fingerprint disappear; a tweak to the
 /// finding's user-facing message does NOT change the fingerprint.
 ///
+/// **Algorithm version `v2`** (replaces v1 from v0.9.1).
+///
+/// v1 collapsed every per-hop finding against the same root Secret/Identity
+/// onto a single fingerprint. That hides genuinely distinct issues — two
+/// untrusted steps reaching the same secret are two separate
+/// remediation-distinct findings, not one. v2 makes every component of the
+/// finding contribute to the hash so unrelated findings cannot alias.
+///
 /// **Inputs (sensitive to):**
 ///   * Rule id — either a custom rule id parsed from a `[id] …` message
 ///     prefix, or the snake_case form of `finding.category`
-///   * Source file path (`graph.source.file`)
+///   * Source file path (`graph.source.file`) — verbatim, never normalised
+///     to a basename, so two pipelines named the same file in different
+///     directories never collide
 ///   * Finding category (snake_case)
-///   * Identifying node names. Where the finding involves a `Secret` or
-///     `Identity` node, the root authority name is used (collapses many
-///     per-hop findings against one secret to a single fingerprint —
-///     matches the existing SARIF dedup behaviour). Otherwise the names
-///     of all involved nodes, sorted, are used.
+///   * Root-authority node name — Secret/Identity name when one is
+///     involved, empty string otherwise. Surfaces the credential identity
+///     in the SIEM context column without being the only differentiator.
+///   * Ordered involved-node names — every node in `nodes_involved`,
+///     joined in original order (preserves caller intent so per-hop
+///     findings against the same secret produce distinct fingerprints).
 ///
 /// **Inputs (insensitive to):**
 ///   * Wall-clock time
@@ -299,9 +310,10 @@ fn category_rule_id(category: &FindingCategory) -> String {
 ///   * Environment / host / cwd
 ///   * Pipeline file content hash — only the path matters
 ///
-/// Stability guarantee: the format is stable within a major version
-/// (1.x.y). A 2.0.0 release may change the algorithm; the JSON / SARIF
-/// schemas surface the current major in their respective version fields.
+/// Stability guarantee: the v2 algorithm is stable for the v0.10+ line.
+/// Pre-v0.10 (v1 algorithm) suppressions DO NOT carry forward — a one-time
+/// re-baselining is required when upgrading. CHANGELOG and
+/// `docs/finding-fingerprint.md` flag the break explicitly.
 ///
 /// Output: SHA-256 of the canonical input string, truncated to the first
 /// 16 hex characters (64 bits — collision-resistant enough for finding
@@ -314,36 +326,39 @@ pub fn compute_fingerprint(finding: &Finding, graph: &AuthorityGraph) -> String 
     let category = category_rule_id(&finding.category);
     let file = graph.source.file.as_str();
 
-    // Prefer a single root authority (Secret / Identity) so per-hop
-    // findings collapse to one fingerprint per underlying credential.
-    let root_authority: Option<&str> = finding
+    // Root authority name (if any) — always emitted as its own component,
+    // empty string when no Secret/Identity is involved. Distinct field so
+    // a finding whose root_authority differs from a sibling's is
+    // recognisably different even when the involved-node list happens to
+    // overlap.
+    let root_authority: String = finding
         .nodes_involved
         .iter()
         .filter_map(|id| graph.node(*id))
         .find(|n| matches!(n.kind, NodeKind::Secret | NodeKind::Identity))
-        .map(|n| n.name.as_str());
+        .map(|n| n.name.clone())
+        .unwrap_or_default();
 
-    let node_segment: String = match root_authority {
-        Some(name) => name.to_string(),
-        None => {
-            let mut names: Vec<&str> = finding
-                .nodes_involved
-                .iter()
-                .filter_map(|id| graph.node(*id))
-                .map(|n| n.name.as_str())
-                .collect();
-            names.sort_unstable();
-            names.dedup();
-            names.join(",")
-        }
-    };
+    // Ordered involved-node names. Order is preserved (NOT sorted) — for
+    // authority_propagation findings the convention is `[source, sink]`,
+    // so two findings hitting the same secret but reaching different
+    // untrusted steps produce different fingerprints (the v1 collision
+    // class). Empty string when no nodes are involved.
+    let nodes_ordered: String = finding
+        .nodes_involved
+        .iter()
+        .filter_map(|id| graph.node(*id))
+        .map(|n| n.name.as_str())
+        .collect::<Vec<_>>()
+        .join(",");
 
-    // Canonical encoding: each component prefixed with a tag and joined
+    // Canonical encoding: every component prefixed with a tag and joined
     // by `\x1f` (ASCII unit separator) so component boundaries cannot
-    // alias across inputs (e.g. node name containing the literal
-    // separator string used between fields).
+    // alias across inputs. Algorithm version baked into the prefix so a
+    // future change to the contract is detectable from the canonical
+    // string alone.
     let canonical = format!(
-        "v1\x1frule={rule_id}\x1ffile={file}\x1fcategory={category}\x1fnodes={node_segment}"
+        "v2\x1frule={rule_id}\x1ffile={file}\x1fcategory={category}\x1froot={root_authority}\x1fnodes={nodes_ordered}"
     );
 
     let digest = Sha256::digest(canonical.as_bytes());
@@ -449,9 +464,12 @@ mod fingerprint_tests {
     }
 
     #[test]
-    fn per_hop_findings_against_same_authority_collapse() {
-        // A single secret reaching N untrusted steps must yield the
-        // SAME fingerprint each time so SIEM rolls up to one ticket.
+    fn per_hop_findings_against_same_authority_are_distinct() {
+        // v2 contract: a single secret reaching N distinct untrusted steps
+        // produces N distinct fingerprints. Each (secret, step) pair is its
+        // own remediation-distinct finding — collapsing them (the v1
+        // behaviour) hid genuinely different exposure surfaces. SIEMs that
+        // want a per-secret rollup can group on root_authority client-side.
         let mut graph = AuthorityGraph::new(source(".github/workflows/ci.yml"));
         let secret = graph.add_node(NodeKind::Secret, "DEPLOY_TOKEN", TrustZone::FirstParty);
         let step_a = graph.add_node(NodeKind::Step, "deploy[0]", TrustZone::Untrusted);
@@ -467,10 +485,108 @@ mod fingerprint_tests {
             "DEPLOY_TOKEN reaches deploy[1]",
             vec![secret, step_b],
         );
-        assert_eq!(
+        assert_ne!(
             compute_fingerprint(&f_a, &graph),
             compute_fingerprint(&f_b, &graph),
-            "per-hop findings against one secret must share a fingerprint"
+            "per-hop findings against one secret must produce distinct \
+             fingerprints — sink identity is part of the issue"
+        );
+    }
+
+    #[test]
+    fn same_secret_same_sink_remains_stable_across_calls() {
+        // Re-running the SAME finding (same secret, same sink, same file)
+        // must still produce the same fingerprint — that is the entire
+        // point of cross-run dedup. The v2 change adds inputs but does not
+        // introduce non-determinism.
+        let mut graph = AuthorityGraph::new(source(".github/workflows/ci.yml"));
+        let secret = graph.add_node(NodeKind::Secret, "DEPLOY_TOKEN", TrustZone::FirstParty);
+        let step = graph.add_node(NodeKind::Step, "deploy[0]", TrustZone::Untrusted);
+        let f = make_finding(
+            FindingCategory::AuthorityPropagation,
+            "msg",
+            vec![secret, step],
+        );
+        assert_eq!(
+            compute_fingerprint(&f, &graph),
+            compute_fingerprint(&f, &graph)
+        );
+    }
+
+    #[test]
+    fn r2_attack2_two_files_same_secret_name_distinct_fingerprints() {
+        // R2 attack #2 reproducer: two genuinely different findings in two
+        // different pipeline files that share a secret NAME must produce
+        // different fingerprints. The earlier (pre-v0.9.1) algorithm could
+        // collide here; the v2 algorithm explicitly includes file path so
+        // the names cannot alias across files.
+        let mut g_a = AuthorityGraph::new(source("workflows/a.yml"));
+        let mut g_b = AuthorityGraph::new(source("workflows/b.yml"));
+        let s_a = g_a.add_node(NodeKind::Secret, "MY_SECRET", TrustZone::FirstParty);
+        let sink_a = g_a.add_node(NodeKind::Step, "evil/action", TrustZone::Untrusted);
+        let s_b = g_b.add_node(NodeKind::Secret, "MY_SECRET", TrustZone::FirstParty);
+        let sink_b = g_b.add_node(
+            NodeKind::Step,
+            "different-evil/action",
+            TrustZone::Untrusted,
+        );
+
+        let f_a = make_finding(
+            FindingCategory::AuthorityPropagation,
+            "MY_SECRET reaches evil/action",
+            vec![s_a, sink_a],
+        );
+        let f_b = make_finding(
+            FindingCategory::AuthorityPropagation,
+            "MY_SECRET reaches different-evil/action",
+            vec![s_b, sink_b],
+        );
+        assert_ne!(
+            compute_fingerprint(&f_a, &g_a),
+            compute_fingerprint(&f_b, &g_b),
+            "two genuinely different findings must not share a fingerprint \
+             just because the secret name overlaps"
+        );
+    }
+
+    #[test]
+    fn root_authority_segment_is_always_present_even_when_empty() {
+        // Findings without any Secret/Identity (e.g. floating_image) MUST
+        // still produce a stable fingerprint. The empty-root case is its
+        // own equivalence class — two such findings with the same node
+        // list collapse to the same fingerprint; differing node lists
+        // produce different fingerprints.
+        let mut g = AuthorityGraph::new(source(".github/workflows/ci.yml"));
+        let img_a = g.add_node(NodeKind::Image, "alpine:latest", TrustZone::ThirdParty);
+        let img_b = g.add_node(NodeKind::Image, "ubuntu:22.04", TrustZone::ThirdParty);
+        let f_a = make_finding(FindingCategory::FloatingImage, "msg-a", vec![img_a]);
+        let f_b = make_finding(FindingCategory::FloatingImage, "msg-b", vec![img_b]);
+        let fp_a = compute_fingerprint(&f_a, &g);
+        let fp_b = compute_fingerprint(&f_b, &g);
+        assert_ne!(
+            fp_a, fp_b,
+            "two distinct floating-image findings must not collide"
+        );
+        assert_eq!(fp_a.len(), 16);
+        assert_eq!(fp_b.len(), 16);
+    }
+
+    #[test]
+    fn node_order_is_significant() {
+        // The fingerprint preserves caller order in nodes_involved. A
+        // finding emitted as [secret, step] is semantically different from
+        // [step, secret] (source vs sink role) and produces a different
+        // fingerprint. Rules must therefore stay consistent in the order
+        // they push nodes — every built-in does today.
+        let mut g = AuthorityGraph::new(source(".github/workflows/ci.yml"));
+        let s = g.add_node(NodeKind::Secret, "K", TrustZone::FirstParty);
+        let step = g.add_node(NodeKind::Step, "use", TrustZone::Untrusted);
+        let forward = make_finding(FindingCategory::AuthorityPropagation, "x", vec![s, step]);
+        let reverse = make_finding(FindingCategory::AuthorityPropagation, "x", vec![step, s]);
+        assert_ne!(
+            compute_fingerprint(&forward, &g),
+            compute_fingerprint(&reverse, &g),
+            "node order must influence the fingerprint so role swap is detectable"
         );
     }
 
