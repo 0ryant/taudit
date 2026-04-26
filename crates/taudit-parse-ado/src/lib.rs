@@ -69,6 +69,9 @@ impl PipelineParser for AdoParser {
                     && has_root_parameter_conditional(content);
                 if looks_like_template_fragment {
                     let mut graph = AuthorityGraph::new(source.clone());
+                    graph
+                        .metadata
+                        .insert(META_PLATFORM.into(), "azure-devops".into());
                     graph.mark_partial(
                         "ADO template fragment with top-level parameter conditional — root structure depends on parent pipeline context".to_string(),
                     );
@@ -80,6 +83,9 @@ impl PipelineParser for AdoParser {
         let extra_docs = de.next().is_some();
 
         let mut graph = AuthorityGraph::new(source.clone());
+        graph
+            .metadata
+            .insert(META_PLATFORM.into(), "azure-devops".into());
         if extra_docs {
             graph.mark_partial(
                 "file contains multiple YAML documents (--- separator) — only the first was analyzed".to_string(),
