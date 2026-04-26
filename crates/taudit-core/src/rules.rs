@@ -3622,6 +3622,17 @@ pub fn run_all_rules(graph: &AuthorityGraph, max_hops: usize) -> Vec<Finding> {
     // neutralises the risk).
     apply_compensating_controls(graph, &mut findings);
 
+    // Deduplicate structurally identical findings — BFS propagation can visit
+    // the same (step, secret) pair via two distinct graph paths, producing
+    // findings with identical category + nodes + message. Key on all three
+    // so distinct per-variable findings (same step, different message) are
+    // preserved. Belt-and-suspenders: dedup here so every output format
+    // (JSON, SARIF, terminal) sees a clean list regardless of root-cause.
+    let mut seen_keys: std::collections::HashSet<(FindingCategory, Vec<NodeId>, String)> =
+        std::collections::HashSet::new();
+    findings
+        .retain(|f| seen_keys.insert((f.category, f.nodes_involved.clone(), f.message.clone())));
+
     findings.sort_by_key(|f| f.severity);
 
     findings
