@@ -2,6 +2,24 @@
 
 All notable changes to this project will be documented in this file.
 
+## v0.9.4 — 2026-04-26
+
+> Patch release: GHA parser now emits Artifact nodes (Produces/Consumes edges) enabling `artifact_boundary_crossing` to fire from real scans; `.gitignore` hardened for `.taudit/baselines/`; B7/B8/B3/G1/G2/G3 fixes from v0.9.3 validated against 1,636-file corpus.
+
+### Added
+
+- **GHA parser — Artifact graph edges**: `actions/upload-artifact` steps now create `Artifact` nodes with `Produces` edges; `actions/download-artifact` and `dawidd6/action-download-artifact` steps create `Consumes` edges. Same artifact name within a workflow reuses the same node. This makes `artifact_boundary_crossing` fire from real scans (previously rule was unit-tested only against hand-built graphs).
+- **3 new parser tests**: `upload_artifact_creates_produces_edge`, `download_artifact_creates_consumes_edge`, `upload_download_same_name_share_artifact_node`.
+
+### Fixed
+
+- **`.gitignore`**: Added `.taudit/baselines/` exclusion (scanner-generated per-file state was untracked). `.taudit/backups/` was already excluded; now both generated sub-directories are covered with an explanatory comment.
+
+### Validation
+
+- Corpus scan (1,636 files — 960 GHA, 412 ADO, 264 GitLab): `artifact_boundary_crossing` verified fires on crafted positive/negative test YAMLs; 0 corpus fires (no SHA-pinned download after unpinned upload with auth in the wild).
+- Workspace tests: **530 passed, 0 failed**.
+
 ## v0.9.3 — 2026-04-26
 
 > Patch release that merges deferred additive rule work from `worktree-agent-af68e4b6acd4e6bdd` using a safe 3-way patch apply onto post-v0.9.2 main. Keeps v0.9.2 release contents/versions/docs intact while landing the council/red-team GHA+GitLab expansion.

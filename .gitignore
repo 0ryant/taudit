@@ -20,5 +20,10 @@ BUILD_SHEET.md
 MEMORY/
 .claude/
 
-# Remediation rollback artifacts are local operational state.
+# taudit operational state: backups and per-file scan baselines are
+# machine-generated and should not be committed.  The .taudit/ directory
+# itself IS intentionally tracked so that suppression configs and
+# .taudit-suppressions.yml live in source control; only the generated
+# sub-directories are excluded.
 .taudit/backups/
+.taudit/baselines/

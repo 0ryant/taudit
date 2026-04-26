@@ -55,6 +55,7 @@ impl PipelineParser for GhaParser {
             );
         }
         let mut secret_ids: HashMap<String, NodeId> = HashMap::new();
+        let mut artifact_ids: HashMap<String, NodeId> = HashMap::new();
 
         // Workflow-level `env:` may be a template expression (e.g. `env: ${{ matrix }}`)
         // whose shape is unknown statically. Mark Partial once and skip env processing
@@ -454,6 +455,37 @@ impl PipelineParser for GhaParser {
                             node.metadata
                                 .insert(META_DOWNLOADS_ARTIFACT.into(), "true".into());
                         }
+                    }
+                }
+
+                // Artifact graph edges: upload → Produces, download → Consumes.
+                // These let artifact_boundary_crossing fire when an untrusted
+                // producer step hands off to a privileged consumer step.
+                if let Some(ref uses) = step.uses {
+                    let action = uses.split('@').next().unwrap_or(uses);
+                    if action == "actions/upload-artifact" {
+                        let artifact_name = step
+                            .with
+                            .as_ref()
+                            .and_then(|w| w.get("name"))
+                            .map(|s| s.as_str())
+                            .unwrap_or("artifact");
+                        let art_id =
+                            find_or_create_artifact(&mut graph, &mut artifact_ids, artifact_name);
+                        graph.add_edge(step_id, art_id, EdgeKind::Produces);
+                    } else if matches!(
+                        action,
+                        "actions/download-artifact" | "dawidd6/action-download-artifact"
+                    ) {
+                        let artifact_name = step
+                            .with
+                            .as_ref()
+                            .and_then(|w| w.get("name"))
+                            .map(|s| s.as_str())
+                            .unwrap_or("artifact");
+                        let art_id =
+                            find_or_create_artifact(&mut graph, &mut artifact_ids, artifact_name);
+                        graph.add_edge(art_id, step_id, EdgeKind::Consumes);
                     }
                 }
 
@@ -1303,6 +1335,19 @@ fn find_or_create_secret(
         return id;
     }
     let id = graph.add_node(NodeKind::Secret, name, TrustZone::FirstParty);
+    cache.insert(name.to_string(), id);
+    id
+}
+
+fn find_or_create_artifact(
+    graph: &mut AuthorityGraph,
+    cache: &mut HashMap<String, NodeId>,
+    name: &str,
+) -> NodeId {
+    if let Some(&id) = cache.get(name) {
+        return id;
+    }
+    let id = graph.add_node(NodeKind::Artifact, name, TrustZone::FirstParty);
     cache.insert(name.to_string(), id);
     id
 }
@@ -2881,5 +2926,108 @@ jobs:
             TrustZone::ThirdParty,
             "legitimate SHA-pinned action must be classified as ThirdParty"
         );
+    }
+
+    #[test]
+    fn upload_artifact_creates_produces_edge() {
+        let yaml = r#"
+permissions:
+  contents: read
+jobs:
+  build:
+    steps:
+      - uses: actions/upload-artifact@v4
+        with:
+          name: my-dist
+          path: ./dist
+"#;
+        let graph = parse(yaml);
+        let artifacts: Vec<_> = graph.nodes_of_kind(NodeKind::Artifact).collect();
+        assert_eq!(
+            artifacts.len(),
+            1,
+            "upload-artifact should create one Artifact node"
+        );
+        assert_eq!(artifacts[0].name, "my-dist");
+        let produces_edges: Vec<_> = graph
+            .edges
+            .iter()
+            .filter(|e| e.kind == EdgeKind::Produces && e.to == artifacts[0].id)
+            .collect();
+        assert_eq!(
+            produces_edges.len(),
+            1,
+            "upload step must have Produces edge to artifact"
+        );
+    }
+
+    #[test]
+    fn download_artifact_creates_consumes_edge() {
+        let yaml = r#"
+jobs:
+  deploy:
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: my-dist
+"#;
+        let graph = parse(yaml);
+        let artifacts: Vec<_> = graph.nodes_of_kind(NodeKind::Artifact).collect();
+        assert_eq!(
+            artifacts.len(),
+            1,
+            "download-artifact should create one Artifact node"
+        );
+        let consumes_edges: Vec<_> = graph
+            .edges
+            .iter()
+            .filter(|e| e.kind == EdgeKind::Consumes && e.from == artifacts[0].id)
+            .collect();
+        assert_eq!(
+            consumes_edges.len(),
+            1,
+            "download step must have Consumes edge from artifact"
+        );
+    }
+
+    #[test]
+    fn upload_download_same_name_share_artifact_node() {
+        let yaml = r#"
+permissions:
+  contents: read
+jobs:
+  build:
+    steps:
+      - uses: actions/upload-artifact@v4
+        with:
+          name: shared-dist
+          path: ./dist
+  deploy:
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: shared-dist
+"#;
+        let graph = parse(yaml);
+        let artifacts: Vec<_> = graph.nodes_of_kind(NodeKind::Artifact).collect();
+        assert_eq!(
+            artifacts.len(),
+            1,
+            "same artifact name must reuse the same Artifact node"
+        );
+        let produces: Vec<_> = graph
+            .edges
+            .iter()
+            .filter(|e| e.kind == EdgeKind::Produces)
+            .collect();
+        let consumes: Vec<_> = graph
+            .edges
+            .iter()
+            .filter(|e| e.kind == EdgeKind::Consumes)
+            .collect();
+        assert_eq!(produces.len(), 1, "one Produces edge");
+        assert_eq!(consumes.len(), 1, "one Consumes edge");
+        assert_eq!(produces[0].to, artifacts[0].id);
+        assert_eq!(consumes[0].from, artifacts[0].id);
     }
 }
