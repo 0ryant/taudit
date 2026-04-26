@@ -149,6 +149,15 @@ pub enum FindingCategory {
     /// OIDC tokens or registry credentials, and the workflow then pushes a
     /// PR-controlled image to a shared registry.
     PrBuildPushesImageWithFloatingCredentials,
+    /// First-party step writes a Secret/Identity-derived value into the
+    /// `$GITHUB_ENV` gate (or pipeline-variable equivalent) and a *later*
+    /// step in the same job that runs in `Untrusted` or `ThirdParty` trust
+    /// zone reads from the runner-managed env (`${{ env.X }}`). The two
+    /// component rules — `self_mutating_pipeline` (writer) and
+    /// `untrusted_with_authority` (consumer) — each see only half the
+    /// chain and emit no finding for the laundered consumer; this rule
+    /// closes the composition gap that R2 attack #3 exploited.
+    SecretViaEnvGateToUntrustedConsumer,
     // Reserved — requires ADO/GH API enrichment beyond pipeline YAML
     /// Requires runtime network telemetry or policy enrichment — not detectable from YAML alone.
     #[doc(hidden)]

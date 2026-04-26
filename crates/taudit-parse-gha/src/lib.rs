@@ -384,14 +384,30 @@ impl PipelineParser for GhaParser {
                     None => {}
                 }
 
-                // Process secrets from `with:` block
+                // Process secrets from `with:` block, plus detect any
+                // `${{ env.X }}` reference. `env.X` does NOT produce a
+                // HasAccessTo edge (the value is sourced from the ambient
+                // runner environment, not directly from the secrets store)
+                // but it IS the consumer half of the env-gate laundering
+                // pattern that `secret_via_env_gate_to_untrusted_consumer`
+                // detects. Stamping META_READS_ENV here lets the rule run
+                // without re-walking the YAML.
                 if let Some(ref with) = step.with {
+                    let mut reads_env = false;
                     for val in with.values() {
                         if is_secret_reference(val) {
                             let secret_name = extract_secret_name(val);
                             let secret_id =
                                 find_or_create_secret(&mut graph, &mut secret_ids, &secret_name);
                             graph.add_edge(step_id, secret_id, EdgeKind::HasAccessTo);
+                        }
+                        if is_env_reference(val) {
+                            reads_env = true;
+                        }
+                    }
+                    if reads_env {
+                        if let Some(node) = graph.nodes.get_mut(step_id) {
+                            node.metadata.insert(META_READS_ENV.into(), "true".into());
                         }
                     }
                 }
@@ -439,6 +455,16 @@ impl PipelineParser for GhaParser {
                         if let Some(node) = graph.nodes.get_mut(step_id) {
                             node.metadata
                                 .insert(META_WRITES_ENV_GATE.into(), "true".into());
+                        }
+                    }
+                    // `${{ env.X }}` references inside a run: body — same
+                    // consumer signal as the with: detection above. A run
+                    // step that interpolates env via the template engine
+                    // is reading from the runner-managed env table just
+                    // like a uses: action would.
+                    if is_env_reference(run) {
+                        if let Some(node) = graph.nodes.get_mut(step_id) {
+                            node.metadata.insert(META_READS_ENV.into(), "true".into());
                         }
                     }
                 }
@@ -819,6 +845,35 @@ fn try_inline_composite_action(
 
 fn is_secret_reference(val: &str) -> bool {
     val.contains("${{ secrets.")
+}
+
+/// True for any `${{ env.<NAME> }}` template expression. Covers the
+/// canonical $GITHUB_ENV laundering consumer pattern (a step reads
+/// `env.CLOUD_KEY` after a previous step wrote `CLOUD_KEY=$secret` to
+/// `$GITHUB_ENV`) without conflating with ordinary first-party `env:`
+/// declarations on the consuming step itself. We tolerate the lenient
+/// whitespace forms GHA accepts (`${{env.X}}`, `${{   env.X   }}`).
+fn is_env_reference(val: &str) -> bool {
+    // Cheap fast path — bail before substring scan if the marker isn't
+    // present at all. The `env.` substring on its own is too noisy
+    // (matches `step.env.X`, `inputs.env_var`), so we anchor on the
+    // GHA template open-brace plus any whitespace.
+    if !val.contains("${{") {
+        return false;
+    }
+    // Strip whitespace around any template-open and look for the literal
+    // token sequence `env.`. This catches `${{env.X}}`, `${{ env.X }}`,
+    // and `${{    env.X    }}` while rejecting `${{ steps.x.env.foo }}`.
+    let mut idx = 0;
+    while let Some(rel) = val[idx..].find("${{") {
+        let after = &val[idx + rel + 3..];
+        let trimmed = after.trim_start();
+        if trimmed.starts_with("env.") {
+            return true;
+        }
+        idx += rel + 3;
+    }
+    false
 }
 
 fn extract_secret_name(val: &str) -> String {

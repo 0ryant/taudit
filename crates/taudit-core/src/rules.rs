@@ -3,9 +3,10 @@ use crate::graph::{
     is_docker_digest_pinned, is_sha_pinned, AuthorityCompleteness, AuthorityGraph, EdgeKind,
     IdentityScope, NodeId, NodeKind, TrustZone, META_ADD_SPN_TO_ENV, META_ATTESTS,
     META_CHECKOUT_SELF, META_CLI_FLAG_EXPOSED, META_CONTAINER, META_DIGEST, META_ENV_APPROVAL,
-    META_IDENTITY_SCOPE, META_IMPLICIT, META_OIDC, META_PERMISSIONS, META_REPOSITORIES,
-    META_SCRIPT_BODY, META_SELF_HOSTED, META_SERVICE_CONNECTION, META_SERVICE_CONNECTION_NAME,
-    META_TERRAFORM_AUTO_APPROVE, META_TRIGGER, META_VARIABLE_GROUP, META_WRITES_ENV_GATE,
+    META_IDENTITY_SCOPE, META_IMPLICIT, META_JOB_NAME, META_OIDC, META_PERMISSIONS, META_READS_ENV,
+    META_REPOSITORIES, META_SCRIPT_BODY, META_SELF_HOSTED, META_SERVICE_CONNECTION,
+    META_SERVICE_CONNECTION_NAME, META_TERRAFORM_AUTO_APPROVE, META_TRIGGER, META_VARIABLE_GROUP,
+    META_WRITES_ENV_GATE,
 };
 use crate::propagation;
 
@@ -2861,6 +2862,177 @@ pub fn pr_build_pushes_image_with_floating_credentials(graph: &AuthorityGraph) -
     findings
 }
 
+/// Rule: secret laundered through `$GITHUB_ENV` reaches an untrusted consumer
+/// in the same job — composition gap between `self_mutating_pipeline` (the
+/// gate-write detector) and `untrusted_with_authority` (the direct-access
+/// detector).
+///
+/// **Pattern (R2 attack #3):**
+/// ```yaml
+/// jobs:
+///   build:
+///     steps:
+///       - name: setup
+///         run: echo "CLOUD_KEY=${{ secrets.CLOUD_KEY }}" >> $GITHUB_ENV   # writer
+///       - uses: some-org/deploy@main                                        # untrusted
+///         with:
+///           key: ${{ env.CLOUD_KEY }}                                       # consumer
+/// ```
+/// The writer trips `self_mutating_pipeline`. The consumer never gets a
+/// `HasAccessTo` edge to `CLOUD_KEY` (the value is sourced from the runner
+/// env, not the secrets store) so neither `untrusted_with_authority` nor
+/// `authority_propagation` fire — the env-gate launders the trust zone.
+///
+/// **Detection:** for every Step in the same job:
+///   - Writer: `META_WRITES_ENV_GATE = "true"` AND has `HasAccessTo` to a
+///     Secret/Identity (the value being laundered must derive from authority)
+///   - Consumer: appears later in the job (NodeId order tracks declaration
+///     order), trust zone is `Untrusted` or `ThirdParty`, and carries
+///     `META_READS_ENV = "true"` (stamped by the parser when the step
+///     references `${{ env.X }}` in `with:` / `run:`)
+///
+/// Same-job constraint enforced via `META_JOB_NAME` — the env gate only
+/// propagates within a job, so cross-job pairs are not flagged.
+pub fn secret_via_env_gate_to_untrusted_consumer(graph: &AuthorityGraph) -> Vec<Finding> {
+    let mut findings = Vec::new();
+
+    // Step 1: enumerate writer-with-secret nodes, paired with the laundered
+    // authority names so the finding message can name them. We capture the
+    // node id in declaration order so the same-job ordering check below is a
+    // simple comparison rather than an O(n²) scan.
+    struct Writer<'a> {
+        id: NodeId,
+        job: &'a str,
+        name: &'a str,
+        secrets: Vec<&'a str>,
+    }
+    let writers: Vec<Writer<'_>> = graph
+        .nodes_of_kind(NodeKind::Step)
+        .filter(|step| {
+            step.metadata
+                .get(META_WRITES_ENV_GATE)
+                .map(|v| v == "true")
+                .unwrap_or(false)
+        })
+        .filter_map(|step| {
+            let job = step.metadata.get(META_JOB_NAME)?.as_str();
+            // Must hold authority — collect Secret/Identity names reachable
+            // via HasAccessTo. An env-gate write that doesn't carry any
+            // authority is the harmless "ECHO ROUTE=/api >> $GITHUB_ENV"
+            // case; not in scope for this rule.
+            let secrets: Vec<&str> = graph
+                .edges_from(step.id)
+                .filter(|e| e.kind == EdgeKind::HasAccessTo)
+                .filter_map(|e| graph.node(e.to))
+                .filter(|n| matches!(n.kind, NodeKind::Secret | NodeKind::Identity))
+                .map(|n| n.name.as_str())
+                .collect();
+            if secrets.is_empty() {
+                return None;
+            }
+            Some(Writer {
+                id: step.id,
+                job,
+                name: step.name.as_str(),
+                secrets,
+            })
+        })
+        .collect();
+
+    if writers.is_empty() {
+        return findings;
+    }
+
+    // Step 2: for every consumer step that reads env, find the writer(s) it
+    // could be laundering from.
+    for consumer in graph.nodes_of_kind(NodeKind::Step) {
+        // Consumer must read the runner env.
+        let reads_env = consumer
+            .metadata
+            .get(META_READS_ENV)
+            .map(|v| v == "true")
+            .unwrap_or(false);
+        if !reads_env {
+            continue;
+        }
+
+        // Consumer must run with reduced trust — first-party readers are
+        // already accounted for elsewhere and would be a high-FP class.
+        if !matches!(
+            consumer.trust_zone,
+            TrustZone::Untrusted | TrustZone::ThirdParty
+        ) {
+            continue;
+        }
+
+        let consumer_job = match consumer.metadata.get(META_JOB_NAME) {
+            Some(j) => j.as_str(),
+            None => continue,
+        };
+
+        // Find writers in the same job that appear earlier (NodeId order
+        // mirrors declaration order — see GHA parser, ADO parser).
+        let upstream: Vec<&Writer<'_>> = writers
+            .iter()
+            .filter(|w| w.job == consumer_job && w.id < consumer.id)
+            .collect();
+
+        if upstream.is_empty() {
+            continue;
+        }
+
+        // Aggregate the laundered authority names across all writers so
+        // operators see the full set of credentials potentially reaching
+        // the untrusted step. Stable ordering, dedup'd.
+        let mut secret_labels: Vec<&str> = upstream
+            .iter()
+            .flat_map(|w| w.secrets.iter().copied())
+            .collect();
+        secret_labels.sort_unstable();
+        secret_labels.dedup();
+        let writer_names: Vec<&str> = upstream.iter().map(|w| w.name).collect();
+
+        let mut nodes_involved = vec![consumer.id];
+        nodes_involved.extend(upstream.iter().map(|w| w.id));
+        // Include the laundered Secret/Identity nodes themselves so the
+        // fingerprint and downstream consumers can attribute the finding
+        // to a specific credential.
+        for w in &upstream {
+            for e in graph.edges_from(w.id) {
+                if e.kind == EdgeKind::HasAccessTo
+                    && graph
+                        .node(e.to)
+                        .map(|n| matches!(n.kind, NodeKind::Secret | NodeKind::Identity))
+                        .unwrap_or(false)
+                    && !nodes_involved.contains(&e.to)
+                {
+                    nodes_involved.push(e.to);
+                }
+            }
+        }
+
+        findings.push(Finding {
+            severity: Severity::Critical,
+            category: FindingCategory::SecretViaEnvGateToUntrustedConsumer,
+            path: None,
+            nodes_involved,
+            message: format!(
+                "Untrusted consumer '{}' in job '{}' reads from $GITHUB_ENV after step(s) [{}] laundered authority [{}] through the env gate — secret reaches untrusted code without ever appearing in a HasAccessTo edge",
+                consumer.name,
+                consumer_job,
+                writer_names.join(", "),
+                secret_labels.join(", "),
+            ),
+            recommendation: Recommendation::Manual {
+                action: "Pass the secret to the consuming step via an explicit `env:` mapping on that step (so the relationship is graph-visible) instead of writing it to `$GITHUB_ENV` for ambient pickup. If the consumer is a third-party action, pin it to a 40-char SHA before exposing any secret-derived value to it.".into(),
+            },
+            source: FindingSource::BuiltIn,
+        });
+    }
+
+    findings
+}
+
 pub fn run_all_rules(graph: &AuthorityGraph, max_hops: usize) -> Vec<Finding> {
     let mut findings = Vec::new();
     // MVP rules
@@ -2898,6 +3070,8 @@ pub fn run_all_rules(graph: &AuthorityGraph, max_hops: usize) -> Vec<Finding> {
     findings.extend(pr_trigger_with_floating_action_ref(graph));
     findings.extend(untrusted_api_response_to_env_sink(graph));
     findings.extend(pr_build_pushes_image_with_floating_credentials(graph));
+    // Composition-gap rule: env-gate laundering into untrusted consumer.
+    findings.extend(secret_via_env_gate_to_untrusted_consumer(graph));
 
     apply_confidence_cap(graph, &mut findings);
 
@@ -5206,5 +5380,225 @@ mod tests {
         let g = graph_pr_with_login_action("pull_request", "actions/checkout@v4");
         let findings = pr_build_pushes_image_with_floating_credentials(&g);
         assert!(findings.is_empty());
+    }
+
+    // ── secret_via_env_gate_to_untrusted_consumer ──────────────────────
+
+    /// Build a graph with one job containing a configurable sequence of
+    /// steps. Each tuple is (name, trust_zone, writes_env_gate, reads_env,
+    /// secret_to_link). Returns the graph plus the assigned NodeIds in
+    /// declaration order so tests can assert on specific nodes.
+    fn job_with_steps(
+        job: &str,
+        steps: &[(&str, TrustZone, bool, bool, Option<&str>)],
+    ) -> (AuthorityGraph, Vec<NodeId>) {
+        let mut g = AuthorityGraph::new(source("ci.yml"));
+        let mut secret_ids: std::collections::HashMap<String, NodeId> =
+            std::collections::HashMap::new();
+        let mut step_ids = Vec::new();
+        for (name, zone, writes, reads, secret) in steps {
+            let mut meta = std::collections::HashMap::new();
+            meta.insert(META_JOB_NAME.into(), job.into());
+            if *writes {
+                meta.insert(META_WRITES_ENV_GATE.into(), "true".into());
+            }
+            if *reads {
+                meta.insert(META_READS_ENV.into(), "true".into());
+            }
+            let id = g.add_node_with_metadata(NodeKind::Step, *name, *zone, meta);
+            if let Some(sname) = secret {
+                let secret_id = *secret_ids
+                    .entry((*sname).to_string())
+                    .or_insert_with(|| g.add_node(NodeKind::Secret, *sname, TrustZone::FirstParty));
+                g.add_edge(id, secret_id, EdgeKind::HasAccessTo);
+            }
+            step_ids.push(id);
+        }
+        (g, step_ids)
+    }
+
+    #[test]
+    fn env_gate_writer_then_untrusted_reader_fires() {
+        let (g, _ids) = job_with_steps(
+            "build",
+            &[
+                (
+                    "setup",
+                    TrustZone::FirstParty,
+                    true,
+                    false,
+                    Some("CLOUD_KEY"),
+                ),
+                ("deploy", TrustZone::Untrusted, false, true, None),
+            ],
+        );
+        let findings = secret_via_env_gate_to_untrusted_consumer(&g);
+        assert_eq!(findings.len(), 1, "writer + untrusted reader must fire");
+        assert_eq!(findings[0].severity, Severity::Critical);
+        assert!(
+            findings[0].message.contains("CLOUD_KEY"),
+            "message must name the laundered secret"
+        );
+        assert!(
+            findings[0].message.contains("deploy"),
+            "message must name the consumer step"
+        );
+    }
+
+    #[test]
+    fn env_gate_writer_then_first_party_reader_does_not_fire() {
+        // First-party consumer is the legitimate use of $GITHUB_ENV — the
+        // entire point of the gate. Only flagged when the consumer's trust
+        // zone is reduced.
+        let (g, _) = job_with_steps(
+            "build",
+            &[
+                (
+                    "setup",
+                    TrustZone::FirstParty,
+                    true,
+                    false,
+                    Some("CLOUD_KEY"),
+                ),
+                ("use-it", TrustZone::FirstParty, false, true, None),
+            ],
+        );
+        let findings = secret_via_env_gate_to_untrusted_consumer(&g);
+        assert!(
+            findings.is_empty(),
+            "first-party reader is the intended use; must not fire"
+        );
+    }
+
+    #[test]
+    fn env_gate_write_of_non_secret_value_does_not_fire() {
+        // Writer step doesn't hold any Secret/Identity — it's writing a
+        // benign value (build version, config flag) into the env. Out of
+        // scope: the env gate isn't laundering authority across a trust
+        // boundary because there's no authority to launder.
+        let (g, _) = job_with_steps(
+            "build",
+            &[
+                ("setup", TrustZone::FirstParty, true, false, None),
+                ("deploy", TrustZone::Untrusted, false, true, None),
+            ],
+        );
+        let findings = secret_via_env_gate_to_untrusted_consumer(&g);
+        assert!(
+            findings.is_empty(),
+            "env-gate write of non-authority value must not fire"
+        );
+    }
+
+    #[test]
+    fn writer_in_different_job_does_not_fire() {
+        // The env gate only propagates within a job — a writer in job A
+        // cannot reach a consumer in job B even if both jobs run on the
+        // same runner. Same-job constraint enforced via META_JOB_NAME.
+        let mut g = AuthorityGraph::new(source("ci.yml"));
+        let secret = g.add_node(NodeKind::Secret, "CLOUD_KEY", TrustZone::FirstParty);
+
+        let mut writer_meta = std::collections::HashMap::new();
+        writer_meta.insert(META_JOB_NAME.into(), "build".into());
+        writer_meta.insert(META_WRITES_ENV_GATE.into(), "true".into());
+        let writer =
+            g.add_node_with_metadata(NodeKind::Step, "setup", TrustZone::FirstParty, writer_meta);
+        g.add_edge(writer, secret, EdgeKind::HasAccessTo);
+
+        let mut consumer_meta = std::collections::HashMap::new();
+        consumer_meta.insert(META_JOB_NAME.into(), "deploy".into()); // DIFFERENT job
+        consumer_meta.insert(META_READS_ENV.into(), "true".into());
+        g.add_node_with_metadata(
+            NodeKind::Step,
+            "remote-deploy",
+            TrustZone::Untrusted,
+            consumer_meta,
+        );
+
+        let findings = secret_via_env_gate_to_untrusted_consumer(&g);
+        assert!(
+            findings.is_empty(),
+            "cross-job writer/consumer pair must not fire — same-job constraint"
+        );
+    }
+
+    #[test]
+    fn writer_after_consumer_in_same_job_does_not_fire() {
+        // Declaration order matters: a writer that comes AFTER the
+        // consumer can't have populated the env the consumer read. Without
+        // this ordering check the rule would over-fire on any same-job
+        // write/read pair.
+        let (g, _) = job_with_steps(
+            "build",
+            &[
+                ("deploy", TrustZone::Untrusted, false, true, None),
+                (
+                    "setup",
+                    TrustZone::FirstParty,
+                    true,
+                    false,
+                    Some("CLOUD_KEY"),
+                ),
+            ],
+        );
+        let findings = secret_via_env_gate_to_untrusted_consumer(&g);
+        assert!(
+            findings.is_empty(),
+            "writer that runs after the consumer cannot launder into it"
+        );
+    }
+
+    #[test]
+    fn third_party_consumer_also_fires() {
+        // ThirdParty (SHA-pinned marketplace action) is still in scope —
+        // the action's code is immutable but it can still receive and
+        // exfiltrate the laundered secret.
+        let (g, _) = job_with_steps(
+            "build",
+            &[
+                (
+                    "setup",
+                    TrustZone::FirstParty,
+                    true,
+                    false,
+                    Some("CLOUD_KEY"),
+                ),
+                (
+                    "third-party-deploy",
+                    TrustZone::ThirdParty,
+                    false,
+                    true,
+                    None,
+                ),
+            ],
+        );
+        let findings = secret_via_env_gate_to_untrusted_consumer(&g);
+        assert_eq!(findings.len(), 1);
+    }
+
+    #[test]
+    fn rule_appears_in_run_all_rules() {
+        // run_all_rules wires every rule in the catalogue — assert the
+        // new one is hooked up so it actually fires from the CLI scan path.
+        let (g, _) = job_with_steps(
+            "build",
+            &[
+                (
+                    "setup",
+                    TrustZone::FirstParty,
+                    true,
+                    false,
+                    Some("CLOUD_KEY"),
+                ),
+                ("deploy", TrustZone::Untrusted, false, true, None),
+            ],
+        );
+        let findings = run_all_rules(&g, 4);
+        assert!(
+            findings
+                .iter()
+                .any(|f| f.category == FindingCategory::SecretViaEnvGateToUntrustedConsumer),
+            "secret_via_env_gate_to_untrusted_consumer must run via run_all_rules"
+        );
     }
 }

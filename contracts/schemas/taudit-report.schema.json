@@ -119,7 +119,8 @@
             "egress_blindspot",
             "missing_audit_trail",
             "floating_image",
-            "long_lived_credential"
+            "long_lived_credential",
+            "secret_via_env_gate_to_untrusted_consumer"
           ]
         },
         "path": {

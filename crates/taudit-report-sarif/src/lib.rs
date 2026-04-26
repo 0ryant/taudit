@@ -498,6 +498,35 @@ pub const RULE_DEFS: &[RuleDef] = &[
         security_severity: "7.5",
         tags: &["security", "supply-chain", "credentials", "github-actions"],
     },
+    RuleDef {
+        id: "secret_via_env_gate_to_untrusted_consumer",
+        name: "SecretViaEnvGateToUntrustedConsumer",
+        short_description:
+            "Secret laundered through $GITHUB_ENV by a first-party step is read by a later untrusted step in the same job.",
+        full_description:
+            "A first-party step writes a Secret/Identity-derived value into `$GITHUB_ENV` \
+             (or pipeline-variable equivalent), and a later step in the same job that \
+             runs in the Untrusted or ThirdParty trust zone reads from the runner-managed \
+             env via `${{ env.X }}`. The two component rules — `self_mutating_pipeline` \
+             on the writer and `untrusted_with_authority` on the consumer — each see only \
+             half the chain and emit no finding; the env gate launders the secret across \
+             the trust boundary without ever producing a `HasAccessTo` edge from the \
+             consumer to the original credential. \
+             \n\n\
+             Mitigation: pass the secret to the consuming step via an explicit `env:` \
+             mapping on that step (so the relationship is graph-visible) instead of \
+             writing it to `$GITHUB_ENV` for ambient pickup. If the consumer is a \
+             third-party action, pin it to a 40-char SHA before exposing any \
+             secret-derived value to it.",
+        default_level: "error",
+        security_severity: "9.0",
+        tags: &[
+            "security",
+            "privilege-escalation",
+            "propagation",
+            "github-actions",
+        ],
+    },
 ];
 
 // ── SARIF 2.1.0 schema structs ──────────────────────────
@@ -1034,6 +1063,7 @@ mod tests {
             FindingCategory::PrTriggerWithFloatingActionRef,
             FindingCategory::UntrustedApiResponseToEnvSink,
             FindingCategory::PrBuildPushesImageWithFloatingCredentials,
+            FindingCategory::SecretViaEnvGateToUntrustedConsumer,
         ];
 
         for cat in categories {

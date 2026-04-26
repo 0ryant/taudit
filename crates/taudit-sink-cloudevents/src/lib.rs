@@ -94,6 +94,9 @@ fn event_type(category: FindingCategory) -> String {
         FindingCategory::PrBuildPushesImageWithFloatingCredentials => {
             "pr_build_pushes_image_with_floating_credentials"
         }
+        FindingCategory::SecretViaEnvGateToUntrustedConsumer => {
+            "secret_via_env_gate_to_untrusted_consumer"
+        }
         #[allow(deprecated)]
         FindingCategory::EgressBlindspot => "egress_blindspot",
         #[allow(deprecated)]
