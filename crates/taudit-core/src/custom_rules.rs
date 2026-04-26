@@ -1,7 +1,8 @@
 use crate::finding::{Finding, FindingCategory, Recommendation, Severity};
 use crate::graph::{AuthorityGraph, NodeKind, TrustZone};
 use crate::propagation::PropagationPath;
-use serde::Deserialize;
+use serde::de::{self, MapAccess, Visitor};
+use serde::{Deserialize, Deserializer};
 use std::collections::HashMap;
 use std::fmt;
 use std::fs;
@@ -32,14 +33,180 @@ pub struct MatchSpec {
     pub path: PathMatcher,
 }
 
+/// A scalar-or-list helper. Lets YAML write `node_type: secret` (single value)
+/// or `node_type: [secret, identity]` (any-of). Single form preserved for
+/// backward compatibility with v0.4.x rule files.
+#[derive(Debug, Clone, Deserialize)]
+#[serde(untagged)]
+pub enum OneOrMany<T> {
+    One(T),
+    Many(Vec<T>),
+}
+
+impl<T: PartialEq> OneOrMany<T> {
+    fn contains(&self, value: &T) -> bool {
+        match self {
+            OneOrMany::One(v) => v == value,
+            OneOrMany::Many(vs) => vs.iter().any(|v| v == value),
+        }
+    }
+}
+
+/// Per-field metadata predicate. Bare string is `equals` (back-compat with
+/// v0.4.x). Operator object supports `equals`, `not_equals`, `contains` (substring
+/// match on string values), and `in` (any-of allowed values).
+#[derive(Debug, Clone, Deserialize)]
+#[serde(untagged)]
+pub enum MetadataPredicate {
+    /// `key: "value"` — equality (back-compat).
+    Equals(String),
+    /// `key: { equals/not_equals/contains/in: ... }`
+    Op(MetadataOp),
+}
+
+#[derive(Debug, Clone, Default, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct MetadataOp {
+    #[serde(default)]
+    pub equals: Option<String>,
+    #[serde(default)]
+    pub not_equals: Option<String>,
+    /// Substring match on the string-valued metadata field.
+    #[serde(default)]
+    pub contains: Option<String>,
+    #[serde(default, rename = "in")]
+    pub in_: Option<Vec<String>>,
+}
+
+impl MetadataOp {
+    fn matches(&self, actual: Option<&String>) -> bool {
+        // If the metadata key is absent, only `not_equals` can succeed (against
+        // anything-not-this-value), all positive operators fail.
+        if let Some(want) = &self.equals {
+            if actual.map(|s| s.as_str()) != Some(want.as_str()) {
+                return false;
+            }
+        }
+        if let Some(want) = &self.not_equals {
+            if actual.map(|s| s.as_str()) == Some(want.as_str()) {
+                return false;
+            }
+        }
+        if let Some(needle) = &self.contains {
+            match actual {
+                Some(s) if s.contains(needle.as_str()) => {}
+                _ => return false,
+            }
+        }
+        if let Some(allowed) = &self.in_ {
+            match actual {
+                Some(s) if allowed.iter().any(|a| a == s) => {}
+                _ => return false,
+            }
+        }
+        true
+    }
+}
+
+impl MetadataPredicate {
+    fn matches(&self, actual: Option<&String>) -> bool {
+        match self {
+            MetadataPredicate::Equals(want) => actual.map(|s| s.as_str()) == Some(want.as_str()),
+            MetadataPredicate::Op(op) => op.matches(actual),
+        }
+    }
+}
+
+/// Metadata matcher: map of field -> predicate, with an optional `not`
+/// sub-matcher (negation). The `not:` key is reserved and parsed specially —
+/// it cannot be used as a metadata field name.
+#[derive(Debug, Clone, Default)]
+pub struct MetadataMatcher {
+    pub fields: HashMap<String, MetadataPredicate>,
+    pub not: Option<Box<MetadataMatcher>>,
+}
+
+impl MetadataMatcher {
+    fn matches(&self, metadata: &HashMap<String, String>) -> bool {
+        for (key, pred) in &self.fields {
+            if !pred.matches(metadata.get(key)) {
+                return false;
+            }
+        }
+        if let Some(inner) = &self.not {
+            if inner.matches(metadata) {
+                return false;
+            }
+        }
+        true
+    }
+
+    fn is_empty(&self) -> bool {
+        self.fields.is_empty() && self.not.is_none()
+    }
+}
+
+// Custom Deserialize: pull out reserved `not` key, rest become field predicates.
+impl<'de> Deserialize<'de> for MetadataMatcher {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        struct MetadataMatcherVisitor;
+
+        impl<'de> Visitor<'de> for MetadataMatcherVisitor {
+            type Value = MetadataMatcher;
+
+            fn expecting(&self, f: &mut fmt::Formatter) -> fmt::Result {
+                f.write_str("a metadata predicate map (field -> string|operator) with optional `not:` sub-map")
+            }
+
+            fn visit_map<M>(self, mut map: M) -> Result<MetadataMatcher, M::Error>
+            where
+                M: MapAccess<'de>,
+            {
+                let mut fields: HashMap<String, MetadataPredicate> = HashMap::new();
+                let mut not: Option<Box<MetadataMatcher>> = None;
+
+                while let Some(key) = map.next_key::<String>()? {
+                    if key == "not" {
+                        if not.is_some() {
+                            return Err(de::Error::duplicate_field("not"));
+                        }
+                        let inner: MetadataMatcher = map.next_value()?;
+                        not = Some(Box::new(inner));
+                    } else {
+                        let value: MetadataPredicate = map.next_value()?;
+                        if fields.insert(key.clone(), value).is_some() {
+                            return Err(de::Error::custom(format!(
+                                "duplicate metadata field `{key}`"
+                            )));
+                        }
+                    }
+                }
+
+                Ok(MetadataMatcher { fields, not })
+            }
+        }
+
+        deserializer.deserialize_map(MetadataMatcherVisitor)
+    }
+}
+
 #[derive(Debug, Clone, Default, Deserialize)]
 pub struct NodeMatcher {
+    /// Single value (`node_type: secret`) or any-of list (`[secret, identity]`).
     #[serde(default)]
-    pub node_type: Option<NodeKind>,
+    pub node_type: Option<OneOrMany<NodeKind>>,
+    /// Single value or any-of list.
     #[serde(default)]
-    pub trust_zone: Option<TrustZone>,
+    pub trust_zone: Option<OneOrMany<TrustZone>>,
     #[serde(default)]
-    pub metadata: HashMap<String, String>,
+    pub metadata: MetadataMatcher,
+    /// Negation: matches when the inner sub-matcher does NOT match.
+    /// Nested `not` is allowed and double-negation collapses naturally.
+    #[serde(default)]
+    pub not: Option<Box<NodeMatcher>>,
 }
 
 #[derive(Debug, Clone, Default, Deserialize)]
@@ -127,23 +294,34 @@ pub fn load_rules_dir(dir: &Path) -> Result<Vec<CustomRule>, Vec<CustomRuleError
 
 impl NodeMatcher {
     fn matches(&self, node: &crate::graph::Node) -> bool {
-        if let Some(kind) = self.node_type {
-            if node.kind != kind {
+        if let Some(kinds) = &self.node_type {
+            if !kinds.contains(&node.kind) {
                 return false;
             }
         }
-        if let Some(zone) = self.trust_zone {
-            if node.trust_zone != zone {
+        if let Some(zones) = &self.trust_zone {
+            if !zones.contains(&node.trust_zone) {
                 return false;
             }
         }
-        for (key, expected) in &self.metadata {
-            match node.metadata.get(key) {
-                Some(actual) if actual == expected => {}
-                _ => return false,
+        if !self.metadata.matches(&node.metadata) {
+            return false;
+        }
+        if let Some(inner) = &self.not {
+            if inner.matches(node) {
+                return false;
             }
         }
         true
+    }
+
+    /// True when the matcher has no constraints — used by tests/tooling.
+    #[allow(dead_code)]
+    fn is_wildcard(&self) -> bool {
+        self.node_type.is_none()
+            && self.trust_zone.is_none()
+            && self.metadata.is_empty()
+            && self.not.is_none()
     }
 }
 
@@ -240,6 +418,10 @@ mod tests {
         (g, paths)
     }
 
+    fn one<T>(v: T) -> Option<OneOrMany<T>> {
+        Some(OneOrMany::One(v))
+    }
+
     #[test]
     fn custom_rule_fires_on_matching_path() {
         let (graph, paths) = build_graph_with_paths();
@@ -253,13 +435,15 @@ mod tests {
             match_spec: MatchSpec {
                 source: NodeMatcher {
                     node_type: None,
-                    trust_zone: Some(TrustZone::FirstParty),
-                    metadata: HashMap::new(),
+                    trust_zone: one(TrustZone::FirstParty),
+                    metadata: MetadataMatcher::default(),
+                    not: None,
                 },
                 sink: NodeMatcher {
                     node_type: None,
-                    trust_zone: Some(TrustZone::Untrusted),
-                    metadata: HashMap::new(),
+                    trust_zone: one(TrustZone::Untrusted),
+                    metadata: MetadataMatcher::default(),
+                    not: None,
                 },
                 path: PathMatcher::default(),
             },
@@ -284,8 +468,9 @@ mod tests {
             match_spec: MatchSpec {
                 source: NodeMatcher {
                     node_type: None,
-                    trust_zone: Some(TrustZone::Untrusted),
-                    metadata: HashMap::new(),
+                    trust_zone: one(TrustZone::Untrusted),
+                    metadata: MetadataMatcher::default(),
+                    not: None,
                 },
                 sink: NodeMatcher::default(),
                 path: PathMatcher::default(),
@@ -317,8 +502,14 @@ match:
         let rule: CustomRule = serde_yaml::from_str(yaml).expect("yaml must parse");
         assert_eq!(rule.id, "my_secret_to_untrusted");
         assert_eq!(rule.severity, Severity::Critical);
-        assert_eq!(rule.match_spec.source.node_type, Some(NodeKind::Secret));
-        assert_eq!(rule.match_spec.sink.trust_zone, Some(TrustZone::Untrusted));
+        assert!(matches!(
+            rule.match_spec.source.node_type,
+            Some(OneOrMany::One(NodeKind::Secret))
+        ));
+        assert!(matches!(
+            rule.match_spec.sink.trust_zone,
+            Some(OneOrMany::One(TrustZone::Untrusted))
+        ));
         assert_eq!(rule.match_spec.path.crosses_to, vec![TrustZone::Untrusted]);
     }
 
@@ -336,8 +527,11 @@ match:
 
         let paths = propagation_analysis(&g, DEFAULT_MAX_HOPS);
 
-        let mut want = HashMap::new();
-        want.insert("kind".to_string(), "deploy".to_string());
+        let mut want_fields = HashMap::new();
+        want_fields.insert(
+            "kind".to_string(),
+            MetadataPredicate::Equals("deploy".to_string()),
+        );
         let hit = CustomRule {
             id: "hit".into(),
             name: "n".into(),
@@ -346,9 +540,13 @@ match:
             category: FindingCategory::AuthorityPropagation,
             match_spec: MatchSpec {
                 source: NodeMatcher {
-                    node_type: Some(NodeKind::Secret),
+                    node_type: one(NodeKind::Secret),
                     trust_zone: None,
-                    metadata: want.clone(),
+                    metadata: MetadataMatcher {
+                        fields: want_fields,
+                        not: None,
+                    },
+                    not: None,
                 },
                 sink: NodeMatcher::default(),
                 path: PathMatcher::default(),
@@ -356,8 +554,11 @@ match:
         };
         assert_eq!(evaluate_custom_rules(&g, &paths, &[hit]).len(), 1);
 
-        let mut wrong = HashMap::new();
-        wrong.insert("kind".to_string(), "build".to_string());
+        let mut wrong_fields = HashMap::new();
+        wrong_fields.insert(
+            "kind".to_string(),
+            MetadataPredicate::Equals("build".to_string()),
+        );
         let miss = CustomRule {
             id: "miss".into(),
             name: "n".into(),
@@ -366,9 +567,13 @@ match:
             category: FindingCategory::AuthorityPropagation,
             match_spec: MatchSpec {
                 source: NodeMatcher {
-                    node_type: Some(NodeKind::Secret),
+                    node_type: one(NodeKind::Secret),
                     trust_zone: None,
-                    metadata: wrong,
+                    metadata: MetadataMatcher {
+                        fields: wrong_fields,
+                        not: None,
+                    },
+                    not: None,
                 },
                 sink: NodeMatcher::default(),
                 path: PathMatcher::default(),
@@ -420,5 +625,300 @@ match:
         assert!(msg.contains("bad.yml"), "error must mention path: {msg}");
 
         let _ = fs::remove_dir_all(&tmp);
+    }
+
+    // ── v0.6 grammar additions: negation + typed metadata predicates ─────
+
+    /// Build a graph with one secret in first_party reaching one untrusted
+    /// step. Used by the new grammar tests.
+    fn simple_first_to_untrusted_graph() -> (AuthorityGraph, Vec<PropagationPath>) {
+        let mut g = AuthorityGraph::new(source());
+        let mut meta = HashMap::new();
+        meta.insert("oidc".to_string(), "true".to_string());
+        meta.insert("permissions".to_string(), "contents: write".to_string());
+        meta.insert("role".to_string(), "admin".to_string());
+        let secret =
+            g.add_node_with_metadata(NodeKind::Identity, "GH_TOKEN", TrustZone::FirstParty, meta);
+        let step = g.add_node(NodeKind::Step, "use-it", TrustZone::FirstParty);
+        let untrusted = g.add_node(NodeKind::Step, "third-party", TrustZone::Untrusted);
+        g.add_edge(step, secret, EdgeKind::HasAccessTo);
+        g.add_edge(step, untrusted, EdgeKind::DelegatesTo);
+        let paths = propagation_analysis(&g, DEFAULT_MAX_HOPS);
+        (g, paths)
+    }
+
+    #[test]
+    fn negation_on_trust_zone_inverts_match() {
+        let (graph, paths) = simple_first_to_untrusted_graph();
+        // sink is untrusted; "not untrusted" must NOT match the sink → no findings
+        let yaml = r#"
+id: r
+name: r
+severity: high
+category: authority_propagation
+match:
+  sink:
+    not:
+      trust_zone: untrusted
+"#;
+        let rule: CustomRule = serde_yaml::from_str(yaml).expect("yaml parses");
+        assert!(evaluate_custom_rules(&graph, &paths, &[rule]).is_empty());
+    }
+
+    #[test]
+    fn negation_on_node_type_list_matches_other_kinds() {
+        let (graph, paths) = simple_first_to_untrusted_graph();
+        // source kinds in fixtures: identity. "not [secret, identity]" excludes it
+        // → source predicate fails → no findings.
+        let yaml = r#"
+id: r
+name: r
+severity: high
+category: authority_propagation
+match:
+  source:
+    not:
+      node_type: [secret, identity]
+"#;
+        let rule: CustomRule = serde_yaml::from_str(yaml).expect("yaml parses");
+        assert!(evaluate_custom_rules(&graph, &paths, &[rule]).is_empty());
+
+        // Inverse: "not [step]" — source is identity, so the inner does NOT match,
+        // therefore the not-wrapper matches → at least one finding fires.
+        let yaml2 = r#"
+id: r2
+name: r2
+severity: high
+category: authority_propagation
+match:
+  source:
+    not:
+      node_type: [step]
+"#;
+        let rule2: CustomRule = serde_yaml::from_str(yaml2).expect("yaml parses");
+        assert!(!evaluate_custom_rules(&graph, &paths, &[rule2]).is_empty());
+    }
+
+    #[test]
+    fn metadata_negation_matches_absent_or_other_value() {
+        let (graph, paths) = simple_first_to_untrusted_graph();
+        // The identity has oidc=true. `not: { oidc: "true" }` excludes it →
+        // no finding when applied to the source.
+        let yaml = r#"
+id: r
+name: r
+severity: high
+category: authority_propagation
+match:
+  source:
+    metadata:
+      not:
+        oidc: "true"
+"#;
+        let rule: CustomRule = serde_yaml::from_str(yaml).expect("yaml parses");
+        assert!(evaluate_custom_rules(&graph, &paths, &[rule]).is_empty());
+    }
+
+    #[test]
+    fn metadata_contains_does_substring_match() {
+        let (graph, paths) = simple_first_to_untrusted_graph();
+        let yaml = r#"
+id: r
+name: r
+severity: high
+category: authority_propagation
+match:
+  source:
+    metadata:
+      permissions:
+        contains: "contents: write"
+"#;
+        let rule: CustomRule = serde_yaml::from_str(yaml).expect("yaml parses");
+        assert_eq!(evaluate_custom_rules(&graph, &paths, &[rule]).len(), 1);
+
+        // negative case: substring not present
+        let yaml_miss = r#"
+id: r
+name: r
+severity: high
+category: authority_propagation
+match:
+  source:
+    metadata:
+      permissions:
+        contains: "actions: write"
+"#;
+        let rule_miss: CustomRule = serde_yaml::from_str(yaml_miss).expect("yaml parses");
+        assert!(evaluate_custom_rules(&graph, &paths, &[rule_miss]).is_empty());
+    }
+
+    #[test]
+    fn metadata_in_matches_any_of_allowed_values() {
+        let (graph, paths) = simple_first_to_untrusted_graph();
+        let yaml = r#"
+id: r
+name: r
+severity: high
+category: authority_propagation
+match:
+  source:
+    metadata:
+      role:
+        in: [admin, owner, write]
+"#;
+        let rule: CustomRule = serde_yaml::from_str(yaml).expect("yaml parses");
+        assert_eq!(evaluate_custom_rules(&graph, &paths, &[rule]).len(), 1);
+
+        let yaml_miss = r#"
+id: r
+name: r
+severity: high
+category: authority_propagation
+match:
+  source:
+    metadata:
+      role:
+        in: [reader, none]
+"#;
+        let rule_miss: CustomRule = serde_yaml::from_str(yaml_miss).expect("yaml parses");
+        assert!(evaluate_custom_rules(&graph, &paths, &[rule_miss]).is_empty());
+    }
+
+    #[test]
+    fn metadata_not_equals_excludes_specific_value() {
+        let (graph, paths) = simple_first_to_untrusted_graph();
+        let yaml = r#"
+id: r
+name: r
+severity: high
+category: authority_propagation
+match:
+  source:
+    metadata:
+      role:
+        not_equals: admin
+"#;
+        let rule: CustomRule = serde_yaml::from_str(yaml).expect("yaml parses");
+        // role=admin → not_equals fails → no findings
+        assert!(evaluate_custom_rules(&graph, &paths, &[rule]).is_empty());
+
+        let yaml_hit = r#"
+id: r
+name: r
+severity: high
+category: authority_propagation
+match:
+  source:
+    metadata:
+      role:
+        not_equals: reader
+"#;
+        let rule_hit: CustomRule = serde_yaml::from_str(yaml_hit).expect("yaml parses");
+        assert_eq!(evaluate_custom_rules(&graph, &paths, &[rule_hit]).len(), 1);
+    }
+
+    #[test]
+    fn nested_not_collapses_to_inner_condition() {
+        let (graph, paths) = simple_first_to_untrusted_graph();
+        // not(not(trust_zone=first_party)) ≡ trust_zone=first_party.
+        // The source is first_party so this should fire.
+        let yaml = r#"
+id: r
+name: r
+severity: high
+category: authority_propagation
+match:
+  source:
+    not:
+      not:
+        trust_zone: first_party
+"#;
+        let rule: CustomRule = serde_yaml::from_str(yaml).expect("yaml parses");
+        assert!(!evaluate_custom_rules(&graph, &paths, &[rule]).is_empty());
+    }
+
+    #[test]
+    fn node_type_accepts_single_value_back_compat() {
+        // The original v0.4 simple form must still parse and behave identically.
+        let yaml = r#"
+id: r
+name: r
+severity: high
+category: authority_propagation
+match:
+  source:
+    node_type: identity
+    trust_zone: first_party
+    metadata:
+      oidc: "true"
+"#;
+        let rule: CustomRule = serde_yaml::from_str(yaml).expect("v0.4 form must still parse");
+        assert!(matches!(
+            rule.match_spec.source.node_type,
+            Some(OneOrMany::One(NodeKind::Identity))
+        ));
+        assert!(matches!(
+            rule.match_spec.source.trust_zone,
+            Some(OneOrMany::One(TrustZone::FirstParty))
+        ));
+        let pred = rule
+            .match_spec
+            .source
+            .metadata
+            .fields
+            .get("oidc")
+            .expect("oidc predicate");
+        assert!(matches!(pred, MetadataPredicate::Equals(v) if v == "true"));
+
+        let (graph, paths) = simple_first_to_untrusted_graph();
+        assert_eq!(evaluate_custom_rules(&graph, &paths, &[rule]).len(), 1);
+    }
+
+    #[test]
+    fn node_type_accepts_list_form() {
+        let yaml = r#"
+id: r
+name: r
+severity: high
+category: authority_propagation
+match:
+  source:
+    node_type: [secret, identity]
+    trust_zone: [first_party, third_party]
+"#;
+        let rule: CustomRule = serde_yaml::from_str(yaml).expect("list form must parse");
+        match &rule.match_spec.source.node_type {
+            Some(OneOrMany::Many(v)) => {
+                assert_eq!(v, &vec![NodeKind::Secret, NodeKind::Identity]);
+            }
+            other => panic!("expected list form, got {other:?}"),
+        }
+        let (graph, paths) = simple_first_to_untrusted_graph();
+        assert_eq!(evaluate_custom_rules(&graph, &paths, &[rule]).len(), 1);
+    }
+
+    #[test]
+    fn unknown_metadata_operator_is_rejected() {
+        let yaml = r#"
+id: r
+name: r
+severity: high
+category: authority_propagation
+match:
+  source:
+    metadata:
+      role:
+        starts_with: adm
+"#;
+        let err = serde_yaml::from_str::<CustomRule>(yaml)
+            .expect_err("unknown operator must be rejected");
+        let msg = err.to_string();
+        // serde_yaml's untagged-enum error doesn't always echo the unknown
+        // field name; the important guarantee is that the parse fails (so
+        // typos in operator names don't silently match nothing).
+        assert!(
+            msg.contains("metadata") || msg.contains("variant"),
+            "parse should fail with a meaningful location: {msg}"
+        );
     }
 }

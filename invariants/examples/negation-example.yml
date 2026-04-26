@@ -1,0 +1,47 @@
+# Example invariant exercising the v0.6 grammar additions:
+#   - negation (`not:`) on source / sink / metadata
+#   - typed metadata predicates (`equals`, `not_equals`, `contains`, `in`)
+#   - multi-value `node_type` / `trust_zone` lists
+#
+# Policy: a non-OIDC, broad-scoped identity must never reach an
+# untrusted-OR-third-party sink with write permissions.
+#
+# Read this rule out loud:
+#   "If the source is an identity that is NOT OIDC, whose scope is in the
+#    broad-bucket (admin/owner/write), and whose role is anything other than
+#    `read-only`, and the sink is in [third_party, untrusted] and its
+#    permissions contain `write`, then fire."
+id: example_non_oidc_broad_identity_to_external_writer
+name: Non-OIDC broad identity reaching external write-capable sink
+description: >
+  Non-OIDC identities with broad scope are long-lived bearer credentials. They
+  must never reach a sink outside the first-party trust zone that holds write
+  permissions. Replace with a federated OIDC identity, or scope the sink down.
+severity: critical
+category: authority_propagation
+match:
+  source:
+    node_type: identity
+    trust_zone: first_party
+    metadata:
+      # NEW: typed predicates ────────────────────
+      identity_scope:
+        in: [admin, owner, write]
+      role:
+        not_equals: read-only
+      # NEW: negation on metadata ────────────────
+      not:
+        oidc: "true"
+  sink:
+    # NEW: list form for trust_zone ──────────────
+    trust_zone: [third_party, untrusted]
+    metadata:
+      permissions:
+        contains: "write"
+    # NEW: negation on the sink as a whole ───────
+    # Don't fire for sinks that have an explicit attestation present —
+    # those go through the uplift_without_attestation rule instead.
+    not:
+      metadata:
+        attestation:
+          equals: present
