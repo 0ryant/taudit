@@ -93,7 +93,9 @@ impl PipelineParser for AdoParser {
         }
 
         // Detect PR trigger — sets graph-level META_TRIGGER for trigger_context_mismatch.
-        let has_pr_trigger = pipeline.pr.is_some();
+        // `pr: none` deserialises as Some(Value::Null); guard against that so a pipeline
+        // that explicitly opts out of PR triggers is not treated as PR-triggered.
+        let has_pr_trigger = pipeline.pr.as_ref().map(|v| !v.is_null()).unwrap_or(false);
         if has_pr_trigger {
             graph.metadata.insert(META_TRIGGER.into(), "pr".into());
         }
@@ -140,6 +142,21 @@ impl PipelineParser for AdoParser {
             TrustZone::FirstParty,
             meta,
         );
+
+        // Pipeline-level permissions block — when present and non-broad (no write
+        // permissions), downgrade System.AccessToken from broad → constrained so
+        // over_privileged_identity does not fire on already-restricted pipelines.
+        if let Some(ref perms_val) = pipeline.permissions {
+            if !ado_permissions_are_broad(perms_val) {
+                let perms_str = ado_permissions_display(perms_val);
+                graph.nodes[token_id]
+                    .metadata
+                    .insert(META_IDENTITY_SCOPE.into(), "constrained".into());
+                graph.nodes[token_id]
+                    .metadata
+                    .insert(META_PERMISSIONS.into(), perms_str);
+            }
+        }
 
         // Pipeline-level pool: adds Image node, tagged self-hosted when applicable.
         process_pool(&pipeline.pool, &pipeline.workspace, &mut graph);
@@ -308,6 +325,39 @@ impl PipelineParser for AdoParser {
 ///   - `pool: { name: my-pool, vmImage: ubuntu-latest }` (hosted; vmImage wins)
 ///
 /// Creates an Image node representing the agent environment. Self-hosted pools
+/// Returns `true` when an ADO pipeline-level `permissions:` value implies a
+/// broad (write-capable) token scope, `false` when every scope is `none` or
+/// `read` (i.e. the token has been explicitly restricted).
+///
+/// ADO permission values are the strings `"read"`, `"write"`, and `"none"`.
+/// Any unrecognised shape is conservatively treated as broad.
+fn ado_permissions_are_broad(perms: &serde_yaml::Value) -> bool {
+    if let Some(map) = perms.as_mapping() {
+        map.values().any(|v| v.as_str() == Some("write"))
+    } else {
+        // Scalar `none` / null / unknown shape — conservatively treat as not broad
+        // only when the value is the string "none" or YAML null.
+        !matches!(perms.as_str(), Some("none") | Some("") | None)
+    }
+}
+
+/// Format an ADO `permissions:` YAML value into a compact human-readable
+/// string for the finding message (e.g. `"contents: none, idToken: none"`).
+fn ado_permissions_display(perms: &serde_yaml::Value) -> String {
+    if let Some(map) = perms.as_mapping() {
+        map.iter()
+            .filter_map(|(k, v)| {
+                let key = k.as_str()?;
+                let val = v.as_str().unwrap_or("?");
+                Some(format!("{key}: {val}"))
+            })
+            .collect::<Vec<_>>()
+            .join(", ")
+    } else {
+        perms.as_str().unwrap_or("none").to_string()
+    }
+}
+
 /// are tagged with META_SELF_HOSTED so downstream rules can flag them.
 ///
 /// When `workspace` is provided and contains `clean:` with a truthy value
@@ -1069,6 +1119,13 @@ pub struct AdoPipeline {
     /// older template fragments. The custom deserializer normalizes both.
     #[serde(default, deserialize_with = "deserialize_optional_parameters")]
     pub parameters: Option<Vec<AdoParameter>>,
+    /// Pipeline-level `permissions:` block. Controls the scope of
+    /// `System.AccessToken` for all jobs in the pipeline unless overridden
+    /// at the job level. Parsed to detect explicit scope restriction (e.g.
+    /// `contents: none`) so `over_privileged_identity` doesn't fire on
+    /// pipelines that have already locked down their token.
+    #[serde(default)]
+    pub permissions: Option<serde_yaml::Value>,
 }
 
 /// Accept either a sequence of `AdoParameter` (modern typed form) or a

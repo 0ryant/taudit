@@ -111,6 +111,13 @@ The graph is the artifact. Everything else is a view onto it.
 cargo install taudit
 ```
 
+Or download a pre-built binary from [GitHub Releases](https://github.com/0ryant/taudit/releases).
+Every release binary and SBOM is attested — verify with:
+
+```bash
+gh attestation verify taudit-x86_64-linux.tar.gz --repo 0ryant/taudit
+```
+
 Or build from source:
 
 ```bash
