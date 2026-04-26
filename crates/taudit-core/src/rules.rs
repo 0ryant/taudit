@@ -1276,6 +1276,130 @@ pub fn template_extends_unpinned_branch(graph: &AuthorityGraph) -> Vec<Finding> 
     findings
 }
 
+/// ADO-only rule: a `resources.repositories[]` entry pins to a *feature-class*
+/// branch — anything outside the platform-blessed set
+/// (`main`, `master`, `release/*`, `hotfix/*`).
+///
+/// Strictly stronger signal than [`template_extends_unpinned_branch`]:
+///
+/// * `template_extends_unpinned_branch` fires on *any* mutable branch ref
+///   (including `main` and `master`) — the abstract "ref isn't pinned to a
+///   SHA or tag" finding.
+/// * This rule fires only on the subset that's *worse than main*: a developer
+///   feature branch (`feature/*`, `topic/*`, `dev/*`, `wip/*`, `users/*`,
+///   `develop`, …) where push protection is typically weaker than the trunk.
+///
+/// The two findings co-fire intentionally — they describe different angles of
+/// the same risk class. `template_extends_unpinned_branch` says "this isn't
+/// pinned"; this rule adds "and the branch it points to is one any developer
+/// can push to without a code review gate".
+///
+/// Detection inputs are identical to `template_extends_unpinned_branch`:
+/// `META_REPOSITORIES` JSON array, with the same `used` suppression for
+/// `ref`-absent entries.
+///
+/// Pinned forms (40-char SHA, `refs/tags/<x>`, `refs/heads/<sha>`) do not
+/// fire — same classification helper as the parent rule.
+///
+/// Default-branch (no-`ref:`) entries do not fire from this rule. The default
+/// branch is conventionally `main`/`master`, and even when it's something
+/// else the *implicit* default-branch contract carries less risk than an
+/// explicit feature-branch pin (the default branch usually has the strongest
+/// protection in the org). The plain "this isn't pinned" surface is left to
+/// `template_extends_unpinned_branch`.
+pub fn template_repo_ref_is_feature_branch(graph: &AuthorityGraph) -> Vec<Finding> {
+    let raw = match graph.metadata.get(META_REPOSITORIES) {
+        Some(s) => s,
+        None => return Vec::new(),
+    };
+    let entries: Vec<serde_json::Value> = match serde_json::from_str(raw) {
+        Ok(v) => v,
+        Err(_) => return Vec::new(),
+    };
+
+    let mut findings = Vec::new();
+    for entry in entries {
+        let alias = match entry.get("alias").and_then(|v| v.as_str()) {
+            Some(a) => a,
+            None => continue,
+        };
+        let name = entry.get("name").and_then(|v| v.as_str()).unwrap_or(alias);
+        let repo_type = entry
+            .get("repo_type")
+            .and_then(|v| v.as_str())
+            .unwrap_or("git");
+        let ref_value = entry.get("ref").and_then(|v| v.as_str());
+
+        // Only explicit refs are candidates here — the parent rule covers the
+        // ref-absent case via the default-branch path.
+        let branch = match classify_repository_ref(ref_value) {
+            RepositoryRefClass::MutableBranch(b) => b,
+            RepositoryRefClass::Pinned | RepositoryRefClass::DefaultBranch => continue,
+        };
+
+        if !is_feature_class_branch(&branch) {
+            continue;
+        }
+
+        let pinned_example = format!("ref: <40-char-sha>  # commit on {name}");
+        findings.push(Finding {
+            severity: Severity::High,
+            category: FindingCategory::TemplateRepoRefIsFeatureBranch,
+            path: None,
+            nodes_involved: Vec::new(),
+            message: format!(
+                "ADO resources.repositories alias '{alias}' (type: {repo_type}, name: {name}) is pinned to feature-class branch '{branch}' — \
+                 weaker than even an unpinned trunk pin: any developer with write access to that branch can inject pipeline steps without a code review on main"
+            ),
+            recommendation: Recommendation::PinAction {
+                current: ref_value.unwrap_or("(default branch)").to_string(),
+                pinned: pinned_example,
+            },
+        });
+    }
+
+    findings
+}
+
+/// Returns `true` for ADO branch names that are *not* part of the
+/// platform-blessed trunk/release set. The blessed set:
+///
+///   - `main`, `master`
+///   - `release/*`, `releases/*`
+///   - `hotfix/*`, `hotfixes/*`
+///
+/// Everything else — `feature/*`, `topic/*`, `dev/*`, `wip/*`, `users/*`,
+/// `develop`, ad-hoc names — is treated as feature-class.
+///
+/// Comparison is case-insensitive and prefix-stripped of any leading
+/// `refs/heads/` (the [`classify_repository_ref`] caller already strips it,
+/// but defensive normalisation keeps this helper standalone-testable).
+fn is_feature_class_branch(branch: &str) -> bool {
+    let normalised = branch
+        .trim()
+        .trim_start_matches("refs/heads/")
+        .to_ascii_lowercase();
+
+    if normalised.is_empty() {
+        return false;
+    }
+
+    // Exact-match trunk names.
+    if matches!(normalised.as_str(), "main" | "master") {
+        return false;
+    }
+
+    // Prefix-match release / hotfix branches (with or without trailing slash).
+    const TRUNK_PREFIXES: &[&str] = &["release/", "releases/", "hotfix/", "hotfixes/"];
+    for p in TRUNK_PREFIXES {
+        if normalised == p.trim_end_matches('/') || normalised.starts_with(p) {
+            return false;
+        }
+    }
+
+    true
+}
+
 // ── Command-line credential leakage helpers ─────────────
 //
 // These two rules (`vm_remote_exec_via_pipeline_secret`,
@@ -2728,6 +2852,7 @@ pub fn run_all_rules(graph: &AuthorityGraph, max_hops: usize) -> Vec<Finding> {
     findings.extend(self_hosted_pool_pr_hijack(graph));
     findings.extend(service_connection_scope_mismatch(graph));
     findings.extend(template_extends_unpinned_branch(graph));
+    findings.extend(template_repo_ref_is_feature_branch(graph));
     findings.extend(vm_remote_exec_via_pipeline_secret(graph));
     findings.extend(short_lived_sas_in_command_line(graph));
     // ADO inline-script secret-leak rules
@@ -3979,6 +4104,177 @@ mod tests {
         let findings = template_extends_unpinned_branch(&g);
         assert_eq!(findings.len(), 1);
         assert!(findings[0].message.contains("mutable branch 'main'"));
+    }
+
+    // ── template_repo_ref_is_feature_branch ───────────────────
+
+    #[test]
+    fn template_repo_ref_is_feature_branch_fires_on_bare_feature_branch() {
+        // Mirrors the corpus shape: `ref: feature/maps-network` (no
+        // `refs/heads/` prefix) on the Template Library checkout.
+        let g = graph_with_repo(
+            "templateLibRepo",
+            "git",
+            "Template Library/Template Library",
+            Some("feature/maps-network"),
+            true,
+        );
+        let findings = template_repo_ref_is_feature_branch(&g);
+        assert_eq!(findings.len(), 1);
+        assert_eq!(
+            findings[0].category,
+            FindingCategory::TemplateRepoRefIsFeatureBranch
+        );
+        assert_eq!(findings[0].severity, Severity::High);
+        assert!(findings[0].message.contains("feature/maps-network"));
+        assert!(findings[0].message.contains("feature-class"));
+    }
+
+    #[test]
+    fn template_repo_ref_is_feature_branch_fires_on_refs_heads_feature() {
+        // Same attack via the fully-qualified `refs/heads/feature/...` form.
+        let g = graph_with_repo(
+            "templates",
+            "git",
+            "org/templates",
+            Some("refs/heads/feature/wip"),
+            true,
+        );
+        let findings = template_repo_ref_is_feature_branch(&g);
+        assert_eq!(findings.len(), 1);
+        assert!(findings[0].message.contains("feature/wip"));
+    }
+
+    #[test]
+    fn template_repo_ref_is_feature_branch_fires_on_develop_branch() {
+        // `develop` is not in the trunk set — it's a feature-class branch.
+        let g = graph_with_repo(
+            "templates",
+            "git",
+            "org/templates",
+            Some("refs/heads/develop"),
+            true,
+        );
+        let findings = template_repo_ref_is_feature_branch(&g);
+        assert_eq!(findings.len(), 1);
+    }
+
+    #[test]
+    fn template_repo_ref_is_feature_branch_skips_main_branch() {
+        // `template_extends_unpinned_branch` still fires on this — but the
+        // feature-branch refinement does not, because main is the trunk.
+        let g = graph_with_repo(
+            "templates",
+            "git",
+            "org/templates",
+            Some("refs/heads/main"),
+            true,
+        );
+        assert!(template_repo_ref_is_feature_branch(&g).is_empty());
+        // Sanity: the parent rule still fires on the same input.
+        assert_eq!(template_extends_unpinned_branch(&g).len(), 1);
+    }
+
+    #[test]
+    fn template_repo_ref_is_feature_branch_skips_master_release_hotfix() {
+        for ref_value in [
+            "master",
+            "refs/heads/master",
+            "release/v1.4",
+            "refs/heads/release/2026-q2",
+            "releases/2026-04",
+            "hotfix/CVE-2026-0001",
+            "refs/heads/hotfix/CVE-2026-0002",
+        ] {
+            let g = graph_with_repo("t", "git", "org/t", Some(ref_value), true);
+            assert!(
+                template_repo_ref_is_feature_branch(&g).is_empty(),
+                "ref {ref_value:?} must not fire as feature-class"
+            );
+        }
+    }
+
+    #[test]
+    fn template_repo_ref_is_feature_branch_skips_pinned_refs() {
+        // SHA, tag, and refs/heads/<sha> are all pinned — the feature-branch
+        // rule must not fire on any of them, regardless of the alias name.
+        let sha = "a1b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6e7f8a9b0";
+        for ref_value in [
+            sha.to_string(),
+            "refs/tags/v1.4.2".to_string(),
+            format!("refs/heads/{sha}"),
+        ] {
+            let g = graph_with_repo("templates", "git", "org/t", Some(&ref_value), true);
+            assert!(
+                template_repo_ref_is_feature_branch(&g).is_empty(),
+                "pinned ref {ref_value:?} must not fire"
+            );
+        }
+    }
+
+    #[test]
+    fn template_repo_ref_is_feature_branch_skips_when_ref_absent() {
+        // The "no ref:" (default-branch) case is left to
+        // `template_extends_unpinned_branch`. The feature-branch rule only
+        // fires on explicit feature-class refs.
+        let g = graph_with_repo("templates", "git", "org/templates", None, true);
+        assert!(template_repo_ref_is_feature_branch(&g).is_empty());
+    }
+
+    #[test]
+    fn template_repo_ref_is_feature_branch_cofires_with_parent_rule() {
+        // Both rules should fire together on the corpus shape — the parent
+        // says "not pinned", the refinement says "and it's a feature branch".
+        let g = graph_with_repo(
+            "templateLibRepo",
+            "git",
+            "Template Library/Template Library",
+            Some("feature/maps-network"),
+            true,
+        );
+        let parent = template_extends_unpinned_branch(&g);
+        let refinement = template_repo_ref_is_feature_branch(&g);
+        assert_eq!(parent.len(), 1, "parent rule must still fire");
+        assert_eq!(refinement.len(), 1, "refinement must fire alongside");
+        assert_ne!(parent[0].category, refinement[0].category);
+    }
+
+    #[test]
+    fn is_feature_class_branch_classification() {
+        // Trunk-class — must return false.
+        for b in [
+            "main",
+            "MAIN",
+            "master",
+            "refs/heads/main",
+            "release/v1",
+            "release/",
+            "release",
+            "releases/2026",
+            "hotfix/x",
+            "hotfix",
+            "hotfixes/y",
+            "  refs/heads/main  ",
+        ] {
+            assert!(!is_feature_class_branch(b), "{b:?} must be trunk");
+        }
+        // Feature-class — must return true.
+        for b in [
+            "feature/foo",
+            "topic/bar",
+            "dev/wip",
+            "wip/x",
+            "develop",
+            "users/alice/spike",
+            "personal-branch",
+            "refs/heads/feature/x",
+            "main-staging", // not exact main, prefix-only — feature-class
+        ] {
+            assert!(is_feature_class_branch(b), "{b:?} must be feature-class");
+        }
+        // Empty / whitespace.
+        assert!(!is_feature_class_branch(""));
+        assert!(!is_feature_class_branch("   "));
     }
 
     #[test]

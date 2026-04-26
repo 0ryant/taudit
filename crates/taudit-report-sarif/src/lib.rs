@@ -251,6 +251,26 @@ pub const RULE_DEFS: &[RuleDef] = &[
         tags: &["security", "supply-chain"],
     },
     RuleDef {
+        id: "template_repo_ref_is_feature_branch",
+        name: "TemplateRepoRefIsFeatureBranch",
+        short_description:
+            "ADO pipeline pins a template repository to a developer feature branch.",
+        full_description:
+            "An Azure DevOps pipeline's `resources.repositories[].ref` resolves to a feature-class \
+             branch — anything outside the platform-blessed set (`main`, `master`, `release/*`, \
+             `hotfix/*`). Feature branches typically have weaker push protection than the trunk: any \
+             developer with write access to that branch can push pipeline YAML that runs with the \
+             consumer pipeline's authority — service connections, variable groups, OIDC federations, \
+             `System.AccessToken`. This is strictly worse than pinning to `main`, because main \
+             usually has branch protection (required reviewers, build validation) that a feature \
+             branch lacks. Co-fires with `template_extends_unpinned_branch`, which describes the \
+             same entry from the abstract \"not pinned\" angle. Pin to `refs/tags/<x>` or a 40-char \
+             commit SHA.",
+        default_level: "error",
+        security_severity: "7.5",
+        tags: &["security", "supply-chain", "azure-devops"],
+    },
+    RuleDef {
         id: "vm_remote_exec_via_pipeline_secret",
         name: "VmRemoteExecViaPipelineSecret",
         short_description:
@@ -1004,6 +1024,7 @@ mod tests {
             FindingCategory::SelfHostedPoolPrHijack,
             FindingCategory::ServiceConnectionScopeMismatch,
             FindingCategory::TemplateExtendsUnpinnedBranch,
+            FindingCategory::TemplateRepoRefIsFeatureBranch,
             FindingCategory::VmRemoteExecViaPipelineSecret,
             FindingCategory::ShortLivedSasInCommandLine,
             FindingCategory::SecretToInlineScriptEnvExport,

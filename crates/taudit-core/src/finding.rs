@@ -77,6 +77,13 @@ pub enum FindingCategory {
     /// `ref:` (default branch) or a mutable branch ref (`refs/heads/<name>`).
     /// Whoever owns that branch can inject steps into the consuming pipeline.
     TemplateExtendsUnpinnedBranch,
+    /// ADO `resources.repositories[]` entry pinned to a feature-class branch
+    /// (anything outside the `main` / `master` / `release/*` / `hotfix/*`
+    /// platform set). Feature branches typically have weaker push protection
+    /// than the trunk, so any developer with write access to that branch can
+    /// inject pipeline YAML that runs with the consumer's authority. Strictly
+    /// stronger signal than `template_extends_unpinned_branch` — co-fires.
+    TemplateRepoRefIsFeatureBranch,
     /// Pipeline step uses an Azure VM remote-exec primitive (Set-AzVMExtension /
     /// CustomScriptExtension, Invoke-AzVMRunCommand, az vm run-command, az vm extension set)
     /// where the executed command line interpolates a pipeline secret or a SAS token —
