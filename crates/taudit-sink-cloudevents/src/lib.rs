@@ -67,6 +67,7 @@ fn event_type(category: FindingCategory) -> String {
         FindingCategory::VariableGroupInPrJob => "variable_group_in_pr_job",
         FindingCategory::SelfHostedPoolPrHijack => "self_hosted_pool_pr_hijack",
         FindingCategory::ServiceConnectionScopeMismatch => "service_connection_scope_mismatch",
+        FindingCategory::TemplateExtendsUnpinnedBranch => "template_extends_unpinned_branch",
         #[allow(deprecated)]
         FindingCategory::EgressBlindspot => "egress_blindspot",
         #[allow(deprecated)]

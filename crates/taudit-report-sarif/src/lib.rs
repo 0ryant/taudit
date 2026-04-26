@@ -234,6 +234,23 @@ pub const RULE_DEFS: &[RuleDef] = &[
         tags: &["security", "privilege-escalation"],
     },
     RuleDef {
+        id: "template_extends_unpinned_branch",
+        name: "TemplateExtendsUnpinnedBranch",
+        short_description:
+            "ADO pipeline pulls a template repository pinned to a mutable branch or default branch.",
+        full_description:
+            "An Azure DevOps pipeline declares a `resources.repositories` entry that resolves to a \
+             mutable target — either no `ref:` field at all (defaults to the repo's default branch) \
+             or `refs/heads/<branch>` with a normal branch name. The pipeline references the alias \
+             via `extends:`, `template: x@<alias>`, or `checkout: <alias>`. Whoever owns that branch \
+             can inject steps into every consuming pipeline at the next run — the ADO equivalent of \
+             an unpinned GitHub Action. Combined with self-hosted pool reuse this is full pipeline \
+             RCE. Pin to `refs/tags/<x>` or a 40-char commit SHA.",
+        default_level: "error",
+        security_severity: "7.5",
+        tags: &["security", "supply-chain"],
+    },
+    RuleDef {
         id: "checkout_self_pr_exposure",
         name: "CheckoutSelfPrExposure",
         short_description: "PR-triggered pipeline checks out attacker-controlled repository code",
@@ -775,6 +792,7 @@ mod tests {
             FindingCategory::VariableGroupInPrJob,
             FindingCategory::SelfHostedPoolPrHijack,
             FindingCategory::ServiceConnectionScopeMismatch,
+            FindingCategory::TemplateExtendsUnpinnedBranch,
         ];
 
         for cat in categories {

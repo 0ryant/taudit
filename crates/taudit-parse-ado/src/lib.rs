@@ -56,6 +56,12 @@ impl PipelineParser for AdoParser {
             graph.metadata.insert(META_TRIGGER.into(), "pr".into());
         }
 
+        // Capture resources.repositories[] declarations and detect aliases that
+        // are actually referenced by an `extends:`, `template: x@alias`, or
+        // `checkout: alias`. The result is JSON-encoded into graph metadata
+        // for the `template_extends_unpinned_branch` rule to consume.
+        process_repositories(&pipeline, content, &mut graph);
+
         let mut secret_ids: HashMap<String, NodeId> = HashMap::new();
 
         // System.AccessToken is always present — equivalent to GITHUB_TOKEN.
@@ -238,6 +244,130 @@ fn process_pool(pool: &Option<serde_yaml::Value>, graph: &mut AuthorityGraph) {
         meta.insert(META_SELF_HOSTED.into(), "true".into());
     }
     graph.add_node_with_metadata(NodeKind::Image, image_name, TrustZone::FirstParty, meta);
+}
+
+/// Scan the parsed pipeline for `resources.repositories[]` declarations and
+/// determine which aliases are referenced inside the same file. Stores the
+/// result as a JSON-encoded array in `graph.metadata[META_REPOSITORIES]`.
+///
+/// Usage signal — an alias is "used" when it appears in any of:
+///   - `template: <path>@<alias>` (anywhere — top-level extends, stage, job, step)
+///   - `extends:` referencing `template: <path>@<alias>`
+///   - `checkout: <alias>` (steps consume an external repo into the workspace)
+///
+/// The `extends:` and per-step `template:` references are resolved by walking
+/// the parsed Value tree; the raw text is only used for the `checkout:` case
+/// (cheap substring scan, robust to YAML shape variation).
+fn process_repositories(pipeline: &AdoPipeline, raw_content: &str, graph: &mut AuthorityGraph) {
+    let resources = match pipeline.resources.as_ref() {
+        Some(r) if !r.repositories.is_empty() => r,
+        _ => return,
+    };
+
+    // Collect all aliases referenced as `template: x@alias`. We walk every
+    // `template:` field appearing in the parsed pipeline (extends and steps
+    // already deserialize to their own paths; stages/jobs use the per-job
+    // template field). The raw YAML walk via serde_yaml::Value covers all
+    // shapes uniformly without re-deriving structure-specific models.
+    let mut used_aliases: HashSet<String> = HashSet::new();
+
+    if let Some(ref ext) = pipeline.extends {
+        collect_template_alias_refs(ext, &mut used_aliases);
+    }
+    if let Ok(value) = serde_yaml::from_str::<serde_yaml::Value>(raw_content) {
+        collect_template_alias_refs(&value, &mut used_aliases);
+        collect_checkout_alias_refs(&value, &mut used_aliases);
+    }
+
+    // Build the JSON-encoded repository descriptor list.
+    let mut entries: Vec<serde_json::Value> = Vec::with_capacity(resources.repositories.len());
+    for repo in &resources.repositories {
+        let used = used_aliases.contains(&repo.repository);
+        let mut obj = serde_json::Map::new();
+        obj.insert(
+            "alias".into(),
+            serde_json::Value::String(repo.repository.clone()),
+        );
+        if let Some(ref t) = repo.repo_type {
+            obj.insert("repo_type".into(), serde_json::Value::String(t.clone()));
+        }
+        if let Some(ref n) = repo.name {
+            obj.insert("name".into(), serde_json::Value::String(n.clone()));
+        }
+        if let Some(ref r) = repo.git_ref {
+            obj.insert("ref".into(), serde_json::Value::String(r.clone()));
+        }
+        obj.insert("used".into(), serde_json::Value::Bool(used));
+        entries.push(serde_json::Value::Object(obj));
+    }
+
+    if let Ok(json) = serde_json::to_string(&serde_json::Value::Array(entries)) {
+        graph.metadata.insert(META_REPOSITORIES.into(), json);
+    }
+}
+
+/// Walk a YAML value and record every `template: <ref>@<alias>` alias seen.
+/// Recurses into mappings and sequences so it catches references in extends,
+/// stages, jobs, steps, and conditional blocks indiscriminately.
+fn collect_template_alias_refs(value: &serde_yaml::Value, sink: &mut HashSet<String>) {
+    match value {
+        serde_yaml::Value::Mapping(map) => {
+            for (k, v) in map {
+                if k.as_str() == Some("template") {
+                    if let Some(s) = v.as_str() {
+                        if let Some(alias) = parse_template_alias(s) {
+                            sink.insert(alias);
+                        }
+                    }
+                }
+                collect_template_alias_refs(v, sink);
+            }
+        }
+        serde_yaml::Value::Sequence(seq) => {
+            for v in seq {
+                collect_template_alias_refs(v, sink);
+            }
+        }
+        _ => {}
+    }
+}
+
+/// Walk a YAML value and record every `checkout: <alias>` value seen, except
+/// `self` and `none` which are platform keywords (not external repo aliases).
+fn collect_checkout_alias_refs(value: &serde_yaml::Value, sink: &mut HashSet<String>) {
+    match value {
+        serde_yaml::Value::Mapping(map) => {
+            for (k, v) in map {
+                if k.as_str() == Some("checkout") {
+                    if let Some(s) = v.as_str() {
+                        if s != "self" && s != "none" && !s.is_empty() {
+                            sink.insert(s.to_string());
+                        }
+                    }
+                }
+                collect_checkout_alias_refs(v, sink);
+            }
+        }
+        serde_yaml::Value::Sequence(seq) => {
+            for v in seq {
+                collect_checkout_alias_refs(v, sink);
+            }
+        }
+        _ => {}
+    }
+}
+
+/// Extract `<alias>` from a `template: <path>@<alias>` reference. Returns
+/// None for plain in-repo paths (`templates/deploy.yml`) which target the
+/// current pipeline's repo, not an external `resources.repositories[]` entry.
+fn parse_template_alias(template_ref: &str) -> Option<String> {
+    let at = template_ref.rfind('@')?;
+    let alias = &template_ref[at + 1..];
+    if alias.is_empty() {
+        None
+    } else {
+        Some(alias.to_string())
+    }
 }
 
 /// Tag every Step node added since `start_idx` with META_ENV_APPROVAL.
@@ -631,6 +761,41 @@ pub struct AdoPipeline {
     pub steps: Option<Vec<AdoStep>>,
     #[serde(default)]
     pub pool: Option<serde_yaml::Value>,
+    /// `resources:` block — repository declarations, container declarations,
+    /// pipeline declarations. We only consume `repositories[]` today.
+    #[serde(default)]
+    pub resources: Option<AdoResources>,
+    /// Top-level `extends:` directive — `extends: { template: x@alias, ... }`.
+    /// Captured raw so we can scan for `template: x@alias` references that
+    /// consume a `resources.repositories[]` entry.
+    #[serde(default)]
+    pub extends: Option<serde_yaml::Value>,
+}
+
+/// `resources:` block. Only `repositories[]` is modelled today.
+#[derive(Debug, Default, Deserialize)]
+pub struct AdoResources {
+    #[serde(default)]
+    pub repositories: Vec<AdoRepository>,
+}
+
+/// A single `resources.repositories[]` entry — declares an external repo
+/// alias the pipeline can consume via `template: x@alias`, `extends:`, or
+/// `checkout: alias`.
+#[derive(Debug, Deserialize)]
+pub struct AdoRepository {
+    /// The alias used by consumers (`template: file@<repository>`).
+    pub repository: String,
+    /// `git`, `github`, `bitbucket`, or `azureGit`.
+    #[serde(default, rename = "type")]
+    pub repo_type: Option<String>,
+    /// Full repo path (e.g. `org/repo`).
+    #[serde(default)]
+    pub name: Option<String>,
+    /// Optional ref. Absent = default branch (mutable). Present forms:
+    /// `refs/tags/v1.2.3`, `refs/heads/main`, bare branch `main`, or a SHA.
+    #[serde(default, rename = "ref")]
+    pub git_ref: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -1504,5 +1669,107 @@ jobs:
             Some(&"true".to_string()),
             "gated deployment job's step must be tagged"
         );
+    }
+
+    // ── resources.repositories[] capture ──────────────────────
+
+    fn repos_meta(graph: &AuthorityGraph) -> Vec<serde_json::Value> {
+        let raw = graph
+            .metadata
+            .get(META_REPOSITORIES)
+            .expect("META_REPOSITORIES must be set");
+        serde_json::from_str(raw).expect("META_REPOSITORIES must be valid JSON")
+    }
+
+    #[test]
+    fn resources_repositories_captured_with_used_flag_when_referenced_by_extends() {
+        let yaml = r#"
+resources:
+  repositories:
+    - repository: shared-templates
+      type: git
+      name: Platform/shared-templates
+      ref: refs/heads/main
+
+extends:
+  template: pipeline.yml@shared-templates
+"#;
+        let graph = parse(yaml);
+        let entries = repos_meta(&graph);
+        assert_eq!(entries.len(), 1);
+        let e = &entries[0];
+        assert_eq!(e["alias"], "shared-templates");
+        assert_eq!(e["repo_type"], "git");
+        assert_eq!(e["name"], "Platform/shared-templates");
+        assert_eq!(e["ref"], "refs/heads/main");
+        assert_eq!(e["used"], true);
+    }
+
+    #[test]
+    fn resources_repositories_used_via_checkout_alias() {
+        // Mirrors the msigeurope-adf-finance-reporting corpus shape.
+        let yaml = r#"
+resources:
+  repositories:
+    - repository: adf_publish
+      type: git
+      name: org/adf-finance-reporting
+      ref: refs/heads/adf_publish
+
+jobs:
+  - job: deploy
+    steps:
+      - checkout: adf_publish
+"#;
+        let graph = parse(yaml);
+        let entries = repos_meta(&graph);
+        assert_eq!(entries.len(), 1);
+        assert_eq!(entries[0]["alias"], "adf_publish");
+        assert_eq!(entries[0]["used"], true);
+    }
+
+    #[test]
+    fn resources_repositories_unreferenced_alias_is_marked_not_used() {
+        // Declared but no `template: x@alias`, no `checkout: alias`, no extends.
+        let yaml = r#"
+resources:
+  repositories:
+    - repository: orphan-templates
+      type: git
+      name: Platform/orphan
+      ref: main
+
+jobs:
+  - job: build
+    steps:
+      - script: echo hi
+"#;
+        let graph = parse(yaml);
+        let entries = repos_meta(&graph);
+        assert_eq!(entries.len(), 1);
+        assert_eq!(entries[0]["alias"], "orphan-templates");
+        assert_eq!(entries[0]["used"], false);
+    }
+
+    #[test]
+    fn resources_repositories_absent_when_no_resources_block() {
+        let yaml = r#"
+jobs:
+  - job: build
+    steps:
+      - script: echo hi
+"#;
+        let graph = parse(yaml);
+        assert!(!graph.metadata.contains_key(META_REPOSITORIES));
+    }
+
+    #[test]
+    fn parse_template_alias_extracts_segment_after_at() {
+        assert_eq!(
+            parse_template_alias("steps/deploy.yml@templates"),
+            Some("templates".to_string())
+        );
+        assert_eq!(parse_template_alias("local/path.yml"), None);
+        assert_eq!(parse_template_alias("path@"), None);
     }
 }
