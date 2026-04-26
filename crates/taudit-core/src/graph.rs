@@ -50,6 +50,13 @@ pub const META_ENV_APPROVAL: &str = "env_approval";
 /// need to attribute steps back to their containing job. Set by both the GHA
 /// and ADO parsers on every Step they create within a job's scope.
 pub const META_JOB_NAME: &str = "job_name";
+/// Graph-level metadata: JSON-encoded array of `resources.repositories[]`
+/// entries declared by the pipeline. Each entry is an object with fields
+/// `alias`, `repo_type`, `name`, optional `ref`, and `used` (true when the
+/// alias is referenced via `template: x@alias`, `extends: x@alias`, or
+/// `checkout: alias` somewhere in the same pipeline file). Set by the ADO
+/// parser; consumed by `template_extends_unpinned_branch`.
+pub const META_REPOSITORIES: &str = "repositories";
 
 // ── Shared helpers ─────────────────────────────────────
 

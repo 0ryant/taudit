@@ -72,6 +72,11 @@ pub enum FindingCategory {
     SelfHostedPoolPrHijack,
     /// Broad-scope ADO service connection reachable from a PR-triggered job without OIDC.
     ServiceConnectionScopeMismatch,
+    /// ADO `resources.repositories[]` entry referenced by an `extends:`,
+    /// `template: x@alias`, or `checkout: alias` consumer resolves with no
+    /// `ref:` (default branch) or a mutable branch ref (`refs/heads/<name>`).
+    /// Whoever owns that branch can inject steps into the consuming pipeline.
+    TemplateExtendsUnpinnedBranch,
     // Reserved — requires ADO/GH API enrichment beyond pipeline YAML
     /// Requires runtime network telemetry or policy enrichment — not detectable from YAML alone.
     #[doc(hidden)]

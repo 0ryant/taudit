@@ -3,8 +3,8 @@ use crate::graph::{
     is_docker_digest_pinned, is_sha_pinned, AuthorityCompleteness, AuthorityGraph, EdgeKind,
     IdentityScope, NodeId, NodeKind, TrustZone, META_ATTESTS, META_CHECKOUT_SELF,
     META_CLI_FLAG_EXPOSED, META_CONTAINER, META_DIGEST, META_ENV_APPROVAL, META_IDENTITY_SCOPE,
-    META_IMPLICIT, META_OIDC, META_PERMISSIONS, META_SELF_HOSTED, META_SERVICE_CONNECTION,
-    META_TRIGGER, META_VARIABLE_GROUP, META_WRITES_ENV_GATE,
+    META_IMPLICIT, META_OIDC, META_PERMISSIONS, META_REPOSITORIES, META_SELF_HOSTED,
+    META_SERVICE_CONNECTION, META_TRIGGER, META_VARIABLE_GROUP, META_WRITES_ENV_GATE,
 };
 use crate::propagation;
 
@@ -1192,6 +1192,135 @@ pub fn service_connection_scope_mismatch(graph: &AuthorityGraph) -> Vec<Finding>
     findings
 }
 
+/// ADO-only rule: a `resources.repositories[]` entry resolves against a
+/// mutable target — no `ref:` field (default branch) or `refs/heads/<x>`
+/// without a SHA. Whoever owns that branch can inject steps into every
+/// consuming pipeline at the next run.
+///
+/// Pinned forms that do NOT fire:
+///   - `refs/tags/<x>` — git tags (treated as immutable in practice)
+///   - bare 40-char hex SHA — explicit commit pin
+///   - `refs/heads/<sha>` where the trailing segment is a 40-char hex SHA
+///
+/// Mutable forms that DO fire:
+///   - field absent — defaults to the repo's default branch
+///   - `refs/heads/<branch>` with a normal branch name
+///   - bare branch name (`main`, `master`, `develop`, ...)
+///
+/// Suppression: a repository entry declared with NO `ref:` field AND no
+/// in-file consumer (`extends:`, `template: x@alias`, or `checkout: alias`)
+/// is skipped. This catches purely vestigial declarations — a leftover
+/// `resources.repositories[]` entry that no one references is not an active
+/// attack surface. An entry with an explicit `ref: refs/heads/<x>` always
+/// fires regardless of in-file usage, because the explicit branch ref
+/// signals an intent to consume (the consumer is typically in an included
+/// template file outside the per-file scan boundary).
+pub fn template_extends_unpinned_branch(graph: &AuthorityGraph) -> Vec<Finding> {
+    let raw = match graph.metadata.get(META_REPOSITORIES) {
+        Some(s) => s,
+        None => return Vec::new(),
+    };
+    let entries: Vec<serde_json::Value> = match serde_json::from_str(raw) {
+        Ok(v) => v,
+        Err(_) => return Vec::new(),
+    };
+
+    let mut findings = Vec::new();
+    for entry in entries {
+        let alias = match entry.get("alias").and_then(|v| v.as_str()) {
+            Some(a) => a,
+            None => continue,
+        };
+        let name = entry.get("name").and_then(|v| v.as_str()).unwrap_or(alias);
+        let repo_type = entry
+            .get("repo_type")
+            .and_then(|v| v.as_str())
+            .unwrap_or("git");
+        let ref_value = entry.get("ref").and_then(|v| v.as_str());
+        let used = entry.get("used").and_then(|v| v.as_bool()).unwrap_or(false);
+
+        let classification = classify_repository_ref(ref_value);
+        let resolved = match classification {
+            RepositoryRefClass::Pinned => continue,
+            RepositoryRefClass::DefaultBranch => {
+                // Default-branch entries are only flagged when an in-file
+                // consumer actually references the alias. Without an explicit
+                // `ref:` and without a consumer there's no evidence the
+                // declaration is active — likely vestigial.
+                if !used {
+                    continue;
+                }
+                "default branch (no ref:)".to_string()
+            }
+            RepositoryRefClass::MutableBranch(b) => format!("mutable branch '{b}'"),
+        };
+
+        let pinned_example = format!("ref: <40-char-sha>  # commit on {name}");
+        findings.push(Finding {
+            severity: Severity::High,
+            category: FindingCategory::TemplateExtendsUnpinnedBranch,
+            path: None,
+            nodes_involved: Vec::new(),
+            message: format!(
+                "ADO resources.repositories alias '{alias}' (type: {repo_type}, name: {name}) resolves to {resolved} — \
+                 whoever owns that branch can inject steps at the next pipeline run"
+            ),
+            recommendation: Recommendation::PinAction {
+                current: ref_value.unwrap_or("(default branch)").to_string(),
+                pinned: pinned_example,
+            },
+        });
+    }
+
+    findings
+}
+
+/// How a `resources.repositories[].ref` value resolves for the purposes of
+/// the `template_extends_unpinned_branch` rule.
+enum RepositoryRefClass {
+    /// SHA-pinned, tag-pinned — code at the consumer is immutable.
+    Pinned,
+    /// No `ref:` field — resolves to the repo's default branch.
+    DefaultBranch,
+    /// `refs/heads/<name>` or bare branch — mutable.
+    MutableBranch(String),
+}
+
+fn classify_repository_ref(ref_value: Option<&str>) -> RepositoryRefClass {
+    let raw = match ref_value {
+        None => return RepositoryRefClass::DefaultBranch,
+        Some(s) if s.trim().is_empty() => return RepositoryRefClass::DefaultBranch,
+        Some(s) => s.trim(),
+    };
+
+    // Bare 40+ hex SHA — pinned.
+    if is_hex_sha(raw) {
+        return RepositoryRefClass::Pinned;
+    }
+
+    // refs/tags/<x> — pinned.
+    if let Some(tag) = raw.strip_prefix("refs/tags/") {
+        if !tag.is_empty() {
+            return RepositoryRefClass::Pinned;
+        }
+    }
+
+    // refs/heads/<x> — mutable, unless trailing segment is a SHA.
+    if let Some(branch) = raw.strip_prefix("refs/heads/") {
+        if is_hex_sha(branch) {
+            return RepositoryRefClass::Pinned;
+        }
+        return RepositoryRefClass::MutableBranch(branch.to_string());
+    }
+
+    // Bare value — treat as a branch name.
+    RepositoryRefClass::MutableBranch(raw.to_string())
+}
+
+fn is_hex_sha(s: &str) -> bool {
+    s.len() >= 40 && s.chars().all(|c| c.is_ascii_hexdigit())
+}
+
 /// Run all rules against a graph.
 pub fn run_all_rules(graph: &AuthorityGraph, max_hops: usize) -> Vec<Finding> {
     let mut findings = Vec::new();
@@ -1214,6 +1343,7 @@ pub fn run_all_rules(graph: &AuthorityGraph, max_hops: usize) -> Vec<Finding> {
     findings.extend(variable_group_in_pr_job(graph));
     findings.extend(self_hosted_pool_pr_hijack(graph));
     findings.extend(service_connection_scope_mismatch(graph));
+    findings.extend(template_extends_unpinned_branch(graph));
 
     apply_confidence_cap(graph, &mut findings);
 
@@ -2270,5 +2400,170 @@ mod tests {
         assert_eq!(downgrade_one_step(Severity::Medium), Severity::Low);
         assert_eq!(downgrade_one_step(Severity::Low), Severity::Low);
         assert_eq!(downgrade_one_step(Severity::Info), Severity::Info);
+    }
+
+    // ── template_extends_unpinned_branch ──────────────────────
+
+    /// Build a graph whose META_REPOSITORIES carries a single repo descriptor.
+    /// `git_ref` of `None` encodes the "no `ref:` field" case (default branch).
+    fn graph_with_repo(
+        alias: &str,
+        repo_type: &str,
+        name: &str,
+        git_ref: Option<&str>,
+        used: bool,
+    ) -> AuthorityGraph {
+        let mut g = AuthorityGraph::new(source("azure-pipelines.yml"));
+        let mut obj = serde_json::Map::new();
+        obj.insert("alias".into(), serde_json::Value::String(alias.into()));
+        obj.insert(
+            "repo_type".into(),
+            serde_json::Value::String(repo_type.into()),
+        );
+        obj.insert("name".into(), serde_json::Value::String(name.into()));
+        if let Some(r) = git_ref {
+            obj.insert("ref".into(), serde_json::Value::String(r.into()));
+        }
+        obj.insert("used".into(), serde_json::Value::Bool(used));
+        let arr = serde_json::Value::Array(vec![serde_json::Value::Object(obj)]);
+        g.metadata.insert(
+            META_REPOSITORIES.into(),
+            serde_json::to_string(&arr).unwrap(),
+        );
+        g
+    }
+
+    #[test]
+    fn template_extends_unpinned_branch_fires_on_missing_ref() {
+        let g = graph_with_repo(
+            "template-library",
+            "git",
+            "Template Library/Library",
+            None,
+            true,
+        );
+        let findings = template_extends_unpinned_branch(&g);
+        assert_eq!(findings.len(), 1);
+        assert_eq!(
+            findings[0].category,
+            FindingCategory::TemplateExtendsUnpinnedBranch
+        );
+        assert_eq!(findings[0].severity, Severity::High);
+        assert!(findings[0].message.contains("default branch"));
+    }
+
+    #[test]
+    fn template_extends_unpinned_branch_fires_on_refs_heads_main() {
+        let g = graph_with_repo(
+            "templates",
+            "git",
+            "org/templates",
+            Some("refs/heads/main"),
+            true,
+        );
+        let findings = template_extends_unpinned_branch(&g);
+        assert_eq!(findings.len(), 1);
+        assert!(findings[0].message.contains("mutable branch 'main'"));
+    }
+
+    #[test]
+    fn template_extends_unpinned_branch_skips_tag_pinned() {
+        let g = graph_with_repo(
+            "templates",
+            "github",
+            "org/templates",
+            Some("refs/tags/v1.0.0"),
+            true,
+        );
+        let findings = template_extends_unpinned_branch(&g);
+        assert!(
+            findings.is_empty(),
+            "refs/tags/v1.0.0 must be treated as pinned"
+        );
+    }
+
+    #[test]
+    fn template_extends_unpinned_branch_skips_sha_pinned() {
+        let sha = "a1b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6e7f8a9b0";
+        assert_eq!(sha.len(), 40);
+        let g = graph_with_repo("templates", "git", "org/templates", Some(sha), true);
+        let findings = template_extends_unpinned_branch(&g);
+        assert!(
+            findings.is_empty(),
+            "40-char hex SHA must be treated as pinned"
+        );
+    }
+
+    #[test]
+    fn template_extends_unpinned_branch_skips_unreferenced_repo_with_no_ref() {
+        // Spec edge: "repo declared but not referenced anywhere → does not fire
+        // (no consumer = no risk)". Applies when the declaration carries no
+        // explicit `ref:` field — the entry is purely vestigial in that case.
+        let g = graph_with_repo(
+            "templates",
+            "git",
+            "org/templates",
+            None,  // no explicit ref
+            false, // and no consumer
+        );
+        let findings = template_extends_unpinned_branch(&g);
+        assert!(
+            findings.is_empty(),
+            "repo declared with no ref and no consumer must not fire"
+        );
+    }
+
+    #[test]
+    fn template_extends_unpinned_branch_fires_on_explicit_branch_even_without_in_file_consumer() {
+        // An explicit `ref: refs/heads/<branch>` signals intent to consume —
+        // the consumer is typically inside an included template file outside
+        // the per-file scan boundary (mirrors the msigeurope corpus shape).
+        let g = graph_with_repo(
+            "adf_publish",
+            "git",
+            "org/finance-reporting",
+            Some("refs/heads/adf_publish"),
+            false, // no in-file consumer
+        );
+        let findings = template_extends_unpinned_branch(&g);
+        assert_eq!(findings.len(), 1);
+        assert!(findings[0].message.contains("mutable branch 'adf_publish'"));
+    }
+
+    #[test]
+    fn template_extends_unpinned_branch_skips_when_metadata_absent() {
+        let g = AuthorityGraph::new(source("ci.yml"));
+        assert!(template_extends_unpinned_branch(&g).is_empty());
+    }
+
+    #[test]
+    fn template_extends_unpinned_branch_handles_bare_branch_name() {
+        // `ref: main` (no `refs/heads/` prefix) is a valid ADO shorthand for a branch.
+        let g = graph_with_repo(
+            "template-library",
+            "git",
+            "Template Library/Library",
+            Some("main"),
+            true,
+        );
+        let findings = template_extends_unpinned_branch(&g);
+        assert_eq!(findings.len(), 1);
+        assert!(findings[0].message.contains("mutable branch 'main'"));
+    }
+
+    #[test]
+    fn template_extends_unpinned_branch_skips_refs_heads_with_sha() {
+        // ADO accepts `ref: refs/heads/<sha>` to lock onto a commit on a branch.
+        // The trailing segment is what determines mutability.
+        let sha = "0123456789abcdef0123456789abcdef01234567";
+        let g = graph_with_repo(
+            "templates",
+            "git",
+            "org/templates",
+            Some(&format!("refs/heads/{sha}")),
+            true,
+        );
+        let findings = template_extends_unpinned_branch(&g);
+        assert!(findings.is_empty());
     }
 }
