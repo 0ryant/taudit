@@ -33,10 +33,12 @@ MEDIUM  GITHUB_TOKEN (release-artifacts) propagated to actions/checkout@sha acro
 taudit does three things, in this order:
 
 1. **Models authority propagation as a deterministic graph.** Typed `NodeKinds` (`Step`, `Secret`, `Identity`, `Image`, `Artifact`), explicit `TrustZones` (`FirstParty`, `ThirdParty`, `Untrusted`), and named `EdgeKinds` (`HasAccessTo`, `Produces`, `Consumes`, `UsesImage`, `DelegatesTo`, `PersistsTo`). Same YAML in, same graph out. See [`docs/authority-graph.md`](docs/authority-graph.md) for the full specification.
-2. **Detects 17 built-in authority invariants** across GitHub Actions, Azure DevOps, and GitLab CI. The graph is what makes the invariants tractable — each rule is a predicate over typed nodes and edges, not a regex over YAML.
+2. **Detects 61 built-in rules** across GitHub Actions, Azure DevOps, and GitLab CI. The graph is what makes the invariants tractable — each rule is a predicate over typed nodes and edges, not a regex over YAML.
 3. **Lets you write custom invariants** via declarative YAML rules (`--rules-dir`), and (in v1.0) gate PR merges with `taudit verify` against an explicit invariant set.
 
-### Built-in invariants
+### Built-in rules (61 total)
+
+> This table shows a representative subset. Run `taudit explain` to list all 61 rules with severity, or `taudit explain <rule-id>` for full description and remediation guidance. The full catalogue is in [`docs/rules/index.md`](docs/rules/index.md).
 
 | Rule | Severity | What it catches |
 |---|---|---|
@@ -58,7 +60,7 @@ taudit does three things, in this order:
 | `service_connection_scope_mismatch` | High | Broad-scope ADO service connection reachable from a PR-triggered job |
 | `checkout_self_pr_exposure` | Critical | PR-triggered pipeline checks out the repo, landing attacker-controlled code on the runner |
 
-Run `taudit explain` to list all invariants, or `taudit explain <rule>` for full description and remediation guidance. Custom YAML invariants are loaded from `--rules-dir <path>` and participate in the same propagation engine — see [`docs/custom-rules.md`](docs/custom-rules.md).
+Custom YAML invariants are loaded from `--rules-dir <path>` and participate in the same propagation engine — see [`docs/custom-rules.md`](docs/custom-rules.md).
 
 Severity is graduated from real-world signal: constrained identity to SHA-pinned action = Medium. Broad identity to unpinned action = Critical. The tool handles unknowns honestly — if it can't fully resolve the authority graph, it marks it `Partial`, tells you why, and caps findings at High until the graph is complete.
 
@@ -128,7 +130,7 @@ taudit map --format dot .github/workflows/release.yml | dot -Tsvg > release.svg
 # 2. Inspect the same graph as a human-readable access table.
 taudit map .github/workflows/release.yml
 
-# 3. Apply the 17 built-in authority invariants and emit findings.
+# 3. Apply the 61 built-in rules and emit findings.
 taudit scan .github/workflows/
 
 # 4. Same scan, machine-readable, with the full graph included in the JSON.
@@ -282,7 +284,7 @@ Then pass that spec to your runtime supervisor/executor.
 ### Explain rules
 
 ```bash
-# List all 17 rules with severity
+# List all 61 rules with severity
 taudit explain
 
 # Full description for a single rule
@@ -302,7 +304,7 @@ taudit --version
 
 ### Authority invariants (custom checks)
 
-taudit's 17 built-in checks are **authority invariants** — declarative
+taudit's 61 built-in rules are **authority invariants** — declarative
 properties the authority graph must satisfy. You can add your own as YAML
 files and load them with `--invariants-dir`:
 
@@ -363,7 +365,7 @@ taudit scan . --ignore-file .taudit/ignore.yml
 1. **Parse** — GitHub Actions, Azure DevOps, or GitLab CI YAML into typed nodes (steps, secrets, identities, images) with trust zone classification (FirstParty, ThirdParty, Untrusted). Platform is auto-detected by default (`--platform auto`); override with `--platform github-actions`, `--platform azure-devops`, or `--platform gitlab-ci`.
 2. **Build graph** — Directed edges model authority flow: `HasAccessTo`, `Produces`, `Consumes`, `UsesImage`, `DelegatesTo`, `PersistsTo`.
 3. **Propagate** — BFS from authority-bearing sources (secrets, identities) through edges, flagging trust boundary crossings.
-4. **Apply invariants** — 17 built-in invariants (plus any custom YAML rules) pattern-match against the graph, producing findings with severity, evidence paths, and remediation routing.
+4. **Apply invariants** — 61 built-in rules (plus any custom YAML rules) pattern-match against the graph, producing findings with severity, evidence paths, and remediation routing.
 
 Trust zones are explicit on every node:
 - **FirstParty** — code you own (`run:` steps, local actions)
@@ -405,7 +407,7 @@ GitHub Code Scanning.
 ## Architecture
 
 ```
-taudit-core              graph, propagation engine, 17 invariants, finding model (no I/O)
+taudit-core              graph, propagation engine, 61 rules, finding model (no I/O)
 taudit-parse-gha         GitHub Actions YAML → AuthorityGraph
 taudit-parse-ado         Azure DevOps YAML → AuthorityGraph
 taudit-parse-gitlab      GitLab CI YAML → AuthorityGraph

@@ -1674,7 +1674,6 @@ mod tests {
             FindingCategory::UntrustedApiResponseToEnvSink,
             FindingCategory::PrBuildPushesImageWithFloatingCredentials,
             FindingCategory::SecretViaEnvGateToUntrustedConsumer,
-            FindingCategory::SecretViaEnvGateToUntrustedConsumer,
             FindingCategory::TerraformOutputViaSetvariableShellExpansion,
             FindingCategory::RiskyTriggerWithAuthority,
             FindingCategory::SensitiveValueInJobOutput,

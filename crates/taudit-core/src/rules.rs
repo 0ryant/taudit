@@ -570,19 +570,6 @@ pub fn artifact_boundary_crossing(graph: &AuthorityGraph) -> Vec<Finding> {
             .collect();
 
         for producer in &producers {
-            // Only care if the producer is privileged (has access to secrets/identities)
-            let producer_has_authority = graph.edges_from(producer.id).any(|e| {
-                e.kind == EdgeKind::HasAccessTo
-                    && graph
-                        .node(e.to)
-                        .map(|n| matches!(n.kind, NodeKind::Secret | NodeKind::Identity))
-                        .unwrap_or(false)
-            });
-
-            if !producer_has_authority {
-                continue;
-            }
-
             for consumer in &consumers {
                 if producer.trust_zone.is_lower_than(&consumer.trust_zone) {
                     findings.push(Finding {
@@ -598,19 +585,12 @@ pub fn artifact_boundary_crossing(graph: &AuthorityGraph) -> Vec<Finding> {
                             consumer.name,
                             consumer.trust_zone
                         ),
-                        recommendation: Recommendation::TsafeRemediation {
-                            command: format!(
-                                "tsafe exec --ns {} -- <build-command>",
-                                producer.name
-                            ),
-                            explanation: format!(
-                                "Scope secrets to '{}' only; artifact '{}' should not carry authority",
-                                producer.name, artifact.name
-                            ),
+                        recommendation: Recommendation::Manual {
+                            action: "Pin the upload step to a SHA-tagged action (e.g. actions/upload-artifact@<sha>) to elevate it to TrustZone::ThirdParty, removing the trust boundary crossing.".into(),
                         },
                         source: FindingSource::BuiltIn,
-                                        extras: FindingExtras::default(),
-});
+                        extras: FindingExtras::default(),
+                    });
                 }
             }
         }
@@ -3495,8 +3475,15 @@ pub fn setvariable_issecret_false(graph: &AuthorityGraph) -> Vec<Finding> {
                 continue;
             }
 
-            // Check if variable name contains a sensitive keyword.
-            let is_sensitive = SENSITIVE_KEYWORDS.iter().any(|kw| var_name.contains(kw));
+            // Check if variable name contains a sensitive keyword using token
+            // (word-boundary) matching. Split on `_` and `-` so that "key"
+            // matches "STORAGE_ACCOUNT_KEY" (token: "key") but NOT
+            // "keyvaultname" (tokens: ["keyvaultname"] with no exact match).
+            // var_name is already lowercased via `lower` above.
+            let tokens: Vec<&str> = var_name.split(|c| c == '_' || c == '-').collect();
+            let is_sensitive = tokens
+                .iter()
+                .any(|tok| SENSITIVE_KEYWORDS.iter().any(|kw| kw == tok));
 
             if !is_sensitive {
                 cursor = start + name_end;
@@ -6821,6 +6808,30 @@ mod tests {
     }
 
     #[test]
+    #[test]
+    fn artifact_crossing_no_authority_still_fires() {
+        // A-6 fix: rule fires even when producer has NO HasAccessTo edge.
+        // The crossing itself is the risk; no GITHUB_TOKEN gate needed.
+        let mut g = AuthorityGraph::new(source("ci.yml"));
+        let build = g.add_node(NodeKind::Step, "pr-build", TrustZone::Untrusted);
+        let artifact = g.add_node(NodeKind::Artifact, "dist.zip", TrustZone::Untrusted);
+        let deploy = g.add_node(NodeKind::Step, "deploy", TrustZone::FirstParty);
+        // No HasAccessTo edge on the producer — previously this caused the rule to skip.
+        g.add_edge(build, artifact, EdgeKind::Produces);
+        g.add_edge(artifact, deploy, EdgeKind::Consumes);
+        let findings = artifact_boundary_crossing(&g);
+        assert_eq!(
+            findings.len(),
+            1,
+            "boundary crossing must fire without a producer HasAccessTo edge; got: {findings:#?}"
+        );
+        assert_eq!(
+            findings[0].category,
+            FindingCategory::ArtifactBoundaryCrossing
+        );
+    }
+
+    #[test]
     fn artifact_crossing_firstparty_producer_untrusted_consumer_silent() {
         // First-party producer -> untrusted consumer: should NOT fire (benign direction)
         let mut g = AuthorityGraph::new(source("ci.yml"));
@@ -10124,6 +10135,62 @@ mod tests {
         let findings = setvariable_issecret_false(&g);
         assert_eq!(findings.len(), 1, "got: {findings:#?}");
         assert!(findings[0].message.contains("DB_PASSWORD"));
+    }
+
+    #[test]
+    fn keyvaultname_does_not_fire() {
+        // "key" is a substring of "keyvaultname" but not a token — must not fire.
+        let g = ado_graph_with_script(
+            r###"echo "##vso[task.setvariable variable=KEYVAULTNAME]my-vault""###,
+        );
+        let findings = setvariable_issecret_false(&g);
+        assert!(
+            findings.is_empty(),
+            "keyvaultname must not fire (FP regression); got: {findings:#?}"
+        );
+    }
+
+    #[test]
+    fn storage_account_key_still_fires() {
+        // "key" is an exact token in "STORAGE_ACCOUNT_KEY" — must still fire.
+        let g = ado_graph_with_script(
+            r###"echo "##vso[task.setvariable variable=STORAGE_ACCOUNT_KEY]secret""###,
+        );
+        let findings = setvariable_issecret_false(&g);
+        assert_eq!(
+            findings.len(),
+            1,
+            "STORAGE_ACCOUNT_KEY must fire; got: {findings:#?}"
+        );
+        assert!(findings[0].message.contains("STORAGE_ACCOUNT_KEY"));
+    }
+
+    #[test]
+    fn github_author_email_does_not_fire() {
+        // "auth" is a substring of "author" but not a token — must not fire.
+        let g = ado_graph_with_script(
+            r###"echo "##vso[task.setvariable variable=GITHUB_AUTHOR_EMAIL]user@example.com""###,
+        );
+        let findings = setvariable_issecret_false(&g);
+        assert!(
+            findings.is_empty(),
+            "GITHUB_AUTHOR_EMAIL must not fire (FP regression); got: {findings:#?}"
+        );
+    }
+
+    #[test]
+    fn cert_thumbprint_still_fires() {
+        // "cert" is an exact token in "CERT_THUMBPRINT" — must still fire.
+        let g = ado_graph_with_script(
+            r###"echo "##vso[task.setvariable variable=CERT_THUMBPRINT]abc123""###,
+        );
+        let findings = setvariable_issecret_false(&g);
+        assert_eq!(
+            findings.len(),
+            1,
+            "CERT_THUMBPRINT must fire; got: {findings:#?}"
+        );
+        assert!(findings[0].message.contains("CERT_THUMBPRINT"));
     }
 
     // ── homoglyph_in_action_ref ──────────────────────────────────

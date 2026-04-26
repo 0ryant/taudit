@@ -1,6 +1,6 @@
-# Addspn With Inline Script
+# Add Spn With Inline Script
 
-**Rule ID:** `addspn_with_inline_script`
+**Rule ID:** `add_spn_with_inline_script`
 **Severity:** see SARIF `security-severity` for the authoritative value
 **Category:** see SARIF `tags` (security + injection / supply-chain / privilege-escalation / credentials)
 **Status:** stub doc — to be expanded with detection walkthrough, attack scenario, and remediation.

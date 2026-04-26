@@ -464,28 +464,44 @@ impl PipelineParser for GhaParser {
                 if let Some(ref uses) = step.uses {
                     let action = uses.split('@').next().unwrap_or(uses);
                     if action == "actions/upload-artifact" {
-                        let artifact_name = step
+                        // Only create an artifact edge when `name:` is explicitly
+                        // set. Anonymous uploads (no name) can't be correlated with
+                        // a specific download and would silently merge unrelated
+                        // jobs — skip them to avoid false positives (A-1).
+                        if let Some(artifact_name) = step
                             .with
                             .as_ref()
                             .and_then(|w| w.get("name"))
                             .map(|s| s.as_str())
-                            .unwrap_or("artifact");
-                        let art_id =
-                            find_or_create_artifact(&mut graph, &mut artifact_ids, artifact_name);
-                        graph.add_edge(step_id, art_id, EdgeKind::Produces);
+                        {
+                            let art_id = find_or_create_artifact(
+                                &mut graph,
+                                &mut artifact_ids,
+                                artifact_name,
+                            );
+                            graph.add_edge(step_id, art_id, EdgeKind::Produces);
+                        }
                     } else if matches!(
                         action,
                         "actions/download-artifact" | "dawidd6/action-download-artifact"
                     ) {
-                        let artifact_name = step
+                        // Same rationale: omitting `name:` means "download all
+                        // artifacts" (wildcard), which we can't correlate to a
+                        // specific producer — skip to avoid incorrect Consumes
+                        // edges (A-3).
+                        if let Some(artifact_name) = step
                             .with
                             .as_ref()
                             .and_then(|w| w.get("name"))
                             .map(|s| s.as_str())
-                            .unwrap_or("artifact");
-                        let art_id =
-                            find_or_create_artifact(&mut graph, &mut artifact_ids, artifact_name);
-                        graph.add_edge(art_id, step_id, EdgeKind::Consumes);
+                        {
+                            let art_id = find_or_create_artifact(
+                                &mut graph,
+                                &mut artifact_ids,
+                                artifact_name,
+                            );
+                            graph.add_edge(art_id, step_id, EdgeKind::Consumes);
+                        }
                     }
                 }
 

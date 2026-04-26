@@ -19,6 +19,7 @@ Platforms: **GHA** = GitHub Actions · **ADO** = Azure DevOps · **GL** = GitLab
 | [authority_propagation](authority_propagation.md) | Critical / High | Propagation | GHA, ADO, GL |
 | [over_privileged_identity](over_privileged_identity.md) | High | Privilege | GHA, ADO, GL |
 | [unpinned_action](unpinned_action.md) | High | Supply Chain | GHA, ADO |
+| [homoglyph_in_action_ref](homoglyph_in_action_ref.md) | High | Supply Chain | GHA only |
 | [untrusted_with_authority](untrusted_with_authority.md) | Critical / Info | Propagation | GHA, ADO, GL |
 | [artifact_boundary_crossing](artifact_boundary_crossing.md) | High | Supply Chain | GHA, ADO, GL |
 | [floating_image](floating_image.md) | Medium | Supply Chain | GHA, ADO, GL |
@@ -39,10 +40,11 @@ Platforms: **GHA** = GitHub Actions · **ADO** = Azure DevOps · **GL** = GitLab
 | [vm_remote_exec_via_pipeline_secret](vm_remote_exec_via_pipeline_secret.md) | High | Credentials | ADO only |
 | [short_lived_sas_in_command_line](short_lived_sas_in_command_line.md) | Medium | Credentials | ADO only |
 | [secret_to_inline_script_env_export](secret_to_inline_script_env_export.md) | High | Credentials | ADO only |
+| [setvariable_issecret_false](setvariable_issecret_false.md) | High | Credentials | ADO only |
 | [secret_materialised_to_workspace_file](secret_materialised_to_workspace_file.md) | High | Credentials | ADO only |
 | [keyvault_secret_to_plaintext](keyvault_secret_to_plaintext.md) | Medium | Credentials | ADO only |
 | [terraform_auto_approve_in_prod](terraform_auto_approve_in_prod.md) | Critical | Configuration | ADO only |
-| [addspn_with_inline_script](addspn_with_inline_script.md) | High | Credentials | ADO only |
+| [add_spn_with_inline_script](add_spn_with_inline_script.md) | High | Credentials | ADO only |
 | [parameter_interpolation_into_shell](parameter_interpolation_into_shell.md) | Medium | Injection | ADO only |
 | [terraform_output_via_setvariable_shell_expansion](terraform_output_via_setvariable_shell_expansion.md) | High | Injection | ADO only |
 | [secret_via_env_gate_to_untrusted_consumer](secret_via_env_gate_to_untrusted_consumer.md) | Critical | Propagation | GHA |
@@ -108,7 +110,7 @@ Several rules graduate severity based on context rather than emitting a fixed le
 
 ## Authority invariants
 
-The 52 rules above are taudit's **built-in authority invariants** —
+The 61 rules above are taudit's **built-in authority invariants** —
 declarative properties the authority graph must satisfy. You can extend
 this set with **custom authority invariants**: YAML files loaded with
 `taudit scan --invariants-dir <path>` that evaluate against the same
