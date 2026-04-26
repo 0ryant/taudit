@@ -119,6 +119,20 @@ pub enum FindingCategory {
     /// via `${{ parameters.X }}` into an inline shell/PowerShell script body —
     /// shell injection vector for anyone with "queue build".
     ParameterInterpolationIntoShell,
+    /// Two-step ADO chain: an inline script captures a `terraform output`
+    /// value (literal `terraform output` CLI invocation or a `$env:TF_OUT_*` /
+    /// `$TF_OUT_*` env var sourced from a Terraform CLI task) AND emits a
+    /// `##vso[task.setvariable variable=X;...]` directive setting that
+    /// captured value into pipeline variable `X`. A subsequent step in the
+    /// same job then expands `$(X)` in shell-expansion position
+    /// (`bash -c "..."`, `eval`, command substitution `$(...)`, PowerShell
+    /// `-split` / `Invoke-Command` / `Invoke-Expression`/`iex`, or as an
+    /// unquoted command word). The `task.setvariable` hop launders
+    /// attacker-controlled Terraform state — sourced from a remote backend
+    /// (S3 bucket, Azure Storage) that often has weaker access controls than
+    /// the pipeline itself — through pipeline-variable space and into a
+    /// shell interpreter.
+    TerraformOutputViaSetvariableShellExpansion,
     // Reserved — requires ADO/GH API enrichment beyond pipeline YAML
     /// Requires runtime network telemetry or policy enrichment — not detectable from YAML alone.
     #[doc(hidden)]

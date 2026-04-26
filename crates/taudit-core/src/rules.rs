@@ -3,9 +3,10 @@ use crate::graph::{
     is_docker_digest_pinned, is_sha_pinned, AuthorityCompleteness, AuthorityGraph, EdgeKind,
     IdentityScope, NodeId, NodeKind, TrustZone, META_ADD_SPN_TO_ENV, META_ATTESTS,
     META_CHECKOUT_SELF, META_CLI_FLAG_EXPOSED, META_CONTAINER, META_DIGEST, META_ENV_APPROVAL,
-    META_IDENTITY_SCOPE, META_IMPLICIT, META_OIDC, META_PERMISSIONS, META_REPOSITORIES,
-    META_SCRIPT_BODY, META_SELF_HOSTED, META_SERVICE_CONNECTION, META_SERVICE_CONNECTION_NAME,
-    META_TERRAFORM_AUTO_APPROVE, META_TRIGGER, META_VARIABLE_GROUP, META_WRITES_ENV_GATE,
+    META_IDENTITY_SCOPE, META_IMPLICIT, META_JOB_NAME, META_OIDC, META_PERMISSIONS,
+    META_REPOSITORIES, META_SCRIPT_BODY, META_SELF_HOSTED, META_SERVICE_CONNECTION,
+    META_SERVICE_CONNECTION_NAME, META_TERRAFORM_AUTO_APPROVE, META_TRIGGER, META_VARIABLE_GROUP,
+    META_WRITES_ENV_GATE,
 };
 use crate::propagation;
 
@@ -2289,6 +2290,256 @@ pub fn parameter_interpolation_into_shell(graph: &AuthorityGraph) -> Vec<Finding
     findings
 }
 
+/// Rule: ADO terraform-output → `task.setvariable` → downstream shell
+/// expansion, a 2-step injection chain.
+///
+/// **Phase 1 (capture step):** an inline ADO script body
+/// (`META_SCRIPT_BODY`) that contains BOTH:
+///   - a "terraform output capture" signal — either a literal `terraform
+///     output` CLI invocation (with or without `-raw <name>` / `-json`),
+///     OR a reference to a `TF_OUT_*` env var (the standard naming
+///     convention for env vars sourced from a `TerraformCLI@*`
+///     `command: output` task), AND
+///   - a `##vso[task.setvariable variable=NAME ...]VALUE` directive.
+///
+/// **Phase 2 (sink step):** a *later* Step in the SAME job (matched via
+/// `META_JOB_NAME`) whose script body expands `$(NAME)` in
+/// shell-expansion position, where "shell-expansion position" is any of:
+///   - inside `bash -c "..."` / `bash -c '...'`
+///   - inside `eval "..."` / `eval '...'` / `eval $(...)`
+///   - inside command substitution `$(... $(NAME) ...)`
+///   - PowerShell `-split` / `Invoke-Command` / `Invoke-Expression` / `iex`
+///     in the same script
+///   - bare unquoted `$(NAME)` as a command word (line-leading)
+///
+/// **Severity: High.** Terraform state/outputs are often controlled by
+/// remote backends (S3 bucket, Azure Storage) whose IAM may have weaker
+/// access controls than the pipeline itself. The `task.setvariable` hop
+/// launders attacker-controlled state through pipeline-variable space —
+/// existing rules see only the in-step view.
+pub fn terraform_output_via_setvariable_shell_expansion(graph: &AuthorityGraph) -> Vec<Finding> {
+    // Step 0: collect every Step (in graph insertion order, which matches
+    // YAML order) that carries a non-empty script body. Group by job name.
+    struct StepInfo<'a> {
+        id: NodeId,
+        name: &'a str,
+        body: &'a str,
+    }
+    let mut by_job: std::collections::BTreeMap<&str, Vec<StepInfo<'_>>> =
+        std::collections::BTreeMap::new();
+    for step in graph.nodes_of_kind(NodeKind::Step) {
+        let body = match step.metadata.get(META_SCRIPT_BODY) {
+            Some(b) if !b.is_empty() => b.as_str(),
+            _ => continue,
+        };
+        let job = step
+            .metadata
+            .get(META_JOB_NAME)
+            .map(String::as_str)
+            .unwrap_or("");
+        by_job.entry(job).or_default().push(StepInfo {
+            id: step.id,
+            name: step.name.as_str(),
+            body,
+        });
+    }
+
+    let mut findings = Vec::new();
+
+    for (_job_name, steps) in by_job.iter() {
+        // Phase 1: scan every step in this job for capture+setvariable.
+        // Each capture step yields zero-or-more (variable_name) outputs.
+        let captures: Vec<(usize, Vec<String>)> = steps
+            .iter()
+            .enumerate()
+            .filter_map(|(idx, s)| {
+                let vars = capture_phase_variables(s.body);
+                if vars.is_empty() {
+                    None
+                } else {
+                    Some((idx, vars))
+                }
+            })
+            .collect();
+
+        if captures.is_empty() {
+            continue;
+        }
+
+        // Phase 2: for each capture step, look at all later steps in the
+        // same job. For each later step, find any captured variable name
+        // whose `$(NAME)` reference appears in shell-expansion position
+        // within that later step's body.
+        for (cap_idx, vars) in &captures {
+            for later_idx in (cap_idx + 1)..steps.len() {
+                let sink = &steps[later_idx];
+                let mut hits: Vec<&str> = Vec::new();
+                for var in vars {
+                    if expansion_in_shell_position(sink.body, var) {
+                        hits.push(var.as_str());
+                    }
+                }
+                if hits.is_empty() {
+                    continue;
+                }
+                hits.sort();
+                hits.dedup();
+                let cap = &steps[*cap_idx];
+                let names = hits.join(", ");
+                findings.push(Finding {
+                    severity: Severity::High,
+                    category:
+                        FindingCategory::TerraformOutputViaSetvariableShellExpansion,
+                    path: None,
+                    nodes_involved: vec![cap.id, sink.id],
+                    message: format!(
+                        "Step '{}' captures terraform output and emits ##vso[task.setvariable] for [{}]; later step '{}' (same job) expands $({}) in shell-expansion position — attacker control of terraform state ({{S3, Azure Storage}} backend) becomes shell injection across the pipeline-variable hop",
+                        cap.name,
+                        names,
+                        sink.name,
+                        hits[0],
+                    ),
+                    recommendation: Recommendation::Manual {
+                        action: "Pass the captured value through the downstream step's `env:` block (so the runtime quotes it as a shell variable: `env: { GDSVMS: $(gdsvms) }` then `$GDSVMS` in script) instead of YAML-interpolating `$(VAR)` into the script body. Where the value is structured (comma list of VM names), validate the shape — e.g. `[[ \"$VAR\" =~ ^[a-zA-Z0-9._,-]+$ ]]` — before splitting/looping. Consider lock-down of the terraform state backend (S3 bucket policy, Azure Storage RBAC) so untrusted parties cannot rewrite outputs.".into(),
+                    },
+                });
+            }
+        }
+    }
+
+    findings
+}
+
+/// Phase-1 helper: given an inline-script body, return the list of
+/// pipeline-variable names that the body sets via
+/// `##vso[task.setvariable variable=NAME ...]` *only when* the body also
+/// contains a "terraform output capture" signal.
+///
+/// We do not attempt to data-flow-link the captured value to the
+/// `setvariable` directive — the proximity within a single inline script
+/// is the operative signal. The two corpus exemplars
+/// (`sharedservice-solarwinds` and `userapp-mvit-prd`) both pair the
+/// capture and the setvariable inside the same PowerShell block.
+fn capture_phase_variables(body: &str) -> Vec<String> {
+    if !body_has_terraform_output_capture(body) {
+        return Vec::new();
+    }
+    setvariable_names_in(body)
+}
+
+/// True iff the body contains a terraform-output capture signal.
+fn body_has_terraform_output_capture(body: &str) -> bool {
+    // Literal CLI invocation, with or without subcommand args. We check
+    // case-sensitive because terraform CLI is always lowercase.
+    if body.contains("terraform output") {
+        return true;
+    }
+    // Env-var convention used by the `TerraformCLI@*` task family
+    // (`command: output` writes results into `TF_OUT_<name>` env vars
+    // surfaced into the next step). PowerShell form: `$env:TF_OUT_X`.
+    // POSIX form: `$TF_OUT_X` or `${TF_OUT_X}`.
+    if body.contains("$env:TF_OUT_") || body.contains("${env:TF_OUT_") {
+        return true;
+    }
+    // POSIX shell. Use a manual scan — we want to match `$TF_OUT_X` and
+    // `${TF_OUT_X}` but avoid matching arbitrary substrings like
+    // `MY_TF_OUT_X` that aren't a variable expansion.
+    for marker in ["$TF_OUT_", "${TF_OUT_"] {
+        if body.contains(marker) {
+            return true;
+        }
+    }
+    false
+}
+
+/// Extract the variable names set by every
+/// `##vso[task.setvariable variable=NAME ...]` directive in the body.
+/// Tolerates whitespace and either `;` or `]` as the variable= terminator.
+fn setvariable_names_in(body: &str) -> Vec<String> {
+    let needle = "##vso[task.setvariable variable=";
+    let mut out: Vec<String> = Vec::new();
+    let mut cursor = 0;
+    while let Some(rel) = body[cursor..].find(needle) {
+        let start = cursor + rel + needle.len();
+        let tail = &body[start..];
+        let end = tail
+            .find(|c: char| c == ';' || c == ']' || c.is_whitespace())
+            .unwrap_or(tail.len());
+        let name = tail[..end].trim().to_string();
+        if !name.is_empty()
+            && name
+                .chars()
+                .all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '.')
+        {
+            out.push(name);
+        }
+        cursor = start + end;
+    }
+    out.sort();
+    out.dedup();
+    out
+}
+
+/// Phase-2 predicate: does `body` reference `$(name)` in a shell-expansion
+/// position? "Shell-expansion position" means the value will be parsed by
+/// a shell or PowerShell interpreter at runtime, rather than being fed
+/// into a function/cmdlet that quotes its arguments.
+fn expansion_in_shell_position(body: &str, name: &str) -> bool {
+    let needle = format!("$({name})");
+    if !body.contains(&needle) {
+        return false;
+    }
+    // Cheap whole-body checks: if the script contains any of these
+    // primitives anywhere, an interpolation of `$(name)` elsewhere in the
+    // same script is at risk. The `sharedservice-solarwinds` corpus
+    // exemplar exercises the `-split` + `Invoke-Command` + foreach branch
+    // — all three signals fire.
+    let sigil_set: &[&str] = &[
+        "bash -c",
+        "sh -c",
+        "eval ",
+        "Invoke-Expression",
+        " iex ",
+        "iex(",
+        "iex (",
+        "Invoke-Command",
+        "-split",
+    ];
+    if sigil_set.iter().any(|s| body.contains(s)) {
+        return true;
+    }
+    // Nested command substitution: `$(... $(name) ...)`. We look for any
+    // `$(` occurring strictly before the first `$(name)` — ADO's
+    // `$(macro)` and POSIX `$(cmd)` share the same surface syntax, but
+    // any `$(` *outside* the `$(name)` itself, on the same line, indicates
+    // the sink is being parsed inside another command substitution.
+    for (line_no, line) in body.lines().enumerate() {
+        let _ = line_no;
+        if let Some(pos) = line.find(&needle) {
+            // Search the prefix for an unclosed `$(`. Naive but adequate
+            // for inline-script bodies (we don't attempt to balance).
+            let prefix = &line[..pos];
+            let opens = prefix.matches("$(").count();
+            let closes = prefix.matches(')').count();
+            if opens > closes {
+                return true;
+            }
+        }
+    }
+    // Bare unquoted line-leading reference: `$(NAME) ...` with no
+    // surrounding quotes — the value is parsed as a command line.
+    for line in body.lines() {
+        let trimmed = line.trim_start();
+        if trimmed.starts_with(&needle) {
+            // Skip the obvious assignment-to-variable forms that quote.
+            // PowerShell `$x = "$(name)"` and POSIX `X="$(name)"` keep
+            // the value out of the command position.
+            return true;
+        }
+    }
+    false
+}
+
 /// Run all rules against a graph.
 pub fn run_all_rules(graph: &AuthorityGraph, max_hops: usize) -> Vec<Finding> {
     let mut findings = Vec::new();
@@ -2321,6 +2572,7 @@ pub fn run_all_rules(graph: &AuthorityGraph, max_hops: usize) -> Vec<Finding> {
     findings.extend(terraform_auto_approve_in_prod(graph));
     findings.extend(addspn_with_inline_script(graph));
     findings.extend(parameter_interpolation_into_shell(graph));
+    findings.extend(terraform_output_via_setvariable_shell_expansion(graph));
 
     apply_confidence_cap(graph, &mut findings);
 
@@ -4230,5 +4482,215 @@ mod tests {
 
         let findings = parameter_interpolation_into_shell(&g);
         assert!(findings.is_empty());
+    }
+
+    // ── terraform_output_via_setvariable_shell_expansion ─────
+
+    /// Helper: add a Step node tagged with the given job and an inline
+    /// script body. Returns the node id so the caller can wire it up.
+    fn add_script_step_in_job(g: &mut AuthorityGraph, name: &str, job: &str, body: &str) -> NodeId {
+        let mut meta = std::collections::HashMap::new();
+        meta.insert(META_SCRIPT_BODY.into(), body.into());
+        meta.insert(META_JOB_NAME.into(), job.into());
+        g.add_node_with_metadata(NodeKind::Step, name, TrustZone::FirstParty, meta)
+    }
+
+    #[test]
+    fn tf_output_setvariable_fires_on_solarwinds_corpus_pattern() {
+        // Faithful reproduction of the
+        // `Azure_Landing_Zone/sharedservice-solarwinds/.pipeline/deployment.yml`
+        // pattern (lines ~98-180 of the corpus exemplar): a PowerShell@2
+        // step reads `$env:TF_OUT_GDSVMS` and emits
+        // `##vso[task.setvariable variable=gdsvms]`. A later
+        // AzurePowerShell@5 step does `"$(gdsvms)" -split ","` followed by
+        // `Invoke-Command` against each VM in the list.
+        let mut g = AuthorityGraph::new(source("ado.yml"));
+        add_script_step_in_job(
+            &mut g,
+            "capture-tf-outputs",
+            "Deployment_Apply",
+            "Write-Host \"TF_OUT_GDSVMS: $env:TF_OUT_GDSVMS\"\n\
+             Write-Host \"##vso[task.setvariable variable=gdsvms]$env:TF_OUT_GDSVMS\"\n\
+             Write-Host \"##vso[task.setvariable variable=amlinvms]$env:TF_OUT_AMLINVMS\"",
+        );
+        add_script_step_in_job(
+            &mut g,
+            "join-vms-to-domain",
+            "Deployment_Apply",
+            "$GDSvmNames = \"$(gdsvms)\" -split \",\"\n\
+             foreach ($vmName in $GDSvmNames) {\n\
+               Invoke-Command -ComputerName $vmName -ScriptBlock { Add-Computer }\n\
+             }",
+        );
+
+        let findings = terraform_output_via_setvariable_shell_expansion(&g);
+        // Two captured variables (gdsvms, amlinvms) but only `gdsvms` is
+        // referenced in the sink — exactly one finding.
+        assert_eq!(findings.len(), 1, "got: {findings:#?}");
+        assert_eq!(findings[0].severity, Severity::High);
+        assert_eq!(
+            findings[0].category,
+            FindingCategory::TerraformOutputViaSetvariableShellExpansion
+        );
+        assert!(findings[0].message.contains("gdsvms"));
+        assert!(findings[0].nodes_involved.len() == 2);
+    }
+
+    #[test]
+    fn tf_output_setvariable_fires_on_literal_terraform_output_cli() {
+        // Variant: the capture step actually shells out to
+        // `terraform output -raw vm_names` instead of going through the
+        // `TF_OUT_*` env-var convention. Sink uses bash -c "$(NAME)".
+        let mut g = AuthorityGraph::new(source("ado.yml"));
+        add_script_step_in_job(
+            &mut g,
+            "tf-capture",
+            "deploy",
+            "VMS=$(terraform output -raw vm_names)\n\
+             echo \"##vso[task.setvariable variable=vms;]$VMS\"",
+        );
+        add_script_step_in_job(
+            &mut g,
+            "tf-consume",
+            "deploy",
+            "bash -c \"for vm in $(vms); do ssh $vm uptime; done\"",
+        );
+
+        let findings = terraform_output_via_setvariable_shell_expansion(&g);
+        assert_eq!(findings.len(), 1, "got: {findings:#?}");
+        assert!(findings[0].message.contains("vms"));
+    }
+
+    #[test]
+    fn tf_output_setvariable_skips_when_only_phase_one_present() {
+        // Capture step exists, but no later step in the same job ever
+        // references the captured variable in shell-expansion position.
+        let mut g = AuthorityGraph::new(source("ado.yml"));
+        add_script_step_in_job(
+            &mut g,
+            "capture",
+            "deploy",
+            "Write-Host \"##vso[task.setvariable variable=gdsvms]$env:TF_OUT_GDSVMS\"",
+        );
+        add_script_step_in_job(
+            &mut g,
+            "innocuous-print",
+            "deploy",
+            "Write-Host 'Deployment complete.'",
+        );
+
+        let findings = terraform_output_via_setvariable_shell_expansion(&g);
+        assert!(
+            findings.is_empty(),
+            "phase-1-only must not fire; got: {findings:#?}"
+        );
+    }
+
+    #[test]
+    fn tf_output_setvariable_skips_when_only_phase_two_present() {
+        // Sink step uses $(gdsvms) in shell-expansion position, but no
+        // earlier step in the same job ever captured a terraform output
+        // and emitted a setvariable for that name. Variable might be
+        // defined elsewhere (variable group, vars yaml) — out of scope.
+        let mut g = AuthorityGraph::new(source("ado.yml"));
+        add_script_step_in_job(&mut g, "noop-first", "deploy", "echo 'starting deploy'");
+        add_script_step_in_job(
+            &mut g,
+            "consume-only",
+            "deploy",
+            "$names = \"$(gdsvms)\" -split \",\"\n\
+             foreach ($n in $names) { Invoke-Command -ComputerName $n -ScriptBlock {} }",
+        );
+
+        let findings = terraform_output_via_setvariable_shell_expansion(&g);
+        assert!(
+            findings.is_empty(),
+            "phase-2-only must not fire; got: {findings:#?}"
+        );
+    }
+
+    #[test]
+    fn tf_output_setvariable_skips_when_sink_quotes_in_env_block() {
+        // Sink step references `$(gdsvms)` only in `echo "$(gdsvms)"` —
+        // a context with no shell-expansion sigils (no bash -c, no eval,
+        // no Invoke-Command, no -split, no command substitution, not
+        // line-leading). The value is quoted by the shell on its way
+        // into echo's argv and never reaches an interpreter.
+        let mut g = AuthorityGraph::new(source("ado.yml"));
+        add_script_step_in_job(
+            &mut g,
+            "capture",
+            "deploy",
+            "Write-Host \"##vso[task.setvariable variable=gdsvms]$env:TF_OUT_GDSVMS\"",
+        );
+        add_script_step_in_job(
+            &mut g,
+            "safe-echo",
+            "deploy",
+            "echo \"gdsvms is: $(gdsvms)\"",
+        );
+
+        let findings = terraform_output_via_setvariable_shell_expansion(&g);
+        assert!(
+            findings.is_empty(),
+            "properly-quoted echo must not fire; got: {findings:#?}"
+        );
+    }
+
+    #[test]
+    fn tf_output_setvariable_skips_when_sink_in_different_job() {
+        // Capture and sink exist, but in different jobs. Pipeline
+        // variable scoping in ADO is per-stage/per-job by default — the
+        // chain doesn't compose without explicit cross-job output
+        // wiring (which is a separate primitive).
+        let mut g = AuthorityGraph::new(source("ado.yml"));
+        add_script_step_in_job(
+            &mut g,
+            "capture",
+            "job-a",
+            "Write-Host \"##vso[task.setvariable variable=gdsvms]$env:TF_OUT_GDSVMS\"",
+        );
+        add_script_step_in_job(
+            &mut g,
+            "consume",
+            "job-b",
+            "$names = \"$(gdsvms)\" -split \",\"\n\
+             foreach ($n in $names) { Invoke-Command -ComputerName $n -ScriptBlock {} }",
+        );
+
+        let findings = terraform_output_via_setvariable_shell_expansion(&g);
+        assert!(
+            findings.is_empty(),
+            "cross-job chain must not fire; got: {findings:#?}"
+        );
+    }
+
+    #[test]
+    fn tf_output_setvariable_skips_when_setvariable_lacks_tf_capture_signal() {
+        // Inline script emits `task.setvariable` but the source value is
+        // a plain pipeline variable, not anything terraform-shaped.
+        // Without a TF_OUT_* / `terraform output` capture signal in the
+        // body, the rule must not fire — `self_mutating_pipeline`
+        // already covers the generic setvariable primitive.
+        let mut g = AuthorityGraph::new(source("ado.yml"));
+        add_script_step_in_job(
+            &mut g,
+            "pure-setvar",
+            "deploy",
+            "Write-Host \"##vso[task.setvariable variable=gdsvms]$(BuildId)\"",
+        );
+        add_script_step_in_job(
+            &mut g,
+            "consume",
+            "deploy",
+            "$names = \"$(gdsvms)\" -split \",\"\n\
+             foreach ($n in $names) { Invoke-Command -ComputerName $n -ScriptBlock {} }",
+        );
+
+        let findings = terraform_output_via_setvariable_shell_expansion(&g);
+        assert!(
+            findings.is_empty(),
+            "setvariable without terraform-output signal must not fire; got: {findings:#?}"
+        );
     }
 }

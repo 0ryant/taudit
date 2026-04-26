@@ -402,6 +402,30 @@ pub const RULE_DEFS: &[RuleDef] = &[
         security_severity: "5.0",
         tags: &["security", "injection", "azure-devops"],
     },
+    RuleDef {
+        id: "terraform_output_via_setvariable_shell_expansion",
+        name: "TerraformOutputViaSetvariableShellExpansion",
+        short_description:
+            "Terraform output captured into ##vso[task.setvariable] then expanded in a downstream shell — cross-step injection chain",
+        full_description:
+            "An ADO inline script (Bash@3, PowerShell@2, AzurePowerShell@5, AzureCLI@2 \
+             inline, or top-level `script:`) captures a Terraform output value — either a \
+             literal `terraform output` CLI invocation or a `$env:TF_OUT_*` / `$TF_OUT_*` \
+             env var sourced from a `TerraformCLI@*` `command: output` task — AND emits a \
+             `##vso[task.setvariable variable=NAME]VALUE` directive in the same step. A \
+             subsequent step in the same job then expands `$(NAME)` in shell-expansion \
+             position (`bash -c \"...\"`, `eval`, command substitution `$(...)`, PowerShell \
+             `-split` / `Invoke-Command` / `Invoke-Expression` / `iex`, or as an unquoted \
+             line-leading command word). The `task.setvariable` hop launders \
+             attacker-controlled Terraform state — sourced from a remote backend (S3 \
+             bucket, Azure Storage) whose IAM is often weaker than the pipeline's — \
+             through pipeline-variable space and into a shell interpreter. Pass the value \
+             via the downstream step's `env:` block (so the runtime quotes it as a shell \
+             variable) and validate the shape before splitting/looping.",
+        default_level: "error",
+        security_severity: "7.5",
+        tags: &["security", "injection", "azure-devops"],
+    },
 ];
 
 // ── SARIF 2.1.0 schema structs ──────────────────────────
@@ -938,6 +962,7 @@ mod tests {
             FindingCategory::TerraformAutoApproveInProd,
             FindingCategory::AddSpnWithInlineScript,
             FindingCategory::ParameterInterpolationIntoShell,
+            FindingCategory::TerraformOutputViaSetvariableShellExpansion,
         ];
 
         for cat in categories {

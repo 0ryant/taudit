@@ -78,6 +78,9 @@ fn event_type(category: FindingCategory) -> String {
         FindingCategory::TerraformAutoApproveInProd => "terraform_auto_approve_in_prod",
         FindingCategory::AddSpnWithInlineScript => "add_spn_with_inline_script",
         FindingCategory::ParameterInterpolationIntoShell => "parameter_interpolation_into_shell",
+        FindingCategory::TerraformOutputViaSetvariableShellExpansion => {
+            "terraform_output_via_setvariable_shell_expansion"
+        }
         #[allow(deprecated)]
         FindingCategory::EgressBlindspot => "egress_blindspot",
         #[allow(deprecated)]
