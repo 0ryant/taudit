@@ -2,6 +2,25 @@
 
 All notable changes to this project will be documented in this file.
 
+## v1.0.0 — 2026-04-26
+
+> Stable release. CLI contract, graph schema, and invariant DSL are now stable. 61 built-in rules across GitHub Actions, Azure DevOps, and GitLab CI. 540 tests.
+
+### Highlights
+
+- **CLI contract stable**: `scan`, `verify`, `map`, `explain`, `baseline`, `suppressions`, `invariants`, `remediate`, `update` — all subcommands stable as of this release.
+- **61 built-in rules**: 20 new authority/injection/supply-chain rules landed in v0.9.3 (see below); this release freezes the rule schema.
+- **`taudit update`**: Background version check against crates.io on every command; `taudit update` subcommand for explicit check. Respects `TAUDIT_NO_UPDATE_CHECK` and `CI` env vars.
+- **`taudit remediate --unstable`**: Write-path remediation (`apply`, `rollback`) gated behind `--unstable` opt-in. Read-only ops (`suggest`, `diff`, `list-backups`) are stable.
+- **BUG-2 fix**: `artifact_boundary_crossing` no longer fires for upload→download within the same CI job.
+- **BUG-3 fix**: Artifact node TrustZone now inherits the producing step's zone (not always FirstParty).
+- **THREAT_MODEL.md**: 12 threats documented across HTTP (version check), YAML deserialization, and `remediate apply` write-path.
+- **SBOM on release**: SPDX + CycloneDX SBOMs generated and attached to every GitHub release.
+
+### Pre-release review
+
+Pre-v1.0.0 code review (28 ISC criteria) completed. All criteria satisfied or acknowledged as non-blocking advisory gaps. 540 tests, 0 failed.
+
 ## v0.9.4 — 2026-04-26
 
 > Patch release: GHA parser now emits Artifact nodes (Produces/Consumes edges) enabling `artifact_boundary_crossing` to fire from real scans; `.gitignore` hardened for `.taudit/baselines/`; B7/B8/B3/G1/G2/G3 fixes from v0.9.3 validated against 1,636-file corpus.
