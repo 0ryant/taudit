@@ -167,6 +167,7 @@ pub fn authority_propagation(graph: &AuthorityGraph, max_hops: usize) -> Vec<Fin
         nodes_involved.push(source_id);
         nodes_involved.extend(sink_ids.iter().copied());
 
+        let n = paths.len();
         let unique_sinks = sink_ids.len();
         let message = if unique_sinks == 1 {
             format!("{source_name} propagated to {sink_list} across trust boundary{suffix}")
@@ -175,6 +176,8 @@ pub fn authority_propagation(graph: &AuthorityGraph, max_hops: usize) -> Vec<Fin
                 "{source_name} reaches {unique_sinks} sinks via authority propagation: [{sink_list}{truncated}]{suffix}"
             )
         };
+
+        let _ = n; // path count retained in the cluster's `path` field; not surfaced separately
 
         findings.push(Finding {
             severity: worst_sev,
@@ -305,6 +308,23 @@ pub fn over_privileged_identity(graph: &AuthorityGraph) -> Vec<Finding> {
 
 /// MVP Rule 3: Third-party action/image without SHA pin.
 ///
+/// **Severity tiering (v0.9.x):** the rule used to fire at a single severity
+/// regardless of which action was unpinned, which produced uniform noise on
+/// monorepo CI files where the action owner determined the actual risk.
+/// The blue-team corpus report (`MEMORY/.../blueteam-corpus-defense.md`)
+/// recommended splitting:
+///   * Same-repo composite action (`./.github/actions/*`) → **Info**.
+///     The action lives in the consumer's own repo — there's no external
+///     supply-chain surface; pinning is a hygiene preference, not a
+///     control gap.
+///   * Owner is a well-known first-party org (`actions/*`, `github/*`,
+///     `actions-rs/*`, `docker/*`) → **Medium**. These are GitHub-org or
+///     adjacent tooling maintainers; the supply-chain surface exists but
+///     is operationally narrow and well-monitored.
+///   * Anything else (`random-org/foo@v1`, etc.) → **High**. Unbounded
+///     supply-chain risk — this is the case the rule was originally
+///     designed for.
+///
 /// Deduplicates by action reference — the same action used in multiple jobs
 /// produces multiple Image nodes but should only be flagged once.
 pub fn unpinned_action(graph: &AuthorityGraph) -> Vec<Finding> {
@@ -312,10 +332,6 @@ pub fn unpinned_action(graph: &AuthorityGraph) -> Vec<Finding> {
     let mut seen = std::collections::HashSet::new();
 
     for image in graph.nodes_of_kind(NodeKind::Image) {
-        if image.trust_zone == TrustZone::FirstParty {
-            continue;
-        }
-
         // Container images are handled by floating_image — skip here to avoid
         // double-flagging the same node as both UnpinnedAction and FloatingImage.
         if image
@@ -327,6 +343,28 @@ pub fn unpinned_action(graph: &AuthorityGraph) -> Vec<Finding> {
             continue;
         }
 
+        // Self-hosted runner labels live in the FirstParty zone but aren't
+        // an action reference — they have no `@version` to pin and the rule
+        // would otherwise flag every `runs-on: self-hosted` line.
+        if image
+            .metadata
+            .get(META_SELF_HOSTED)
+            .map(|v| v == "true")
+            .unwrap_or(false)
+        {
+            continue;
+        }
+
+        // Same-repo composite actions (`./.github/actions/foo`) sit in the
+        // FirstParty zone. Other FirstParty Image nodes (e.g. self-hosted
+        // pool labels, hosted runner names) are not flaggable references —
+        // we admit FirstParty into the severity ladder ONLY when the name
+        // is the relative-path form, and emit Info for it.
+        let is_local_composite = image.name.starts_with("./");
+        if image.trust_zone == TrustZone::FirstParty && !is_local_composite {
+            continue;
+        }
+
         // Deduplicate: same action reference flagged once
         if !seen.insert(&image.name) {
             continue;
@@ -334,25 +372,50 @@ pub fn unpinned_action(graph: &AuthorityGraph) -> Vec<Finding> {
 
         let has_digest = image.metadata.contains_key(META_DIGEST);
 
-        if !has_digest && !is_sha_pinned(&image.name) {
-            findings.push(Finding {
-                severity: Severity::Medium,
-                category: FindingCategory::UnpinnedAction,
-                path: None,
-                nodes_involved: vec![image.id],
-                message: format!("{} is not pinned to a SHA digest", image.name),
-                recommendation: Recommendation::PinAction {
-                    current: image.name.clone(),
-                    pinned: format!(
-                        "{}@<sha256-digest>",
-                        image.name.split('@').next().unwrap_or(&image.name)
-                    ),
-                },
-            });
+        if has_digest || is_sha_pinned(&image.name) {
+            continue;
         }
+
+        // Tier severity by owner. `is_local_composite` already handled the
+        // same-repo case; for everything else, look at the `<owner>/...`
+        // prefix and decide first-party vs unknown supplier.
+        let severity = if is_local_composite {
+            Severity::Info
+        } else if is_well_known_first_party_action(&image.name) {
+            Severity::Medium
+        } else {
+            Severity::High
+        };
+
+        findings.push(Finding {
+            severity,
+            category: FindingCategory::UnpinnedAction,
+            path: None,
+            nodes_involved: vec![image.id],
+            message: format!("{} is not pinned to a SHA digest", image.name),
+            recommendation: Recommendation::PinAction {
+                current: image.name.clone(),
+                pinned: format!(
+                    "{}@<sha256-digest>",
+                    image.name.split('@').next().unwrap_or(&image.name)
+                ),
+            },
+        });
     }
 
     findings
+}
+
+/// Owners we treat as well-known first-party for the purpose of severity
+/// tiering. The list is intentionally short and conservative — adding an
+/// org here downgrades every unpinned action it ships, so the bar is
+/// "GitHub-maintained or directly adjacent core tooling." Anything else
+/// stays at the High default.
+fn is_well_known_first_party_action(uses: &str) -> bool {
+    // Strip an optional `@<ref>` suffix, then take the leading owner segment.
+    let bare = uses.split('@').next().unwrap_or(uses);
+    let owner = bare.split('/').next().unwrap_or("");
+    matches!(owner, "actions" | "github" | "actions-rs" | "docker")
 }
 
 /// MVP Rule 4: Untrusted step has direct access to secret/identity.
@@ -5253,6 +5316,71 @@ mod tests {
         let g = graph_pr_with_login_action("pull_request", "actions/checkout@v4");
         let findings = pr_build_pushes_image_with_floating_credentials(&g);
         assert!(findings.is_empty());
+    }
+
+    // ── unpinned_action severity tiering ─────────────────────────
+
+    #[test]
+    fn unpinned_action_well_known_first_party_is_medium() {
+        // `actions/checkout@v4` — owner is the GitHub-maintained `actions`
+        // org. The supply-chain surface is real but operationally narrow,
+        // so the rule emits Medium rather than the default High.
+        let mut g = AuthorityGraph::new(source("ci.yml"));
+        g.add_node(NodeKind::Image, "actions/checkout@v4", TrustZone::Untrusted);
+
+        let findings = unpinned_action(&g);
+        assert_eq!(findings.len(), 1);
+        assert_eq!(findings[0].severity, Severity::Medium);
+        assert_eq!(findings[0].category, FindingCategory::UnpinnedAction);
+    }
+
+    #[test]
+    fn unpinned_action_same_repo_composite_is_info() {
+        // `./.github/actions/setup` — same-repo composite action. No
+        // external supply-chain surface, so the rule emits Info as a
+        // hygiene-only signal rather than a security finding.
+        let mut g = AuthorityGraph::new(source("ci.yml"));
+        g.add_node(
+            NodeKind::Image,
+            "./.github/actions/setup",
+            TrustZone::FirstParty,
+        );
+
+        let findings = unpinned_action(&g);
+        assert_eq!(findings.len(), 1);
+        assert_eq!(findings[0].severity, Severity::Info);
+        assert_eq!(findings[0].category, FindingCategory::UnpinnedAction);
+    }
+
+    #[test]
+    fn unpinned_action_unknown_owner_is_high() {
+        // `random-org/foo@v1` — unknown owner, full unbounded supply-chain
+        // surface. This is the case the rule was originally designed for
+        // and the only severity tier that still emits at High.
+        let mut g = AuthorityGraph::new(source("ci.yml"));
+        g.add_node(NodeKind::Image, "random-org/foo@v1", TrustZone::Untrusted);
+
+        let findings = unpinned_action(&g);
+        assert_eq!(findings.len(), 1);
+        assert_eq!(findings[0].severity, Severity::High);
+        assert_eq!(findings[0].category, FindingCategory::UnpinnedAction);
+    }
+
+    #[test]
+    fn unpinned_action_self_hosted_runner_label_not_flagged() {
+        // Self-hosted runner labels are FirstParty Image nodes too — but
+        // they aren't action references and have no @version to pin. The
+        // rule must skip them (META_SELF_HOSTED is the marker).
+        let mut g = AuthorityGraph::new(source("ci.yml"));
+        let mut meta = std::collections::HashMap::new();
+        meta.insert(META_SELF_HOSTED.into(), "true".into());
+        g.add_node_with_metadata(NodeKind::Image, "self-hosted", TrustZone::FirstParty, meta);
+
+        let findings = unpinned_action(&g);
+        assert!(
+            findings.is_empty(),
+            "self-hosted runner labels must not be flagged as unpinned actions: {findings:#?}"
+        );
     }
 
     // ── authority_propagation clustering ─────────────────────────
