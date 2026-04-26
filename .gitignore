@@ -31,3 +31,10 @@ MEMORY/
 # sub-directories are excluded.
 .taudit/backups/
 .taudit/baselines/
+
+# cargo-mutants output
+mutants.out/
+mutants.out.old/
+
+# insta snapshot review files (do not commit these)
+crates/*/tests/snapshots/*.snap.new

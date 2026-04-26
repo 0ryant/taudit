@@ -1,0 +1,22 @@
+[package]
+name = "taudit-parse-gitlab-fuzz"
+version = "0.0.0"
+publish = false
+edition = "2021"
+
+[package.metadata]
+cargo-fuzz = true
+
+# Keep the fuzz crate out of the parent workspace; cargo-fuzz convention.
+[workspace]
+
+[dependencies]
+libfuzzer-sys = "0.4"
+taudit-parse-gitlab = { path = ".." }
+taudit-core = { path = "../../taudit-core" }
+
+[[bin]]
+name = "parse_gitlab"
+path = "fuzz_targets/parse_gitlab.rs"
+test = false
+doc = false

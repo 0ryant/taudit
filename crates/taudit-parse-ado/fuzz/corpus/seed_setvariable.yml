@@ -1,0 +1,8 @@
+trigger:
+  - main
+pool:
+  vmImage: ubuntu-latest
+steps:
+  - script: |
+      echo "##vso[task.setvariable variable=TOKEN;issecret=false]$(System.AccessToken)"
+    displayName: Expose token

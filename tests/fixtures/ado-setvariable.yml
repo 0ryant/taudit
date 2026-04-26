@@ -1,0 +1,16 @@
+# ADO pipeline — setvariable without issecret=true (security smell)
+trigger:
+  - main
+
+pool:
+  vmImage: ubuntu-latest
+
+steps:
+  - script: |
+      echo "##vso[task.setvariable variable=MY_TOKEN;issecret=false]$(System.AccessToken)"
+      echo "##vso[task.setvariable variable=API_KEY;issecret=false]$(API_KEY_SECRET)"
+    displayName: Expose secrets as plain variables
+
+  - script: |
+      echo "Token is: $MY_TOKEN"
+    displayName: Use exposed secret

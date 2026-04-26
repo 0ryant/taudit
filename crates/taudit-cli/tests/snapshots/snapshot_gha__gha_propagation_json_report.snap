@@ -1,0 +1,354 @@
+---
+source: crates/taudit-cli/tests/snapshot_gha.rs
+expression: json
+---
+findings:
+  - category: authority_propagation
+    finding_group_id: ed0f643a-a9ea-520a-81a1-e7a12728d90c
+    fingerprint: 25d85ae2f2132cc2
+    message: "GITHUB_TOKEN reaches 5 sinks via authority propagation: [actions/checkout@a5ac7e51b41094c92402da3b24376905380afc29, actions/upload-artifact@v4, release-bundle, actions/download-artifact@v4, untrusted-org/publish-action@main]"
+    nodes_involved:
+      - 0
+      - 1
+      - 5
+      - 7
+      - 8
+      - 10
+    path:
+      boundary_crossing:
+        - first_party
+        - third_party
+      crossed_boundary: true
+      edges:
+        - 0
+      sink: 1
+      source: 0
+    recommendation:
+      command: tsafe exec --ns <scoped-namespace> -- <command>
+      explanation: Scope GITHUB_TOKEN to only the steps that need it
+      type: tsafe_remediation
+    rule_id: authority_propagation
+    severity: critical
+    source: built-in
+  - category: authority_propagation
+    finding_group_id: 24c51300-c14b-5a97-a43f-e30abbefbc2b
+    fingerprint: 91ac6ab9aaa28a0f
+    message: PUBLISH_API_KEY propagated to untrusted-org/publish-action@main across trust boundary
+    nodes_involved:
+      - 12
+      - 10
+    path:
+      boundary_crossing:
+        - first_party
+        - untrusted
+      crossed_boundary: true
+      edges:
+        - 10
+      sink: 10
+      source: 12
+    recommendation:
+      command: tsafe exec --ns <scoped-namespace> -- <command>
+      explanation: Scope PUBLISH_API_KEY to only the steps that need it
+      type: tsafe_remediation
+    rule_id: authority_propagation
+    severity: critical
+    source: built-in
+  - category: long_lived_credential
+    finding_group_id: e28fbf47-5ca1-5582-973f-7eec51c73172
+    fingerprint: 1a4ce732917ed202
+    message: "'PUBLISH_API_KEY' looks like a long-lived static credential"
+    nodes_involved:
+      - 12
+    recommendation:
+      oidc_provider: "GitHub Actions OIDC (id-token: write)"
+      static_secret: PUBLISH_API_KEY
+      type: federate_identity
+    rule_id: long_lived_credential
+    severity: low
+    source: built-in
+    time_to_fix: large
+  - category: over_privileged_identity
+    finding_group_id: 969b593c-6068-549b-a5d8-dcd88d0c507d
+    fingerprint: 636c27a5cf951c53
+    message: "GITHUB_TOKEN has broad scope (permissions: 'write-all') — likely broader than needed"
+    nodes_involved:
+      - 0
+      - 2
+      - 3
+      - 6
+      - 9
+      - 11
+    recommendation:
+      current: write-all
+      minimum: "{ contents: read }"
+      type: reduce_permissions
+    rule_id: over_privileged_identity
+    severity: high
+    source: built-in
+    time_to_fix: small
+  - category: unpinned_action
+    finding_group_id: 08ba96be-eccf-5dd8-9270-bed15c1cc1c5
+    fingerprint: 1e92e25d58a4ad8b
+    message: actions/download-artifact@v4 is not pinned to a SHA digest
+    nodes_involved:
+      - 8
+    recommendation:
+      current: actions/download-artifact@v4
+      pinned: actions/download-artifact@<sha256-digest>
+      type: pin_action
+    rule_id: unpinned_action
+    severity: medium
+    source: built-in
+    time_to_fix: trivial
+  - category: unpinned_action
+    finding_group_id: 21593e0b-1b13-5f55-adcc-f124433bc303
+    fingerprint: f93d2d4fd21f4d5f
+    message: actions/upload-artifact@v4 is not pinned to a SHA digest
+    nodes_involved:
+      - 5
+    recommendation:
+      current: actions/upload-artifact@v4
+      pinned: actions/upload-artifact@<sha256-digest>
+      type: pin_action
+    rule_id: unpinned_action
+    severity: medium
+    source: built-in
+    time_to_fix: trivial
+  - category: unpinned_action
+    finding_group_id: 80cdea3d-fd33-5af7-aa5a-a04dff642752
+    fingerprint: 6151d535a577635f
+    message: untrusted-org/publish-action@main is not pinned to a SHA digest
+    nodes_involved:
+      - 10
+    recommendation:
+      current: untrusted-org/publish-action@main
+      pinned: untrusted-org/publish-action@<sha256-digest>
+      type: pin_action
+    rule_id: unpinned_action
+    severity: high
+    source: built-in
+    time_to_fix: trivial
+  - category: untrusted_with_authority
+    finding_group_id: c490b0e3-517c-5ae8-81e5-653e03ec1464
+    fingerprint: 6b95d9d1d1c36415
+    message: "Untrusted step 'build[2]' has direct access to identity 'GITHUB_TOKEN'"
+    nodes_involved:
+      - 6
+      - 0
+    recommendation:
+      current: write-all
+      minimum: minimal required scope
+      type: reduce_permissions
+    rule_id: untrusted_with_authority
+    severity: critical
+    source: built-in
+  - category: untrusted_with_authority
+    finding_group_id: f68529c1-b97f-5ec6-9f88-3094f0021c59
+    fingerprint: d3c9a69c3a369468
+    message: "Untrusted step 'publish[0]' has direct access to identity 'GITHUB_TOKEN'"
+    nodes_involved:
+      - 9
+      - 0
+    recommendation:
+      current: write-all
+      minimum: minimal required scope
+      type: reduce_permissions
+    rule_id: untrusted_with_authority
+    severity: critical
+    source: built-in
+  - category: untrusted_with_authority
+    finding_group_id: 861e7c28-4959-582a-af3d-0b1c306bccac
+    fingerprint: aaddb0f9f646e259
+    message: "Untrusted step 'publish[1]' has direct access to identity 'GITHUB_TOKEN'"
+    nodes_involved:
+      - 11
+      - 0
+    recommendation:
+      current: write-all
+      minimum: minimal required scope
+      type: reduce_permissions
+    rule_id: untrusted_with_authority
+    severity: critical
+    source: built-in
+  - category: untrusted_with_authority
+    finding_group_id: f13e083f-58da-5acd-b9f1-ee307db69685
+    fingerprint: 991aaae346669a99
+    message: "Untrusted step 'publish[1]' has direct access to secret 'PUBLISH_API_KEY'"
+    nodes_involved:
+      - 11
+      - 12
+    recommendation:
+      reason: "Untrusted step 'publish[1]' has direct access to secret 'PUBLISH_API_KEY'"
+      spec_hint: "cellos run --network deny-all --broker env:PUBLISH_API_KEY"
+      type: cellos_remediation
+    rule_id: untrusted_with_authority
+    severity: critical
+    source: built-in
+  - category: uplift_without_attestation
+    finding_group_id: 19195dad-8fa3-5308-b863-575664b482f9
+    fingerprint: 94d7dcd0a7b65a6a
+    message: 5 step(s) use OIDC/federated identity but no provenance attestation step was detected — artifact integrity cannot be verified
+    nodes_involved:
+      - 2
+      - 3
+      - 6
+      - 9
+      - 11
+      - 0
+    recommendation:
+      action: "Add 'actions/attest-build-provenance' after your build step (GHA) to provide SLSA provenance. See https://docs.github.com/en/actions/security-guides/using-artifact-attestations"
+      type: manual
+    rule_id: uplift_without_attestation
+    severity: info
+    source: built-in
+graph:
+  completeness: complete
+  edges:
+    - from: 2
+      id: 0
+      kind: uses_image
+      to: 1
+    - from: 2
+      id: 1
+      kind: has_access_to
+      to: 0
+    - from: 3
+      id: 2
+      kind: has_access_to
+      to: 0
+    - from: 3
+      id: 3
+      kind: has_access_to
+      to: 4
+    - from: 6
+      id: 4
+      kind: uses_image
+      to: 5
+    - from: 6
+      id: 5
+      kind: has_access_to
+      to: 0
+    - from: 6
+      id: 6
+      kind: produces
+      to: 7
+    - from: 9
+      id: 7
+      kind: uses_image
+      to: 8
+    - from: 9
+      id: 8
+      kind: has_access_to
+      to: 0
+    - from: 7
+      id: 9
+      kind: consumes
+      to: 9
+    - from: 11
+      id: 10
+      kind: uses_image
+      to: 10
+    - from: 11
+      id: 11
+      kind: has_access_to
+      to: 0
+    - from: 11
+      id: 12
+      kind: has_access_to
+      to: 12
+  metadata:
+    platform: github-actions
+    trigger: push
+    triggers: push
+  nodes:
+    - id: 0
+      kind: identity
+      metadata:
+        identity_scope: broad
+        oidc: "true"
+        permissions: write-all
+      name: GITHUB_TOKEN
+      trust_zone: first_party
+    - id: 1
+      kind: image
+      metadata:
+        digest: a5ac7e51b41094c92402da3b24376905380afc29
+      name: actions/checkout@a5ac7e51b41094c92402da3b24376905380afc29
+      trust_zone: third_party
+    - id: 2
+      kind: step
+      metadata:
+        checkout_self: "true"
+        job_name: build
+      name: "build[0]"
+      trust_zone: third_party
+    - id: 3
+      kind: step
+      metadata:
+        job_name: build
+        script_body: make release
+      name: Build with secrets
+      trust_zone: first_party
+    - id: 4
+      kind: secret
+      metadata: {}
+      name: SIGNING_KEY
+      trust_zone: first_party
+    - id: 5
+      kind: image
+      metadata: {}
+      name: actions/upload-artifact@v4
+      trust_zone: untrusted
+    - id: 6
+      kind: step
+      metadata:
+        job_name: build
+      name: "build[2]"
+      trust_zone: untrusted
+    - id: 7
+      kind: artifact
+      metadata: {}
+      name: release-bundle
+      trust_zone: untrusted
+    - id: 8
+      kind: image
+      metadata: {}
+      name: actions/download-artifact@v4
+      trust_zone: untrusted
+    - id: 9
+      kind: step
+      metadata:
+        downloads_artifact: "true"
+        job_name: publish
+      name: "publish[0]"
+      trust_zone: untrusted
+    - id: 10
+      kind: image
+      metadata: {}
+      name: untrusted-org/publish-action@main
+      trust_zone: untrusted
+    - id: 11
+      kind: step
+      metadata:
+        job_name: publish
+      name: "publish[1]"
+      trust_zone: untrusted
+    - id: 12
+      kind: secret
+      metadata: {}
+      name: PUBLISH_API_KEY
+      trust_zone: first_party
+  source:
+    file: test.yml
+schema_uri: "https://taudit.dev/schemas/taudit-report.schema.json"
+schema_version: v1
+summary:
+  completeness: complete
+  critical: 6
+  high: 2
+  info: 1
+  low: 1
+  medium: 2
+  total_edges: 13
+  total_findings: 12
+  total_nodes: 13

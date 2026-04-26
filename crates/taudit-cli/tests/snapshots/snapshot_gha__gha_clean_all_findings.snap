@@ -1,0 +1,24 @@
+---
+source: crates/taudit-cli/tests/snapshot_gha.rs
+expression: findings
+---
+- severity: medium
+  category: authority_propagation
+  path:
+    source: 0
+    sink: 1
+    edges:
+      - 0
+    crossed_boundary: true
+    boundary_crossing:
+      - first_party
+      - third_party
+  nodes_involved:
+    - 0
+    - 1
+  message: GITHUB_TOKEN propagated to actions/checkout@a5ac7e51b41094c92402da3b24376905380afc29 across trust boundary
+  recommendation:
+    type: tsafe_remediation
+    command: tsafe exec --ns <scoped-namespace> -- <command>
+    explanation: Scope GITHUB_TOKEN to only the steps that need it
+  source: built-in

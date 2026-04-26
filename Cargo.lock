@@ -358,6 +358,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "console"
+version = "0.16.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "d64e8af5551369d19cf50138de61f1c42074ab970f74e99be916646777f8fc87"
+dependencies = [
+ "encode_unicode",
+ "libc",
+ "windows-sys 0.61.2",
+]
+
+[[package]]
 name = "core-foundation"
 version = "0.10.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -517,10 +528,26 @@ dependencies = [
 ]
 
 [[package]]
+name = "encode_unicode"
+version = "1.0.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "34aa73646ffb006b8f5147f3dc182bd4bcb190227ce861fc4a4844bf8e3cb2c0"
+
+[[package]]
 name = "equivalent"
 version = "1.0.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "877a4ace8713b0bcf2a4e7eec82529c029f1d0619886d18145fea96c3ffe5c0f"
+
+[[package]]
+name = "errno"
+version = "0.3.14"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "39cab71617ae0d63f51a36d69f866391735b51691dbda63cf6f96d042b63efeb"
+dependencies = [
+ "libc",
+ "windows-sys 0.61.2",
+]
 
 [[package]]
 name = "fancy-regex"
@@ -532,6 +559,12 @@ dependencies = [
  "regex-automata",
  "regex-syntax",
 ]
+
+[[package]]
+name = "fastrand"
+version = "2.4.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "9f1f227452a390804cdb637b74a86990f2a7d7ba4b7d5693aac9b4dd6defd8d6"
 
 [[package]]
 name = "find-msvc-tools"
@@ -1012,6 +1045,19 @@ dependencies = [
 ]
 
 [[package]]
+name = "insta"
+version = "1.47.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "7b4a6248eb93a4401ed2f37dfe8ea592d3cf05b7cf4f8efa867b6895af7e094e"
+dependencies = [
+ "console",
+ "once_cell",
+ "serde",
+ "similar",
+ "tempfile",
+]
+
+[[package]]
 name = "ipnet"
 version = "2.12.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1171,6 +1217,12 @@ name = "libc"
 version = "0.2.186"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "68ab91017fe16c622486840e4c83c9a37afeff978bd239b5293d61ece587de66"
+
+[[package]]
+name = "linux-raw-sys"
+version = "0.12.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "32a66949e030da00e8c7d4434b251670a91556f4144941d37452769c25d58a53"
 
 [[package]]
 name = "litemap"
@@ -1588,6 +1640,19 @@ dependencies = [
 ]
 
 [[package]]
+name = "rustix"
+version = "1.1.4"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "b6fe4565b9518b83ef4f91bb47ce29620ca828bd32cb7e408f0062e9930ba190"
+dependencies = [
+ "bitflags",
+ "errno",
+ "libc",
+ "linux-raw-sys",
+ "windows-sys 0.61.2",
+]
+
+[[package]]
 name = "rustls"
 version = "0.23.39"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1819,6 +1884,12 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "703d5c7ef118737c72f1af64ad2f6f8c5e1921f818cdcb97b8fe6fc69bf66214"
 
 [[package]]
+name = "similar"
+version = "2.7.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "bbbb5d9659141646ae647b42fe094daf6c6192d1620870b449d9557f748b2daa"
+
+[[package]]
 name = "slab"
 version = "0.4.12"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1891,13 +1962,14 @@ dependencies = [
 
 [[package]]
 name = "taudit"
-version = "0.9.4"
+version = "1.0.0"
 dependencies = [
  "anyhow",
  "chrono",
  "clap",
  "clap_complete",
  "colored",
+ "insta",
  "jsonschema",
  "serde",
  "serde_json",
@@ -1916,7 +1988,7 @@ dependencies = [
 
 [[package]]
 name = "taudit-core"
-version = "0.9.4"
+version = "1.0.0"
 dependencies = [
  "chrono",
  "criterion",
@@ -1930,7 +2002,7 @@ dependencies = [
 
 [[package]]
 name = "taudit-parse-ado"
-version = "0.9.4"
+version = "1.0.0"
 dependencies = [
  "criterion",
  "serde",
@@ -1942,7 +2014,7 @@ dependencies = [
 
 [[package]]
 name = "taudit-parse-gha"
-version = "0.9.4"
+version = "1.0.0"
 dependencies = [
  "criterion",
  "serde",
@@ -1953,7 +2025,7 @@ dependencies = [
 
 [[package]]
 name = "taudit-parse-gitlab"
-version = "0.9.4"
+version = "1.0.0"
 dependencies = [
  "criterion",
  "serde",
@@ -1965,7 +2037,7 @@ dependencies = [
 
 [[package]]
 name = "taudit-report-json"
-version = "0.9.4"
+version = "1.0.0"
 dependencies = [
  "jsonschema",
  "serde",
@@ -1975,7 +2047,7 @@ dependencies = [
 
 [[package]]
 name = "taudit-report-sarif"
-version = "0.9.4"
+version = "1.0.0"
 dependencies = [
  "serde",
  "serde_json",
@@ -1984,7 +2056,7 @@ dependencies = [
 
 [[package]]
 name = "taudit-report-terminal"
-version = "0.9.4"
+version = "1.0.0"
 dependencies = [
  "colored",
  "taudit-core",
@@ -1992,7 +2064,7 @@ dependencies = [
 
 [[package]]
 name = "taudit-sink-cloudevents"
-version = "0.9.4"
+version = "1.0.0"
 dependencies = [
  "chrono",
  "jsonschema",
@@ -2000,6 +2072,19 @@ dependencies = [
  "serde_json",
  "taudit-core",
  "uuid",
+]
+
+[[package]]
+name = "tempfile"
+version = "3.27.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "32497e9a4c7b38532efcdebeef879707aa9f794296a4f0244f6f69e9bc8574bd"
+dependencies = [
+ "fastrand",
+ "getrandom 0.4.2",
+ "once_cell",
+ "rustix",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]

@@ -1,0 +1,16 @@
+---
+source: crates/taudit-cli/tests/snapshot_ado.rs
+expression: findings
+---
+- severity: high
+  category: over_privileged_identity
+  nodes_involved:
+    - 0
+    - 3
+  message: "System.AccessToken has broad scope (permissions: '') — likely broader than needed"
+  recommendation:
+    type: reduce_permissions
+    current: ""
+    minimum: "{ contents: read }"
+  source: built-in
+  time_to_fix: small

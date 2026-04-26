@@ -1,0 +1,136 @@
+---
+source: crates/taudit-cli/tests/snapshot_gitlab.rs
+expression: results
+---
+- level: error
+  locations:
+    - physicalLocation:
+        artifactLocation:
+          uri: ".gitlab-ci.yml"
+          uriBaseId: "%SRCROOT%"
+  message:
+    text: "API_SECRET_KEY propagated to alpine:latest across trust boundary"
+  partialFingerprints:
+    primaryLocationLineHash: 7849ccce90a9affb
+    taudit/v1: 7849ccce90a9affb
+  properties:
+    findingGroupId: cb5eefd6-bd71-549b-957b-0850fc777097
+    security-severity: "9.0"
+    taudit-source: built-in
+  ruleId: authority_propagation
+- level: error
+  locations:
+    - physicalLocation:
+        artifactLocation:
+          uri: ".gitlab-ci.yml"
+          uriBaseId: "%SRCROOT%"
+  message:
+    text: "CI_JOB_TOKEN propagated to alpine:latest across trust boundary"
+  partialFingerprints:
+    primaryLocationLineHash: 1da7e65c2ff977aa
+    taudit/v1: 1da7e65c2ff977aa
+  properties:
+    findingGroupId: 23936b25-cf39-5a35-af07-2189903b1067
+    security-severity: "9.0"
+    taudit-source: built-in
+  ruleId: authority_propagation
+- level: error
+  locations:
+    - physicalLocation:
+        artifactLocation:
+          uri: ".gitlab-ci.yml"
+          uriBaseId: "%SRCROOT%"
+  message:
+    text: "DATABASE_PASSWORD propagated to alpine:latest across trust boundary"
+  partialFingerprints:
+    primaryLocationLineHash: 63d395dd2a2674d3
+    taudit/v1: 63d395dd2a2674d3
+  properties:
+    findingGroupId: 23aefb82-189d-5fc2-8861-759c3278dbec
+    security-severity: "9.0"
+    taudit-source: built-in
+  ruleId: authority_propagation
+- level: error
+  locations:
+    - physicalLocation:
+        artifactLocation:
+          uri: ".gitlab-ci.yml"
+          uriBaseId: "%SRCROOT%"
+  message:
+    text: "DEPLOY_TOKEN propagated to alpine:latest across trust boundary"
+  partialFingerprints:
+    primaryLocationLineHash: e9a285367946aec8
+    taudit/v1: e9a285367946aec8
+  properties:
+    findingGroupId: 89b56659-76e2-5da1-ac8f-194ff0779677
+    security-severity: "9.0"
+    taudit-source: built-in
+  ruleId: authority_propagation
+- level: note
+  locations:
+    - physicalLocation:
+        artifactLocation:
+          uri: ".gitlab-ci.yml"
+          uriBaseId: "%SRCROOT%"
+  message:
+    text: "'API_SECRET_KEY' looks like a long-lived static credential"
+  partialFingerprints:
+    primaryLocationLineHash: 5c1be269511d1b57
+    taudit/v1: 5c1be269511d1b57
+  properties:
+    findingGroupId: d6cc214c-5fee-519d-88da-09a6fe21b157
+    security-severity: "2.0"
+    taudit-source: built-in
+    timeToFix: large
+  ruleId: long_lived_credential
+- level: note
+  locations:
+    - physicalLocation:
+        artifactLocation:
+          uri: ".gitlab-ci.yml"
+          uriBaseId: "%SRCROOT%"
+  message:
+    text: "'DATABASE_PASSWORD' looks like a long-lived static credential"
+  partialFingerprints:
+    primaryLocationLineHash: f6d67b78eaa7525d
+    taudit/v1: f6d67b78eaa7525d
+  properties:
+    findingGroupId: 0668de89-ebb3-5eda-bcf2-e103cbdc8966
+    security-severity: "2.0"
+    taudit-source: built-in
+    timeToFix: large
+  ruleId: long_lived_credential
+- level: error
+  locations:
+    - physicalLocation:
+        artifactLocation:
+          uri: ".gitlab-ci.yml"
+          uriBaseId: "%SRCROOT%"
+  message:
+    text: "CI_JOB_TOKEN has broad scope (permissions: '') — likely broader than needed"
+  partialFingerprints:
+    primaryLocationLineHash: 0f0242611c8820c9
+    taudit/v1: 0f0242611c8820c9
+  properties:
+    findingGroupId: c6f2525f-850a-5b5a-bc1b-26f18de73730
+    security-severity: "7.5"
+    taudit-source: built-in
+    timeToFix: small
+  ruleId: over_privileged_identity
+- level: error
+  locations:
+    - physicalLocation:
+        artifactLocation:
+          uri: ".gitlab-ci.yml"
+          uriBaseId: "%SRCROOT%"
+  message:
+    text: "alpine:latest is not pinned to a SHA digest"
+  partialFingerprints:
+    primaryLocationLineHash: b3489f0390e803b0
+    taudit/v1: b3489f0390e803b0
+  properties:
+    findingGroupId: 6a77aadd-f782-5155-b751-6b6697977ae5
+    security-severity: "7.5"
+    taudit-source: built-in
+    timeToFix: trivial
+  ruleId: unpinned_action

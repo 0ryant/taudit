@@ -1,0 +1,24 @@
+---
+source: crates/taudit-cli/tests/snapshot_gha.rs
+expression: finding
+---
+severity: critical
+category: authority_propagation
+path:
+  source: 9
+  sink: 7
+  edges:
+    - 6
+  crossed_boundary: true
+  boundary_crossing:
+    - first_party
+    - untrusted
+nodes_involved:
+  - 9
+  - 7
+message: DEPLOY_TOKEN propagated to some-org/deploy-action@main across trust boundary
+recommendation:
+  type: tsafe_remediation
+  command: tsafe exec --ns <scoped-namespace> -- <command>
+  explanation: Scope DEPLOY_TOKEN to only the steps that need it
+source: built-in

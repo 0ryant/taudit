@@ -1,0 +1,15 @@
+---
+source: crates/taudit-cli/tests/snapshot_gha.rs
+expression: finding
+---
+severity: high
+category: unpinned_action
+nodes_involved:
+  - 10
+message: untrusted-org/publish-action@main is not pinned to a SHA digest
+recommendation:
+  type: pin_action
+  current: untrusted-org/publish-action@main
+  pinned: untrusted-org/publish-action@<sha256-digest>
+source: built-in
+time_to_fix: trivial

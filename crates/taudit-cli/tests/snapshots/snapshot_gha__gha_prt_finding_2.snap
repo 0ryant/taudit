@@ -1,0 +1,17 @@
+---
+source: crates/taudit-cli/tests/snapshot_gha.rs
+expression: finding
+---
+severity: high
+category: over_privileged_identity
+nodes_involved:
+  - 0
+  - 2
+  - 3
+message: "GITHUB_TOKEN has broad scope (permissions: 'write-all') — likely broader than needed"
+recommendation:
+  type: reduce_permissions
+  current: write-all
+  minimum: "{ contents: read }"
+source: built-in
+time_to_fix: small

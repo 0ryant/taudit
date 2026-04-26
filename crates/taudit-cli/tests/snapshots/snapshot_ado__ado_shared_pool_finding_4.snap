@@ -1,0 +1,18 @@
+---
+source: crates/taudit-cli/tests/snapshot_ado.rs
+expression: finding
+---
+severity: high
+category: trigger_context_mismatch
+nodes_involved:
+  - 2
+  - 3
+  - 0
+  - 4
+  - 5
+  - 6
+message: Workflow triggered by pr with secret/identity access — 2 step(s) hold authority that attacker-controlled code could reach
+recommendation:
+  type: manual
+  action: "Use a separate workflow triggered by workflow_run (not pull_request_target) for privileged operations, or ensure no checkout of the PR head ref occurs before secret use"
+source: built-in

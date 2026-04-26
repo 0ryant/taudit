@@ -1,0 +1,201 @@
+---
+source: crates/taudit-cli/tests/snapshot_gha.rs
+expression: results
+---
+- level: error
+  locations:
+    - physicalLocation:
+        artifactLocation:
+          uri: test.yml
+          uriBaseId: "%SRCROOT%"
+  message:
+    text: "GITHUB_TOKEN reaches 5 sinks via authority propagation: [actions/checkout@a5ac7e51b41094c92402da3b24376905380afc29, actions/upload-artifact@v4, release-bundle, actions/download-artifact@v4, untrusted-org/publish-action@main]"
+  partialFingerprints:
+    primaryLocationLineHash: 25d85ae2f2132cc2
+    taudit/v1: 25d85ae2f2132cc2
+  properties:
+    findingGroupId: ed0f643a-a9ea-520a-81a1-e7a12728d90c
+    security-severity: "9.0"
+    taudit-source: built-in
+  ruleId: authority_propagation
+- level: error
+  locations:
+    - physicalLocation:
+        artifactLocation:
+          uri: test.yml
+          uriBaseId: "%SRCROOT%"
+  message:
+    text: PUBLISH_API_KEY propagated to untrusted-org/publish-action@main across trust boundary
+  partialFingerprints:
+    primaryLocationLineHash: 91ac6ab9aaa28a0f
+    taudit/v1: 91ac6ab9aaa28a0f
+  properties:
+    findingGroupId: 24c51300-c14b-5a97-a43f-e30abbefbc2b
+    security-severity: "9.0"
+    taudit-source: built-in
+  ruleId: authority_propagation
+- level: note
+  locations:
+    - physicalLocation:
+        artifactLocation:
+          uri: test.yml
+          uriBaseId: "%SRCROOT%"
+  message:
+    text: "'PUBLISH_API_KEY' looks like a long-lived static credential"
+  partialFingerprints:
+    primaryLocationLineHash: 1a4ce732917ed202
+    taudit/v1: 1a4ce732917ed202
+  properties:
+    findingGroupId: e28fbf47-5ca1-5582-973f-7eec51c73172
+    security-severity: "2.0"
+    taudit-source: built-in
+    timeToFix: large
+  ruleId: long_lived_credential
+- level: error
+  locations:
+    - physicalLocation:
+        artifactLocation:
+          uri: test.yml
+          uriBaseId: "%SRCROOT%"
+  message:
+    text: "GITHUB_TOKEN has broad scope (permissions: 'write-all') — likely broader than needed"
+  partialFingerprints:
+    primaryLocationLineHash: 636c27a5cf951c53
+    taudit/v1: 636c27a5cf951c53
+  properties:
+    findingGroupId: 969b593c-6068-549b-a5d8-dcd88d0c507d
+    security-severity: "7.5"
+    taudit-source: built-in
+    timeToFix: small
+  ruleId: over_privileged_identity
+- level: warning
+  locations:
+    - physicalLocation:
+        artifactLocation:
+          uri: test.yml
+          uriBaseId: "%SRCROOT%"
+  message:
+    text: actions/download-artifact@v4 is not pinned to a SHA digest
+  partialFingerprints:
+    primaryLocationLineHash: 1e92e25d58a4ad8b
+    taudit/v1: 1e92e25d58a4ad8b
+  properties:
+    findingGroupId: 08ba96be-eccf-5dd8-9270-bed15c1cc1c5
+    security-severity: "5.0"
+    taudit-source: built-in
+    timeToFix: trivial
+  ruleId: unpinned_action
+- level: warning
+  locations:
+    - physicalLocation:
+        artifactLocation:
+          uri: test.yml
+          uriBaseId: "%SRCROOT%"
+  message:
+    text: actions/upload-artifact@v4 is not pinned to a SHA digest
+  partialFingerprints:
+    primaryLocationLineHash: f93d2d4fd21f4d5f
+    taudit/v1: f93d2d4fd21f4d5f
+  properties:
+    findingGroupId: 21593e0b-1b13-5f55-adcc-f124433bc303
+    security-severity: "5.0"
+    taudit-source: built-in
+    timeToFix: trivial
+  ruleId: unpinned_action
+- level: error
+  locations:
+    - physicalLocation:
+        artifactLocation:
+          uri: test.yml
+          uriBaseId: "%SRCROOT%"
+  message:
+    text: untrusted-org/publish-action@main is not pinned to a SHA digest
+  partialFingerprints:
+    primaryLocationLineHash: 6151d535a577635f
+    taudit/v1: 6151d535a577635f
+  properties:
+    findingGroupId: 80cdea3d-fd33-5af7-aa5a-a04dff642752
+    security-severity: "7.5"
+    taudit-source: built-in
+    timeToFix: trivial
+  ruleId: unpinned_action
+- level: error
+  locations:
+    - physicalLocation:
+        artifactLocation:
+          uri: test.yml
+          uriBaseId: "%SRCROOT%"
+  message:
+    text: "Untrusted step 'build[2]' has direct access to identity 'GITHUB_TOKEN'"
+  partialFingerprints:
+    primaryLocationLineHash: 6b95d9d1d1c36415
+    taudit/v1: 6b95d9d1d1c36415
+  properties:
+    findingGroupId: c490b0e3-517c-5ae8-81e5-653e03ec1464
+    security-severity: "9.0"
+    taudit-source: built-in
+  ruleId: untrusted_with_authority
+- level: error
+  locations:
+    - physicalLocation:
+        artifactLocation:
+          uri: test.yml
+          uriBaseId: "%SRCROOT%"
+  message:
+    text: "Untrusted step 'publish[0]' has direct access to identity 'GITHUB_TOKEN'"
+  partialFingerprints:
+    primaryLocationLineHash: d3c9a69c3a369468
+    taudit/v1: d3c9a69c3a369468
+  properties:
+    findingGroupId: f68529c1-b97f-5ec6-9f88-3094f0021c59
+    security-severity: "9.0"
+    taudit-source: built-in
+  ruleId: untrusted_with_authority
+- level: error
+  locations:
+    - physicalLocation:
+        artifactLocation:
+          uri: test.yml
+          uriBaseId: "%SRCROOT%"
+  message:
+    text: "Untrusted step 'publish[1]' has direct access to identity 'GITHUB_TOKEN'"
+  partialFingerprints:
+    primaryLocationLineHash: aaddb0f9f646e259
+    taudit/v1: aaddb0f9f646e259
+  properties:
+    findingGroupId: 861e7c28-4959-582a-af3d-0b1c306bccac
+    security-severity: "9.0"
+    taudit-source: built-in
+  ruleId: untrusted_with_authority
+- level: error
+  locations:
+    - physicalLocation:
+        artifactLocation:
+          uri: test.yml
+          uriBaseId: "%SRCROOT%"
+  message:
+    text: "Untrusted step 'publish[1]' has direct access to secret 'PUBLISH_API_KEY'"
+  partialFingerprints:
+    primaryLocationLineHash: 991aaae346669a99
+    taudit/v1: 991aaae346669a99
+  properties:
+    findingGroupId: f13e083f-58da-5acd-b9f1-ee307db69685
+    security-severity: "9.0"
+    taudit-source: built-in
+  ruleId: untrusted_with_authority
+- level: note
+  locations:
+    - physicalLocation:
+        artifactLocation:
+          uri: test.yml
+          uriBaseId: "%SRCROOT%"
+  message:
+    text: 5 step(s) use OIDC/federated identity but no provenance attestation step was detected — artifact integrity cannot be verified
+  partialFingerprints:
+    primaryLocationLineHash: 94d7dcd0a7b65a6a
+    taudit/v1: 94d7dcd0a7b65a6a
+  properties:
+    findingGroupId: 19195dad-8fa3-5308-b863-575664b482f9
+    security-severity: "0.1"
+    taudit-source: built-in
+  ruleId: uplift_without_attestation

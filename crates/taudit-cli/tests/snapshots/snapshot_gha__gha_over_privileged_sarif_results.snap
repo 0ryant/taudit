@@ -1,0 +1,185 @@
+---
+source: crates/taudit-cli/tests/snapshot_gha.rs
+expression: results
+---
+- level: error
+  locations:
+    - physicalLocation:
+        artifactLocation:
+          uri: test.yml
+          uriBaseId: "%SRCROOT%"
+  message:
+    text: DEPLOY_TOKEN propagated to some-org/deploy-action@main across trust boundary
+  partialFingerprints:
+    primaryLocationLineHash: e901cfa0c754946c
+    taudit/v1: e901cfa0c754946c
+  properties:
+    findingGroupId: 2ef519a9-1670-5213-aa79-0f5996b79a28
+    security-severity: "9.0"
+    taudit-source: built-in
+  ruleId: authority_propagation
+- level: error
+  locations:
+    - physicalLocation:
+        artifactLocation:
+          uri: test.yml
+          uriBaseId: "%SRCROOT%"
+  message:
+    text: "GITHUB_TOKEN reaches 2 sinks via authority propagation: [actions/checkout@v4, some-org/deploy-action@main]"
+  partialFingerprints:
+    primaryLocationLineHash: 386c5fb6035fcee1
+    taudit/v1: 386c5fb6035fcee1
+  properties:
+    findingGroupId: c8e7bc78-520c-5da5-b2d5-ec56fb6e0f8a
+    security-severity: "9.0"
+    taudit-source: built-in
+  ruleId: authority_propagation
+- level: note
+  locations:
+    - physicalLocation:
+        artifactLocation:
+          uri: test.yml
+          uriBaseId: "%SRCROOT%"
+  message:
+    text: "'AWS_ACCESS_KEY_ID' looks like a long-lived static credential"
+  partialFingerprints:
+    primaryLocationLineHash: f8e7c6d27fb9c502
+    taudit/v1: f8e7c6d27fb9c502
+  properties:
+    findingGroupId: 4be6bde9-2138-5c69-b0b9-049cccb310ed
+    security-severity: "2.0"
+    taudit-source: built-in
+    timeToFix: large
+  ruleId: long_lived_credential
+- level: note
+  locations:
+    - physicalLocation:
+        artifactLocation:
+          uri: test.yml
+          uriBaseId: "%SRCROOT%"
+  message:
+    text: "'AWS_SECRET_ACCESS_KEY' looks like a long-lived static credential"
+  partialFingerprints:
+    primaryLocationLineHash: 4bfa8377963396f3
+    taudit/v1: 4bfa8377963396f3
+  properties:
+    findingGroupId: d683298a-7b9d-581e-9d39-753e4eb760b3
+    security-severity: "2.0"
+    taudit-source: built-in
+    timeToFix: large
+  ruleId: long_lived_credential
+- level: error
+  locations:
+    - physicalLocation:
+        artifactLocation:
+          uri: test.yml
+          uriBaseId: "%SRCROOT%"
+  message:
+    text: "GITHUB_TOKEN has broad scope (permissions: 'write-all') — likely broader than needed"
+  partialFingerprints:
+    primaryLocationLineHash: 8da052f076b32aa4
+    taudit/v1: 8da052f076b32aa4
+  properties:
+    findingGroupId: e5f1bb57-bcce-5a20-9521-5539e98de5a8
+    security-severity: "7.5"
+    taudit-source: built-in
+    timeToFix: small
+  ruleId: over_privileged_identity
+- level: warning
+  locations:
+    - physicalLocation:
+        artifactLocation:
+          uri: test.yml
+          uriBaseId: "%SRCROOT%"
+  message:
+    text: actions/checkout@v4 is not pinned to a SHA digest
+  partialFingerprints:
+    primaryLocationLineHash: 7d0c4b89e87f4eb1
+    taudit/v1: 7d0c4b89e87f4eb1
+  properties:
+    findingGroupId: 0106c620-6518-5ffc-b0a3-1729c9af2d7d
+    security-severity: "5.0"
+    taudit-source: built-in
+    timeToFix: trivial
+  ruleId: unpinned_action
+- level: error
+  locations:
+    - physicalLocation:
+        artifactLocation:
+          uri: test.yml
+          uriBaseId: "%SRCROOT%"
+  message:
+    text: some-org/deploy-action@main is not pinned to a SHA digest
+  partialFingerprints:
+    primaryLocationLineHash: edd2103ad9feff6e
+    taudit/v1: edd2103ad9feff6e
+  properties:
+    findingGroupId: e473bd0d-ba51-5a9f-b505-c23a3d48c303
+    security-severity: "7.5"
+    taudit-source: built-in
+    timeToFix: trivial
+  ruleId: unpinned_action
+- level: error
+  locations:
+    - physicalLocation:
+        artifactLocation:
+          uri: test.yml
+          uriBaseId: "%SRCROOT%"
+  message:
+    text: "Untrusted step 'build[0]' has direct access to identity 'GITHUB_TOKEN'"
+  partialFingerprints:
+    primaryLocationLineHash: f1ecc83632f1ea02
+    taudit/v1: f1ecc83632f1ea02
+  properties:
+    findingGroupId: a1cbac10-b734-5880-8ccd-435a8995a15c
+    security-severity: "9.0"
+    taudit-source: built-in
+  ruleId: untrusted_with_authority
+- level: error
+  locations:
+    - physicalLocation:
+        artifactLocation:
+          uri: test.yml
+          uriBaseId: "%SRCROOT%"
+  message:
+    text: "Untrusted step 'deploy[0]' has direct access to identity 'GITHUB_TOKEN'"
+  partialFingerprints:
+    primaryLocationLineHash: 295e6dbee6d98391
+    taudit/v1: 295e6dbee6d98391
+  properties:
+    findingGroupId: a8715616-b2b7-5db2-b67c-02b1a930c2bd
+    security-severity: "9.0"
+    taudit-source: built-in
+  ruleId: untrusted_with_authority
+- level: error
+  locations:
+    - physicalLocation:
+        artifactLocation:
+          uri: test.yml
+          uriBaseId: "%SRCROOT%"
+  message:
+    text: "Untrusted step 'deploy[0]' has direct access to secret 'DEPLOY_TOKEN'"
+  partialFingerprints:
+    primaryLocationLineHash: 14b09cd62355460f
+    taudit/v1: 14b09cd62355460f
+  properties:
+    findingGroupId: c2a96a98-db35-51dd-b96c-36647c50b13a
+    security-severity: "9.0"
+    taudit-source: built-in
+  ruleId: untrusted_with_authority
+- level: note
+  locations:
+    - physicalLocation:
+        artifactLocation:
+          uri: test.yml
+          uriBaseId: "%SRCROOT%"
+  message:
+    text: 3 step(s) use OIDC/federated identity but no provenance attestation step was detected — artifact integrity cannot be verified
+  partialFingerprints:
+    primaryLocationLineHash: ef4a4a9247eed1d3
+    taudit/v1: ef4a4a9247eed1d3
+  properties:
+    findingGroupId: 68540b5a-2257-5a3e-9b30-179f65dacf77
+    security-severity: "0.1"
+    taudit-source: built-in
+  ruleId: uplift_without_attestation

@@ -1,0 +1,15 @@
+---
+source: crates/taudit-cli/tests/snapshot_gha.rs
+expression: finding
+---
+severity: medium
+category: unpinned_action
+nodes_involved:
+  - 5
+message: actions/upload-artifact@v4 is not pinned to a SHA digest
+recommendation:
+  type: pin_action
+  current: actions/upload-artifact@v4
+  pinned: actions/upload-artifact@<sha256-digest>
+source: built-in
+time_to_fix: trivial

@@ -1,0 +1,89 @@
+---
+source: crates/taudit-cli/tests/snapshot_gitlab.rs
+expression: findings
+---
+- severity: critical
+  category: authority_propagation
+  path:
+    source: 0
+    sink: 2
+    edges:
+      - 2
+    crossed_boundary: true
+    boundary_crossing:
+      - first_party
+      - untrusted
+  nodes_involved:
+    - 0
+    - 2
+    - 3
+  message: "CI_JOB_TOKEN reaches 2 sinks via authority propagation: [docker:latest, docker:dind]"
+  recommendation:
+    type: tsafe_remediation
+    command: tsafe exec --ns <scoped-namespace> -- <command>
+    explanation: Scope CI_JOB_TOKEN to only the steps that need it
+  source: built-in
+- severity: critical
+  category: authority_propagation
+  path:
+    source: 1
+    sink: 2
+    edges:
+      - 2
+    crossed_boundary: true
+    boundary_crossing:
+      - first_party
+      - untrusted
+  nodes_involved:
+    - 1
+    - 2
+    - 3
+  message: "REGISTRY_TOKEN reaches 2 sinks via authority propagation: [docker:latest, docker:dind]"
+  recommendation:
+    type: tsafe_remediation
+    command: tsafe exec --ns <scoped-namespace> -- <command>
+    explanation: Scope REGISTRY_TOKEN to only the steps that need it
+  source: built-in
+- severity: high
+  category: dind_service_grants_host_authority
+  nodes_involved:
+    - 4
+  message: "Step 'build' uses a docker:dind service AND holds secrets [REGISTRY_TOKEN] — a malicious build step can `docker run -v /:/host` from inside dind and exfiltrate the runner's filesystem (other jobs' artifacts, cached creds)"
+  recommendation:
+    type: manual
+    action: "Replace docker-in-docker with kaniko / buildah / img for image builds (no privileged sidecar required), OR isolate the dind job to a dedicated runner pool with no shared workspace and no other secrets in scope."
+  source: built-in
+- severity: high
+  category: over_privileged_identity
+  nodes_involved:
+    - 0
+    - 4
+  message: "CI_JOB_TOKEN has broad scope (permissions: '') — likely broader than needed"
+  recommendation:
+    type: reduce_permissions
+    current: ""
+    minimum: "{ contents: read }"
+  source: built-in
+  time_to_fix: small
+- severity: high
+  category: unpinned_action
+  nodes_involved:
+    - 3
+  message: "docker:dind is not pinned to a SHA digest"
+  recommendation:
+    type: pin_action
+    current: "docker:dind"
+    pinned: "docker:dind@<sha256-digest>"
+  source: built-in
+  time_to_fix: trivial
+- severity: high
+  category: unpinned_action
+  nodes_involved:
+    - 2
+  message: "docker:latest is not pinned to a SHA digest"
+  recommendation:
+    type: pin_action
+    current: "docker:latest"
+    pinned: "docker:latest@<sha256-digest>"
+  source: built-in
+  time_to_fix: trivial

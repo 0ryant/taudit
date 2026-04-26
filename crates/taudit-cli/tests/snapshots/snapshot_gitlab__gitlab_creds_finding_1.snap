@@ -1,0 +1,24 @@
+---
+source: crates/taudit-cli/tests/snapshot_gitlab.rs
+expression: finding
+---
+severity: critical
+category: authority_propagation
+path:
+  source: 0
+  sink: 4
+  edges:
+    - 4
+  crossed_boundary: true
+  boundary_crossing:
+    - first_party
+    - untrusted
+nodes_involved:
+  - 0
+  - 4
+message: "CI_JOB_TOKEN propagated to alpine:latest across trust boundary"
+recommendation:
+  type: tsafe_remediation
+  command: tsafe exec --ns <scoped-namespace> -- <command>
+  explanation: Scope CI_JOB_TOKEN to only the steps that need it
+source: built-in

@@ -1,0 +1,121 @@
+---
+source: crates/taudit-cli/tests/snapshot_gha.rs
+expression: findings
+---
+- severity: critical
+  category: authority_propagation
+  path:
+    source: 0
+    sink: 1
+    edges:
+      - 0
+    crossed_boundary: true
+    boundary_crossing:
+      - first_party
+      - untrusted
+  nodes_involved:
+    - 0
+    - 1
+  message: GITHUB_TOKEN propagated to actions/checkout@v4 across trust boundary
+  recommendation:
+    type: tsafe_remediation
+    command: tsafe exec --ns <scoped-namespace> -- <command>
+    explanation: Scope GITHUB_TOKEN to only the steps that need it
+  source: built-in
+- severity: high
+  category: checkout_self_pr_exposure
+  nodes_involved:
+    - 2
+  message: "PR-triggered pipeline checks out the repository at step 'check[0]' — attacker-controlled code from the fork lands on the runner and is readable by all subsequent steps"
+  recommendation:
+    type: manual
+    action: "Use `persist-credentials: false` and avoid reading workspace files in subsequent privileged steps. Consider `checkout: none` for jobs that only need pipeline config, not source code."
+  source: built-in
+  time_to_fix: medium
+- severity: high
+  category: over_privileged_identity
+  nodes_involved:
+    - 0
+    - 2
+    - 3
+  message: "GITHUB_TOKEN has broad scope (permissions: 'write-all') — likely broader than needed"
+  recommendation:
+    type: reduce_permissions
+    current: write-all
+    minimum: "{ contents: read }"
+  source: built-in
+  time_to_fix: small
+- severity: critical
+  category: pr_trigger_with_floating_action_ref
+  nodes_involved:
+    - 1
+  message: "Workflow trigger 'pull_request_target' runs in privileged base-repo context and step uses unpinned action 'actions/checkout@v4' — anyone who can push to that action's branch executes arbitrary code with full repo write token"
+  recommendation:
+    type: pin_action
+    current: actions/checkout@v4
+    pinned: actions/checkout@<sha256-digest>
+  source: built-in
+- severity: critical
+  category: script_injection_via_untrusted_context
+  nodes_involved:
+    - 3
+  message: "Step 'check[1]' interpolates attacker-controlled expression(s) ${{ github.event.pull_request.title }} directly into a script body without an env: indirection — classic GitHub Actions RCE"
+  recommendation:
+    type: manual
+    action: "Bind the expression to a step-level `env:` variable and reference it as `\"$VAR\"` (shell) or `process.env.VAR` (JS). The runtime then quotes the value as data instead of YAML-rendering it as code."
+  source: built-in
+- severity: critical
+  category: trigger_context_mismatch
+  nodes_involved:
+    - 2
+    - 3
+    - 0
+  message: Workflow triggered by pull_request_target with secret/identity access — 2 step(s) hold authority that attacker-controlled code could reach
+  recommendation:
+    type: manual
+    action: "Use a separate workflow triggered by workflow_run (not pull_request_target) for privileged operations, or ensure no checkout of the PR head ref occurs before secret use"
+  source: built-in
+- severity: medium
+  category: unpinned_action
+  nodes_involved:
+    - 1
+  message: actions/checkout@v4 is not pinned to a SHA digest
+  recommendation:
+    type: pin_action
+    current: actions/checkout@v4
+    pinned: actions/checkout@<sha256-digest>
+  source: built-in
+  time_to_fix: trivial
+- severity: critical
+  category: untrusted_with_authority
+  nodes_involved:
+    - 2
+    - 0
+  message: "Untrusted step 'check[0]' has direct access to identity 'GITHUB_TOKEN'"
+  recommendation:
+    type: reduce_permissions
+    current: write-all
+    minimum: minimal required scope
+  source: built-in
+- severity: critical
+  category: untrusted_with_authority
+  nodes_involved:
+    - 3
+    - 0
+  message: "Untrusted step 'check[1]' has direct access to identity 'GITHUB_TOKEN'"
+  recommendation:
+    type: reduce_permissions
+    current: write-all
+    minimum: minimal required scope
+  source: built-in
+- severity: info
+  category: uplift_without_attestation
+  nodes_involved:
+    - 2
+    - 3
+    - 0
+  message: 2 step(s) use OIDC/federated identity but no provenance attestation step was detected — artifact integrity cannot be verified
+  recommendation:
+    type: manual
+    action: "Add 'actions/attest-build-provenance' after your build step (GHA) to provide SLSA provenance. See https://docs.github.com/en/actions/security-guides/using-artifact-attestations"
+  source: built-in

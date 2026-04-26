@@ -1,0 +1,26 @@
+---
+source: crates/taudit-cli/tests/snapshot_ado.rs
+expression: findings
+---
+- severity: info
+  category: long_lived_secret_without_oidc_recommendation
+  nodes_involved:
+    - 3
+  message: "Long-lived Azure credential 'ARM_CLIENT_SECRET' is in scope and no OIDC identity exists in this workflow — Azure supports OIDC federation, so this credential could be replaced with a short-lived token issued at runtime"
+  recommendation:
+    type: federate_identity
+    static_secret: ARM_CLIENT_SECRET
+    oidc_provider: "Azure federated credential (azure/login with client-id, no client-secret)"
+  source: built-in
+- severity: high
+  category: over_privileged_identity
+  nodes_involved:
+    - 0
+    - 2
+  message: "System.AccessToken has broad scope (permissions: '') — likely broader than needed"
+  recommendation:
+    type: reduce_permissions
+    current: ""
+    minimum: "{ contents: read }"
+  source: built-in
+  time_to_fix: small

@@ -1,0 +1,15 @@
+---
+source: crates/taudit-cli/tests/snapshot_gha.rs
+expression: finding
+---
+severity: critical
+category: untrusted_with_authority
+nodes_involved:
+  - 2
+  - 0
+message: "Untrusted step 'check[0]' has direct access to identity 'GITHUB_TOKEN'"
+recommendation:
+  type: reduce_permissions
+  current: write-all
+  minimum: minimal required scope
+source: built-in

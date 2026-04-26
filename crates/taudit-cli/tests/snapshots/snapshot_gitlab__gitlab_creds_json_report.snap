@@ -1,0 +1,228 @@
+---
+source: crates/taudit-cli/tests/snapshot_gitlab.rs
+expression: json
+---
+findings:
+  - category: authority_propagation
+    finding_group_id: cb5eefd6-bd71-549b-957b-0850fc777097
+    fingerprint: 7849ccce90a9affb
+    message: "API_SECRET_KEY propagated to alpine:latest across trust boundary"
+    nodes_involved:
+      - 2
+      - 4
+    path:
+      boundary_crossing:
+        - first_party
+        - untrusted
+      crossed_boundary: true
+      edges:
+        - 4
+      sink: 4
+      source: 2
+    recommendation:
+      command: tsafe exec --ns <scoped-namespace> -- <command>
+      explanation: Scope API_SECRET_KEY to only the steps that need it
+      type: tsafe_remediation
+    rule_id: authority_propagation
+    severity: critical
+    source: built-in
+  - category: authority_propagation
+    finding_group_id: 23936b25-cf39-5a35-af07-2189903b1067
+    fingerprint: 1da7e65c2ff977aa
+    message: "CI_JOB_TOKEN propagated to alpine:latest across trust boundary"
+    nodes_involved:
+      - 0
+      - 4
+    path:
+      boundary_crossing:
+        - first_party
+        - untrusted
+      crossed_boundary: true
+      edges:
+        - 4
+      sink: 4
+      source: 0
+    recommendation:
+      command: tsafe exec --ns <scoped-namespace> -- <command>
+      explanation: Scope CI_JOB_TOKEN to only the steps that need it
+      type: tsafe_remediation
+    rule_id: authority_propagation
+    severity: critical
+    source: built-in
+  - category: authority_propagation
+    finding_group_id: 23aefb82-189d-5fc2-8861-759c3278dbec
+    fingerprint: 63d395dd2a2674d3
+    message: "DATABASE_PASSWORD propagated to alpine:latest across trust boundary"
+    nodes_involved:
+      - 3
+      - 4
+    path:
+      boundary_crossing:
+        - first_party
+        - untrusted
+      crossed_boundary: true
+      edges:
+        - 4
+      sink: 4
+      source: 3
+    recommendation:
+      command: tsafe exec --ns <scoped-namespace> -- <command>
+      explanation: Scope DATABASE_PASSWORD to only the steps that need it
+      type: tsafe_remediation
+    rule_id: authority_propagation
+    severity: critical
+    source: built-in
+  - category: authority_propagation
+    finding_group_id: 89b56659-76e2-5da1-ac8f-194ff0779677
+    fingerprint: e9a285367946aec8
+    message: "DEPLOY_TOKEN propagated to alpine:latest across trust boundary"
+    nodes_involved:
+      - 1
+      - 4
+    path:
+      boundary_crossing:
+        - first_party
+        - untrusted
+      crossed_boundary: true
+      edges:
+        - 4
+      sink: 4
+      source: 1
+    recommendation:
+      command: tsafe exec --ns <scoped-namespace> -- <command>
+      explanation: Scope DEPLOY_TOKEN to only the steps that need it
+      type: tsafe_remediation
+    rule_id: authority_propagation
+    severity: critical
+    source: built-in
+  - category: long_lived_credential
+    finding_group_id: d6cc214c-5fee-519d-88da-09a6fe21b157
+    fingerprint: 5c1be269511d1b57
+    message: "'API_SECRET_KEY' looks like a long-lived static credential"
+    nodes_involved:
+      - 2
+    recommendation:
+      oidc_provider: "GitHub Actions OIDC (id-token: write)"
+      static_secret: API_SECRET_KEY
+      type: federate_identity
+    rule_id: long_lived_credential
+    severity: low
+    source: built-in
+    time_to_fix: large
+  - category: long_lived_credential
+    finding_group_id: 0668de89-ebb3-5eda-bcf2-e103cbdc8966
+    fingerprint: f6d67b78eaa7525d
+    message: "'DATABASE_PASSWORD' looks like a long-lived static credential"
+    nodes_involved:
+      - 3
+    recommendation:
+      oidc_provider: "GitHub Actions OIDC (id-token: write)"
+      static_secret: DATABASE_PASSWORD
+      type: federate_identity
+    rule_id: long_lived_credential
+    severity: low
+    source: built-in
+    time_to_fix: large
+  - category: over_privileged_identity
+    finding_group_id: c6f2525f-850a-5b5a-bc1b-26f18de73730
+    fingerprint: 0f0242611c8820c9
+    message: "CI_JOB_TOKEN has broad scope (permissions: '') — likely broader than needed"
+    nodes_involved:
+      - 0
+      - 5
+    recommendation:
+      current: ""
+      minimum: "{ contents: read }"
+      type: reduce_permissions
+    rule_id: over_privileged_identity
+    severity: high
+    source: built-in
+    time_to_fix: small
+  - category: unpinned_action
+    finding_group_id: 6a77aadd-f782-5155-b751-6b6697977ae5
+    fingerprint: b3489f0390e803b0
+    message: "alpine:latest is not pinned to a SHA digest"
+    nodes_involved:
+      - 4
+    recommendation:
+      current: "alpine:latest"
+      pinned: "alpine:latest@<sha256-digest>"
+      type: pin_action
+    rule_id: unpinned_action
+    severity: high
+    source: built-in
+    time_to_fix: trivial
+graph:
+  completeness: complete
+  edges:
+    - from: 5
+      id: 0
+      kind: has_access_to
+      to: 0
+    - from: 5
+      id: 1
+      kind: has_access_to
+      to: 1
+    - from: 5
+      id: 2
+      kind: has_access_to
+      to: 2
+    - from: 5
+      id: 3
+      kind: has_access_to
+      to: 3
+    - from: 5
+      id: 4
+      kind: uses_image
+      to: 4
+  metadata:
+    platform: gitlab
+  nodes:
+    - id: 0
+      kind: identity
+      metadata:
+        identity_scope: broad
+        implicit: "true"
+      name: CI_JOB_TOKEN
+      trust_zone: first_party
+    - id: 1
+      kind: secret
+      metadata: {}
+      name: DEPLOY_TOKEN
+      trust_zone: first_party
+    - id: 2
+      kind: secret
+      metadata: {}
+      name: API_SECRET_KEY
+      trust_zone: first_party
+    - id: 3
+      kind: secret
+      metadata: {}
+      name: DATABASE_PASSWORD
+      trust_zone: first_party
+    - id: 4
+      kind: image
+      metadata: {}
+      name: "alpine:latest"
+      trust_zone: untrusted
+    - id: 5
+      kind: step
+      metadata:
+        job_name: deploy
+        script_body: "echo \"Deploying with token $DEPLOY_TOKEN\""
+      name: deploy
+      trust_zone: first_party
+  source:
+    file: ".gitlab-ci.yml"
+schema_uri: "https://taudit.dev/schemas/taudit-report.schema.json"
+schema_version: v1
+summary:
+  completeness: complete
+  critical: 4
+  high: 2
+  info: 0
+  low: 2
+  medium: 0
+  total_edges: 5
+  total_findings: 8
+  total_nodes: 6

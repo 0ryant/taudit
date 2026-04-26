@@ -1,0 +1,13 @@
+---
+source: crates/taudit-cli/tests/snapshot_ado.rs
+expression: finding
+---
+severity: high
+category: setvariable_issecret_false
+nodes_involved:
+  - 2
+message: "ADO setvariable with sensitive name 'MY_TOKEN' uses issecret=false or omits issecret flag, value printed in plaintext logs"
+recommendation:
+  type: manual
+  action: "Add `issecret=true` to the setvariable directive: `##vso[task.setvariable variable=MY_TOKEN;issecret=true]`"
+source: built-in

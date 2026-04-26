@@ -1,0 +1,129 @@
+---
+source: crates/taudit-cli/tests/snapshot_gitlab.rs
+expression: findings
+---
+- severity: critical
+  category: authority_propagation
+  path:
+    source: 2
+    sink: 4
+    edges:
+      - 4
+    crossed_boundary: true
+    boundary_crossing:
+      - first_party
+      - untrusted
+  nodes_involved:
+    - 2
+    - 4
+  message: "API_SECRET_KEY propagated to alpine:latest across trust boundary"
+  recommendation:
+    type: tsafe_remediation
+    command: tsafe exec --ns <scoped-namespace> -- <command>
+    explanation: Scope API_SECRET_KEY to only the steps that need it
+  source: built-in
+- severity: critical
+  category: authority_propagation
+  path:
+    source: 0
+    sink: 4
+    edges:
+      - 4
+    crossed_boundary: true
+    boundary_crossing:
+      - first_party
+      - untrusted
+  nodes_involved:
+    - 0
+    - 4
+  message: "CI_JOB_TOKEN propagated to alpine:latest across trust boundary"
+  recommendation:
+    type: tsafe_remediation
+    command: tsafe exec --ns <scoped-namespace> -- <command>
+    explanation: Scope CI_JOB_TOKEN to only the steps that need it
+  source: built-in
+- severity: critical
+  category: authority_propagation
+  path:
+    source: 3
+    sink: 4
+    edges:
+      - 4
+    crossed_boundary: true
+    boundary_crossing:
+      - first_party
+      - untrusted
+  nodes_involved:
+    - 3
+    - 4
+  message: "DATABASE_PASSWORD propagated to alpine:latest across trust boundary"
+  recommendation:
+    type: tsafe_remediation
+    command: tsafe exec --ns <scoped-namespace> -- <command>
+    explanation: Scope DATABASE_PASSWORD to only the steps that need it
+  source: built-in
+- severity: critical
+  category: authority_propagation
+  path:
+    source: 1
+    sink: 4
+    edges:
+      - 4
+    crossed_boundary: true
+    boundary_crossing:
+      - first_party
+      - untrusted
+  nodes_involved:
+    - 1
+    - 4
+  message: "DEPLOY_TOKEN propagated to alpine:latest across trust boundary"
+  recommendation:
+    type: tsafe_remediation
+    command: tsafe exec --ns <scoped-namespace> -- <command>
+    explanation: Scope DEPLOY_TOKEN to only the steps that need it
+  source: built-in
+- severity: low
+  category: long_lived_credential
+  nodes_involved:
+    - 2
+  message: "'API_SECRET_KEY' looks like a long-lived static credential"
+  recommendation:
+    type: federate_identity
+    static_secret: API_SECRET_KEY
+    oidc_provider: "GitHub Actions OIDC (id-token: write)"
+  source: built-in
+  time_to_fix: large
+- severity: low
+  category: long_lived_credential
+  nodes_involved:
+    - 3
+  message: "'DATABASE_PASSWORD' looks like a long-lived static credential"
+  recommendation:
+    type: federate_identity
+    static_secret: DATABASE_PASSWORD
+    oidc_provider: "GitHub Actions OIDC (id-token: write)"
+  source: built-in
+  time_to_fix: large
+- severity: high
+  category: over_privileged_identity
+  nodes_involved:
+    - 0
+    - 5
+  message: "CI_JOB_TOKEN has broad scope (permissions: '') — likely broader than needed"
+  recommendation:
+    type: reduce_permissions
+    current: ""
+    minimum: "{ contents: read }"
+  source: built-in
+  time_to_fix: small
+- severity: high
+  category: unpinned_action
+  nodes_involved:
+    - 4
+  message: "alpine:latest is not pinned to a SHA digest"
+  recommendation:
+    type: pin_action
+    current: "alpine:latest"
+    pinned: "alpine:latest@<sha256-digest>"
+  source: built-in
+  time_to_fix: trivial

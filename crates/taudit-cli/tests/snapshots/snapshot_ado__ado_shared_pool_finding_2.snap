@@ -1,0 +1,14 @@
+---
+source: crates/taudit-cli/tests/snapshot_ado.rs
+expression: finding
+---
+severity: critical
+category: self_hosted_pool_pr_hijack
+nodes_involved:
+  - 1
+  - 2
+message: "PR-triggered pipeline uses self-hosted agent pool with checkout:self — enables git hook injection persisting across pipeline runs on the shared runner"
+recommendation:
+  type: manual
+  action: "Run PR pipelines on Microsoft-hosted (ephemeral) agents, or disable checkout:self for PR-triggered jobs on self-hosted pools"
+source: built-in

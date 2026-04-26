@@ -1,0 +1,164 @@
+---
+source: crates/taudit-cli/tests/snapshot_ado.rs
+expression: json
+---
+findings:
+  - category: checkout_self_pr_exposure
+    finding_group_id: 1fd18bf0-de37-5a37-bbd3-374094ede65a
+    fingerprint: 54ae1136cbaafd93
+    message: "PR-triggered pipeline checks out the repository at step 'pipeline[0]' — attacker-controlled code from the fork lands on the runner and is readable by all subsequent steps"
+    nodes_involved:
+      - 2
+    recommendation:
+      action: "Use `persist-credentials: false` and avoid reading workspace files in subsequent privileged steps. Consider `checkout: none` for jobs that only need pipeline config, not source code."
+      type: manual
+    rule_id: checkout_self_pr_exposure
+    severity: high
+    source: built-in
+    time_to_fix: medium
+  - category: over_privileged_identity
+    finding_group_id: 93e42f6b-6b91-5954-b127-41c8527d6cc1
+    fingerprint: 7c26a645de21270f
+    message: "System.AccessToken has broad scope (permissions: '') — likely broader than needed"
+    nodes_involved:
+      - 0
+      - 2
+      - 3
+    recommendation:
+      current: ""
+      minimum: "{ contents: read }"
+      type: reduce_permissions
+    rule_id: over_privileged_identity
+    severity: high
+    source: built-in
+    time_to_fix: small
+  - category: self_hosted_pool_pr_hijack
+    finding_group_id: 712486ed-dda5-5597-a00a-650b29fb6c24
+    fingerprint: 9618c476c7c31ada
+    message: "PR-triggered pipeline uses self-hosted agent pool with checkout:self — enables git hook injection persisting across pipeline runs on the shared runner"
+    nodes_involved:
+      - 1
+      - 2
+    recommendation:
+      action: "Run PR pipelines on Microsoft-hosted (ephemeral) agents, or disable checkout:self for PR-triggered jobs on self-hosted pools"
+      type: manual
+    rule_id: self_hosted_pool_pr_hijack
+    severity: critical
+    source: built-in
+  - category: shared_self_hosted_pool_no_isolation
+    finding_group_id: e65fdf1c-0fe1-5119-8b5d-60cca9f04f12
+    fingerprint: c02d22ffa1414429
+    message: "Self-hosted pool 'SharedBuildAgents' has no workspace isolation (workspace: {clean: all/true} not set); a previous pipeline run can pollute the workspace for the next — including privileged deployment jobs"
+    nodes_involved:
+      - 1
+    recommendation:
+      action: "Add `workspace: { clean: all }` to every job that uses a self-hosted pool, or migrate to Microsoft-hosted (ephemeral) agents for untrusted builds."
+      type: manual
+    rule_id: shared_self_hosted_pool_no_isolation
+    severity: high
+    source: built-in
+  - category: trigger_context_mismatch
+    finding_group_id: e70373ea-e2d8-5317-b67f-332e34e9f3b1
+    fingerprint: 4daf34cdda9433fd
+    message: Workflow triggered by pr with secret/identity access — 2 step(s) hold authority that attacker-controlled code could reach
+    nodes_involved:
+      - 2
+      - 3
+      - 0
+      - 4
+      - 5
+      - 6
+    recommendation:
+      action: "Use a separate workflow triggered by workflow_run (not pull_request_target) for privileged operations, or ensure no checkout of the PR head ref occurs before secret use"
+      type: manual
+    rule_id: trigger_context_mismatch
+    severity: high
+    source: built-in
+graph:
+  completeness: complete
+  edges:
+    - from: 2
+      id: 0
+      kind: has_access_to
+      to: 0
+    - from: 3
+      id: 1
+      kind: has_access_to
+      to: 0
+    - from: 3
+      id: 2
+      kind: has_access_to
+      to: 4
+    - from: 3
+      id: 3
+      kind: has_access_to
+      to: 5
+    - from: 3
+      id: 4
+      kind: has_access_to
+      to: 4
+    - from: 3
+      id: 5
+      kind: has_access_to
+      to: 6
+  metadata:
+    platform: azure-devops
+    trigger: pr
+  nodes:
+    - id: 0
+      kind: identity
+      metadata:
+        identity_scope: broad
+        implicit: "true"
+      name: System.AccessToken
+      trust_zone: first_party
+    - id: 1
+      kind: image
+      metadata:
+        self_hosted: "true"
+      name: SharedBuildAgents
+      trust_zone: first_party
+    - id: 2
+      kind: step
+      metadata:
+        checkout_self: "true"
+        job_name: pipeline
+      name: "pipeline[0]"
+      trust_zone: first_party
+    - id: 3
+      kind: step
+      metadata:
+        job_name: pipeline
+        script_body: "az login --service-principal -u $(SERVICE_PRINCIPAL_ID) -p $(SERVICE_PRINCIPAL_SECRET) --tenant $(TENANT_ID)\nterraform apply -auto-approve\n"
+        terraform_auto_approve: "true"
+      name: Deploy with service principal
+      trust_zone: first_party
+    - id: 4
+      kind: secret
+      metadata: {}
+      name: SERVICE_PRINCIPAL_SECRET
+      trust_zone: first_party
+    - id: 5
+      kind: secret
+      metadata: {}
+      name: SERVICE_PRINCIPAL_ID
+      trust_zone: first_party
+    - id: 6
+      kind: secret
+      metadata: {}
+      name: TENANT_ID
+      trust_zone: first_party
+  source:
+    file: azure-pipelines.yml
+schema_uri: "https://taudit.dev/schemas/taudit-report.schema.json"
+schema_version: v1
+summary:
+  completeness: complete
+  critical: 1
+  high: 4
+  info: 0
+  low: 0
+  medium: 0
+  total_edges: 6
+  total_findings: 5
+  total_nodes: 7

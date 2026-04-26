@@ -1,0 +1,14 @@
+---
+source: crates/taudit-cli/tests/snapshot_gha.rs
+expression: finding
+---
+severity: critical
+category: pr_trigger_with_floating_action_ref
+nodes_involved:
+  - 1
+message: "Workflow trigger 'pull_request_target' runs in privileged base-repo context and step uses unpinned action 'actions/checkout@v4' — anyone who can push to that action's branch executes arbitrary code with full repo write token"
+recommendation:
+  type: pin_action
+  current: actions/checkout@v4
+  pinned: actions/checkout@<sha256-digest>
+source: built-in

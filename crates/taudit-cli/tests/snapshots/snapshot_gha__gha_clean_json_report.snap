@@ -1,0 +1,89 @@
+---
+source: crates/taudit-cli/tests/snapshot_gha.rs
+expression: json
+---
+findings:
+  - category: authority_propagation
+    finding_group_id: 34e05532-cb8e-5859-a01f-da1552c57997
+    fingerprint: 0da8c80421a0b537
+    message: GITHUB_TOKEN propagated to actions/checkout@a5ac7e51b41094c92402da3b24376905380afc29 across trust boundary
+    nodes_involved:
+      - 0
+      - 1
+    path:
+      boundary_crossing:
+        - first_party
+        - third_party
+      crossed_boundary: true
+      edges:
+        - 0
+      sink: 1
+      source: 0
+    recommendation:
+      command: tsafe exec --ns <scoped-namespace> -- <command>
+      explanation: Scope GITHUB_TOKEN to only the steps that need it
+      type: tsafe_remediation
+    rule_id: authority_propagation
+    severity: medium
+    source: built-in
+graph:
+  completeness: complete
+  edges:
+    - from: 2
+      id: 0
+      kind: uses_image
+      to: 1
+    - from: 2
+      id: 1
+      kind: has_access_to
+      to: 0
+    - from: 3
+      id: 2
+      kind: has_access_to
+      to: 0
+  metadata:
+    platform: github-actions
+    trigger: push
+    triggers: push
+  nodes:
+    - id: 0
+      kind: identity
+      metadata:
+        identity_scope: constrained
+        permissions: "{ contents: read }"
+      name: GITHUB_TOKEN
+      trust_zone: first_party
+    - id: 1
+      kind: image
+      metadata:
+        digest: a5ac7e51b41094c92402da3b24376905380afc29
+      name: actions/checkout@a5ac7e51b41094c92402da3b24376905380afc29
+      trust_zone: third_party
+    - id: 2
+      kind: step
+      metadata:
+        checkout_self: "true"
+        job_name: test
+      name: "test[0]"
+      trust_zone: third_party
+    - id: 3
+      kind: step
+      metadata:
+        job_name: test
+        script_body: cargo test
+      name: Run tests
+      trust_zone: first_party
+  source:
+    file: test.yml
+schema_uri: "https://taudit.dev/schemas/taudit-report.schema.json"
+schema_version: v1
+summary:
+  completeness: complete
+  critical: 0
+  high: 0
+  info: 0
+  low: 0
+  medium: 1
+  total_edges: 3
+  total_findings: 1
+  total_nodes: 4

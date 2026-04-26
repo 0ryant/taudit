@@ -1,5 +1,7 @@
 # taudit
 
+[![SLSA 3](https://slsa.dev/images/gh-badge-level3.svg)](https://slsa.dev)
+
 > **CI/CD is an untyped authority system. taudit makes it explicit, inspectable, and enforceable.**
 
 taudit models how authority — secrets, identities, tokens, image trust — propagates through a CI/CD pipeline as a deterministic, typed graph. The graph is the product. Findings, SARIF reports, the terminal scanner, and PR-gate enforcement are all consumers of that graph.

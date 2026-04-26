@@ -39,3 +39,4 @@ ureq = { workspace = true }
 serde_json = { workspace = true }
 serde_yaml = { workspace = true }
 jsonschema = { workspace = true }
+insta = { version = "1.43", features = ["yaml"] }

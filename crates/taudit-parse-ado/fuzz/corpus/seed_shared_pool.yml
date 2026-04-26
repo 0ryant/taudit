@@ -1,0 +1,8 @@
+trigger: none
+pr:
+  - main
+pool:
+  name: SelfHostedPool
+steps:
+  - checkout: self
+  - script: build.sh

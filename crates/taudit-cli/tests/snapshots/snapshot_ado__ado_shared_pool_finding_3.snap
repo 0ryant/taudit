@@ -1,0 +1,13 @@
+---
+source: crates/taudit-cli/tests/snapshot_ado.rs
+expression: finding
+---
+severity: high
+category: shared_self_hosted_pool_no_isolation
+nodes_involved:
+  - 1
+message: "Self-hosted pool 'SharedBuildAgents' has no workspace isolation (workspace: {clean: all/true} not set); a previous pipeline run can pollute the workspace for the next — including privileged deployment jobs"
+recommendation:
+  type: manual
+  action: "Add `workspace: { clean: all }` to every job that uses a self-hosted pool, or migrate to Microsoft-hosted (ephemeral) agents for untrusted builds."
+source: built-in

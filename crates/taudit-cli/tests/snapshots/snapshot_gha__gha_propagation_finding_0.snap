@@ -1,0 +1,28 @@
+---
+source: crates/taudit-cli/tests/snapshot_gha.rs
+expression: finding
+---
+severity: critical
+category: authority_propagation
+path:
+  source: 0
+  sink: 1
+  edges:
+    - 0
+  crossed_boundary: true
+  boundary_crossing:
+    - first_party
+    - third_party
+nodes_involved:
+  - 0
+  - 1
+  - 5
+  - 7
+  - 8
+  - 10
+message: "GITHUB_TOKEN reaches 5 sinks via authority propagation: [actions/checkout@a5ac7e51b41094c92402da3b24376905380afc29, actions/upload-artifact@v4, release-bundle, actions/download-artifact@v4, untrusted-org/publish-action@main]"
+recommendation:
+  type: tsafe_remediation
+  command: tsafe exec --ns <scoped-namespace> -- <command>
+  explanation: Scope GITHUB_TOKEN to only the steps that need it
+source: built-in

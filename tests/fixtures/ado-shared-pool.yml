@@ -1,0 +1,19 @@
+# ADO pipeline — shared self-hosted pool without isolation (hijack risk on PR)
+trigger:
+  - none
+
+pr:
+  - main
+
+pool:
+  name: SharedBuildAgents
+
+steps:
+  - checkout: self
+
+  - script: |
+      az login --service-principal -u $(SERVICE_PRINCIPAL_ID) -p $(SERVICE_PRINCIPAL_SECRET) --tenant $(TENANT_ID)
+      terraform apply -auto-approve
+    displayName: Deploy with service principal
+    env:
+      SERVICE_PRINCIPAL_SECRET: $(SERVICE_PRINCIPAL_SECRET)

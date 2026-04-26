@@ -1,0 +1,15 @@
+# GitLab CI — credentials stored as plain variables (not masked secrets)
+stages:
+  - deploy
+
+variables:
+  DEPLOY_TOKEN: "ghp_hardcoded_token_value"
+  API_SECRET_KEY: "sk-proj-xxxxxxxx"
+  DATABASE_PASSWORD: "supersecretpassword"
+
+deploy:
+  stage: deploy
+  image: alpine:latest
+  script:
+    - echo "Deploying with token $DEPLOY_TOKEN"
+    - curl -H "Authorization: Bearer $DEPLOY_TOKEN" https://api.example.com/deploy

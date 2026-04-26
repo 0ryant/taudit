@@ -1,0 +1,166 @@
+---
+source: crates/taudit-cli/tests/snapshot_gha.rs
+expression: findings
+---
+- severity: critical
+  category: authority_propagation
+  path:
+    source: 0
+    sink: 1
+    edges:
+      - 0
+    crossed_boundary: true
+    boundary_crossing:
+      - first_party
+      - third_party
+  nodes_involved:
+    - 0
+    - 1
+    - 5
+    - 7
+    - 8
+    - 10
+  message: "GITHUB_TOKEN reaches 5 sinks via authority propagation: [actions/checkout@a5ac7e51b41094c92402da3b24376905380afc29, actions/upload-artifact@v4, release-bundle, actions/download-artifact@v4, untrusted-org/publish-action@main]"
+  recommendation:
+    type: tsafe_remediation
+    command: tsafe exec --ns <scoped-namespace> -- <command>
+    explanation: Scope GITHUB_TOKEN to only the steps that need it
+  source: built-in
+- severity: critical
+  category: authority_propagation
+  path:
+    source: 12
+    sink: 10
+    edges:
+      - 10
+    crossed_boundary: true
+    boundary_crossing:
+      - first_party
+      - untrusted
+  nodes_involved:
+    - 12
+    - 10
+  message: PUBLISH_API_KEY propagated to untrusted-org/publish-action@main across trust boundary
+  recommendation:
+    type: tsafe_remediation
+    command: tsafe exec --ns <scoped-namespace> -- <command>
+    explanation: Scope PUBLISH_API_KEY to only the steps that need it
+  source: built-in
+- severity: low
+  category: long_lived_credential
+  nodes_involved:
+    - 12
+  message: "'PUBLISH_API_KEY' looks like a long-lived static credential"
+  recommendation:
+    type: federate_identity
+    static_secret: PUBLISH_API_KEY
+    oidc_provider: "GitHub Actions OIDC (id-token: write)"
+  source: built-in
+  time_to_fix: large
+- severity: high
+  category: over_privileged_identity
+  nodes_involved:
+    - 0
+    - 2
+    - 3
+    - 6
+    - 9
+    - 11
+  message: "GITHUB_TOKEN has broad scope (permissions: 'write-all') — likely broader than needed"
+  recommendation:
+    type: reduce_permissions
+    current: write-all
+    minimum: "{ contents: read }"
+  source: built-in
+  time_to_fix: small
+- severity: medium
+  category: unpinned_action
+  nodes_involved:
+    - 8
+  message: actions/download-artifact@v4 is not pinned to a SHA digest
+  recommendation:
+    type: pin_action
+    current: actions/download-artifact@v4
+    pinned: actions/download-artifact@<sha256-digest>
+  source: built-in
+  time_to_fix: trivial
+- severity: medium
+  category: unpinned_action
+  nodes_involved:
+    - 5
+  message: actions/upload-artifact@v4 is not pinned to a SHA digest
+  recommendation:
+    type: pin_action
+    current: actions/upload-artifact@v4
+    pinned: actions/upload-artifact@<sha256-digest>
+  source: built-in
+  time_to_fix: trivial
+- severity: high
+  category: unpinned_action
+  nodes_involved:
+    - 10
+  message: untrusted-org/publish-action@main is not pinned to a SHA digest
+  recommendation:
+    type: pin_action
+    current: untrusted-org/publish-action@main
+    pinned: untrusted-org/publish-action@<sha256-digest>
+  source: built-in
+  time_to_fix: trivial
+- severity: critical
+  category: untrusted_with_authority
+  nodes_involved:
+    - 6
+    - 0
+  message: "Untrusted step 'build[2]' has direct access to identity 'GITHUB_TOKEN'"
+  recommendation:
+    type: reduce_permissions
+    current: write-all
+    minimum: minimal required scope
+  source: built-in
+- severity: critical
+  category: untrusted_with_authority
+  nodes_involved:
+    - 9
+    - 0
+  message: "Untrusted step 'publish[0]' has direct access to identity 'GITHUB_TOKEN'"
+  recommendation:
+    type: reduce_permissions
+    current: write-all
+    minimum: minimal required scope
+  source: built-in
+- severity: critical
+  category: untrusted_with_authority
+  nodes_involved:
+    - 11
+    - 0
+  message: "Untrusted step 'publish[1]' has direct access to identity 'GITHUB_TOKEN'"
+  recommendation:
+    type: reduce_permissions
+    current: write-all
+    minimum: minimal required scope
+  source: built-in
+- severity: critical
+  category: untrusted_with_authority
+  nodes_involved:
+    - 11
+    - 12
+  message: "Untrusted step 'publish[1]' has direct access to secret 'PUBLISH_API_KEY'"
+  recommendation:
+    type: cellos_remediation
+    reason: "Untrusted step 'publish[1]' has direct access to secret 'PUBLISH_API_KEY'"
+    spec_hint: "cellos run --network deny-all --broker env:PUBLISH_API_KEY"
+  source: built-in
+- severity: info
+  category: uplift_without_attestation
+  nodes_involved:
+    - 2
+    - 3
+    - 6
+    - 9
+    - 11
+    - 0
+  message: 5 step(s) use OIDC/federated identity but no provenance attestation step was detected — artifact integrity cannot be verified
+  recommendation:
+    type: manual
+    action: "Add 'actions/attest-build-provenance' after your build step (GHA) to provide SLSA provenance. See https://docs.github.com/en/actions/security-guides/using-artifact-attestations"
+  source: built-in

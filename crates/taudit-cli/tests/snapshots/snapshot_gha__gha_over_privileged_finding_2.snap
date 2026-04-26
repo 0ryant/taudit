@@ -1,0 +1,15 @@
+---
+source: crates/taudit-cli/tests/snapshot_gha.rs
+expression: finding
+---
+severity: low
+category: long_lived_credential
+nodes_involved:
+  - 4
+message: "'AWS_ACCESS_KEY_ID' looks like a long-lived static credential"
+recommendation:
+  type: federate_identity
+  static_secret: AWS_ACCESS_KEY_ID
+  oidc_provider: "GitHub Actions OIDC (id-token: write)"
+source: built-in
+time_to_fix: large

@@ -1,0 +1,15 @@
+---
+source: crates/taudit-cli/tests/snapshot_ado.rs
+expression: finding
+---
+severity: high
+category: self_mutating_pipeline
+nodes_involved:
+  - 2
+  - 0
+  - 3
+message: "Step 'Expose secrets as plain variables' writes to the environment gate while holding authority (System.AccessToken, API_KEY_SECRET) — secrets may leak into pipeline environment"
+recommendation:
+  type: manual
+  action: Avoid writing secrets or attacker-controlled values to $GITHUB_ENV / $GITHUB_PATH / pipeline variables. Use explicit step outputs with narrow scoping instead.
+source: built-in

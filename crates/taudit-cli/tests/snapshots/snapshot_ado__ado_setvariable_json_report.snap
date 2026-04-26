@@ -1,0 +1,123 @@
+---
+source: crates/taudit-cli/tests/snapshot_ado.rs
+expression: json
+---
+findings:
+  - category: over_privileged_identity
+    finding_group_id: e7f1a86f-1dec-5427-a8f0-7a3659b72dd8
+    fingerprint: fa5e3d886e2fabbb
+    message: "System.AccessToken has broad scope (permissions: '') — likely broader than needed"
+    nodes_involved:
+      - 0
+      - 2
+      - 4
+    recommendation:
+      current: ""
+      minimum: "{ contents: read }"
+      type: reduce_permissions
+    rule_id: over_privileged_identity
+    severity: high
+    source: built-in
+    time_to_fix: small
+  - category: self_mutating_pipeline
+    finding_group_id: b4b2c6b3-800c-5822-a67e-a1bdb5e8088c
+    fingerprint: 661220dcddaaa28c
+    message: "Step 'Expose secrets as plain variables' writes to the environment gate while holding authority (System.AccessToken, API_KEY_SECRET) — secrets may leak into pipeline environment"
+    nodes_involved:
+      - 2
+      - 0
+      - 3
+    recommendation:
+      action: Avoid writing secrets or attacker-controlled values to $GITHUB_ENV / $GITHUB_PATH / pipeline variables. Use explicit step outputs with narrow scoping instead.
+      type: manual
+    rule_id: self_mutating_pipeline
+    severity: high
+    source: built-in
+  - category: setvariable_issecret_false
+    finding_group_id: e3f7744e-42de-5ff0-84ab-0f70e58d59dd
+    fingerprint: 1c19c0c1edc4fcf4
+    message: "ADO setvariable with sensitive name 'API_KEY' uses issecret=false or omits issecret flag, value printed in plaintext logs"
+    nodes_involved:
+      - 2
+    recommendation:
+      action: "Add `issecret=true` to the setvariable directive: `##vso[task.setvariable variable=API_KEY;issecret=true]`"
+      type: manual
+    rule_id: setvariable_issecret_false
+    severity: high
+    source: built-in
+  - category: setvariable_issecret_false
+    finding_group_id: e3f7744e-42de-5ff0-84ab-0f70e58d59dd
+    fingerprint: 1c19c0c1edc4fcf4
+    message: "ADO setvariable with sensitive name 'MY_TOKEN' uses issecret=false or omits issecret flag, value printed in plaintext logs"
+    nodes_involved:
+      - 2
+    recommendation:
+      action: "Add `issecret=true` to the setvariable directive: `##vso[task.setvariable variable=MY_TOKEN;issecret=true]`"
+      type: manual
+    rule_id: setvariable_issecret_false
+    severity: high
+    source: built-in
+graph:
+  completeness: complete
+  edges:
+    - from: 2
+      id: 0
+      kind: has_access_to
+      to: 0
+    - from: 2
+      id: 1
+      kind: has_access_to
+      to: 3
+    - from: 4
+      id: 2
+      kind: has_access_to
+      to: 0
+  metadata:
+    platform: azure-devops
+  nodes:
+    - id: 0
+      kind: identity
+      metadata:
+        identity_scope: broad
+        implicit: "true"
+      name: System.AccessToken
+      trust_zone: first_party
+    - id: 1
+      kind: image
+      metadata: {}
+      name: ubuntu-latest
+      trust_zone: first_party
+    - id: 2
+      kind: step
+      metadata:
+        job_name: pipeline
+        script_body: "echo \"##vso[task.setvariable variable=MY_TOKEN;issecret=false]$(System.AccessToken)\"\necho \"##vso[task.setvariable variable=API_KEY;issecret=false]$(API_KEY_SECRET)\"\n"
+        writes_env_gate: "true"
+      name: Expose secrets as plain variables
+      trust_zone: first_party
+    - id: 3
+      kind: secret
+      metadata: {}
+      name: API_KEY_SECRET
+      trust_zone: first_party
+    - id: 4
+      kind: step
+      metadata:
+        job_name: pipeline
+        script_body: "echo \"Token is: $MY_TOKEN\"\n"
+      name: Use exposed secret
+      trust_zone: first_party
+  source:
+    file: azure-pipelines.yml
+schema_uri: "https://taudit.dev/schemas/taudit-report.schema.json"
+schema_version: v1
+summary:
+  completeness: complete
+  critical: 0
+  high: 4
+  info: 0
+  low: 0
+  medium: 0
+  total_edges: 3
+  total_findings: 4
+  total_nodes: 5

@@ -1,0 +1,69 @@
+---
+source: crates/taudit-cli/tests/snapshot_ado.rs
+expression: results
+---
+- level: error
+  locations:
+    - physicalLocation:
+        artifactLocation:
+          uri: azure-pipelines.yml
+          uriBaseId: "%SRCROOT%"
+  message:
+    text: "System.AccessToken has broad scope (permissions: '') — likely broader than needed"
+  partialFingerprints:
+    primaryLocationLineHash: fa5e3d886e2fabbb
+    taudit/v1: fa5e3d886e2fabbb
+  properties:
+    findingGroupId: e7f1a86f-1dec-5427-a8f0-7a3659b72dd8
+    security-severity: "7.5"
+    taudit-source: built-in
+    timeToFix: small
+  ruleId: over_privileged_identity
+- level: error
+  locations:
+    - physicalLocation:
+        artifactLocation:
+          uri: azure-pipelines.yml
+          uriBaseId: "%SRCROOT%"
+  message:
+    text: "Step 'Expose secrets as plain variables' writes to the environment gate while holding authority (System.AccessToken, API_KEY_SECRET) — secrets may leak into pipeline environment"
+  partialFingerprints:
+    primaryLocationLineHash: 661220dcddaaa28c
+    taudit/v1: 661220dcddaaa28c
+  properties:
+    findingGroupId: b4b2c6b3-800c-5822-a67e-a1bdb5e8088c
+    security-severity: "7.5"
+    taudit-source: built-in
+  ruleId: self_mutating_pipeline
+- level: error
+  locations:
+    - physicalLocation:
+        artifactLocation:
+          uri: azure-pipelines.yml
+          uriBaseId: "%SRCROOT%"
+  message:
+    text: "ADO setvariable with sensitive name 'API_KEY' uses issecret=false or omits issecret flag, value printed in plaintext logs"
+  partialFingerprints:
+    primaryLocationLineHash: 1c19c0c1edc4fcf4
+    taudit/v1: 1c19c0c1edc4fcf4
+  properties:
+    findingGroupId: e3f7744e-42de-5ff0-84ab-0f70e58d59dd
+    security-severity: "7.5"
+    taudit-source: built-in
+  ruleId: setvariable_issecret_false
+- level: error
+  locations:
+    - physicalLocation:
+        artifactLocation:
+          uri: azure-pipelines.yml
+          uriBaseId: "%SRCROOT%"
+  message:
+    text: "ADO setvariable with sensitive name 'MY_TOKEN' uses issecret=false or omits issecret flag, value printed in plaintext logs"
+  partialFingerprints:
+    primaryLocationLineHash: 1c19c0c1edc4fcf4
+    taudit/v1: 1c19c0c1edc4fcf4
+  properties:
+    findingGroupId: e3f7744e-42de-5ff0-84ab-0f70e58d59dd
+    security-severity: "7.5"
+    taudit-source: built-in
+  ruleId: setvariable_issecret_false
