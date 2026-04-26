@@ -52,10 +52,49 @@ jobs:
           cargo test -p taudit-report-json
           cargo test -p taudit-sink-cloudevents
 
-      - name: taudit self-scan
+      # Build once in release; reuse for self-scan + verify steps below.
+      - name: Build taudit (release)
+        run: cargo build --release -p taudit
+
+      # Informational — taudit scan always exits 0 in v0.7+; we surface
+      # findings via SARIF artifact + a CI warning if the threshold is hit.
+      - name: taudit self-scan (SARIF)
         run: |
-          cargo run --bin taudit -- scan .github/workflows/ \
+          ./target/release/taudit scan .github/workflows/ \
             --platform github-actions \
             --severity-threshold high \
-            --quiet \
-            || echo "::warning::taudit found issues in workflow files"
+            --format sarif \
+            > taudit-self-scan.sarif \
+            || (echo "::error::taudit scan failed against own workflows" && exit 1)
+
+      - name: Upload self-scan SARIF
+        uses: actions/upload-artifact@65c4c4a1ddee5b72f698fdd19549f0f0fb45cf08 # v4.6.0
+        with:
+          name: taudit-self-scan-sarif
+          path: taudit-self-scan.sarif
+          if-no-files-found: error
+          retention-days: 30
+
+      # Gate: enforce starter invariants on our own workflows. Treat
+      # violations as advisory until the starter bundle stabilises (the
+      # `|| true` lets us land the wiring without breaking main on
+      # pre-existing issues — flip to a hard fail in a follow-up).
+      - name: taudit verify (starter invariants)
+        if: hashFiles('invariants/starter/*.yml') != ''
+        run: |
+          ./target/release/taudit verify \
+            --policy invariants/starter/ \
+            --platform github-actions \
+            .github/workflows/ \
+            || echo "::warning::taudit verify found policy violations against starter invariants"
+
+      # Gate: ensure the example ADO policy file still parses + matches
+      # zero false-positives on a known-clean fixture as the DSL evolves.
+      - name: taudit verify (example ADO policy parses)
+        if: hashFiles('invariants/policies/example-enterprise-ado.yml') != '' && hashFiles('tests/fixtures/clean.yml') != ''
+        run: |
+          ./target/release/taudit verify \
+            --policy invariants/policies/example-enterprise-ado.yml \
+            --platform azure-devops \
+            tests/fixtures/clean.yml \
+            || echo "::warning::example-enterprise-ado policy reported violations on clean fixture"
