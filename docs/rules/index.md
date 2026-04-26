@@ -1,12 +1,12 @@
 # taudit Rule Reference
 
-58 built-in rules. Run `taudit explain <rule-id>` for a description in the terminal.
+61 built-in rules. Run `taudit explain <rule-id>` for a description in the terminal.
 
 ## Top-level commands
 
 | Command | Purpose |
 |---------|---------|
-| `taudit scan` | Run the 58 built-in rules (and optional custom rules via `--rules-dir`); produces a report. |
+| `taudit scan` | Run the 61 built-in rules (and optional custom rules via `--rules-dir`); produces a report. |
 | [`taudit verify`](../verify.md) | Policy-driven enforcement entrypoint for CI gates. Exit 0 = clean, 1 = violation, 2 = config error. Runs only `--policy` invariants by default. |
 | `taudit map` | Render the authority graph (text table or DOT). |
 | `taudit diff` | Compare findings between two pipeline versions. |
@@ -32,6 +32,7 @@ Platforms: **GHA** = GitHub Actions · **ADO** = Azure DevOps · **GL** = GitLab
 | [checkout_self_pr_exposure](checkout_self_pr_exposure.md) | High | Supply Chain | GHA, ADO |
 | [variable_group_in_pr_job](variable_group_in_pr_job.md) | Critical | Privilege | ADO only |
 | [self_hosted_pool_pr_hijack](self_hosted_pool_pr_hijack.md) | Critical | Injection | ADO only |
+| [shared_self_hosted_pool_no_isolation](shared_self_hosted_pool_no_isolation.md) | High | Injection | ADO only |
 | [service_connection_scope_mismatch](service_connection_scope_mismatch.md) | High | Privilege | ADO only |
 | [template_extends_unpinned_branch](template_extends_unpinned_branch.md) | High | Supply Chain | ADO only |
 | [template_repo_ref_is_feature_branch](template_repo_ref_is_feature_branch.md) | High | Supply Chain | ADO only |

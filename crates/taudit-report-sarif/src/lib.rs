@@ -224,6 +224,20 @@ pub const RULE_DEFS: &[RuleDef] = &[
         tags: &["security", "injection"],
     },
     RuleDef {
+        id: "shared_self_hosted_pool_no_isolation",
+        name: "SharedSelfHostedPoolNoIsolation",
+        short_description: "ADO self-hosted pool missing workspace isolation (`workspace: {clean: all}`)",
+        full_description: "An ADO pipeline runs on a self-hosted agent pool that does not declare \
+             `workspace: { clean: all }`. Self-hosted agents are shared across pipeline runs — a previous \
+             run (potentially from a low-trust source) can leave behind malicious files, compiled \
+             artefacts, or git hooks that persist on disk and execute with the next run's authority, \
+             including privileged deployment jobs. Microsoft-hosted agents are ephemeral and are never \
+             flagged by this rule.",
+        default_level: "error",
+        security_severity: "7.5",
+        tags: &["security", "injection", "azure-devops"],
+    },
+    RuleDef {
         id: "service_connection_scope_mismatch",
         name: "ServiceConnectionScopeMismatch",
         short_description: "Broad-scope service connection accessible from PR-triggered job",

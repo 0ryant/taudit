@@ -4141,10 +4141,9 @@ fn resolve_captured_by(supplied: Option<String>) -> String {
 /// `captured_with.rules_version`. Built-ins are counted from the explain
 /// table; custom rules are counted from the loaded set.
 fn rules_version_label(custom_count: usize) -> String {
-    // 32 built-in invariants is the v0.9.x count surfaced by `taudit explain`.
-    // Stable enough to hard-code; if the count drifts we update this in lock-
-    // step with the explain table.
-    const BUILTIN_COUNT: usize = 32;
+    // Built-in rule count — kept in sync with `taudit_report_sarif::all_rules().len()`.
+    // Update whenever a rule is added to or removed from the SARIF registry.
+    const BUILTIN_COUNT: usize = 61;
     if custom_count == 0 {
         format!("{BUILTIN_COUNT}-builtin")
     } else {
