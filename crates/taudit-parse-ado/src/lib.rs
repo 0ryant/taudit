@@ -18,8 +18,29 @@ impl PipelineParser for AdoParser {
         let doc = de
             .next()
             .ok_or_else(|| TauditError::Parse("empty YAML document".into()))?;
-        let pipeline: AdoPipeline = AdoPipeline::deserialize(doc)
-            .map_err(|e| TauditError::Parse(format!("YAML parse error: {e}")))?;
+        let pipeline: AdoPipeline = match AdoPipeline::deserialize(doc) {
+            Ok(p) => p,
+            Err(e) => {
+                // Real-world ADO template fragments often wrap their root content in
+                // a parameter conditional like `- ${{ if eq(parameters.X, true) }}:`
+                // followed by a list of jobs. That is not a standard YAML mapping at
+                // the root, so serde_yaml fails with a "did not find expected key"
+                // error. These files are intended to be `template:`-included from a
+                // parent pipeline; analyzing them in isolation is not meaningful.
+                // Return a near-empty graph marked Partial instead of crashing the scan.
+                let msg = e.to_string();
+                if msg.contains("did not find expected key")
+                    && has_root_parameter_conditional(content)
+                {
+                    let mut graph = AuthorityGraph::new(source.clone());
+                    graph.mark_partial(
+                        "ADO template fragment with top-level parameter conditional — root structure depends on parent pipeline context".to_string(),
+                    );
+                    return Ok(graph);
+                }
+                return Err(TauditError::Parse(format!("YAML parse error: {e}")));
+            }
+        };
         let extra_docs = de.next().is_some();
 
         let mut graph = AuthorityGraph::new(source.clone());
@@ -799,6 +820,26 @@ pub enum AdoVariable {
     },
 }
 
+/// Heuristic: does this YAML have a top-level parameter conditional wrapper
+/// (e.g. `- ${{ if eq(parameters.X, true) }}:`) at column 0 or as the first
+/// list item? This is the construct that breaks root-level mapping parses but
+/// is valid in an ADO template fragment included by a parent pipeline.
+fn has_root_parameter_conditional(content: &str) -> bool {
+    for line in content.lines() {
+        let trimmed = line.trim_start();
+        // Strip an optional leading list marker so we match both
+        // `- ${{ if ... }}:` and bare `${{ if ... }}:` forms.
+        let candidate = trimmed.strip_prefix("- ").unwrap_or(trimmed);
+        if candidate.starts_with("${{")
+            && (candidate.contains("if ") || candidate.contains("if("))
+            && candidate.trim_end().ends_with(":")
+        {
+            return true;
+        }
+    }
+    false
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1386,6 +1427,46 @@ jobs:
         assert!(
             !any_tagged,
             "jobs without `environment:` must not carry META_ENV_APPROVAL"
+        );
+    }
+
+    #[test]
+    fn root_parameter_conditional_template_fragment_does_not_crash_and_marks_partial() {
+        // Real-world repro: an ADO template fragment whose root content is wrapped
+        // in a parameter conditional (`- ${{ if eq(parameters.X, true) }}:`) followed
+        // by a list of jobs. This is valid when `template:`-included from a parent
+        // pipeline, but parsing it standalone fails with "did not find expected key".
+        // The parser must now return a Partial graph instead of a fatal error.
+        let yaml = r#"
+parameters:
+  msabs_ws2022: false
+
+- ${{ if eq(parameters.msabs_ws2022, true) }}:
+  - job: packer_ws2022
+    displayName: Build WS2022 Gold Image
+    steps:
+      - task: PackerTool@0
+"#;
+        let parser = AdoParser;
+        let source = PipelineSource {
+            file: "fragment.yml".into(),
+            repo: None,
+            git_ref: None,
+        };
+        let result = parser.parse(yaml, &source);
+        let graph = result.expect("template fragment must not crash the parser");
+        assert!(
+            matches!(graph.completeness, AuthorityCompleteness::Partial),
+            "template-fragment graph must be marked Partial"
+        );
+        let saw_fragment_gap = graph
+            .completeness_gaps
+            .iter()
+            .any(|g| g.contains("template fragment") && g.contains("parent pipeline"));
+        assert!(
+            saw_fragment_gap,
+            "completeness_gaps must mention the template-fragment reason, got: {:?}",
+            graph.completeness_gaps
         );
     }
 
