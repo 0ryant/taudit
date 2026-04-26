@@ -109,6 +109,16 @@ pub enum FindingCategory {
     /// docs filename and the convention used in the corpus evidence.
     #[serde(rename = "keyvault_secret_to_plaintext")]
     KeyVaultSecretToPlaintext,
+    /// `terraform apply -auto-approve` against a production-named service connection
+    /// without an environment approval gate.
+    TerraformAutoApproveInProd,
+    /// `AzureCLI@2` task with `addSpnToEnvironment: true` AND an inline script —
+    /// the script can launder federated SPN/OIDC tokens into pipeline variables.
+    AddSpnWithInlineScript,
+    /// A `type: string` pipeline parameter (no `values:` allowlist) is interpolated
+    /// via `${{ parameters.X }}` into an inline shell/PowerShell script body —
+    /// shell injection vector for anyone with "queue build".
+    ParameterInterpolationIntoShell,
     // Reserved — requires ADO/GH API enrichment beyond pipeline YAML
     /// Requires runtime network telemetry or policy enrichment — not detectable from YAML alone.
     #[doc(hidden)]

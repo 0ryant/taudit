@@ -63,9 +63,23 @@ pub const META_REPOSITORIES: &str = "repositories";
 /// parsers when the step has an inline script. Consumed by script-aware
 /// rules: `vm_remote_exec_via_pipeline_secret`,
 /// `short_lived_sas_in_command_line`, `secret_to_inline_script_env_export`,
-/// `secret_materialised_to_workspace_file`, `keyvault_secret_to_plaintext`.
+/// `secret_materialised_to_workspace_file`, `keyvault_secret_to_plaintext`,
+/// `add_spn_with_inline_script`, `parameter_interpolation_into_shell`.
 /// Stored verbatim — rules apply their own pattern matching.
 pub const META_SCRIPT_BODY: &str = "script_body";
+/// Records the name of the ADO service connection a step uses (the value of
+/// `inputs.azureSubscription` / `inputs.connectedServiceName*`). Set on the
+/// Step node itself (in addition to the Identity node it links to) so rules
+/// can pattern-match on the connection name without traversing edges.
+pub const META_SERVICE_CONNECTION_NAME: &str = "service_connection_name";
+/// Marks a Step as performing `terraform apply ... -auto-approve` (either via
+/// an inline script or via a `TerraformCLI` / `TerraformTask` task with
+/// `command: apply` and `commandOptions` containing `auto-approve`).
+pub const META_TERRAFORM_AUTO_APPROVE: &str = "terraform_auto_approve";
+/// Marks a Step task that runs with `addSpnToEnvironment: true`, exposing
+/// the federated SPN (idToken / servicePrincipalKey / servicePrincipalId /
+/// tenantId) to the inline script body via environment variables.
+pub const META_ADD_SPN_TO_ENV: &str = "add_spn_to_environment";
 
 // ── Shared helpers ─────────────────────────────────────
 
@@ -239,6 +253,21 @@ pub struct PipelineSource {
 
 // ── The graph ───────────────────────────────────────────
 
+/// Pipeline-level parameter declaration captured from a top-level
+/// `parameters:` block. Used by rules that need to reason about whether
+/// caller-supplied parameter values are constrained (`values:` allowlist)
+/// or free-form (no allowlist on a string parameter — shell-injection risk).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ParamSpec {
+    /// Declared parameter type (`string`, `number`, `boolean`, `object`, etc.).
+    /// Empty string when the YAML omitted `type:` (ADO defaults to string).
+    pub param_type: String,
+    /// True when the parameter declares a `values:` allowlist that constrains
+    /// the set of acceptable inputs. When true, free-form shell injection is
+    /// not possible because the runtime rejects any value outside the list.
+    pub has_values_allowlist: bool,
+}
+
 /// Directed authority graph. Nodes are pipeline elements (steps, secrets,
 /// artifacts, identities, images). Edges model authority/data flow.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -254,6 +283,11 @@ pub struct AuthorityGraph {
     /// Graph-level metadata set by parsers (e.g. trigger type, platform-specific flags).
     #[serde(default, skip_serializing_if = "HashMap::is_empty")]
     pub metadata: HashMap<String, String>,
+    /// Top-level pipeline `parameters:` declarations, keyed by parameter name.
+    /// Populated by parsers that surface parameter metadata (currently ADO).
+    /// Empty for platforms / pipelines that don't declare parameters.
+    #[serde(default, skip_serializing_if = "HashMap::is_empty")]
+    pub parameters: HashMap<String, ParamSpec>,
 }
 
 impl AuthorityGraph {
@@ -265,6 +299,7 @@ impl AuthorityGraph {
             completeness: AuthorityCompleteness::Complete,
             completeness_gaps: Vec::new(),
             metadata: HashMap::new(),
+            parameters: HashMap::new(),
         }
     }
 

