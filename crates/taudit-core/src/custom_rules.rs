@@ -38,6 +38,14 @@ pub struct MatchSpec {
     /// `contains`, `in`, plus `not:` negation).
     #[serde(default)]
     pub graph_metadata: MetadataMatcher,
+    /// Standalone node predicate. When present, the matcher iterates every
+    /// node in the graph and emits one finding per matching node — the
+    /// source/sink/path fields are ignored, but `graph_metadata:` still
+    /// applies as a graph-wide gate. This is the node-shape-only mode used
+    /// for invariants like "any floating Image" where there is no
+    /// propagation chain to walk.
+    #[serde(default)]
+    pub standalone: Option<NodeMatcher>,
 }
 
 /// A scalar-or-list helper. Lets YAML write `node_type: secret` (single value)
@@ -374,6 +382,37 @@ pub fn evaluate_custom_rules(
     let mut findings = Vec::new();
 
     for rule in rules {
+        // Standalone (node-shape-only) mode: when `standalone:` is present,
+        // walk every node in the graph and emit one finding per match. The
+        // source/sink/path fields are ignored, but `graph_metadata:` still
+        // gates whether the rule runs at all — that's how PR-context
+        // assertions on node shape work.
+        if let Some(matcher) = &rule.match_spec.standalone {
+            if !rule.match_spec.graph_metadata.matches(&graph.metadata) {
+                continue;
+            }
+            for node in &graph.nodes {
+                if !matcher.matches(node) {
+                    continue;
+                }
+                findings.push(Finding {
+                    severity: rule.severity,
+                    category: rule.category,
+                    nodes_involved: vec![node.id],
+                    message: format!("[{}] {}: {}", rule.id, rule.name, node.name),
+                    recommendation: Recommendation::Manual {
+                        action: if rule.description.is_empty() {
+                            format!("Review custom rule '{}'", rule.id)
+                        } else {
+                            rule.description.clone()
+                        },
+                    },
+                    path: None,
+                });
+            }
+            continue;
+        }
+
         // Graph-level metadata gate: if the predicate doesn't hold against
         // `graph.metadata`, no path in this graph can match this rule. Skip
         // the path loop entirely. An empty `graph_metadata:` (the common case
@@ -482,6 +521,7 @@ mod tests {
                 },
                 path: PathMatcher::default(),
                 graph_metadata: MetadataMatcher::default(),
+                standalone: None,
             },
         };
 
@@ -511,6 +551,7 @@ mod tests {
                 sink: NodeMatcher::default(),
                 path: PathMatcher::default(),
                 graph_metadata: MetadataMatcher::default(),
+                standalone: None,
             },
         };
 
@@ -588,6 +629,7 @@ match:
                 sink: NodeMatcher::default(),
                 path: PathMatcher::default(),
                 graph_metadata: MetadataMatcher::default(),
+                standalone: None,
             },
         };
         assert_eq!(evaluate_custom_rules(&g, &paths, &[hit]).len(), 1);
@@ -616,6 +658,7 @@ match:
                 sink: NodeMatcher::default(),
                 path: PathMatcher::default(),
                 graph_metadata: MetadataMatcher::default(),
+                standalone: None,
             },
         };
         assert!(evaluate_custom_rules(&g, &paths, &[miss]).is_empty());
@@ -1060,6 +1103,179 @@ match:
 "#;
         let rule: CustomRule = serde_yaml::from_str(yaml).expect("yaml parses");
         assert_eq!(evaluate_custom_rules(&graph, &paths, &[rule]).len(), 1);
+    }
+
+    // ── Gap C: image sinks + standalone node predicates ─────
+
+    /// Builds a graph with one Identity → Step → Image (Untrusted) chain.
+    /// The Image node is reached via `UsesImage` so propagation_analysis
+    /// produces a path whose sink is the Image — this is what lets custom
+    /// rules use `sink: { node_type: image }`.
+    fn graph_with_image_sink() -> (AuthorityGraph, Vec<PropagationPath>) {
+        let mut g = AuthorityGraph::new(source());
+        let identity = g.add_node(NodeKind::Identity, "GH_TOKEN", TrustZone::FirstParty);
+        let step = g.add_node(NodeKind::Step, "publish", TrustZone::FirstParty);
+        let image = g.add_node(
+            NodeKind::Image,
+            "third-party/deploy@v1",
+            TrustZone::Untrusted,
+        );
+        g.add_edge(step, identity, crate::graph::EdgeKind::HasAccessTo);
+        g.add_edge(step, image, crate::graph::EdgeKind::UsesImage);
+        let paths = propagation_analysis(&g, DEFAULT_MAX_HOPS);
+        (g, paths)
+    }
+
+    #[test]
+    fn sink_node_type_image_matches_image_path_endpoint() {
+        let (graph, paths) = graph_with_image_sink();
+        let yaml = r#"
+id: r
+name: r
+severity: high
+category: untrusted_with_authority
+match:
+  sink:
+    node_type: image
+    trust_zone: untrusted
+"#;
+        let rule: CustomRule = serde_yaml::from_str(yaml).expect("yaml parses");
+        let findings = evaluate_custom_rules(&graph, &paths, &[rule]);
+        assert!(
+            !findings.is_empty(),
+            "Image-as-sink must produce at least one finding"
+        );
+    }
+
+    #[test]
+    fn standalone_matches_every_floating_image_in_graph() {
+        // Two Image nodes: one floating (no `digest` metadata), one digest-pinned.
+        let mut g = AuthorityGraph::new(source());
+        let _step = g.add_node(NodeKind::Step, "build", TrustZone::FirstParty);
+        let _floating1 = g.add_node(NodeKind::Image, "alpine:latest", TrustZone::ThirdParty);
+        let _floating2 = g.add_node(NodeKind::Image, "ubuntu:22.04", TrustZone::ThirdParty);
+        let mut pinned_meta = HashMap::new();
+        pinned_meta.insert("digest".to_string(), "sha256:abc".to_string());
+        let _pinned = g.add_node_with_metadata(
+            NodeKind::Image,
+            "alpine@sha256:abc",
+            TrustZone::ThirdParty,
+            pinned_meta,
+        );
+        // Propagation paths irrelevant for standalone mode.
+        let paths: Vec<PropagationPath> = Vec::new();
+
+        let yaml = r#"
+id: floating_image_standalone
+name: Floating image
+severity: medium
+category: unpinned_action
+match:
+  standalone:
+    node_type: image
+    not:
+      metadata:
+        digest:
+          contains: "sha256:"
+"#;
+        let rule: CustomRule = serde_yaml::from_str(yaml).expect("yaml parses");
+        let findings = evaluate_custom_rules(&g, &paths, &[rule]);
+        assert_eq!(
+            findings.len(),
+            2,
+            "standalone must fire once per floating Image node"
+        );
+    }
+
+    #[test]
+    fn standalone_supports_in_operator() {
+        let mut g = AuthorityGraph::new(source());
+        let mut self_hosted_meta = HashMap::new();
+        self_hosted_meta.insert("self_hosted".to_string(), "true".to_string());
+        let _pool = g.add_node_with_metadata(
+            NodeKind::Image,
+            "self-pool",
+            TrustZone::FirstParty,
+            self_hosted_meta,
+        );
+        let _hosted = g.add_node(NodeKind::Image, "ubuntu-latest", TrustZone::ThirdParty);
+        let paths: Vec<PropagationPath> = Vec::new();
+
+        let yaml = r#"
+id: r
+name: r
+severity: high
+category: authority_propagation
+match:
+  standalone:
+    node_type: image
+    metadata:
+      self_hosted:
+        in: ["true", "yes"]
+"#;
+        let rule: CustomRule = serde_yaml::from_str(yaml).expect("yaml parses");
+        let findings = evaluate_custom_rules(&g, &paths, &[rule]);
+        assert_eq!(findings.len(), 1, "in:[\"true\",\"yes\"] matches one node");
+    }
+
+    #[test]
+    fn standalone_still_honors_graph_metadata_gate() {
+        // Standalone bypasses source/sink/path but `graph_metadata:` remains
+        // a precondition — that's how PR-context node-shape rules work.
+        let mut g_pr = AuthorityGraph::new(source());
+        g_pr.metadata.insert("trigger".into(), "pr".into());
+        g_pr.add_node(NodeKind::Image, "alpine:latest", TrustZone::ThirdParty);
+
+        let mut g_push = AuthorityGraph::new(source());
+        g_push.metadata.insert("trigger".into(), "push".into());
+        g_push.add_node(NodeKind::Image, "alpine:latest", TrustZone::ThirdParty);
+
+        let yaml = r#"
+id: r
+name: r
+severity: low
+category: unpinned_action
+match:
+  graph_metadata:
+    trigger:
+      equals: pr
+  standalone:
+    node_type: image
+"#;
+        let rule: CustomRule = serde_yaml::from_str(yaml).expect("yaml parses");
+        assert_eq!(
+            evaluate_custom_rules(&g_pr, &[], std::slice::from_ref(&rule)).len(),
+            1,
+            "fires on PR graph"
+        );
+        assert!(
+            evaluate_custom_rules(&g_push, &[], std::slice::from_ref(&rule)).is_empty(),
+            "graph_metadata gate must suppress on push graph"
+        );
+    }
+
+    #[test]
+    fn standalone_ignores_source_sink_path_fields() {
+        // Even when source/sink would never match (no propagation paths exist),
+        // standalone fires per node-shape match. Documents the precedence rule.
+        let mut g = AuthorityGraph::new(source());
+        let _img = g.add_node(NodeKind::Image, "alpine:latest", TrustZone::ThirdParty);
+        let paths: Vec<PropagationPath> = Vec::new();
+
+        let yaml = r#"
+id: r
+name: r
+severity: low
+category: unpinned_action
+match:
+  source:
+    node_type: secret    # would never match anything in this graph
+  standalone:
+    node_type: image
+"#;
+        let rule: CustomRule = serde_yaml::from_str(yaml).expect("yaml parses");
+        let findings = evaluate_custom_rules(&g, &paths, &[rule]);
+        assert_eq!(findings.len(), 1);
     }
 
     // ── Gap A: multi-doc YAML loading ───────────────────────

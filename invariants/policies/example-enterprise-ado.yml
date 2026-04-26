@@ -1,0 +1,70 @@
+# Example enterprise ADO policy bundle.
+#
+# Demonstrates the v0.9.1 invariant DSL features:
+#  - multi-doc YAML — three invariants in one file, separated by `---`
+#  - graph_metadata: — gates rules on the pipeline's `META_TRIGGER`
+#  - standalone:    — single-node assertions (no propagation walk)
+#
+# Approximate built-in counterparts and corpus counts on the in-repo ADO
+# corpus (MEMORY/WORK/.../corpus-results/ado-corpus/, 412 files):
+#
+#   no_variable_group_in_pr_job:    custom ≈ built-in (variable_group_in_pr_job)
+#   no_self_hosted_pool_from_pr:    custom > built-in — the custom rule is
+#                                   broader than `self_hosted_pool_pr_hijack`,
+#                                   which additionally requires `checkout:self`.
+#                                   Express the broader policy intentionally:
+#                                   "no PR pipeline on a self-hosted pool".
+#   no_self_mutating_pipeline:      custom = built-in (self_mutating_pipeline)
+
+id: no_variable_group_in_pr_job
+name: ADO variable group consumed by a PR-triggered job
+description: >
+  Variable groups hold secrets scoped to pipelines. When the pipeline's
+  trigger is PR-class and the graph contains a Secret/Identity carrying
+  `variable_group: true`, those secrets cross into an
+  untrusted-contributor execution context. Move the secret behind an
+  OIDC exchange or restrict the variable group to non-PR triggers.
+severity: critical
+category: variable_group_in_pr_job
+match:
+  graph_metadata:
+    trigger:
+      in: [pr, pull_request_target, merge_request_event]
+  standalone:
+    node_type: [secret, identity]
+    metadata:
+      variable_group: "true"
+---
+id: no_self_hosted_pool_from_pr
+name: PR-triggered pipeline targets a self-hosted agent pool
+description: >
+  Self-hosted ADO agent pools persist state between runs. When a PR
+  trigger lands code on a self-hosted runner, an attacker can plant
+  git hooks or workspace files that execute under subsequent
+  pipeline authority. Run PR pipelines on Microsoft-hosted (ephemeral)
+  agents.
+severity: critical
+category: self_hosted_pool_pr_hijack
+match:
+  graph_metadata:
+    trigger:
+      in: [pr, pull_request_target, merge_request_event]
+  standalone:
+    node_type: image
+    metadata:
+      self_hosted: "true"
+---
+id: no_self_mutating_pipeline
+name: Pipeline writes to the environment gate
+description: >
+  Steps that write to `$GITHUB_ENV`, `$GITHUB_PATH`, or ADO
+  `##vso[task.setvariable]` propagate authority outside the explicit
+  graph edges. Subsequent steps inherit those values implicitly.
+  Replace with explicit step outputs and narrow scoping.
+severity: high
+category: self_mutating_pipeline
+match:
+  standalone:
+    node_type: step
+    metadata:
+      writes_env_gate: "true"
