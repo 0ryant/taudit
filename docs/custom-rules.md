@@ -89,9 +89,10 @@ Predicates narrow which propagation paths fire a finding. All predicates are opt
 
 | Field | Type | Effect |
 |-------|------|--------|
-| `node_type` | string | Matches only nodes of this kind (see NodeKind values below) |
-| `trust_zone` | string | Matches only nodes in this trust zone (see TrustZone values below) |
-| `metadata` | map | Matches only nodes whose metadata contains ALL listed key/value pairs |
+| `node_type` | string OR list of strings | Matches nodes of this kind (or any kind in the list) |
+| `trust_zone` | string OR list of strings | Matches nodes in this trust zone (or any zone in the list) |
+| `metadata` | map | Matches nodes whose metadata satisfies ALL listed predicates (see operators below) |
+| `not` | sub-matcher | Inverts the inner sub-matcher. Matches when the inner does NOT match |
 
 `source` and `sink` predicates match the source and sink nodes of a propagation path respectively. A path has exactly one source (the authority origin — a secret or identity) and one sink (the endpoint — typically a step).
 
@@ -102,6 +103,69 @@ When present and non-empty, the path must cross a trust boundary into one of the
 ### Absent predicate = wildcard
 
 Any absent predicate field matches everything. A rule with no `match:` block at all fires on every propagation path in the graph — use this only for policy-wide auditing.
+
+### Negation (`not:`)
+
+Wrap any sub-matcher in `not:` to invert it. Available on `source`, `sink`, and inside `metadata`.
+
+```yaml
+match:
+  source:
+    not:
+      trust_zone: untrusted        # source is anything OTHER than untrusted
+
+  sink:
+    not:
+      node_type: [secret, identity]  # sink is anything OTHER than a secret/identity
+
+  source:
+    metadata:
+      not:
+        oidc: "true"               # match nodes whose oidc field is absent or != "true"
+```
+
+Nested `not` is allowed and double-negation collapses naturally: `not: { not: X }` ≡ `X`.
+
+### Typed metadata predicates
+
+A metadata field may be a bare string (equality, back-compat) or an operator object:
+
+| Operator | Type | Semantics |
+|----------|------|-----------|
+| `equals` | string | Field must equal this value exactly (same as bare string) |
+| `not_equals` | string | Field must be absent OR not equal to this value |
+| `contains` | string | Field must be present and contain this substring |
+| `in` | list of strings | Field must be present and equal one of the listed values |
+
+```yaml
+match:
+  source:
+    metadata:
+      identity_scope:
+        equals: broad
+      permissions:
+        contains: "contents: write"
+      role:
+        in: [admin, owner, write]
+      environment:
+        not_equals: development
+```
+
+All operators on the same field are ANDed. Unknown operator names cause a parse error so typos do not silently match nothing.
+
+### Multi-value `node_type` / `trust_zone`
+
+Both fields accept either a single value or a list. The list form matches if the node is any of the listed kinds/zones (any-of semantics).
+
+```yaml
+match:
+  source:
+    node_type: [secret, identity]   # any authority-bearing source
+  sink:
+    trust_zone: [third_party, untrusted]   # any boundary-crossing sink
+```
+
+The single-value form (`node_type: secret`) continues to work unchanged.
 
 ## Valid Values
 
