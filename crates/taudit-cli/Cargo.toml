@@ -24,6 +24,7 @@ taudit-report-terminal = { version = "0.9.1", path = "../taudit-report-terminal"
 taudit-report-json = { version = "0.9.1", path = "../taudit-report-json" }
 taudit-report-sarif = { version = "0.9.1", path = "../taudit-report-sarif" }
 taudit-sink-cloudevents = { version = "0.9.1", path = "../taudit-sink-cloudevents" }
+chrono = { workspace = true }
 clap = { workspace = true }
 clap_complete = { workspace = true }
 anyhow = { workspace = true }

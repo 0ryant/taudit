@@ -339,6 +339,138 @@ enum Cli {
         #[arg(long, short = 'o')]
         output: Option<PathBuf>,
     },
+
+    /// Manage per-pipeline baselines under `.taudit/baselines/`.
+    ///
+    /// Baselines snapshot the findings present on a pipeline at adoption time
+    /// so subsequent scans diff against them, surfacing only NEW findings.
+    /// Pre-existing findings are reported but do not fail `verify` exit-1
+    /// — UNLESS they are critical and have not been explicitly waived with
+    /// `severity_override: critical` + `reason` + `expires_at` <= 90 days.
+    ///
+    /// See docs/baselines.md for the full workflow and security guarantees.
+    Baseline {
+        #[command(subcommand)]
+        action: BaselineAction,
+    },
+}
+
+#[derive(clap::Subcommand)]
+enum BaselineAction {
+    /// Snapshot CURRENT findings on the given pipelines into
+    /// `.taudit/baselines/<pipeline-content-hash>.json`. One file per
+    /// pipeline. Idempotent: re-running on an unchanged pipeline rewrites
+    /// the same file with a refreshed `captured_at` timestamp. Exits 0.
+    Init {
+        /// Pipeline path(s). Files or directories.
+        #[arg(required = true)]
+        paths: Vec<PathBuf>,
+
+        /// Repository root under which `.taudit/baselines/` is created.
+        /// Defaults to the current working directory.
+        #[arg(long)]
+        root: Option<PathBuf>,
+
+        /// Identity recorded in the baseline's `captured_by` field. Defaults
+        /// to `$USER@$HOSTNAME` when both are set, else `$USER`, else
+        /// `unknown@local`.
+        #[arg(long)]
+        captured_by: Option<String>,
+
+        /// CI/CD platform. Default: auto (detects from YAML content).
+        #[arg(long, default_value = "auto")]
+        platform: Platform,
+
+        /// Maximum propagation depth for BFS analysis.
+        #[arg(long, default_value_t = DEFAULT_MAX_HOPS)]
+        max_hops: usize,
+
+        /// Directory containing Authority Invariant YAML files (`*.yml`,
+        /// `*.yaml`). Same semantics as `taudit scan --invariants-dir`.
+        #[arg(long)]
+        invariants_dir: Option<PathBuf>,
+    },
+
+    /// Append a single finding to a baseline as a waiver. Requires a
+    /// `--reason` (>=10 chars) of justification. To waive a critical
+    /// finding, also pass `--severity-override critical` and
+    /// `--expires-at <ISO-8601>` (must be <=90 days away).
+    Accept {
+        /// Pipeline path the finding belongs to. The baseline file is
+        /// resolved by hashing this file's current content.
+        #[arg(long)]
+        pipeline: PathBuf,
+
+        /// 16-hex finding fingerprint to waive.
+        #[arg(long)]
+        fingerprint: String,
+
+        /// Snake-case rule id (recorded for human review).
+        #[arg(long)]
+        rule_id: String,
+
+        /// Severity at the time of acceptance.
+        #[arg(long)]
+        severity: SeverityLevel,
+
+        /// Free-form justification (>=10 chars). Empty / `wip` / `todo` /
+        /// `fix later` strings are rejected.
+        #[arg(long)]
+        reason: String,
+
+        /// Acknowledge a critical-severity bypass. Required when waiving an
+        /// originally-critical finding; otherwise the critical falls
+        /// through to exit 1 even with the entry in the baseline.
+        #[arg(long)]
+        severity_override: Option<SeverityLevel>,
+
+        /// ISO-8601 expiry timestamp. Mandatory when
+        /// `--severity-override critical`; must be <=90 days from now.
+        #[arg(long)]
+        expires_at: Option<String>,
+
+        /// Repository root under which `.taudit/baselines/` lives.
+        /// Defaults to the current working directory.
+        #[arg(long)]
+        root: Option<PathBuf>,
+    },
+
+    /// Scan the given pipelines, compare to their baselines, and print a
+    /// per-pipeline summary: `<pipeline>: N NEW, M FIXED, K PRE-EXISTING
+    /// (W waived, U unwaived)`. Exits 0; use `taudit verify` to gate CI.
+    Diff {
+        /// Pipeline path(s). Files or directories.
+        #[arg(required = true)]
+        paths: Vec<PathBuf>,
+
+        /// Repository root under which `.taudit/baselines/` lives.
+        /// Defaults to the current working directory.
+        #[arg(long)]
+        root: Option<PathBuf>,
+
+        /// CI/CD platform. Default: auto (detects from YAML content).
+        #[arg(long, default_value = "auto")]
+        platform: Platform,
+
+        /// Maximum propagation depth for BFS analysis.
+        #[arg(long, default_value_t = DEFAULT_MAX_HOPS)]
+        max_hops: usize,
+
+        /// Directory containing Authority Invariant YAML files.
+        #[arg(long)]
+        invariants_dir: Option<PathBuf>,
+    },
+
+    /// List all waivers across every baseline under `.taudit/baselines/`,
+    /// sorted by `expires_at` ASC (expiring/expired first). Flags critical
+    /// waivers that have no `expires_at` (config error — they are not
+    /// protecting anything).
+    Review {
+        /// Repository root under which `.taudit/baselines/` lives.
+        /// Defaults to the current working directory.
+        #[arg(long)]
+        root: Option<PathBuf>,
+    },
 }
 
 #[derive(clap::Subcommand)]
@@ -701,6 +833,7 @@ fn run() -> Result<()> {
                 output,
             })
         }
+        Cli::Baseline { action } => cmd_baseline(action),
     }
 }
 
@@ -2708,6 +2841,437 @@ fn walkdir(dir: &PathBuf) -> Result<Vec<PathBuf>> {
         }
     }
     Ok(files)
+}
+
+// ── Baseline subcommand ─────────────────────────────────────
+//
+// Per-pipeline state lives at `<root>/.taudit/baselines/<hash>.json` (one
+// file per pipeline, keyed by SHA-256 of the pipeline content). The
+// fingerprint algorithm is shared with SARIF/JSON/CloudEvents — see
+// `taudit_core::baselines` for the load-bearing decisions.
+
+fn cmd_baseline(action: BaselineAction) -> Result<()> {
+    match action {
+        BaselineAction::Init {
+            paths,
+            root,
+            captured_by,
+            platform,
+            max_hops,
+            invariants_dir,
+        } => cmd_baseline_init(paths, root, captured_by, platform, max_hops, invariants_dir),
+        BaselineAction::Accept {
+            pipeline,
+            fingerprint,
+            rule_id,
+            severity,
+            reason,
+            severity_override,
+            expires_at,
+            root,
+        } => cmd_baseline_accept(
+            pipeline,
+            fingerprint,
+            rule_id,
+            severity,
+            reason,
+            severity_override,
+            expires_at,
+            root,
+        ),
+        BaselineAction::Diff {
+            paths,
+            root,
+            platform,
+            max_hops,
+            invariants_dir,
+        } => cmd_baseline_diff(paths, root, platform, max_hops, invariants_dir),
+        BaselineAction::Review { root } => cmd_baseline_review(root),
+    }
+}
+
+/// Resolve the repository root for baseline storage. Defaults to CWD when
+/// the user did not pass `--root`.
+fn baseline_root(root: Option<PathBuf>) -> Result<PathBuf> {
+    match root {
+        Some(p) => Ok(p),
+        None => std::env::current_dir().with_context(|| "Failed to resolve current directory"),
+    }
+}
+
+/// Pick a sensible `captured_by` identity: `--captured-by` wins, then
+/// `$USER@$HOSTNAME`, then `$USER`, else `unknown@local`.
+fn resolve_captured_by(supplied: Option<String>) -> String {
+    if let Some(s) = supplied {
+        return s;
+    }
+    let user = std::env::var("USER").ok();
+    let host = std::env::var("HOSTNAME").ok();
+    match (user, host) {
+        (Some(u), Some(h)) if !u.is_empty() && !h.is_empty() => format!("{u}@{h}"),
+        (Some(u), _) if !u.is_empty() => u,
+        _ => "unknown@local".to_string(),
+    }
+}
+
+/// Free-form description of the loaded rule set, recorded in
+/// `captured_with.rules_version`. Built-ins are counted from the explain
+/// table; custom rules are counted from the loaded set.
+fn rules_version_label(custom_count: usize) -> String {
+    // 32 built-in invariants is the v0.9.x count surfaced by `taudit explain`.
+    // Stable enough to hard-code; if the count drifts we update this in lock-
+    // step with the explain table.
+    const BUILTIN_COUNT: usize = 32;
+    if custom_count == 0 {
+        format!("{BUILTIN_COUNT}-builtin")
+    } else {
+        format!("{BUILTIN_COUNT}-builtin+{custom_count}-custom")
+    }
+}
+
+/// Run the loaded rules over a parsed graph, returning the full finding set
+/// (built-ins plus custom). Mirrors what `cmd_scan` does internally so the
+/// baseline captures the same fingerprints `scan` would emit.
+fn run_all_findings(
+    graph: &taudit_core::graph::AuthorityGraph,
+    custom_rules: &[taudit_core::custom_rules::CustomRule],
+    max_hops: usize,
+) -> Vec<taudit_core::finding::Finding> {
+    let mut findings = rules::run_all_rules(graph, max_hops);
+    if !custom_rules.is_empty() {
+        let paths = taudit_core::propagation::propagation_analysis(graph, max_hops);
+        findings.extend(taudit_core::custom_rules::evaluate_custom_rules(
+            graph,
+            paths.as_slice(),
+            custom_rules,
+        ));
+    }
+    findings
+}
+
+/// Load custom invariants from `--invariants-dir` or return an empty Vec.
+/// Errors are bubbled as exit-2 the same way `scan` and `verify` do.
+fn load_custom_rules(
+    invariants_dir: Option<&PathBuf>,
+) -> Result<Vec<taudit_core::custom_rules::CustomRule>> {
+    match invariants_dir {
+        Some(dir) => taudit_core::custom_rules::load_rules_dir(dir).map_err(|errs| {
+            let joined = errs
+                .iter()
+                .map(|e| e.to_string())
+                .collect::<Vec<_>>()
+                .join("; ");
+            anyhow::anyhow!("failed to load invariants from {}: {joined}", dir.display())
+        }),
+        None => Ok(Vec::new()),
+    }
+}
+
+fn cmd_baseline_init(
+    paths: Vec<PathBuf>,
+    root: Option<PathBuf>,
+    captured_by: Option<String>,
+    platform: Platform,
+    max_hops: usize,
+    invariants_dir: Option<PathBuf>,
+) -> Result<()> {
+    let root = baseline_root(root)?;
+    let captured_by = resolve_captured_by(captured_by);
+    let custom_rules = load_custom_rules(invariants_dir.as_ref())?;
+    let rules_label = rules_version_label(custom_rules.len());
+    let now = chrono::Utc::now();
+    let resolved = resolve_paths_tagged(&paths)?;
+
+    let mut written = 0usize;
+    let mut skipped = 0usize;
+
+    for tagged in &resolved {
+        let path = tagged.path();
+        let content = match std::fs::read_to_string(path) {
+            Ok(c) => c,
+            Err(err) => match tagged {
+                ResolvedPath::Discovered(_) => {
+                    eprintln!("warning: skipping {}: {err}", path.display());
+                    skipped += 1;
+                    continue;
+                }
+                ResolvedPath::Explicit(_) => {
+                    return Err(anyhow::Error::new(err)
+                        .context(format!("Failed to read {}", path.display())));
+                }
+            },
+        };
+
+        let resolved_platform = resolve_platform(&platform, &content);
+        let parser = make_parser(&resolved_platform);
+        let graph =
+            match parse_content(parser.as_ref(), content.clone(), path.display().to_string()) {
+                Ok(g) => g,
+                Err(err) => match tagged {
+                    ResolvedPath::Discovered(_) => {
+                        eprintln!("warning: skipping {}: {err:#}", path.display());
+                        skipped += 1;
+                        continue;
+                    }
+                    ResolvedPath::Explicit(_) => return Err(err),
+                },
+            };
+
+        let findings = run_all_findings(&graph, &custom_rules, max_hops);
+
+        let baseline = taudit_core::baselines::Baseline::from_findings(
+            &path.display().to_string(),
+            &content,
+            &graph,
+            &findings,
+            &captured_by,
+            env!("CARGO_PKG_VERSION"),
+            &rules_label,
+            now,
+        );
+        let target =
+            taudit_core::baselines::baseline_path_for(&root, &baseline.pipeline_content_hash);
+        baseline
+            .save(&target)
+            .with_context(|| format!("Failed to write baseline {}", target.display()))?;
+        println!(
+            "wrote {} ({} finding{})",
+            target.display(),
+            baseline.baseline_findings.len(),
+            if baseline.baseline_findings.len() == 1 {
+                ""
+            } else {
+                "s"
+            }
+        );
+        written += 1;
+    }
+
+    println!(
+        "{written} baseline{} written{}",
+        if written == 1 { "" } else { "s" },
+        if skipped > 0 {
+            format!(", {skipped} skipped")
+        } else {
+            String::new()
+        }
+    );
+    Ok(())
+}
+
+#[allow(clippy::too_many_arguments)]
+fn cmd_baseline_accept(
+    pipeline: PathBuf,
+    fingerprint: String,
+    rule_id: String,
+    severity: SeverityLevel,
+    reason: String,
+    severity_override: Option<SeverityLevel>,
+    expires_at: Option<String>,
+    root: Option<PathBuf>,
+) -> Result<()> {
+    let root = baseline_root(root)?;
+    let content = std::fs::read_to_string(&pipeline)
+        .with_context(|| format!("Failed to read pipeline {}", pipeline.display()))?;
+    let hash = taudit_core::baselines::compute_pipeline_hash(&content);
+    let target = taudit_core::baselines::baseline_path_for(&root, &hash);
+
+    let mut baseline = match taudit_core::baselines::Baseline::load(&target)? {
+        Some(b) => b,
+        None => anyhow::bail!(
+            "no baseline at {} — run `taudit baseline init {}` first",
+            target.display(),
+            pipeline.display()
+        ),
+    };
+
+    let expires_dt: Option<chrono::DateTime<chrono::Utc>> = match expires_at {
+        Some(s) => Some(parse_iso8601(&s)?),
+        None => None,
+    };
+    let now = chrono::Utc::now();
+
+    baseline
+        .accept(
+            &fingerprint,
+            &rule_id,
+            severity.to_severity(),
+            &reason,
+            severity_override.as_ref().map(|s| s.to_severity()),
+            expires_dt,
+            now,
+        )
+        .map_err(|e| anyhow::anyhow!("{e}"))?;
+
+    baseline.save(&target)?;
+    println!("accepted {fingerprint} into {}", target.display());
+    Ok(())
+}
+
+fn cmd_baseline_diff(
+    paths: Vec<PathBuf>,
+    root: Option<PathBuf>,
+    platform: Platform,
+    max_hops: usize,
+    invariants_dir: Option<PathBuf>,
+) -> Result<()> {
+    let root = baseline_root(root)?;
+    let custom_rules = load_custom_rules(invariants_dir.as_ref())?;
+    let resolved = resolve_paths_tagged(&paths)?;
+    let now = chrono::Utc::now();
+
+    for tagged in &resolved {
+        let path = tagged.path();
+        let content = match std::fs::read_to_string(path) {
+            Ok(c) => c,
+            Err(err) => match tagged {
+                ResolvedPath::Discovered(_) => {
+                    eprintln!("warning: skipping {}: {err}", path.display());
+                    continue;
+                }
+                ResolvedPath::Explicit(_) => {
+                    return Err(anyhow::Error::new(err)
+                        .context(format!("Failed to read {}", path.display())));
+                }
+            },
+        };
+        let resolved_platform = resolve_platform(&platform, &content);
+        let parser = make_parser(&resolved_platform);
+        let graph = parse_content(parser.as_ref(), content.clone(), path.display().to_string())?;
+        let findings = run_all_findings(&graph, &custom_rules, max_hops);
+
+        let hash = taudit_core::baselines::compute_pipeline_hash(&content);
+        let target = taudit_core::baselines::baseline_path_for(&root, &hash);
+        match taudit_core::baselines::Baseline::load(&target)? {
+            Some(baseline) => {
+                let diff = taudit_core::baselines::diff(&findings, &baseline, &graph);
+                let unwaived = diff.preexisting.len() - diff.waived_count;
+                let blockers = diff.critical_without_valid_waiver(&baseline, &graph, now);
+                println!(
+                    "{}: {} NEW, {} FIXED, {} PRE-EXISTING ({} waived, {} unwaived){}",
+                    path.display(),
+                    diff.new.len(),
+                    diff.fixed.len(),
+                    diff.preexisting.len(),
+                    diff.waived_count,
+                    unwaived,
+                    if blockers.is_empty() {
+                        String::new()
+                    } else {
+                        format!(" — {} CRITICAL without valid waiver", blockers.len())
+                    },
+                );
+            }
+            None => {
+                println!(
+                    "{}: no baseline at {} (run `taudit baseline init {}`)",
+                    path.display(),
+                    target.display(),
+                    path.display()
+                );
+            }
+        }
+    }
+    println!("Use 'taudit baseline review' to see waivers.");
+    Ok(())
+}
+
+fn cmd_baseline_review(root: Option<PathBuf>) -> Result<()> {
+    let root = baseline_root(root)?;
+    let dir = taudit_core::baselines::baselines_dir(&root);
+    if !dir.exists() {
+        println!("no baselines at {} (nothing to review)", dir.display());
+        return Ok(());
+    }
+    let mut waivers: Vec<(String, taudit_core::baselines::BaselineFinding)> = Vec::new();
+    for entry in std::fs::read_dir(&dir)
+        .with_context(|| format!("Failed to read baselines dir {}", dir.display()))?
+    {
+        let entry = entry?;
+        let path = entry.path();
+        if path.extension().and_then(|s| s.to_str()) != Some("json") {
+            continue;
+        }
+        let baseline = match taudit_core::baselines::Baseline::load(&path)? {
+            Some(b) => b,
+            None => continue,
+        };
+        for f in &baseline.baseline_findings {
+            if f.reason_waived.is_some() {
+                waivers.push((baseline.pipeline_path.clone(), f.clone()));
+            }
+        }
+    }
+
+    if waivers.is_empty() {
+        println!("no waivers across {} baselines", count_baselines(&dir)?);
+        return Ok(());
+    }
+
+    // Sort: expired first, then expiring soonest. Entries without expires_at
+    // sort to the end, but critical-without-expires_at is flagged inline.
+    waivers.sort_by(|a, b| match (a.1.expires_at, b.1.expires_at) {
+        (Some(x), Some(y)) => x.cmp(&y),
+        (Some(_), None) => std::cmp::Ordering::Less,
+        (None, Some(_)) => std::cmp::Ordering::Greater,
+        (None, None) => std::cmp::Ordering::Equal,
+    });
+
+    let now = chrono::Utc::now();
+    let mut errors = 0usize;
+    println!("waiver review ({} entries)", waivers.len());
+    for (pipeline, w) in &waivers {
+        let expiry = match w.expires_at {
+            Some(t) => {
+                if t <= now {
+                    format!("EXPIRED {}", t.to_rfc3339())
+                } else {
+                    format!("expires {}", t.to_rfc3339())
+                }
+            }
+            None => "no expires_at".to_string(),
+        };
+        let critical_without_expiry =
+            w.severity_override == Some(Severity::Critical) && w.expires_at.is_none();
+        let flag = if critical_without_expiry {
+            errors += 1;
+            " [ERROR: critical waiver without expires_at]"
+        } else {
+            ""
+        };
+        println!(
+            "  {} :: {} :: {} :: {} :: {}{}",
+            pipeline,
+            w.fingerprint,
+            w.rule_id,
+            expiry,
+            w.reason_waived.as_deref().unwrap_or(""),
+            flag
+        );
+    }
+    if errors > 0 {
+        anyhow::bail!("{errors} critical waiver(s) without expires_at — fix before merge");
+    }
+    Ok(())
+}
+
+fn count_baselines(dir: &std::path::Path) -> Result<usize> {
+    let mut n = 0usize;
+    for entry in std::fs::read_dir(dir)
+        .with_context(|| format!("Failed to read baselines dir {}", dir.display()))?
+    {
+        let entry = entry?;
+        if entry.path().extension().and_then(|s| s.to_str()) == Some("json") {
+            n += 1;
+        }
+    }
+    Ok(n)
+}
+
+fn parse_iso8601(s: &str) -> Result<chrono::DateTime<chrono::Utc>> {
+    chrono::DateTime::parse_from_rfc3339(s)
+        .map(|d| d.with_timezone(&chrono::Utc))
+        .with_context(|| format!("--expires-at must be RFC3339 / ISO-8601 (got {s:?})"))
 }
 
 #[cfg(test)]

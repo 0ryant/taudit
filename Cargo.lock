@@ -1834,6 +1834,7 @@ name = "taudit"
 version = "0.9.1"
 dependencies = [
  "anyhow",
+ "chrono",
  "clap",
  "clap_complete",
  "colored",
