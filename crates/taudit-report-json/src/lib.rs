@@ -1,5 +1,5 @@
 use taudit_core::error::TauditError;
-use taudit_core::finding::{compute_fingerprint, Finding};
+use taudit_core::finding::{compute_fingerprint, rule_id_for, Finding};
 use taudit_core::graph::{AuthorityCompleteness, AuthorityGraph};
 use taudit_core::ports::ReportSink;
 
@@ -35,8 +35,16 @@ pub struct JsonReport<'a> {
 /// CloudEvents extension attribute `tauditfindingfingerprint`, so a SIEM
 /// keying on any of the three sees the same identifier per finding.
 /// See `docs/finding-fingerprint.md` for the contract.
+///
+/// The `rule_id` field carries the snake_case rule identifier (custom-rule
+/// id when the finding came from a YAML rule with a `[id] …` message
+/// prefix, otherwise the snake_case form of the category enum). This is
+/// the same id surfaced in SARIF `result.ruleId` and CloudEvents
+/// `taudit.rule_id`, so JSON consumers can filter/group by rule without
+/// re-deriving it from the category serialization.
 #[derive(Serialize)]
 pub struct FindingWithFingerprint<'a> {
+    pub rule_id: String,
     #[serde(flatten)]
     pub finding: &'a Finding,
     pub fingerprint: String,
@@ -102,6 +110,7 @@ impl<W: std::io::Write> ReportSink<W> for JsonReportSink {
         let findings_with_fp: Vec<FindingWithFingerprint<'_>> = findings
             .iter()
             .map(|f| FindingWithFingerprint {
+                rule_id: rule_id_for(f),
                 finding: f,
                 fingerprint: compute_fingerprint(f, graph),
             })
@@ -297,5 +306,143 @@ mod tests {
             "graph export does not match authority-graph.v1.json:\n{}",
             errors.join("\n")
         );
+    }
+
+    /// Regression for the post-v0.9.1 fuzz-report B1 (HIGH): scanning the
+    /// same fixture nine times in a row must produce nine byte-identical
+    /// JSON outputs. Before the fix, HashMap iteration order leaked into
+    /// node IDs, edge `from`/`to`, and `metadata` key ordering — so each
+    /// run differed and any cache / SIEM keying on the JSON saw false
+    /// changes. The fix sorts parser HashMap iteration and serializes
+    /// graph metadata maps in sorted-key order.
+    #[test]
+    fn json_output_is_byte_deterministic_across_runs() {
+        use std::collections::HashMap;
+        use taudit_core::graph::{AuthorityGraph, EdgeKind, NodeKind, PipelineSource, TrustZone};
+
+        // Build a graph with rich metadata across multiple keys — exercises
+        // the HashMap-key-order code path that was previously the source of
+        // non-determinism. We then serialise it twice in sequence (mimics
+        // back-to-back runs of the same scan).
+        fn build_graph() -> (AuthorityGraph, Vec<Finding>) {
+            let mut graph = AuthorityGraph::new(PipelineSource {
+                file: "ci.yml".into(),
+                repo: None,
+                git_ref: None,
+                commit_sha: None,
+            });
+            let secret_a = graph.add_node(NodeKind::Secret, "AWS_KEY", TrustZone::FirstParty);
+            let secret_b = graph.add_node(NodeKind::Secret, "DEPLOY_TOKEN", TrustZone::FirstParty);
+            let step = graph.add_node(NodeKind::Step, "deploy", TrustZone::FirstParty);
+            graph.add_edge(step, secret_a, EdgeKind::HasAccessTo);
+            graph.add_edge(step, secret_b, EdgeKind::HasAccessTo);
+            // Stamp many metadata keys on the step so HashMap ordering matters.
+            if let Some(node) = graph.nodes.get_mut(step) {
+                let mut meta: HashMap<String, String> = HashMap::new();
+                meta.insert("z_field".into(), "z".into());
+                meta.insert("a_field".into(), "a".into());
+                meta.insert("m_field".into(), "m".into());
+                meta.insert("k_field".into(), "k".into());
+                meta.insert("c_field".into(), "c".into());
+                node.metadata = meta;
+            }
+            graph
+                .metadata
+                .insert("trigger".into(), "pull_request".into());
+            graph.metadata.insert("platform".into(), "github".into());
+            let findings = vec![Finding {
+                severity: Severity::High,
+                category: taudit_core::finding::FindingCategory::AuthorityPropagation,
+                path: None,
+                nodes_involved: vec![secret_a, step],
+                message: "AWS_KEY reaches deploy".into(),
+                recommendation: Recommendation::Manual {
+                    action: "scope it".into(),
+                },
+            }];
+            (graph, findings)
+        }
+
+        let mut runs: Vec<Vec<u8>> = Vec::with_capacity(9);
+        for _ in 0..9 {
+            let (g, f) = build_graph();
+            let mut buf = Vec::new();
+            JsonReportSink.emit(&mut buf, &g, &f).unwrap();
+            runs.push(buf);
+        }
+
+        let first = &runs[0];
+        for (i, run) in runs.iter().enumerate().skip(1) {
+            assert_eq!(
+                first, run,
+                "run 0 and run {i} produced byte-different JSON output (non-determinism regression)"
+            );
+        }
+    }
+
+    /// Regression for the post-v0.9.1 self-hosting-scan finding: every
+    /// `findings[].rule_id` was `null` in the JSON sink output, even though
+    /// SARIF and the text formatter surfaced rule names correctly. JSON
+    /// consumers (SIEMs, suppression DBs, dashboards) couldn't filter by
+    /// rule. Each finding must now carry a non-null `rule_id` string equal
+    /// to the snake_case form of the category — and a custom-rule message
+    /// prefix `[id]` must override the category id.
+    #[test]
+    fn each_finding_has_non_null_snake_case_rule_id() {
+        let graph = taudit_core::graph::AuthorityGraph::new(PipelineSource {
+            file: ".github/workflows/ci.yml".into(),
+            repo: None,
+            git_ref: None,
+            commit_sha: None,
+        });
+        let findings = vec![
+            Finding {
+                severity: Severity::High,
+                category: taudit_core::finding::FindingCategory::AuthorityPropagation,
+                path: None,
+                nodes_involved: vec![],
+                message: "GITHUB_TOKEN propagated".into(),
+                recommendation: Recommendation::Manual {
+                    action: "scope it".into(),
+                },
+            },
+            Finding {
+                severity: Severity::Medium,
+                category: taudit_core::finding::FindingCategory::UnpinnedAction,
+                path: None,
+                nodes_involved: vec![],
+                message: "[my_custom_rule] custom rule fired".into(),
+                recommendation: Recommendation::Manual {
+                    action: "pin it".into(),
+                },
+            },
+        ];
+
+        let mut buf = Vec::new();
+        JsonReportSink.emit(&mut buf, &graph, &findings).unwrap();
+        let report: serde_json::Value = serde_json::from_slice(&buf).unwrap();
+
+        let findings_arr = report["findings"].as_array().expect("findings is an array");
+        assert_eq!(findings_arr.len(), 2);
+
+        // Each finding has a non-null rule_id string.
+        for f in findings_arr {
+            let id = f["rule_id"].as_str();
+            assert!(
+                id.is_some(),
+                "every finding must have a string rule_id, got: {:?}",
+                f["rule_id"]
+            );
+            assert!(
+                !id.unwrap().is_empty(),
+                "rule_id must be non-empty, got: {:?}",
+                f["rule_id"]
+            );
+        }
+
+        // Category-derived id: snake_case form of FindingCategory.
+        assert_eq!(findings_arr[0]["rule_id"], "authority_propagation");
+        // Custom-rule prefix wins over the category id.
+        assert_eq!(findings_arr[1]["rule_id"], "my_custom_rule");
     }
 }

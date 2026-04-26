@@ -236,6 +236,23 @@ fn category_rule_id(category: &FindingCategory) -> String {
         .unwrap_or_else(|| "unknown".to_string())
 }
 
+/// Public, stable rule-id resolver for a finding.
+///
+/// Returns the snake_case rule id reported alongside this finding. When the
+/// finding's message starts with a bracketed custom-rule prefix
+/// (`[my_rule] ...`), the bracketed id wins so custom YAML rules surface
+/// their declared id. Otherwise the rule id is the snake_case form of the
+/// finding's `category` (the same string serde uses to serialize the
+/// category enum).
+///
+/// JSON, SARIF, and CloudEvents emitters all share this helper to ensure
+/// the `rule_id` field is identical across the three sinks.
+pub fn rule_id_for(finding: &Finding) -> String {
+    extract_custom_rule_id(&finding.message)
+        .map(str::to_string)
+        .unwrap_or_else(|| category_rule_id(&finding.category))
+}
+
 /// Compute a stable cross-run fingerprint for a finding.
 ///
 /// The fingerprint identifies "the same logical issue" across re-runs and

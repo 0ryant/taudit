@@ -1,5 +1,5 @@
-use serde::{Deserialize, Serialize};
-use std::collections::HashMap;
+use serde::{Deserialize, Serialize, Serializer};
+use std::collections::{BTreeMap, HashMap};
 
 /// Unique identifier for a node in the authority graph.
 pub type NodeId = usize;
@@ -82,6 +82,24 @@ pub const META_TERRAFORM_AUTO_APPROVE: &str = "terraform_auto_approve";
 pub const META_ADD_SPN_TO_ENV: &str = "add_spn_to_environment";
 
 // ── Shared helpers ─────────────────────────────────────
+
+/// Serialize a `HashMap<String, V>` with keys in sorted order. The
+/// in-memory representation stays a `HashMap` (cheaper insertion, hot
+/// path on every parser); only the serialized form is canonicalised.
+/// This is the single point of determinism control for graph metadata
+/// emitted via JSON / SARIF / CloudEvents — without it, HashMap iteration
+/// order leaks per-process randomness into every diff and cache key.
+fn serialize_string_map_sorted<S, V>(
+    map: &HashMap<String, V>,
+    serializer: S,
+) -> Result<S::Ok, S::Error>
+where
+    S: Serializer,
+    V: Serialize,
+{
+    let sorted: BTreeMap<&String, &V> = map.iter().collect();
+    sorted.serialize(serializer)
+}
 
 /// Returns true if `ref_str` is a SHA-pinned action reference.
 /// Checks: contains `@`, part after `@` is >= 40 hex chars.
@@ -204,6 +222,10 @@ pub struct Node {
     pub name: String,
     pub trust_zone: TrustZone,
     /// Flexible metadata: pinning status, digest, scope, permissions, etc.
+    /// Serialized in sorted-key order so JSON / SARIF / CloudEvents output
+    /// is byte-deterministic across runs (HashMap iteration is randomised
+    /// per process, which would otherwise break diffs and cache keys).
+    #[serde(serialize_with = "serialize_string_map_sorted")]
     pub metadata: HashMap<String, String>,
 }
 
@@ -285,12 +307,22 @@ pub struct AuthorityGraph {
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub completeness_gaps: Vec<String>,
     /// Graph-level metadata set by parsers (e.g. trigger type, platform-specific flags).
-    #[serde(default, skip_serializing_if = "HashMap::is_empty")]
+    /// Serialized in sorted-key order — see `Node.metadata` rationale.
+    #[serde(
+        default,
+        skip_serializing_if = "HashMap::is_empty",
+        serialize_with = "serialize_string_map_sorted"
+    )]
     pub metadata: HashMap<String, String>,
     /// Top-level pipeline `parameters:` declarations, keyed by parameter name.
     /// Populated by parsers that surface parameter metadata (currently ADO).
     /// Empty for platforms / pipelines that don't declare parameters.
-    #[serde(default, skip_serializing_if = "HashMap::is_empty")]
+    /// Serialized in sorted-key order — see `Node.metadata` rationale.
+    #[serde(
+        default,
+        skip_serializing_if = "HashMap::is_empty",
+        serialize_with = "serialize_string_map_sorted"
+    )]
     pub parameters: HashMap<String, ParamSpec>,
 }
 
