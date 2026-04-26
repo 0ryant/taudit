@@ -136,6 +136,15 @@ enum Cli {
         /// emits a one-shot stderr deprecation warning.
         #[arg(long, alias = "rules-dir")]
         invariants_dir: Option<PathBuf>,
+
+        /// Allow `--invariants-dir` to follow symlinks that point OUTSIDE
+        /// the directory tree. Off by default — taudit refuses such links to
+        /// prevent symlink-traversal escapes when the invariants directory is
+        /// shared / writable / extracted from a CI artifact. Turn this on
+        /// only when the symlinks are deliberate and the target paths are
+        /// trusted.
+        #[arg(long, default_value_t = false)]
+        invariants_allow_external_symlinks: bool,
     },
 
     /// Show authority map — which steps access which secrets/identities
@@ -638,6 +647,7 @@ struct ScanOpts {
     platform: Platform,
     output: Option<PathBuf>,
     invariants_dir: Option<PathBuf>,
+    invariants_allow_external_symlinks: bool,
 }
 
 #[derive(Clone)]
@@ -686,6 +696,7 @@ fn run() -> Result<()> {
             platform,
             output,
             invariants_dir,
+            invariants_allow_external_symlinks,
         } => {
             // Color is on by default — CI log viewers (GHA, ADO) render ANSI from piped stdout.
             // Disable only when --no-color is passed or the NO_COLOR env var is set (no-color.org).
@@ -713,6 +724,7 @@ fn run() -> Result<()> {
                 platform,
                 output,
                 invariants_dir,
+                invariants_allow_external_symlinks,
             })
         }
         Cli::Completions { shell } => {
@@ -946,6 +958,7 @@ fn cmd_scan(opts: ScanOpts) -> Result<()> {
         platform,
         output,
         invariants_dir,
+        invariants_allow_external_symlinks,
     } = opts;
 
     // Deprecation warning: --rules-dir was renamed to --invariants-dir as
@@ -966,7 +979,10 @@ fn cmd_scan(opts: ScanOpts) -> Result<()> {
     // full and the process exits non-zero — never panic, and never silently
     // ignore.
     let custom_rules = match invariants_dir.as_ref() {
-        Some(dir) => match taudit_core::custom_rules::load_rules_dir(dir) {
+        Some(dir) => match taudit_core::custom_rules::load_rules_dir_with_opts(
+            dir,
+            invariants_allow_external_symlinks,
+        ) {
             Ok(rules) => rules,
             Err(errors) => {
                 for err in &errors {
