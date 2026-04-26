@@ -118,7 +118,16 @@ impl PipelineParser for GhaParser {
             None
         };
 
-        for (job_name, job) in &workflow.jobs {
+        // Iterate jobs in sorted order so node IDs (and therefore every
+        // edge `from`/`to`, every finding `nodes_involved`, every JSON
+        // emit) are byte-deterministic across runs. `workflow.jobs` is a
+        // HashMap whose iteration order is randomised per process — without
+        // sorting here, two runs of the same file produce different node
+        // IDs, which silently breaks `taudit diff`, cache keys, and any
+        // downstream SIEM that hashes the JSON.
+        let mut sorted_jobs: Vec<(&String, &GhaJob)> = workflow.jobs.iter().collect();
+        sorted_jobs.sort_by(|a, b| a.0.cmp(b.0));
+        for (job_name, job) in sorted_jobs {
             // Job-level `env:` may be a template expression (e.g. `env: ${{ matrix }}`)
             // whose shape is unknown statically. Mark Partial once per job and skip
             // env processing for that scope.
@@ -335,8 +344,14 @@ impl PipelineParser for GhaParser {
 
                 // Process secrets from workflow-level `env:` (inherited by all jobs/steps).
                 // Template-shaped envs are skipped here — graph already marked Partial above.
+                // Iterate env keys in sorted order so secret-node creation
+                // order is deterministic across runs (HashMap iteration is
+                // randomised per process; secret IDs leak that randomness
+                // into the JSON output otherwise).
                 if let Some(env_map) = workflow.env.as_ref().and_then(EnvSpec::as_map) {
-                    for env_val in env_map.values() {
+                    let mut entries: Vec<(&String, &String)> = env_map.iter().collect();
+                    entries.sort_by(|a, b| a.0.cmp(b.0));
+                    for (_k, env_val) in entries {
                         if is_secret_reference(env_val) {
                             let secret_name = extract_secret_name(env_val);
                             let secret_id =
@@ -349,7 +364,9 @@ impl PipelineParser for GhaParser {
                 // Process secrets from job-level `env:` (inherited by all steps).
                 // Template-shaped envs are skipped here — graph already marked Partial above.
                 if let Some(env_map) = job.env.as_ref().and_then(EnvSpec::as_map) {
-                    for env_val in env_map.values() {
+                    let mut entries: Vec<(&String, &String)> = env_map.iter().collect();
+                    entries.sort_by(|a, b| a.0.cmp(b.0));
+                    for (_k, env_val) in entries {
                         if is_secret_reference(env_val) {
                             let secret_name = extract_secret_name(env_val);
                             let secret_id =
@@ -364,7 +381,9 @@ impl PipelineParser for GhaParser {
                 // this step and skip env processing.
                 match step.env.as_ref() {
                     Some(EnvSpec::Map(env_map)) => {
-                        for env_val in env_map.values() {
+                        let mut entries: Vec<(&String, &String)> = env_map.iter().collect();
+                        entries.sort_by(|a, b| a.0.cmp(b.0));
+                        for (_k, env_val) in entries {
                             if is_secret_reference(env_val) {
                                 let secret_name = extract_secret_name(env_val);
                                 let secret_id = find_or_create_secret(
@@ -384,9 +403,12 @@ impl PipelineParser for GhaParser {
                     None => {}
                 }
 
-                // Process secrets from `with:` block
+                // Process secrets from `with:` block. Sort keys so secret
+                // node creation order is deterministic across runs.
                 if let Some(ref with) = step.with {
-                    for val in with.values() {
+                    let mut entries: Vec<(&String, &String)> = with.iter().collect();
+                    entries.sort_by(|a, b| a.0.cmp(b.0));
+                    for (_k, val) in entries {
                         if is_secret_reference(val) {
                             let secret_name = extract_secret_name(val);
                             let secret_id =

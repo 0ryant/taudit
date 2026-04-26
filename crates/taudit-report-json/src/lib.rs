@@ -308,6 +308,78 @@ mod tests {
         );
     }
 
+    /// Regression for the post-v0.9.1 fuzz-report B1 (HIGH): scanning the
+    /// same fixture nine times in a row must produce nine byte-identical
+    /// JSON outputs. Before the fix, HashMap iteration order leaked into
+    /// node IDs, edge `from`/`to`, and `metadata` key ordering — so each
+    /// run differed and any cache / SIEM keying on the JSON saw false
+    /// changes. The fix sorts parser HashMap iteration and serializes
+    /// graph metadata maps in sorted-key order.
+    #[test]
+    fn json_output_is_byte_deterministic_across_runs() {
+        use std::collections::HashMap;
+        use taudit_core::graph::{AuthorityGraph, EdgeKind, NodeKind, PipelineSource, TrustZone};
+
+        // Build a graph with rich metadata across multiple keys — exercises
+        // the HashMap-key-order code path that was previously the source of
+        // non-determinism. We then serialise it twice in sequence (mimics
+        // back-to-back runs of the same scan).
+        fn build_graph() -> (AuthorityGraph, Vec<Finding>) {
+            let mut graph = AuthorityGraph::new(PipelineSource {
+                file: "ci.yml".into(),
+                repo: None,
+                git_ref: None,
+                commit_sha: None,
+            });
+            let secret_a = graph.add_node(NodeKind::Secret, "AWS_KEY", TrustZone::FirstParty);
+            let secret_b = graph.add_node(NodeKind::Secret, "DEPLOY_TOKEN", TrustZone::FirstParty);
+            let step = graph.add_node(NodeKind::Step, "deploy", TrustZone::FirstParty);
+            graph.add_edge(step, secret_a, EdgeKind::HasAccessTo);
+            graph.add_edge(step, secret_b, EdgeKind::HasAccessTo);
+            // Stamp many metadata keys on the step so HashMap ordering matters.
+            if let Some(node) = graph.nodes.get_mut(step) {
+                let mut meta: HashMap<String, String> = HashMap::new();
+                meta.insert("z_field".into(), "z".into());
+                meta.insert("a_field".into(), "a".into());
+                meta.insert("m_field".into(), "m".into());
+                meta.insert("k_field".into(), "k".into());
+                meta.insert("c_field".into(), "c".into());
+                node.metadata = meta;
+            }
+            graph
+                .metadata
+                .insert("trigger".into(), "pull_request".into());
+            graph.metadata.insert("platform".into(), "github".into());
+            let findings = vec![Finding {
+                severity: Severity::High,
+                category: taudit_core::finding::FindingCategory::AuthorityPropagation,
+                path: None,
+                nodes_involved: vec![secret_a, step],
+                message: "AWS_KEY reaches deploy".into(),
+                recommendation: Recommendation::Manual {
+                    action: "scope it".into(),
+                },
+            }];
+            (graph, findings)
+        }
+
+        let mut runs: Vec<Vec<u8>> = Vec::with_capacity(9);
+        for _ in 0..9 {
+            let (g, f) = build_graph();
+            let mut buf = Vec::new();
+            JsonReportSink.emit(&mut buf, &g, &f).unwrap();
+            runs.push(buf);
+        }
+
+        let first = &runs[0];
+        for (i, run) in runs.iter().enumerate().skip(1) {
+            assert_eq!(
+                first, run,
+                "run 0 and run {i} produced byte-different JSON output (non-determinism regression)"
+            );
+        }
+    }
+
     /// Regression for the post-v0.9.1 self-hosting-scan finding: every
     /// `findings[].rule_id` was `null` in the JSON sink output, even though
     /// SARIF and the text formatter surfaced rule names correctly. JSON
