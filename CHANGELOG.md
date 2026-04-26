@@ -2,6 +2,21 @@
 
 All notable changes to this project will be documented in this file.
 
+## v1.0.2 — 2026-04-26
+
+> Bug-fix release: ADO trigger detection hardening, permissions parsing, and finding dedup ordering.
+
+### Fixed
+
+- **`pr: none` / `pr: ~` / `pr: false` now correctly suppress PR-specific rules** — ADO PR trigger detection previously used string enumeration that missed serde_yaml 0.9's representation of `~` and boolean `false`. Detection now requires `is_mapping() || is_sequence()`, suppressing `variable_group_in_pr_job`, `trigger_context_mismatch`, and `checkout_self_pr_exposure` on schedule-only pipelines.
+- **`permissions: read` (scalar) now constrains `System.AccessToken`** — `ado_permissions_are_broad()` previously treated scalar `read` as broad scope; only `"write"` is now broad.
+- **`permissions: contents: read` (map form) now constrains the token**.
+- **Finding deduplication now runs before compensating controls** — dedup keyed on `message` previously ran after CC modified messages, allowing BFS-duplicate findings to survive. Reversed order ensures clean dedup before any message mutation.
+
+### Tests
+
+- 9 new regression tests covering all PR trigger opt-out forms, permissions scalar variants, and dedup ordering.
+
 ## v1.0.1 — 2026-04-26
 
 > Competitive parity release: snapshot regression suite, multi-OS CI, SLSA L3 provenance, and parser fuzz harnesses.
