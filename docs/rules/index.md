@@ -2,6 +2,16 @@
 
 17 built-in rules. Run `taudit explain <rule-id>` for a description in the terminal.
 
+## Top-level commands
+
+| Command | Purpose |
+|---------|---------|
+| `taudit scan` | Run the 17 built-in rules (and optional custom rules via `--rules-dir`); produces a report. |
+| [`taudit verify`](../verify.md) | Policy-driven enforcement entrypoint for CI gates. Exit 0 = clean, 1 = violation, 2 = config error. Runs only `--policy` invariants by default. |
+| `taudit map` | Render the authority graph (text table or DOT). |
+| `taudit diff` | Compare findings between two pipeline versions. |
+| `taudit explain` | Describe one or all built-in rules. |
+
 Platforms: **GHA** = GitHub Actions · **ADO** = Azure DevOps · **GL** = GitLab CI
 
 | Rule | Severity | Category | Platform |
