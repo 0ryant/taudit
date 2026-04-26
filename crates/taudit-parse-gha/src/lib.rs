@@ -43,6 +43,16 @@ impl PipelineParser for GhaParser {
         }
         let mut secret_ids: HashMap<String, NodeId> = HashMap::new();
 
+        // Workflow-level `env:` may be a template expression (e.g. `env: ${{ matrix }}`)
+        // whose shape is unknown statically. Mark Partial once and skip env processing
+        // for that scope; static rules cannot reason about runtime-resolved env shapes.
+        if let Some(EnvSpec::Template(_)) = workflow.env {
+            graph.mark_partial(
+                "workflow-level env: uses template expression — environment variable shape unknown"
+                    .to_string(),
+            );
+        }
+
         let is_pull_request_target = workflow
             .triggers
             .as_ref()
@@ -82,6 +92,15 @@ impl PipelineParser for GhaParser {
         };
 
         for (job_name, job) in &workflow.jobs {
+            // Job-level `env:` may be a template expression (e.g. `env: ${{ matrix }}`)
+            // whose shape is unknown statically. Mark Partial once per job and skip
+            // env processing for that scope.
+            if let Some(EnvSpec::Template(_)) = job.env {
+                graph.mark_partial(format!(
+                    "job '{job_name}' env: uses template expression — environment variable shape unknown"
+                ));
+            }
+
             // Job-level permissions override workflow-level
             let job_token_id = if let Some(ref perms) = job.permissions {
                 let perm_string = perms.to_string();
@@ -278,9 +297,10 @@ impl PipelineParser for GhaParser {
                     }
                 }
 
-                // Process secrets from workflow-level `env:` (inherited by all jobs/steps)
-                if let Some(ref env) = workflow.env {
-                    for env_val in env.values() {
+                // Process secrets from workflow-level `env:` (inherited by all jobs/steps).
+                // Template-shaped envs are skipped here — graph already marked Partial above.
+                if let Some(env_map) = workflow.env.as_ref().and_then(EnvSpec::as_map) {
+                    for env_val in env_map.values() {
                         if is_secret_reference(env_val) {
                             let secret_name = extract_secret_name(env_val);
                             let secret_id =
@@ -290,9 +310,10 @@ impl PipelineParser for GhaParser {
                     }
                 }
 
-                // Process secrets from job-level `env:` (inherited by all steps)
-                if let Some(ref env) = job.env {
-                    for env_val in env.values() {
+                // Process secrets from job-level `env:` (inherited by all steps).
+                // Template-shaped envs are skipped here — graph already marked Partial above.
+                if let Some(env_map) = job.env.as_ref().and_then(EnvSpec::as_map) {
+                    for env_val in env_map.values() {
                         if is_secret_reference(env_val) {
                             let secret_name = extract_secret_name(env_val);
                             let secret_id =
@@ -302,16 +323,29 @@ impl PipelineParser for GhaParser {
                     }
                 }
 
-                // Process secrets from step-level `env:` block
-                if let Some(ref env) = step.env {
-                    for env_val in env.values() {
-                        if is_secret_reference(env_val) {
-                            let secret_name = extract_secret_name(env_val);
-                            let secret_id =
-                                find_or_create_secret(&mut graph, &mut secret_ids, &secret_name);
-                            graph.add_edge(step_id, secret_id, EdgeKind::HasAccessTo);
+                // Process secrets from step-level `env:` block.
+                // If this step's env: is a template expression, mark Partial once for
+                // this step and skip env processing.
+                match step.env.as_ref() {
+                    Some(EnvSpec::Map(env_map)) => {
+                        for env_val in env_map.values() {
+                            if is_secret_reference(env_val) {
+                                let secret_name = extract_secret_name(env_val);
+                                let secret_id = find_or_create_secret(
+                                    &mut graph,
+                                    &mut secret_ids,
+                                    &secret_name,
+                                );
+                                graph.add_edge(step_id, secret_id, EdgeKind::HasAccessTo);
+                            }
                         }
                     }
+                    Some(EnvSpec::Template(_)) => {
+                        graph.mark_partial(format!(
+                            "step '{step_name}' in job '{job_name}' env: uses template expression — environment variable shape unknown"
+                        ));
+                    }
+                    None => {}
                 }
 
                 // Process secrets from `with:` block
@@ -825,6 +859,38 @@ pub enum Permissions {
     Map(HashMap<String, String>),
 }
 
+/// Polymorphic `env:` block. Normally a map of name → value, but in some
+/// real-world workflows the entire `env:` value is a template expression
+/// (e.g. `env: ${{ matrix }}`), where the shape resolves at runtime.
+///
+/// When the value is a template string, downstream code must mark the graph
+/// Partial — environment variable shape is unknown to static analysis.
+#[derive(Debug, Clone, Deserialize)]
+#[serde(untagged)]
+pub enum EnvSpec {
+    Map(HashMap<String, String>),
+    Template(String),
+}
+
+impl EnvSpec {
+    /// Returns the env map if statically known, or `None` if it is a template
+    /// expression whose shape resolves at runtime.
+    pub fn as_map(&self) -> Option<&HashMap<String, String>> {
+        match self {
+            EnvSpec::Map(m) => Some(m),
+            EnvSpec::Template(_) => None,
+        }
+    }
+
+    /// Returns the raw template expression, if this `env:` is a template.
+    pub fn as_template(&self) -> Option<&str> {
+        match self {
+            EnvSpec::Template(s) => Some(s.as_str()),
+            EnvSpec::Map(_) => None,
+        }
+    }
+}
+
 impl std::fmt::Display for Permissions {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
@@ -845,8 +911,10 @@ pub struct GhaWorkflow {
     #[serde(default)]
     pub permissions: Option<Permissions>,
     /// Workflow-level env vars, inherited by all jobs and steps.
+    /// Polymorphic: typically a map, but can be a template expression
+    /// (e.g. `env: ${{ matrix }}`) whose shape is unknown statically.
     #[serde(default)]
-    pub env: Option<HashMap<String, String>>,
+    pub env: Option<EnvSpec>,
     #[serde(default)]
     pub jobs: HashMap<String, GhaJob>,
 }
@@ -872,8 +940,11 @@ impl ContainerConfig {
 pub struct GhaJob {
     #[serde(default)]
     pub permissions: Option<Permissions>,
+    /// Job-level env vars. Polymorphic: typically a map, but can be a
+    /// template expression (e.g. `env: ${{ matrix }}`) whose shape is unknown
+    /// statically.
     #[serde(default)]
-    pub env: Option<HashMap<String, String>>,
+    pub env: Option<EnvSpec>,
     #[serde(default)]
     pub steps: Vec<GhaStep>,
     /// Reusable workflow reference — `uses: owner/repo/.github/workflows/foo.yml@ref`
@@ -897,8 +968,11 @@ pub struct GhaStep {
     pub name: Option<String>,
     pub uses: Option<String>,
     pub run: Option<String>,
+    /// Step-level env vars. Polymorphic: typically a map, but can be a
+    /// template expression (e.g. `env: ${{ matrix }}`) whose shape is unknown
+    /// statically.
     #[serde(default)]
-    pub env: Option<HashMap<String, String>>,
+    pub env: Option<EnvSpec>,
     #[serde(rename = "with", default)]
     pub with: Option<HashMap<String, String>>,
 }
@@ -1991,6 +2065,41 @@ jobs:
             identities[0].metadata.get(META_PERMISSIONS).unwrap(),
             "write-all"
         );
+    }
+
+    #[test]
+    fn job_env_template_expression_does_not_crash_and_marks_partial() {
+        // Real-world repro from scikit-learn unit-tests.yml: job-level `env:`
+        // is a bare template expression (`${{ matrix }}`) instead of a map.
+        // Historically the GHA parser deserialized env: as `HashMap<String,String>`
+        // and crashed with "invalid type: string ..., expected a map". The parser
+        // must now tolerate this gracefully: parse succeeds, graph is marked Partial
+        // with a reason that mentions the template-shaped env.
+        let yaml = r#"
+jobs:
+  unit-tests:
+    env: ${{ matrix }}
+    steps:
+      - run: pytest
+"#;
+        let graph = parse(yaml);
+        // No crash — parse returned a graph.
+        assert!(
+            matches!(graph.completeness, AuthorityCompleteness::Partial),
+            "graph must be marked Partial when env: is a template expression"
+        );
+        let saw_template_gap = graph
+            .completeness_gaps
+            .iter()
+            .any(|g| g.contains("env:") && g.contains("template"));
+        assert!(
+            saw_template_gap,
+            "completeness_gaps must mention env: template, got: {:?}",
+            graph.completeness_gaps
+        );
+        // Steps still parsed normally.
+        let steps: Vec<_> = graph.nodes_of_kind(NodeKind::Step).collect();
+        assert_eq!(steps.len(), 1, "the single step must still be parsed");
     }
 
     #[test]
