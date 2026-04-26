@@ -2258,25 +2258,37 @@ pub fn terraform_auto_approve_in_prod(graph: &AuthorityGraph) -> Vec<Finding> {
             _ => continue,
         };
 
-        // Skip when the step is in an environment-gated job — the manual
-        // approval is the change-control we're worried about being missing.
+        // Compensating control: an `environment:` binding routes the apply
+        // through ADO's approval / check pipeline. Whether that environment
+        // *actually* has approvers configured is invisible from YAML — so
+        // downgrade Critical → Medium instead of skipping outright (the
+        // previous behaviour silently dropped the finding even when the
+        // environment was a CI-only approval-free passthrough).
         let env_gated = step
             .metadata
             .get(META_ENV_APPROVAL)
             .map(|v| v == "true")
             .unwrap_or(false);
-        if env_gated {
-            continue;
-        }
+        let (severity, suffix) = if env_gated {
+            (
+                Severity::Medium,
+                " — `environment:` binding present (verify approvers are configured in the ADO Environments UI)",
+            )
+        } else {
+            (
+                Severity::Critical,
+                " — any committer can rewrite prod infrastructure",
+            )
+        };
 
         findings.push(Finding {
-            severity: Severity::Critical,
+            severity,
             category: FindingCategory::TerraformAutoApproveInProd,
             path: None,
             nodes_involved: vec![step.id],
             message: format!(
-                "Step '{}' runs `terraform apply -auto-approve` against production service connection '{}' with no environment approval gate — any committer can rewrite prod infrastructure",
-                step.name, conn_name
+                "Step '{}' runs `terraform apply -auto-approve` against production service connection '{}'{}",
+                step.name, conn_name, suffix
             ),
             recommendation: Recommendation::Manual {
                 action: "Move the apply step into a deployment job whose `environment:` is configured with required approvers in ADO, OR remove `-auto-approve` and run apply behind a manual checkpoint task. Combine with a non-shared agent pool so committers cannot pre-stage payloads.".into(),
@@ -3244,6 +3256,181 @@ pub fn gitlab_deploy_job_missing_protected_branch_only(graph: &AuthorityGraph) -
     findings
 }
 
+// ── Compensating-control suppressions ────────────────────────
+//
+// These suppressions DOWNGRADE or REMOVE existing-rule findings when the
+// graph carries a control that neutralises (or substantially mitigates)
+// the underlying risk. Applied as a post-processing pass so each
+// suppression can see both the finding and the surrounding graph state.
+//
+// Design intent (from the blue-team corpus defense report):
+//   * downgrade > suppress: keep the finding visible at a lower severity
+//     so it still surfaces in audits, but stop competing for triage time
+//     with un-mitigated criticals
+//   * never *delete* a finding silently — every suppression appends an
+//     explanation suffix to the message describing the compensating
+//     control taudit credited
+//
+// Suppressions implemented here:
+//   1. `checkout_self_pr_exposure` downgraded when the same job has no
+//      privileged steps (no Secret/Identity access and no env-gate writes).
+//   2. `trigger_context_mismatch` downgraded when every privileged step
+//      in the workflow carries the standard fork-check `if:`.
+//   3. `over_privileged_identity` suppressed when the workflow-level
+//      identity is broad but at least one job-level override narrows the
+//      scope (job-level wins at runtime).
+//   4. `terraform_auto_approve_in_prod` downgraded — not skipped — when an
+//      `environment:` gate is present (replaces the previous early-skip
+//      which discarded the finding entirely).
+fn apply_compensating_controls(graph: &AuthorityGraph, findings: &mut [Finding]) {
+    // Pre-compute graph-level signals once so the per-finding loop stays
+    // O(N findings) rather than O(N findings × M nodes).
+    let mut all_authority_steps_have_fork_check = true;
+    let mut any_authority_step_seen = false;
+    for step in graph.nodes_of_kind(NodeKind::Step) {
+        let holds_authority = graph.edges_from(step.id).any(|e| {
+            e.kind == EdgeKind::HasAccessTo
+                && graph
+                    .node(e.to)
+                    .map(|n| matches!(n.kind, NodeKind::Secret | NodeKind::Identity))
+                    .unwrap_or(false)
+        });
+        if !holds_authority {
+            continue;
+        }
+        any_authority_step_seen = true;
+        let guarded = step
+            .metadata
+            .get(META_FORK_CHECK)
+            .map(|v| v == "true")
+            .unwrap_or(false);
+        if !guarded {
+            all_authority_steps_have_fork_check = false;
+        }
+    }
+    let fork_check_universal = any_authority_step_seen && all_authority_steps_have_fork_check;
+
+    // For Suppression 1, build per-job: does any step in the job have
+    // access to a Secret/Identity OR write to the env gate?
+    use std::collections::{BTreeMap, BTreeSet};
+    let mut job_has_privileged_step: BTreeMap<String, bool> = BTreeMap::new();
+    for step in graph.nodes_of_kind(NodeKind::Step) {
+        let job = match step.metadata.get(META_JOB_NAME) {
+            Some(j) => j.clone(),
+            None => continue,
+        };
+        let privileged = graph.edges_from(step.id).any(|e| {
+            e.kind == EdgeKind::HasAccessTo
+                && graph
+                    .node(e.to)
+                    .map(|n| matches!(n.kind, NodeKind::Secret | NodeKind::Identity))
+                    .unwrap_or(false)
+        }) || step
+            .metadata
+            .get(META_WRITES_ENV_GATE)
+            .map(|v| v == "true")
+            .unwrap_or(false);
+        let entry = job_has_privileged_step.entry(job).or_insert(false);
+        if privileged {
+            *entry = true;
+        }
+    }
+
+    // For Suppression 3 — over_privileged_identity — collect the names of
+    // narrower per-job identity overrides so we can credit them when the
+    // broad workflow-level identity fires.
+    let job_level_narrow_overrides: BTreeSet<String> = graph
+        .nodes_of_kind(NodeKind::Identity)
+        .filter(|n| {
+            n.name.starts_with("GITHUB_TOKEN (")
+                && n.metadata
+                    .get(META_IDENTITY_SCOPE)
+                    .map(|s| s == "constrained")
+                    .unwrap_or(false)
+        })
+        .map(|n| n.name.clone())
+        .collect();
+
+    for finding in findings.iter_mut() {
+        match finding.category {
+            // ── Suppression 1: checkout_self_pr_exposure
+            FindingCategory::CheckoutSelfPrExposure => {
+                // Identify the checkout step (first node in nodes_involved)
+                // and look up its job. If the job has no privileged steps,
+                // the checkout is read-only — downgrade to Info.
+                let job = finding
+                    .nodes_involved
+                    .first()
+                    .and_then(|id| graph.node(*id))
+                    .and_then(|n| n.metadata.get(META_JOB_NAME).cloned());
+                let job_privileged = job
+                    .as_ref()
+                    .and_then(|j| job_has_privileged_step.get(j).copied())
+                    .unwrap_or(true); // unknown → conservative: keep High
+                if !job_privileged {
+                    finding.severity = Severity::Info;
+                    finding.message.push_str(
+                        " (downgraded: no privileged steps in same job — \
+                                   checkout is read-only for lint/test/analysis)",
+                    );
+                }
+            }
+            // ── Suppression 2: trigger_context_mismatch
+            FindingCategory::TriggerContextMismatch => {
+                if fork_check_universal {
+                    // Critical → Medium (not Info — the trigger choice itself
+                    // is still risky enough to keep visible for audit).
+                    finding.severity = match finding.severity {
+                        Severity::Critical => Severity::Medium,
+                        s => downgrade_one_step(s),
+                    };
+                    finding.message.push_str(
+                        " (downgraded: every privileged job in this workflow carries the \
+                         standard fork-check `if:` — fork PRs cannot reach the privileged steps)",
+                    );
+                }
+            }
+            // ── Suppression 3: over_privileged_identity
+            FindingCategory::OverPrivilegedIdentity => {
+                // Only relevant when the firing identity IS the
+                // workflow-level GITHUB_TOKEN AND at least one job has its
+                // own narrower override.
+                let firing_node_name = finding
+                    .nodes_involved
+                    .first()
+                    .and_then(|id| graph.node(*id))
+                    .map(|n| n.name.clone());
+                let is_workflow_level_token = firing_node_name.as_deref() == Some("GITHUB_TOKEN");
+                if is_workflow_level_token && !job_level_narrow_overrides.is_empty() {
+                    // Suppress by reducing to Info — the runtime identity
+                    // any job actually uses is the narrower job-level one.
+                    finding.severity = Severity::Info;
+                    let mut narrower: Vec<&str> = job_level_narrow_overrides
+                        .iter()
+                        .map(|s| s.as_str())
+                        .collect();
+                    narrower.sort_unstable();
+                    finding.message.push_str(&format!(
+                        " (suppressed: job-level permissions narrow this scope at runtime — \
+                         see {})",
+                        narrower.join(", ")
+                    ));
+                }
+            }
+            // ── Suppression 4: terraform_auto_approve_in_prod
+            //
+            // The pre-existing rule already early-skipped
+            // env-gated steps, so it never emits a finding to downgrade.
+            // Downgrade is wired into the rule body itself (search for
+            // `env_gated`) — kept as a no-op match arm here so future
+            // contributors can find the suppression-pass alongside the
+            // others.
+            FindingCategory::TerraformAutoApproveInProd => { /* see rule body */ }
+            _ => {}
+        }
+    }
+}
+
 pub fn run_all_rules(graph: &AuthorityGraph, max_hops: usize) -> Vec<Finding> {
     let mut findings = Vec::new();
     // MVP rules
@@ -3288,6 +3475,12 @@ pub fn run_all_rules(graph: &AuthorityGraph, max_hops: usize) -> Vec<Finding> {
     findings.extend(long_lived_secret_without_oidc_recommendation(graph));
     findings.extend(pull_request_workflow_inconsistent_fork_check(graph));
     findings.extend(gitlab_deploy_job_missing_protected_branch_only(graph));
+
+    // Blue-team compensating-control suppressions (downgrade or suppress
+    // existing-rule findings when a control elsewhere in the graph
+    // neutralises the risk). Applied AFTER all rules emit so the
+    // suppressions can see every finding alongside the graph.
+    apply_compensating_controls(graph, &mut findings);
 
     apply_confidence_cap(graph, &mut findings);
 
@@ -5083,7 +5276,10 @@ mod tests {
     }
 
     #[test]
-    fn terraform_auto_approve_with_env_gate_does_not_fire() {
+    fn terraform_auto_approve_with_env_gate_downgrades_to_medium() {
+        // Per blue-team CC-4: env gate is a partial control (the gate's
+        // approver list is invisible from YAML), so the finding stays
+        // visible at Medium rather than disappearing entirely.
         let mut g = AuthorityGraph::new(source("azure-pipelines.yml"));
         step_with_meta(
             &mut g,
@@ -5096,10 +5292,19 @@ mod tests {
         );
 
         let findings = terraform_auto_approve_in_prod(&g);
-        assert!(
-            findings.is_empty(),
-            "env-gated apply must not fire — gate is the change-control"
+        assert_eq!(
+            findings.len(),
+            1,
+            "env-gated apply must still emit a finding"
         );
+        assert_eq!(
+            findings[0].severity,
+            Severity::Medium,
+            "env-gated apply downgrades Critical → Medium (compensating control credit)"
+        );
+        assert!(findings[0]
+            .message
+            .contains("`environment:` binding present"));
     }
 
     #[test]
@@ -5886,5 +6091,163 @@ mod tests {
         let mut g = graph_with_platform("gitlab", ".gitlab-ci.yml");
         step_with_meta(&mut g, "deploy-staging", &[("environment_name", "staging")]);
         assert!(gitlab_deploy_job_missing_protected_branch_only(&g).is_empty());
+    }
+
+    // ── compensating-control suppressions ─────────────────────
+
+    #[test]
+    fn suppression_checkout_pr_downgraded_when_no_privileged_steps_in_job() {
+        // Build a graph where checkout_self_pr_exposure would fire BUT the
+        // job has no secret access and no env-gate writes.
+        let mut g = graph_with_platform("github-actions", ".github/workflows/lint.yml");
+        g.metadata
+            .insert(META_TRIGGER.into(), "pull_request_target".into());
+        let _checkout = step_with_meta(
+            &mut g,
+            "lint[0]",
+            &[(META_JOB_NAME, "lint"), (META_CHECKOUT_SELF, "true")],
+        );
+        // A second non-privileged step in the same job.
+        step_with_meta(&mut g, "lint[1]", &[(META_JOB_NAME, "lint")]);
+
+        let mut findings = checkout_self_pr_exposure(&g);
+        assert_eq!(findings.len(), 1);
+        assert_eq!(findings[0].severity, Severity::High); // pre-suppression
+        apply_compensating_controls(&g, &mut findings);
+        assert_eq!(
+            findings[0].severity,
+            Severity::Info,
+            "checkout in a job with no privileged steps must downgrade to Info"
+        );
+        assert!(findings[0].message.contains("downgraded"));
+    }
+
+    #[test]
+    fn suppression_checkout_pr_unchanged_when_job_has_privileged_step() {
+        let mut g = graph_with_platform("github-actions", ".github/workflows/build.yml");
+        g.metadata
+            .insert(META_TRIGGER.into(), "pull_request_target".into());
+        let secret = g.add_node(NodeKind::Secret, "DEPLOY_TOKEN", TrustZone::FirstParty);
+        let checkout = step_with_meta(
+            &mut g,
+            "build[0]",
+            &[(META_JOB_NAME, "build"), (META_CHECKOUT_SELF, "true")],
+        );
+        let priv_step = step_with_meta(&mut g, "build[1]", &[(META_JOB_NAME, "build")]);
+        g.add_edge(priv_step, secret, EdgeKind::HasAccessTo);
+        // checkout step itself has no edges
+        let _ = checkout;
+
+        let mut findings = checkout_self_pr_exposure(&g);
+        assert_eq!(findings.len(), 1);
+        let pre = findings[0].severity;
+        apply_compensating_controls(&g, &mut findings);
+        assert_eq!(
+            findings[0].severity, pre,
+            "must NOT downgrade when same job has privileged steps"
+        );
+    }
+
+    #[test]
+    fn suppression_trigger_context_downgraded_when_all_priv_jobs_fork_checked() {
+        // pull_request_target trigger + every privileged step has fork-check.
+        let mut g = graph_with_platform("github-actions", ".github/workflows/prt.yml");
+        g.metadata
+            .insert(META_TRIGGER.into(), "pull_request_target".into());
+        let secret = g.add_node(NodeKind::Secret, "DEPLOY", TrustZone::FirstParty);
+        let s = step_with_meta(
+            &mut g,
+            "build[0]",
+            &[(META_JOB_NAME, "build"), (META_FORK_CHECK, "true")],
+        );
+        g.add_edge(s, secret, EdgeKind::HasAccessTo);
+
+        let mut findings = trigger_context_mismatch(&g);
+        assert_eq!(findings.len(), 1);
+        assert_eq!(findings[0].severity, Severity::Critical);
+        apply_compensating_controls(&g, &mut findings);
+        assert_eq!(
+            findings[0].severity,
+            Severity::Medium,
+            "trigger_context_mismatch must downgrade Critical → Medium when fork-check universal"
+        );
+        assert!(findings[0].message.contains("downgraded"));
+    }
+
+    #[test]
+    fn suppression_trigger_context_unchanged_when_some_priv_steps_unguarded() {
+        let mut g = graph_with_platform("github-actions", ".github/workflows/prt.yml");
+        g.metadata
+            .insert(META_TRIGGER.into(), "pull_request_target".into());
+        let secret = g.add_node(NodeKind::Secret, "DEPLOY", TrustZone::FirstParty);
+        let s_guard = step_with_meta(
+            &mut g,
+            "build[0]",
+            &[(META_JOB_NAME, "build"), (META_FORK_CHECK, "true")],
+        );
+        let s_no_guard = step_with_meta(&mut g, "deploy[0]", &[(META_JOB_NAME, "deploy")]);
+        g.add_edge(s_guard, secret, EdgeKind::HasAccessTo);
+        g.add_edge(s_no_guard, secret, EdgeKind::HasAccessTo);
+
+        let mut findings = trigger_context_mismatch(&g);
+        let pre = findings[0].severity;
+        apply_compensating_controls(&g, &mut findings);
+        assert_eq!(findings[0].severity, pre);
+    }
+
+    #[test]
+    fn suppression_overpriv_identity_demoted_when_job_has_narrow_override() {
+        // Workflow-level GITHUB_TOKEN is broad; one job has constrained override.
+        let mut g = graph_with_platform("github-actions", ".github/workflows/ci.yml");
+        let mut wf_meta = std::collections::HashMap::new();
+        wf_meta.insert(META_PERMISSIONS.into(), "write-all".into());
+        wf_meta.insert(META_IDENTITY_SCOPE.into(), "broad".into());
+        let wf_token = g.add_node_with_metadata(
+            NodeKind::Identity,
+            "GITHUB_TOKEN",
+            TrustZone::FirstParty,
+            wf_meta,
+        );
+        let mut job_meta = std::collections::HashMap::new();
+        job_meta.insert(META_PERMISSIONS.into(), "{ contents: read }".into());
+        job_meta.insert(META_IDENTITY_SCOPE.into(), "constrained".into());
+        g.add_node_with_metadata(
+            NodeKind::Identity,
+            "GITHUB_TOKEN (build)",
+            TrustZone::FirstParty,
+            job_meta,
+        );
+        let step = g.add_node(NodeKind::Step, "build", TrustZone::FirstParty);
+        g.add_edge(step, wf_token, EdgeKind::HasAccessTo);
+
+        let mut findings = over_privileged_identity(&g);
+        // Filter to only the workflow-level finding (the constrained job-level
+        // override won't fire over_privileged_identity by itself).
+        let wf_findings_count = findings
+            .iter()
+            .filter(|f| {
+                f.nodes_involved
+                    .first()
+                    .and_then(|id| g.node(*id))
+                    .map(|n| n.name == "GITHUB_TOKEN")
+                    .unwrap_or(false)
+            })
+            .count();
+        assert_eq!(wf_findings_count, 1);
+        apply_compensating_controls(&g, &mut findings);
+        let demoted = findings.iter().find(|f| {
+            f.nodes_involved
+                .first()
+                .and_then(|id| g.node(*id))
+                .map(|n| n.name == "GITHUB_TOKEN")
+                .unwrap_or(false)
+        });
+        let demoted = demoted.expect("workflow-level token finding still present");
+        assert_eq!(
+            demoted.severity,
+            Severity::Info,
+            "workflow-level over_priv must downgrade to Info when narrower job override exists"
+        );
+        assert!(demoted.message.contains("suppressed"));
     }
 }
