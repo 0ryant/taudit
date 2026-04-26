@@ -70,6 +70,11 @@ fn event_type(category: FindingCategory) -> String {
         FindingCategory::TemplateExtendsUnpinnedBranch => "template_extends_unpinned_branch",
         FindingCategory::VmRemoteExecViaPipelineSecret => "vm_remote_exec_via_pipeline_secret",
         FindingCategory::ShortLivedSasInCommandLine => "short_lived_sas_in_command_line",
+        FindingCategory::SecretToInlineScriptEnvExport => "secret_to_inline_script_env_export",
+        FindingCategory::SecretMaterialisedToWorkspaceFile => {
+            "secret_materialised_to_workspace_file"
+        }
+        FindingCategory::KeyVaultSecretToPlaintext => "keyvault_secret_to_plaintext",
         #[allow(deprecated)]
         FindingCategory::EgressBlindspot => "egress_blindspot",
         #[allow(deprecated)]

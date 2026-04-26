@@ -1329,6 +1329,19 @@ fn step_secret_var_names(graph: &AuthorityGraph, step_id: NodeId) -> Vec<&str> {
         .collect()
 }
 
+/// Returns the names of all Secret nodes a step has `HasAccessTo`.
+/// Used by the script-aware ADO rules to constrain pattern matches to
+/// `$(VAR)` references that actually resolve to secrets in this graph.
+fn step_secret_names(graph: &AuthorityGraph, step_id: NodeId) -> Vec<String> {
+    graph
+        .edges_from(step_id)
+        .filter(|e| e.kind == EdgeKind::HasAccessTo)
+        .filter_map(|e| graph.node(e.to))
+        .filter(|n| n.kind == NodeKind::Secret)
+        .map(|n| n.name.clone())
+        .collect()
+}
+
 /// Heuristic: returns true if a value-bearing variable named `var_name` appears
 /// to be interpolated into `script_body` (PowerShell `$var` / `"$var"` /
 /// `` `"$var`" `` form, or ADO `$(var)` form). Case-insensitive.
@@ -1356,6 +1369,45 @@ fn body_interpolates_var(script_body: &str, var_name: &str) -> bool {
             return true;
         }
         search_from = end;
+    }
+    false
+}
+
+/// Returns true if `script` contains `$(secret)` and that occurrence sits on
+/// a line whose left-hand side looks like a shell-variable assignment:
+///   - `export FOO=$(SECRET)`
+///   - `FOO="$(SECRET)"`
+///   - `$X = "$(SECRET)"` / `$env:X = "$(SECRET)"`
+///   - `set -a` followed by an assignment is a softer signal but still flagged
+///
+/// Returns false when `$(secret)` is part of a command-line argument
+/// (e.g. `terraform plan -var "k=$(SECRET)"`) — that's covered by other rules.
+fn script_assigns_secret_to_shell_var(script: &str, secret: &str) -> bool {
+    let needle = format!("$({secret})");
+    for line in script.lines() {
+        if !line.contains(&needle) {
+            continue;
+        }
+        // Strip everything from `$(secret)` rightward — we only inspect what
+        // comes before it on this line.
+        let lhs = match line.find(&needle) {
+            Some(pos) => &line[..pos],
+            None => continue,
+        };
+        let trimmed = lhs.trim_start();
+
+        // bash/sh: `export VAR=`, `VAR=`, `set VAR=`, `declare VAR=`
+        // Look for `<word>=` (no space allowed before `=`) and no leading
+        // command pipe / non-assignment indicator.
+        if matches_bash_assignment(trimmed) {
+            return true;
+        }
+
+        // PowerShell: `$VAR = "..."`, `$env:VAR = "..."`, `${VAR} = "..."`,
+        // `Set-Variable -Name X -Value "$(SECRET)"`.
+        if matches_powershell_assignment(trimmed) {
+            return true;
+        }
     }
     false
 }
@@ -1519,6 +1571,123 @@ pub fn vm_remote_exec_via_pipeline_secret(graph: &AuthorityGraph) -> Vec<Finding
     findings
 }
 
+/// Heuristic: line prefix looks like a bash/sh assignment to an env var.
+/// Conservative — only matches when the LHS contains `<keyword>? IDENT=` and
+/// nothing after the `=` other than optional opening quote characters.
+fn matches_bash_assignment(lhs: &str) -> bool {
+    // `export FOO=`, `declare FOO=`, `local FOO=`, `readonly FOO=`, plain `FOO=`
+    let after_keyword = strip_one_of(lhs, &["export ", "declare ", "local ", "readonly "])
+        .unwrap_or(lhs)
+        .trim_start();
+    // Allow trailing opening-quote characters between `=` and the secret ref.
+    let trimmed = after_keyword.trim_end_matches(['"', '\'']);
+    let Some(ident) = trimmed.strip_suffix('=') else {
+        return false;
+    };
+    !ident.is_empty()
+        && ident.chars().all(is_shell_var_char)
+        && !ident.starts_with(|c: char| c.is_ascii_digit())
+}
+
+/// Heuristic: line prefix looks like a PowerShell assignment.
+fn matches_powershell_assignment(lhs: &str) -> bool {
+    // Strip trailing opening quote and whitespace so `$x = "$(SECRET)` matches.
+    let trimmed = lhs.trim_end().trim_end_matches(['"', '\'']).trim_end();
+    if let Some(before_eq) = trimmed.strip_suffix('=') {
+        let before_eq = before_eq.trim_end();
+        if before_eq.starts_with('$') {
+            return true;
+        }
+    }
+    // `Set-Variable ... -Value`
+    if trimmed.contains("Set-Variable") && trimmed.contains("-Value") {
+        return true;
+    }
+    false
+}
+
+fn is_shell_var_char(c: char) -> bool {
+    c.is_ascii_alphanumeric() || c == '_'
+}
+
+fn strip_one_of<'a>(s: &'a str, prefixes: &[&str]) -> Option<&'a str> {
+    for p in prefixes {
+        if let Some(rest) = s.strip_prefix(p) {
+            return Some(rest);
+        }
+    }
+    None
+}
+
+/// Rule: pipeline secret exported via shell variable inside an inline script.
+///
+/// Severity: High. ADO masks the literal token `$(SECRET)` when it appears in
+/// log output, but masking happens on the rendered command string before the
+/// shell runs. Once the value is bound to a shell variable, downstream
+/// transcripts (`Start-Transcript`, `bash -x`, terraform `TF_LOG=DEBUG`,
+/// `az --debug`) print the cleartext.
+pub fn secret_to_inline_script_env_export(graph: &AuthorityGraph) -> Vec<Finding> {
+    let mut findings = Vec::new();
+
+    for step in graph.nodes_of_kind(NodeKind::Step) {
+        let Some(script) = step.metadata.get(META_SCRIPT_BODY) else {
+            continue;
+        };
+        if script.is_empty() {
+            continue;
+        }
+        let secrets = step_secret_names(graph, step.id);
+        let exposed: Vec<String> = secrets
+            .into_iter()
+            .filter(|s| script_assigns_secret_to_shell_var(script, s))
+            .collect();
+
+        if exposed.is_empty() {
+            continue;
+        }
+
+        let n = exposed.len();
+        let preview: String = exposed
+            .iter()
+            .take(3)
+            .map(|s| format!("$({s})"))
+            .collect::<Vec<_>>()
+            .join(", ");
+        let suffix = if n > 3 {
+            format!(", and {} more", n - 3)
+        } else {
+            String::new()
+        };
+        let secret_node_ids: Vec<NodeId> = graph
+            .edges_from(step.id)
+            .filter(|e| e.kind == EdgeKind::HasAccessTo)
+            .filter_map(|e| graph.node(e.to))
+            .filter(|n| n.kind == NodeKind::Secret && exposed.contains(&n.name))
+            .map(|n| n.id)
+            .collect();
+
+        let mut nodes_involved = vec![step.id];
+        nodes_involved.extend(secret_node_ids);
+
+        findings.push(Finding {
+            severity: Severity::High,
+            category: FindingCategory::SecretToInlineScriptEnvExport,
+            path: None,
+            nodes_involved,
+            message: format!(
+                "Step '{}' assigns pipeline secret(s) {preview}{suffix} to shell variables inside an inline script — once bound to a variable the value bypasses ADO's $(SECRET) log mask and will appear in any transcript (Start-Transcript, bash -x, terraform/az --debug)",
+                step.name
+            ),
+            recommendation: Recommendation::TsafeRemediation {
+                command: "tsafe exec --ns <scoped-namespace> -- <command>".to_string(),
+                explanation: "Inject the secret as an env var on the step itself (ADO `env:` block) instead of materialising it inside the script body. The value still reaches the process but never travels through a shell variable assignment that transcripts can capture.".to_string(),
+            },
+        });
+    }
+
+    findings
+}
+
 /// How a `resources.repositories[].ref` value resolves for the purposes of
 /// the `template_extends_unpinned_branch` rule.
 enum RepositoryRefClass {
@@ -1630,6 +1799,243 @@ pub fn short_lived_sas_in_command_line(graph: &AuthorityGraph) -> Vec<Finding> {
     findings
 }
 
+/// Returns true if `line` contains a sink that writes its left-hand-side
+/// content to a file path. Recognises the common bash and PowerShell
+/// "write to file" idioms.
+fn line_writes_to_file(line: &str) -> bool {
+    // bash: `>`, `>>`, `tee`, `cat <<`/`<<-` heredoc redirected with `>`
+    if line.contains(" > ")
+        || line.contains(" >> ")
+        || line.contains(">/")
+        || line.contains(">>/")
+        || line.contains("| tee ")
+        || line.contains("| tee -")
+        || line.starts_with("tee ")
+    {
+        return true;
+    }
+    // PowerShell: Out-File, Set-Content, Add-Content, [IO.File]::WriteAllText
+    let lower = line.to_lowercase();
+    if lower.contains("out-file")
+        || lower.contains("set-content")
+        || lower.contains("add-content")
+        || lower.contains("writealltext")
+        || lower.contains("writealllines")
+    {
+        return true;
+    }
+    false
+}
+
+/// Returns true if `line` references a workspace path or a config-file
+/// extension we consider risky for secret materialisation.
+fn line_references_workspace_path(line: &str) -> bool {
+    let lower = line.to_lowercase();
+    if lower.contains("$(system.defaultworkingdirectory)")
+        || lower.contains("$(build.sourcesdirectory)")
+        || lower.contains("$(pipeline.workspace)")
+        || lower.contains("$(agent.builddirectory)")
+        || lower.contains("$(agent.tempdirectory)")
+    {
+        return true;
+    }
+    // Common credential / config file extensions
+    const RISKY_EXT: &[&str] = &[
+        ".tfvars",
+        ".env",
+        ".hcl",
+        ".pfx",
+        ".key",
+        ".pem",
+        ".crt",
+        ".p12",
+        ".kubeconfig",
+        ".jks",
+        ".keystore",
+    ];
+    RISKY_EXT.iter().any(|ext| lower.contains(ext))
+}
+
+/// Heuristic: returns true if `script` materialises `secret` to a workspace
+/// file. Looks for a single line that contains the secret reference AND a
+/// "write to file" sink AND a workspace/credfile path target.
+///
+/// Also detects the heredoc + Out-File pattern across multiple lines:
+/// the secret appears inside a `@" ... "@` block whose final pipe is
+/// `Out-File <workspace-path>`.
+fn script_materialises_secret_to_file(script: &str, secret: &str) -> bool {
+    let needle = format!("$({secret})");
+
+    // Pass 1: single-line write. Catches `echo $(SECRET) > /tmp/x.env`,
+    // `Out-File ... $(SECRET) ...`, etc.
+    for line in script.lines() {
+        if line.contains(&needle)
+            && line_writes_to_file(line)
+            && line_references_workspace_path(line)
+        {
+            return true;
+        }
+    }
+
+    // Pass 2: PowerShell pattern `$X = "$(SECRET)"` followed by the variable
+    // being piped into Out-File / Set-Content with a workspace path. We
+    // detect this conservatively: if any line assigns `$x = "$(SECRET)"`
+    // AND any *later* line both writes-to-file and references a workspace
+    // path, we flag it. False-positive risk is low because the ASLR-style
+    // `$x` typically won't be reused for unrelated content within the same
+    // inline block.
+    let mut secret_bound_to_var = false;
+    for line in script.lines() {
+        let trimmed = line.trim();
+        if !secret_bound_to_var
+            && trimmed.contains(&needle)
+            && trimmed.starts_with('$')
+            && trimmed.contains('=')
+        {
+            secret_bound_to_var = true;
+            continue;
+        }
+        if secret_bound_to_var && line_writes_to_file(line) && line_references_workspace_path(line)
+        {
+            return true;
+        }
+    }
+
+    false
+}
+
+/// Rule: pipeline secret materialised to a file under the agent workspace.
+///
+/// Severity: High. Files written under `$(System.DefaultWorkingDirectory)` /
+/// `$(Build.SourcesDirectory)` survive the writing step's lifetime, are
+/// uploaded by `PublishPipelineArtifact` tasks (sometimes accidentally), and
+/// remain readable by every subsequent step in the same job.
+pub fn secret_materialised_to_workspace_file(graph: &AuthorityGraph) -> Vec<Finding> {
+    let mut findings = Vec::new();
+
+    for step in graph.nodes_of_kind(NodeKind::Step) {
+        let Some(script) = step.metadata.get(META_SCRIPT_BODY) else {
+            continue;
+        };
+        if script.is_empty() {
+            continue;
+        }
+        let secrets = step_secret_names(graph, step.id);
+        let materialised: Vec<String> = secrets
+            .into_iter()
+            .filter(|s| script_materialises_secret_to_file(script, s))
+            .collect();
+
+        if materialised.is_empty() {
+            continue;
+        }
+
+        let n = materialised.len();
+        let preview: String = materialised
+            .iter()
+            .take(3)
+            .map(|s| format!("$({s})"))
+            .collect::<Vec<_>>()
+            .join(", ");
+        let suffix = if n > 3 {
+            format!(", and {} more", n - 3)
+        } else {
+            String::new()
+        };
+
+        let secret_node_ids: Vec<NodeId> = graph
+            .edges_from(step.id)
+            .filter(|e| e.kind == EdgeKind::HasAccessTo)
+            .filter_map(|e| graph.node(e.to))
+            .filter(|n| n.kind == NodeKind::Secret && materialised.contains(&n.name))
+            .map(|n| n.id)
+            .collect();
+
+        let mut nodes_involved = vec![step.id];
+        nodes_involved.extend(secret_node_ids);
+
+        findings.push(Finding {
+            severity: Severity::High,
+            category: FindingCategory::SecretMaterialisedToWorkspaceFile,
+            path: None,
+            nodes_involved,
+            message: format!(
+                "Step '{}' writes pipeline secret(s) {preview}{suffix} to a file under the agent workspace — the file persists for the rest of the job, is readable by every subsequent step, and may be uploaded by PublishPipelineArtifact",
+                step.name
+            ),
+            recommendation: Recommendation::Manual {
+                action: "Replace inline secret materialisation with the `secureFile` task (downloaded to a temp dir with 0600 perms and auto-deleted), or pass the secret to the consuming tool over stdin / an env var instead of via a workspace file. If a file is unavoidable, write under `$(Agent.TempDirectory)` and `chmod 600` immediately.".into(),
+            },
+        });
+    }
+
+    findings
+}
+
+/// Returns true if `script` contains a Key Vault → plaintext extraction
+/// pattern that lands the secret in a non-`SecureString` variable.
+fn script_extracts_keyvault_to_plaintext(script: &str) -> bool {
+    let lower = script.to_lowercase();
+    // New syntax: Get-AzKeyVaultSecret ... -AsPlainText
+    if lower.contains("get-azkeyvaultsecret") && lower.contains("-asplaintext") {
+        return true;
+    }
+    // ConvertFrom-SecureString ... -AsPlainText (PS 7+) — flat plaintext extraction
+    if lower.contains("convertfrom-securestring") && lower.contains("-asplaintext") {
+        return true;
+    }
+    // Old syntax: ($x = (Get-AzKeyVaultSecret ...).SecretValueText)
+    if lower.contains("get-azkeyvaultsecret") && lower.contains(".secretvaluetext") {
+        return true;
+    }
+    // Even older: BSTR pattern — ConvertToString on PtrToStringAuto
+    if lower.contains("get-azkeyvaultsecret") && lower.contains("ptrtostringauto") {
+        return true;
+    }
+    false
+}
+
+/// Rule: PowerShell pulls a Key Vault secret as plaintext inside an inline
+/// script. The value never crosses the ADO variable-group boundary so
+/// pipeline log masking does not apply — verbose `Az` / PowerShell logging
+/// (`Set-PSDebug -Trace`, `$VerbosePreference = "Continue"`, error stack
+/// traces) will print the cleartext credential.
+///
+/// Severity: Medium. Lower than the materialisation rules because the value
+/// is at least kept in process memory (vs. on disk), but still a real
+/// exposure path that pipeline-level secret rotation alone does not fix.
+pub fn keyvault_secret_to_plaintext(graph: &AuthorityGraph) -> Vec<Finding> {
+    let mut findings = Vec::new();
+
+    for step in graph.nodes_of_kind(NodeKind::Step) {
+        let Some(script) = step.metadata.get(META_SCRIPT_BODY) else {
+            continue;
+        };
+        if script.is_empty() {
+            continue;
+        }
+        if !script_extracts_keyvault_to_plaintext(script) {
+            continue;
+        }
+
+        findings.push(Finding {
+            severity: Severity::Medium,
+            category: FindingCategory::KeyVaultSecretToPlaintext,
+            path: None,
+            nodes_involved: vec![step.id],
+            message: format!(
+                "Step '{}' extracts a Key Vault secret as plaintext inside an inline script (-AsPlainText / .SecretValueText) — value bypasses ADO variable-group masking and is printed by Az verbose logging or any error stack trace",
+                step.name
+            ),
+            recommendation: Recommendation::Manual {
+                action: "Keep the secret as a `SecureString`: drop `-AsPlainText`, pass the SecureString directly to cmdlets that accept it (e.g. `New-PSCredential`, `Connect-AzAccount -ServicePrincipal -Credential ...`), and only convert to plaintext at the moment of consumption, scoped to a single expression. For values that must be plaintext (REST calls, env vars) prefer ADO variable groups linked to Key Vault — the value then participates in pipeline log masking.".into(),
+            },
+        });
+    }
+
+    findings
+}
+
 /// Run all rules against a graph.
 pub fn run_all_rules(graph: &AuthorityGraph, max_hops: usize) -> Vec<Finding> {
     let mut findings = Vec::new();
@@ -1655,6 +2061,10 @@ pub fn run_all_rules(graph: &AuthorityGraph, max_hops: usize) -> Vec<Finding> {
     findings.extend(template_extends_unpinned_branch(graph));
     findings.extend(vm_remote_exec_via_pipeline_secret(graph));
     findings.extend(short_lived_sas_in_command_line(graph));
+    // ADO inline-script secret-leak rules
+    findings.extend(secret_to_inline_script_env_export(graph));
+    findings.extend(secret_materialised_to_workspace_file(graph));
+    findings.extend(keyvault_secret_to_plaintext(graph));
 
     apply_confidence_cap(graph, &mut findings);
 
@@ -2761,6 +3171,20 @@ mod tests {
         g
     }
 
+    // ── secret_to_inline_script_env_export ────────────────────
+
+    /// Build a graph with one Step that has access to `secret_name` and
+    /// stamps `script` as the META_SCRIPT_BODY.
+    fn build_step_with_script(secret_name: &str, script: &str) -> AuthorityGraph {
+        let mut g = AuthorityGraph::new(source("ado.yml"));
+        let secret = g.add_node(NodeKind::Secret, secret_name, TrustZone::FirstParty);
+        let mut meta = std::collections::HashMap::new();
+        meta.insert(META_SCRIPT_BODY.into(), script.into());
+        let step = g.add_node_with_metadata(NodeKind::Step, "deploy", TrustZone::FirstParty, meta);
+        g.add_edge(step, secret, EdgeKind::HasAccessTo);
+        g
+    }
+
     #[test]
     fn template_extends_unpinned_branch_fires_on_missing_ref() {
         let g = graph_with_repo(
@@ -2894,6 +3318,8 @@ mod tests {
         let findings = template_extends_unpinned_branch(&g);
         assert!(findings.is_empty());
     }
+
+    // ── vm_remote_exec_via_pipeline_secret ──────────────
 
     #[test]
     fn vm_remote_exec_fires_on_set_azvmextension_with_minted_sas() {
@@ -3065,5 +3491,140 @@ mod tests {
         assert!(names.iter().any(|n| n.eq_ignore_ascii_case("a")));
         assert!(names.iter().any(|n| n.eq_ignore_ascii_case("sasBlob")));
         assert!(!names.iter().any(|n| n.eq_ignore_ascii_case("b")));
+    }
+
+    #[test]
+    fn bash_export_of_pipeline_secret_flagged() {
+        let g = build_step_with_script(
+            "TF_TOKEN",
+            "echo init\nexport TF_TOKEN_app_terraform_io=\"$(TF_TOKEN)\"\nterraform init",
+        );
+        let findings = secret_to_inline_script_env_export(&g);
+        assert_eq!(findings.len(), 1);
+        assert_eq!(findings[0].severity, Severity::High);
+        assert!(findings[0].message.contains("$(TF_TOKEN)"));
+    }
+
+    #[test]
+    fn powershell_assignment_of_pipeline_secret_flagged() {
+        let g = build_step_with_script(
+            "AppContainerDBPassword",
+            "$AppContainerDBPassword = \"$(AppContainerDBPassword)\"\n$x = 1",
+        );
+        let findings = secret_to_inline_script_env_export(&g);
+        assert_eq!(findings.len(), 1);
+        assert!(findings[0].message.contains("$(AppContainerDBPassword)"));
+    }
+
+    #[test]
+    fn secret_passed_as_command_argument_not_flagged() {
+        // Secret used as a CLI argument, not assigned to a variable. This is
+        // covered by the separate META_CLI_FLAG_EXPOSED detection — env_export
+        // should NOT also fire here.
+        let g = build_step_with_script("TF_TOKEN", "terraform plan -var \"token=$(TF_TOKEN)\"");
+        let findings = secret_to_inline_script_env_export(&g);
+        assert!(
+            findings.is_empty(),
+            "command-arg use of $(SECRET) must not trip env-export rule"
+        );
+    }
+
+    #[test]
+    fn step_without_script_body_not_flagged() {
+        let mut g = AuthorityGraph::new(source("ado.yml"));
+        let secret = g.add_node(NodeKind::Secret, "TF_TOKEN", TrustZone::FirstParty);
+        let step = g.add_node(NodeKind::Step, "task", TrustZone::FirstParty);
+        g.add_edge(step, secret, EdgeKind::HasAccessTo);
+        let findings = secret_to_inline_script_env_export(&g);
+        assert!(findings.is_empty());
+    }
+
+    // ── secret_materialised_to_workspace_file ────────────────
+
+    #[test]
+    fn powershell_outfile_of_secret_to_workspace_flagged() {
+        // Mirrors Azure_Landing_Zone/userapp-n8nx pattern: secret bound to
+        // $var, then $var written via Out-File to $(System.DefaultWorkingDirectory).
+        let script = "$AppContainerDBPassword = \"$(AppContainerDBPassword)\"\n\
+                      $TFfile = Get-Content $(System.DefaultWorkingDirectory)/in.tfvars\n\
+                      $TFfile = $TFfile.Replace(\"x\", $AppContainerDBPassword)\n\
+                      $TFfile | Out-File $(System.DefaultWorkingDirectory)/envVars/tffile.tfvars";
+        let g = build_step_with_script("AppContainerDBPassword", script);
+        let findings = secret_materialised_to_workspace_file(&g);
+        assert_eq!(
+            findings.len(),
+            1,
+            "Out-File of bound secret to workspace must fire"
+        );
+        assert_eq!(findings[0].severity, Severity::High);
+    }
+
+    #[test]
+    fn bash_redirect_of_secret_to_tfvars_flagged() {
+        let script =
+            "echo \"token = \\\"$(TF_TOKEN)\\\"\" > $(Build.SourcesDirectory)/secrets.tfvars";
+        let g = build_step_with_script("TF_TOKEN", script);
+        let findings = secret_materialised_to_workspace_file(&g);
+        assert_eq!(findings.len(), 1);
+    }
+
+    #[test]
+    fn echoing_secret_to_stdout_not_flagged_by_materialisation_rule() {
+        let g = build_step_with_script("TF_TOKEN", "echo using $(TF_TOKEN)\nterraform init");
+        let findings = secret_materialised_to_workspace_file(&g);
+        assert!(
+            findings.is_empty(),
+            "stdout echo (no file sink) must not trip materialisation rule"
+        );
+    }
+
+    #[test]
+    fn write_to_unrelated_path_not_flagged() {
+        // No workspace-path keyword, no risky extension — should not fire.
+        let script = "echo $(MY_SECRET) > /var/tmp/ignore.log";
+        let g = build_step_with_script("MY_SECRET", script);
+        let findings = secret_materialised_to_workspace_file(&g);
+        assert!(findings.is_empty());
+    }
+
+    // ── keyvault_secret_to_plaintext ─────────────────────────
+
+    #[test]
+    fn keyvault_asplaintext_flagged() {
+        let script = "$pass = Get-AzKeyVaultSecret -VaultName foo -Name bar -AsPlainText\n\
+                      Write-Host done";
+        let g = build_step_with_script("UNUSED", script);
+        let findings = keyvault_secret_to_plaintext(&g);
+        assert_eq!(findings.len(), 1);
+        assert_eq!(findings[0].severity, Severity::Medium);
+    }
+
+    #[test]
+    fn keyvault_secretvaluetext_legacy_pattern_flagged() {
+        let script = "$pwd = (Get-AzKeyVaultSecret -VaultName foo -Name bar).SecretValueText";
+        let g = build_step_with_script("UNUSED", script);
+        let findings = keyvault_secret_to_plaintext(&g);
+        assert_eq!(findings.len(), 1);
+    }
+
+    #[test]
+    fn convertfrom_securestring_asplaintext_flagged() {
+        let script = "$plain = ConvertFrom-SecureString $sec -AsPlainText";
+        let g = build_step_with_script("UNUSED", script);
+        let findings = keyvault_secret_to_plaintext(&g);
+        assert_eq!(findings.len(), 1);
+    }
+
+    #[test]
+    fn keyvault_securestring_handling_not_flagged() {
+        // Using the secret as SecureString (no -AsPlainText) is the safe pattern.
+        let script = "$sec = Get-AzKeyVaultSecret -VaultName foo -Name bar\n\
+                      $cred = New-Object PSCredential 'svc', $sec.SecretValue";
+        let g = build_step_with_script("UNUSED", script);
+        let findings = keyvault_secret_to_plaintext(&g);
+        assert!(
+            findings.is_empty(),
+            "SecureString-only handling is the recommended pattern and must not fire"
+        );
     }
 }

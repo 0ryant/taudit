@@ -58,10 +58,13 @@ pub const META_JOB_NAME: &str = "job_name";
 /// parser; consumed by `template_extends_unpinned_branch`.
 pub const META_REPOSITORIES: &str = "repositories";
 /// Records the raw inline script body of a Step (the text from
-/// `script:` / `bash:` / `powershell:` / `pwsh:` / `run:`). Stamped by parsers
-/// when the step has an inline script. Used by command-line-leakage rules
-/// (`vm_remote_exec_via_pipeline_secret`, `short_lived_sas_in_command_line`)
-/// to inspect what the step actually shells out.
+/// `script:` / `bash:` / `powershell:` / `pwsh:` / `run:` / task
+/// `inputs.script` / `inputs.Inline` / `inputs.inlineScript`). Stamped by
+/// parsers when the step has an inline script. Consumed by script-aware
+/// rules: `vm_remote_exec_via_pipeline_secret`,
+/// `short_lived_sas_in_command_line`, `secret_to_inline_script_env_export`,
+/// `secret_materialised_to_workspace_file`, `keyvault_secret_to_plaintext`.
+/// Stored verbatim — rules apply their own pattern matching.
 pub const META_SCRIPT_BODY: &str = "script_body";
 
 // ── Shared helpers ─────────────────────────────────────

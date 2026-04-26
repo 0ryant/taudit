@@ -86,6 +86,29 @@ pub enum FindingCategory {
     /// (commandToExecute / scriptArguments / --arguments / -ArgumentList) instead of
     /// passed via env var or stdin — argv ends up in /proc/*/cmdline, ETW, ARM status.
     ShortLivedSasInCommandLine,
+    /// Pipeline secret value assigned to a shell variable inside an inline
+    /// script (`export VAR=$(SECRET)`, `$X = "$(SECRET)"`). Once the value
+    /// transits a shell variable, ADO's `$(SECRET)` log mask no longer
+    /// applies — transcripts (`Start-Transcript`, `bash -x`, terraform debug
+    /// logs) print the cleartext.
+    SecretToInlineScriptEnvExport,
+    /// Pipeline secret value written to a file under the agent workspace
+    /// (`$(System.DefaultWorkingDirectory)`, `$(Build.SourcesDirectory)`,
+    /// or relative paths) without `secureFile` task or chmod 600. The file
+    /// persists in the agent workspace and is uploaded by
+    /// `PublishPipelineArtifact` and crawlable by later steps.
+    SecretMaterialisedToWorkspaceFile,
+    /// PowerShell pulls a Key Vault secret with `-AsPlainText` (or
+    /// `ConvertFrom-SecureString -AsPlainText`, or older
+    /// `.SecretValueText` syntax) into a non-`SecureString` variable. The
+    /// value never traverses the ADO variable-group boundary, so verbose
+    /// Az/PS logging and error stack traces print the credential.
+    ///
+    /// Rule id is `keyvault_secret_to_plaintext` (single token "keyvault")
+    /// rather than the snake_case derivation `key_vault_…` — matches the
+    /// docs filename and the convention used in the corpus evidence.
+    #[serde(rename = "keyvault_secret_to_plaintext")]
+    KeyVaultSecretToPlaintext,
     // Reserved — requires ADO/GH API enrichment beyond pipeline YAML
     /// Requires runtime network telemetry or policy enrichment — not detectable from YAML alone.
     #[doc(hidden)]

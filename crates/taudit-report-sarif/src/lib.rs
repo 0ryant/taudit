@@ -302,6 +302,56 @@ pub const RULE_DEFS: &[RuleDef] = &[
         security_severity: "7.0",
         tags: &["security", "supply-chain", "pull-request"],
     },
+    RuleDef {
+        id: "secret_to_inline_script_env_export",
+        name: "SecretToInlineScriptEnvExport",
+        short_description: "Pipeline secret assigned to a shell variable inside an inline script",
+        full_description: "An inline script (`script:`, `Bash@3.inputs.script`, \
+             `PowerShell@2.inputs.script`, `AzureCLI@2.inputs.inlineScript`, …) assigns a \
+             pipeline `$(SECRET)` value to a shell variable (`export FOO=$(SECRET)`, \
+             `$X = \"$(SECRET)\"`). ADO masks `$(SECRET)` as it appears in log output, but \
+             masking is applied to the rendered command string before the shell runs. Once \
+             the value is bound to a shell variable any transcript (`Start-Transcript`, \
+             `bash -x`, `terraform TF_LOG=DEBUG`, `az --debug`, error stack traces) prints \
+             the cleartext credential — a historical breach vector for ADO-hosted Terraform \
+             and Azure CLI pipelines.",
+        default_level: "error",
+        security_severity: "7.5",
+        tags: &["security", "credentials", "azure-devops"],
+    },
+    RuleDef {
+        id: "secret_materialised_to_workspace_file",
+        name: "SecretMaterialisedToWorkspaceFile",
+        short_description: "Pipeline secret written to a file under the agent workspace",
+        full_description: "An inline script writes a pipeline `$(SECRET)` value to a file under \
+             `$(System.DefaultWorkingDirectory)`, `$(Build.SourcesDirectory)`, or with a \
+             credential-bearing extension (`.tfvars`, `.env`, `.hcl`, `.pfx`, `.key`, `.pem`, \
+             `.kubeconfig`, …). The file persists for the rest of the job, is readable by \
+             every subsequent step, and may be uploaded by a later `PublishPipelineArtifact` \
+             task. Use the `secureFile` task or stream the secret over stdin / an env var \
+             to the consuming tool instead.",
+        default_level: "error",
+        security_severity: "7.5",
+        tags: &["security", "credentials", "azure-devops"],
+    },
+    RuleDef {
+        id: "keyvault_secret_to_plaintext",
+        name: "KeyVaultSecretToPlaintext",
+        short_description: "Inline PowerShell pulls a Key Vault secret as plaintext (-AsPlainText)",
+        full_description:
+            "An inline PowerShell or AzurePowerShell step calls `Get-AzKeyVaultSecret \
+             -AsPlainText`, `ConvertFrom-SecureString -AsPlainText`, or the older \
+             `(Get-AzKeyVaultSecret …).SecretValueText` pattern, landing the secret in a \
+             non-`SecureString` variable. The value is fetched directly from Key Vault — it \
+             never traverses the ADO variable-group boundary, so pipeline log masking does \
+             not apply. Verbose `Az` / PowerShell logging (`Set-PSDebug -Trace`, \
+             `$VerbosePreference = \"Continue\"`) and any error stack trace will then print \
+             the cleartext credential. Keep the secret as a `SecureString` and only convert \
+             to plaintext at the exact moment of consumption.",
+        default_level: "warning",
+        security_severity: "5.0",
+        tags: &["security", "credentials", "azure-devops"],
+    },
 ];
 
 // ── SARIF 2.1.0 schema structs ──────────────────────────
@@ -831,6 +881,9 @@ mod tests {
             FindingCategory::TemplateExtendsUnpinnedBranch,
             FindingCategory::VmRemoteExecViaPipelineSecret,
             FindingCategory::ShortLivedSasInCommandLine,
+            FindingCategory::SecretToInlineScriptEnvExport,
+            FindingCategory::SecretMaterialisedToWorkspaceFile,
+            FindingCategory::KeyVaultSecretToPlaintext,
         ];
 
         for cat in categories {
