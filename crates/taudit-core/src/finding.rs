@@ -2,6 +2,7 @@ use crate::graph::{AuthorityGraph, NodeId, NodeKind};
 use crate::propagation::PropagationPath;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
+use std::path::PathBuf;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -186,6 +187,35 @@ pub enum Recommendation {
     },
 }
 
+/// Provenance of a finding — distinguishes findings emitted by built-in
+/// taudit rules from findings emitted by user-loaded custom invariant YAML
+/// (`--invariants-dir`). Custom rules can emit arbitrarily-worded findings
+/// at any severity, so an operator piping output into a JIRA workflow or
+/// SARIF upload needs a non-spoofable signal of which file the rule came
+/// from. Serializes as `"built-in"` (string) for built-in findings and
+/// `{"custom": "<path>"}` for custom-rule findings — see
+/// `docs/finding-fingerprint.md` for the contract.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum FindingSource {
+    /// Emitted by a built-in rule defined in `taudit-core::rules`. The
+    /// authoritative trust anchor — the binary's release commit defines the
+    /// rule logic.
+    #[default]
+    BuiltIn,
+    /// Emitted by a custom invariant rule loaded from the given YAML file.
+    /// The path is the file the rule was loaded from, retained so operators
+    /// can audit which file produced any given finding.
+    Custom { source_file: PathBuf },
+}
+
+impl FindingSource {
+    /// True for findings emitted by built-in rules.
+    pub fn is_built_in(&self) -> bool {
+        matches!(self, FindingSource::BuiltIn)
+    }
+}
+
 /// A finding is a concrete, actionable authority issue.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Finding {
@@ -196,6 +226,12 @@ pub struct Finding {
     pub nodes_involved: Vec<NodeId>,
     pub message: String,
     pub recommendation: Recommendation,
+    /// Provenance of this finding. Defaults to `BuiltIn` for backward
+    /// compatibility with code/JSON that predates the field — every
+    /// in-tree built-in rule sets this explicitly. Deserialization of older
+    /// JSON without the field treats the finding as built-in.
+    #[serde(default)]
+    pub source: FindingSource,
 }
 
 // ── Finding fingerprint ────────────────────────────────────
@@ -344,6 +380,7 @@ mod fingerprint_tests {
             recommendation: Recommendation::Manual {
                 action: "fix it".to_string(),
             },
+            source: FindingSource::BuiltIn,
         }
     }
 
@@ -465,5 +502,102 @@ mod fingerprint_tests {
         let fp = compute_fingerprint(&f, &graph);
         assert_eq!(fp.len(), 16);
         assert!(fp.chars().all(|c| c.is_ascii_hexdigit()));
+    }
+}
+
+#[cfg(test)]
+mod source_tests {
+    use super::*;
+
+    #[test]
+    fn built_in_serializes_as_string() {
+        let s = FindingSource::BuiltIn;
+        let v = serde_json::to_value(&s).unwrap();
+        assert_eq!(v, serde_json::json!("built_in"));
+    }
+
+    #[test]
+    fn custom_serializes_with_path_payload() {
+        let s = FindingSource::Custom {
+            source_file: PathBuf::from("/policies/no_prod_pat.yml"),
+        };
+        let v = serde_json::to_value(&s).unwrap();
+        assert_eq!(
+            v,
+            serde_json::json!({"custom": {"source_file": "/policies/no_prod_pat.yml"}})
+        );
+    }
+
+    #[test]
+    fn finding_round_trip_preserves_built_in_source() {
+        let f = Finding {
+            severity: Severity::High,
+            category: FindingCategory::AuthorityPropagation,
+            path: None,
+            nodes_involved: vec![],
+            message: "x".into(),
+            recommendation: Recommendation::Manual {
+                action: "fix".into(),
+            },
+            source: FindingSource::BuiltIn,
+        };
+        let s = serde_json::to_string(&f).unwrap();
+        // Encoded as the literal `"source":"built_in"` — operators eyeballing
+        // raw JSON immediately see "this is a shipped rule".
+        assert!(
+            s.contains("\"source\":\"built_in\""),
+            "built-in source must serialise as \"built_in\": {s}"
+        );
+        let f2: Finding = serde_json::from_str(&s).unwrap();
+        assert_eq!(f2.source, FindingSource::BuiltIn);
+    }
+
+    #[test]
+    fn finding_round_trip_preserves_custom_source_with_path() {
+        let path = PathBuf::from("/work/invariants/no_prod_pat.yml");
+        let f = Finding {
+            severity: Severity::Critical,
+            category: FindingCategory::AuthorityPropagation,
+            path: None,
+            nodes_involved: vec![],
+            message: "[no_prod_pat] hit".into(),
+            recommendation: Recommendation::Manual {
+                action: "fix".into(),
+            },
+            source: FindingSource::Custom {
+                source_file: path.clone(),
+            },
+        };
+        let s = serde_json::to_string(&f).unwrap();
+        assert!(
+            s.contains("\"custom\""),
+            "custom source must serialise with `custom` key: {s}"
+        );
+        assert!(
+            s.contains("/work/invariants/no_prod_pat.yml"),
+            "custom source must include the loader path: {s}"
+        );
+        let f2: Finding = serde_json::from_str(&s).unwrap();
+        assert_eq!(
+            f2.source,
+            FindingSource::Custom { source_file: path },
+            "round-trip must preserve custom source path"
+        );
+    }
+
+    #[test]
+    fn missing_source_field_deserializes_as_built_in() {
+        // Backward-compat: pre-provenance JSON omits the field entirely; the
+        // serde default makes it `BuiltIn`. Without this, every old
+        // suppression DB would fail to parse on upgrade.
+        let json = r#"{
+            "severity": "high",
+            "category": "authority_propagation",
+            "nodes_involved": [],
+            "message": "old-format finding",
+            "recommendation": {"type": "manual", "action": "review"}
+        }"#;
+        let f: Finding = serde_json::from_str(json).expect("legacy JSON must parse");
+        assert_eq!(f.source, FindingSource::BuiltIn);
     }
 }

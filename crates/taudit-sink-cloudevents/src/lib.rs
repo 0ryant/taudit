@@ -192,6 +192,7 @@ mod tests {
             recommendation: Recommendation::Manual {
                 action: "fix it".into(),
             },
+            source: taudit_core::finding::FindingSource::BuiltIn,
         }
     }
 

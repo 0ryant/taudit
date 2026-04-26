@@ -203,6 +203,7 @@ mod tests {
             recommendation: Recommendation::Manual {
                 action: "pin the action".into(),
             },
+            source: taudit_core::finding::FindingSource::BuiltIn,
         }];
 
         let mut buf = Vec::new();

@@ -1,6 +1,6 @@
 use colored::Colorize;
 use taudit_core::error::TauditError;
-use taudit_core::finding::{Finding, Recommendation, Severity};
+use taudit_core::finding::{Finding, FindingSource, Recommendation, Severity};
 use taudit_core::graph::{AuthorityCompleteness, AuthorityGraph, EdgeKind, NodeKind};
 use taudit_core::ports::ReportSink;
 
@@ -101,7 +101,37 @@ impl<W: std::io::Write> ReportSink<W> for TerminalReport {
                 String::new()
             };
 
-            wln!(w, "{}{} {}", sev_tag, partial_tag, finding.message.bold())?;
+            // Custom-rule provenance prefix: surface the originating YAML
+            // file path so an operator scanning the terminal output can tell
+            // an authentic built-in finding from a planted custom invariant
+            // without re-running with --format json. Built-in findings get
+            // no prefix to keep the common path uncluttered.
+            let custom_tag = match &finding.source {
+                FindingSource::Custom { source_file } => {
+                    let label = if source_file.as_os_str().is_empty() {
+                        "custom".to_string()
+                    } else {
+                        // Show the file name only — full path noise overwhelms
+                        // terminal width. JSON / SARIF carry the absolute path.
+                        let name = source_file
+                            .file_name()
+                            .and_then(|s| s.to_str())
+                            .unwrap_or_else(|| source_file.to_str().unwrap_or("custom"));
+                        format!("custom: {name}")
+                    };
+                    format!(" {}", format!("[{label}]").magenta().dimmed())
+                }
+                FindingSource::BuiltIn => String::new(),
+            };
+
+            wln!(
+                w,
+                "{}{}{} {}",
+                sev_tag,
+                partial_tag,
+                custom_tag,
+                finding.message.bold()
+            )?;
 
             // Propagation path
             if let Some(ref path) = finding.path {

@@ -1,4 +1,4 @@
-use crate::finding::{Finding, FindingCategory, Recommendation, Severity};
+use crate::finding::{Finding, FindingCategory, FindingSource, Recommendation, Severity};
 use crate::graph::{
     is_docker_digest_pinned, is_sha_pinned, AuthorityCompleteness, AuthorityGraph, EdgeKind,
     IdentityScope, NodeId, NodeKind, TrustZone, META_ADD_SPN_TO_ENV, META_ATTESTS,
@@ -109,6 +109,7 @@ pub fn authority_propagation(graph: &AuthorityGraph, max_hops: usize) -> Vec<Fin
                     explanation: format!("Scope {source_name} to only the steps that need it"),
                 },
                 path: Some(path),
+                source: FindingSource::BuiltIn,
             }
         })
         .collect()
@@ -218,6 +219,7 @@ pub fn over_privileged_identity(graph: &AuthorityGraph) -> Vec<Finding> {
                     current: granted_scope.clone(),
                     minimum: "{ contents: read }".into(),
                 },
+                source: FindingSource::BuiltIn,
             });
         }
     }
@@ -270,6 +272,7 @@ pub fn unpinned_action(graph: &AuthorityGraph) -> Vec<Finding> {
                         image.name.split('@').next().unwrap_or(&image.name)
                     ),
                 },
+                source: FindingSource::BuiltIn,
             });
         }
     }
@@ -392,6 +395,7 @@ pub fn untrusted_with_authority(graph: &AuthorityGraph) -> Vec<Finding> {
                         nodes_involved: vec![step.id, target.id],
                         message,
                         recommendation,
+                        source: FindingSource::BuiltIn,
                     });
                 }
             }
@@ -459,6 +463,7 @@ pub fn artifact_boundary_crossing(graph: &AuthorityGraph) -> Vec<Finding> {
                                 producer.name, artifact.name
                             ),
                         },
+                        source: FindingSource::BuiltIn,
                     });
                 }
             }
@@ -506,6 +511,7 @@ pub fn long_lived_credential(graph: &AuthorityGraph) -> Vec<Finding> {
                     static_secret: secret.name.clone(),
                     oidc_provider: "GitHub Actions OIDC (id-token: write)".into(),
                 },
+                source: FindingSource::BuiltIn,
             });
         }
     }
@@ -551,6 +557,7 @@ pub fn floating_image(graph: &AuthorityGraph) -> Vec<Finding> {
                         image.name.split(':').next().unwrap_or(&image.name)
                     ),
                 },
+                source: FindingSource::BuiltIn,
             });
         }
     }
@@ -593,6 +600,7 @@ pub fn persisted_credential(graph: &AuthorityGraph) -> Vec<Finding> {
                          Pass credentials explicitly only to steps that need them."
                     .into(),
             },
+            source: FindingSource::BuiltIn,
         });
     }
 
@@ -658,6 +666,7 @@ pub fn trigger_context_mismatch(graph: &AuthorityGraph) -> Vec<Finding> {
         recommendation: Recommendation::Manual {
             action: "Use a separate workflow triggered by workflow_run (not pull_request_target) for privileged operations, or ensure no checkout of the PR head ref occurs before secret use".into(),
         },
+        source: FindingSource::BuiltIn,
     }]
 }
 
@@ -725,6 +734,7 @@ pub fn cross_workflow_authority_chain(graph: &AuthorityGraph) -> Vec<Finding> {
                         target.name
                     ),
                 },
+                source: FindingSource::BuiltIn,
             });
         }
     }
@@ -806,6 +816,7 @@ pub fn authority_cycle(graph: &AuthorityGraph) -> Vec<Finding> {
         recommendation: Recommendation::Manual {
             action: "Break the delegation cycle — a workflow must not directly or transitively call itself".into(),
         },
+        source: FindingSource::BuiltIn,
     }]
 }
 
@@ -872,6 +883,7 @@ pub fn uplift_without_attestation(graph: &AuthorityGraph) -> Vec<Finding> {
         recommendation: Recommendation::Manual {
             action: "Add 'actions/attest-build-provenance' after your build step (GHA) to provide SLSA provenance. See https://docs.github.com/en/actions/security-guides/using-artifact-attestations".into(),
         },
+        source: FindingSource::BuiltIn,
     }]
 }
 
@@ -946,6 +958,7 @@ pub fn self_mutating_pipeline(graph: &AuthorityGraph) -> Vec<Finding> {
             recommendation: Recommendation::Manual {
                 action: "Avoid writing secrets or attacker-controlled values to $GITHUB_ENV / $GITHUB_PATH / pipeline variables. Use explicit step outputs with narrow scoping instead.".into(),
             },
+            source: FindingSource::BuiltIn,
         });
     }
 
@@ -993,6 +1006,7 @@ pub fn checkout_self_pr_exposure(graph: &AuthorityGraph) -> Vec<Finding> {
                          for jobs that only need pipeline config, not source code."
                     .into(),
             },
+            source: FindingSource::BuiltIn,
         });
     }
     findings
@@ -1054,6 +1068,7 @@ pub fn variable_group_in_pr_job(graph: &AuthorityGraph) -> Vec<Finding> {
                     ),
                     spec_hint: "cellos run --network deny-all --policy requireEgressDeclared,requireRuntimeSecretDelivery".into(),
                 },
+                source: FindingSource::BuiltIn,
             });
         }
     }
@@ -1129,6 +1144,7 @@ pub fn self_hosted_pool_pr_hijack(graph: &AuthorityGraph) -> Vec<Finding> {
         recommendation: Recommendation::Manual {
             action: "Run PR pipelines on Microsoft-hosted (ephemeral) agents, or disable checkout:self for PR-triggered jobs on self-hosted pools".into(),
         },
+        source: FindingSource::BuiltIn,
     }]
 }
 
@@ -1186,6 +1202,7 @@ pub fn service_connection_scope_mismatch(graph: &AuthorityGraph) -> Vec<Finding>
                     reason: "Broad-scope service connection reachable from PR code — CellOS egress isolation limits lateral movement even when connection cannot be immediately rescoped".into(),
                     spec_hint: "cellos run --network deny-all --policy requireEgressDeclared".into(),
                 },
+                source: FindingSource::BuiltIn,
             });
         }
     }
@@ -1270,6 +1287,7 @@ pub fn template_extends_unpinned_branch(graph: &AuthorityGraph) -> Vec<Finding> 
                 current: ref_value.unwrap_or("(default branch)").to_string(),
                 pinned: pinned_example,
             },
+            source: FindingSource::BuiltIn,
         });
     }
 
@@ -1355,6 +1373,7 @@ pub fn template_repo_ref_is_feature_branch(graph: &AuthorityGraph) -> Vec<Findin
                 current: ref_value.unwrap_or("(default branch)").to_string(),
                 pinned: pinned_example,
             },
+            source: FindingSource::BuiltIn,
         });
     }
 
@@ -1689,6 +1708,7 @@ pub fn vm_remote_exec_via_pipeline_secret(graph: &AuthorityGraph) -> Vec<Finding
             recommendation: Recommendation::Manual {
                 action: "Stage the script on the VM and pass the SAS via env var or protectedSettings (encrypted, not logged); avoid embedding secrets in commandToExecute".into(),
             },
+            source: FindingSource::BuiltIn,
         });
     }
 
@@ -1806,6 +1826,7 @@ pub fn secret_to_inline_script_env_export(graph: &AuthorityGraph) -> Vec<Finding
                 command: "tsafe exec --ns <scoped-namespace> -- <command>".to_string(),
                 explanation: "Inject the secret as an env var on the step itself (ADO `env:` block) instead of materialising it inside the script body. The value still reaches the process but never travels through a shell variable assignment that transcripts can capture.".to_string(),
             },
+            source: FindingSource::BuiltIn,
         });
     }
 
@@ -1917,6 +1938,7 @@ pub fn short_lived_sas_in_command_line(graph: &AuthorityGraph) -> Vec<Finding> {
             recommendation: Recommendation::Manual {
                 action: "Pass the SAS via env var, stdin, or VM-extension protectedSettings; never put SAS tokens in commandToExecute / --arguments / -ArgumentList".into(),
             },
+            source: FindingSource::BuiltIn,
         });
     }
 
@@ -2090,6 +2112,7 @@ pub fn secret_materialised_to_workspace_file(graph: &AuthorityGraph) -> Vec<Find
             recommendation: Recommendation::Manual {
                 action: "Replace inline secret materialisation with the `secureFile` task (downloaded to a temp dir with 0600 perms and auto-deleted), or pass the secret to the consuming tool over stdin / an env var instead of via a workspace file. If a file is unavoidable, write under `$(Agent.TempDirectory)` and `chmod 600` immediately.".into(),
             },
+            source: FindingSource::BuiltIn,
         });
     }
 
@@ -2154,6 +2177,7 @@ pub fn keyvault_secret_to_plaintext(graph: &AuthorityGraph) -> Vec<Finding> {
             recommendation: Recommendation::Manual {
                 action: "Keep the secret as a `SecureString`: drop `-AsPlainText`, pass the SecureString directly to cmdlets that accept it (e.g. `New-PSCredential`, `Connect-AzAccount -ServicePrincipal -Credential ...`), and only convert to plaintext at the moment of consumption, scoped to a single expression. For values that must be plaintext (REST calls, env vars) prefer ADO variable groups linked to Key Vault — the value then participates in pipeline log masking.".into(),
             },
+            source: FindingSource::BuiltIn,
         });
     }
 
@@ -2279,6 +2303,7 @@ pub fn terraform_auto_approve_in_prod(graph: &AuthorityGraph) -> Vec<Finding> {
             recommendation: Recommendation::Manual {
                 action: "Move the apply step into a deployment job whose `environment:` is configured with required approvers in ADO, OR remove `-auto-approve` and run apply behind a manual checkpoint task. Combine with a non-shared agent pool so committers cannot pre-stage payloads.".into(),
             },
+            source: FindingSource::BuiltIn,
         });
     }
 
@@ -2331,6 +2356,7 @@ pub fn addspn_with_inline_script(graph: &AuthorityGraph) -> Vec<Finding> {
             recommendation: Recommendation::Manual {
                 action: "Replace the inline script with `scriptPath:` pointing to a reviewed file in-repo, OR drop `addSpnToEnvironment: true` and use the task's first-class auth surface. Never emit federated token material via `##vso[task.setvariable]` — those values are inherited by every downstream task and may appear in logs.".into(),
             },
+            source: FindingSource::BuiltIn,
         });
     }
 
@@ -2407,6 +2433,7 @@ pub fn parameter_interpolation_into_shell(graph: &AuthorityGraph) -> Vec<Finding
             recommendation: Recommendation::Manual {
                 action: "Add a `values:` allowlist to the parameter declaration to constrain accepted inputs, OR pass the parameter through the step's `env:` block so the runtime quotes it as a shell variable instead of YAML-interpolating raw text.".into(),
             },
+            source: FindingSource::BuiltIn,
         });
     }
 
@@ -2521,6 +2548,7 @@ pub fn runtime_script_fetched_from_floating_url(graph: &AuthorityGraph) -> Vec<F
             recommendation: Recommendation::Manual {
                 action: "Pin the URL to a release tag or commit SHA (e.g. .../v1.2.3/install.sh) and verify the download against a known checksum before executing it. Avoid `curl … | bash` entirely where possible — fetch to a file, inspect, then run.".into(),
             },
+            source: FindingSource::BuiltIn,
         });
     }
 
@@ -2602,6 +2630,7 @@ pub fn pr_trigger_with_floating_action_ref(graph: &AuthorityGraph) -> Vec<Findin
                     image.name.split('@').next().unwrap_or(&image.name)
                 ),
             },
+            source: FindingSource::BuiltIn,
         });
     }
 
@@ -2732,6 +2761,7 @@ pub fn untrusted_api_response_to_env_sink(graph: &AuthorityGraph) -> Vec<Finding
             recommendation: Recommendation::Manual {
                 action: "Validate the API field with a strict regex before redirecting (e.g. only `[0-9]+` for a PR number), or write only known-numeric fields. Never pipe free-form fields like branch name or PR title directly into $GITHUB_ENV.".into(),
             },
+            source: FindingSource::BuiltIn,
         });
     }
 
@@ -2824,6 +2854,7 @@ pub fn pr_build_pushes_image_with_floating_credentials(graph: &AuthorityGraph) -
                     image.name.split('@').next().unwrap_or(&image.name)
                 ),
             },
+            source: FindingSource::BuiltIn,
         });
     }
 

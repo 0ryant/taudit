@@ -134,6 +134,27 @@
         },
         "message": { "type": "string" },
         "recommendation": { "$ref": "#/$defs/Recommendation" },
+        "source": {
+          "description": "Provenance of the finding. `\"built_in\"` (string) means the finding was emitted by a rule shipped in the taudit binary. An object `{\"custom\": {\"source_file\": \"<path>\"}}` means the finding came from a custom invariant YAML loaded via `--invariants-dir`; the path is the file the rule was loaded from. Optional in v1 for backward-compat; always emitted by current taudit. SIEMs / triage tooling should treat any non-`built_in` source as untrusted-by-default and surface the originating path in alerts.",
+          "oneOf": [
+            { "type": "string", "enum": ["built_in"] },
+            {
+              "type": "object",
+              "required": ["custom"],
+              "additionalProperties": false,
+              "properties": {
+                "custom": {
+                  "type": "object",
+                  "required": ["source_file"],
+                  "additionalProperties": false,
+                  "properties": {
+                    "source_file": { "type": "string" }
+                  }
+                }
+              }
+            }
+          ]
+        },
         "fingerprint": {
           "type": "string",
           "pattern": "^[0-9a-f]{16}$",

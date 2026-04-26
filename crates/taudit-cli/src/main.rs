@@ -1956,6 +1956,12 @@ fn collapse_template_instance_findings(
             nodes_involved: first.nodes_involved.clone(),
             message,
             recommendation: first.recommendation.clone(),
+            // Preserve provenance from the representative finding so the
+            // collapsed entry still attributes back to the correct source
+            // (built-in vs custom YAML). Collapsing only groups findings
+            // already sharing rule + category + nodes, so all members of
+            // the group share a source.
+            source: first.source.clone(),
         });
     }
 
@@ -2713,7 +2719,7 @@ fn walkdir(dir: &PathBuf) -> Result<Vec<PathBuf>> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use taudit_core::finding::{Finding, FindingCategory, Recommendation, Severity};
+    use taudit_core::finding::{Finding, FindingCategory, FindingSource, Recommendation, Severity};
 
     fn finding(severity: Severity, category: FindingCategory, msg: &str) -> Finding {
         Finding {
@@ -2725,6 +2731,7 @@ mod tests {
             recommendation: Recommendation::Manual {
                 action: "review".to_string(),
             },
+            source: FindingSource::BuiltIn,
         }
     }
 

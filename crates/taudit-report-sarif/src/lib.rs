@@ -1,7 +1,9 @@
 use serde::Serialize;
 use taudit_core::custom_rules::CustomRule;
 use taudit_core::error::TauditError;
-use taudit_core::finding::{compute_fingerprint, Finding, FindingCategory, Severity};
+use taudit_core::finding::{
+    compute_fingerprint, Finding, FindingCategory, FindingSource, Severity,
+};
 use taudit_core::graph::AuthorityGraph;
 use taudit_core::ports::ReportSink;
 
@@ -576,6 +578,15 @@ struct SarifResult {
 struct SarifResultProperties {
     #[serde(rename = "security-severity")]
     security_severity: &'static str,
+    /// Provenance label distinguishing built-in findings from those emitted
+    /// by custom invariant YAML loaded via `--invariants-dir`. SIEMs and
+    /// triage tooling should treat any non-`built-in` value as
+    /// untrusted-by-default — anyone with write access to the invariants
+    /// directory can otherwise emit arbitrarily-worded CRITICAL findings
+    /// indistinguishable from authentic ones. Format: literal `built-in`
+    /// for shipped rules, `custom:<source-file-path>` for custom invariants.
+    #[serde(rename = "taudit-source")]
+    taudit_source: String,
 }
 
 #[derive(Serialize)]
@@ -766,6 +777,13 @@ fn finding_to_result(
     // dedup across formats. See `docs/finding-fingerprint.md`.
     let fingerprint = compute_fingerprint(finding, graph);
 
+    let taudit_source = match &finding.source {
+        FindingSource::BuiltIn => "built-in".to_string(),
+        FindingSource::Custom { source_file } => {
+            format!("custom:{}", source_file.display())
+        }
+    };
+
     SarifResult {
         rule_id,
         level,
@@ -780,7 +798,10 @@ fn finding_to_result(
                 },
             },
         }],
-        properties: SarifResultProperties { security_severity },
+        properties: SarifResultProperties {
+            security_severity,
+            taudit_source,
+        },
         partial_fingerprints: SarifPartialFingerprints {
             primary_location_line_hash: fingerprint,
         },
@@ -860,6 +881,7 @@ mod tests {
             recommendation: Recommendation::Manual {
                 action: "review".to_string(),
             },
+            source: taudit_core::finding::FindingSource::BuiltIn,
         }
     }
 
