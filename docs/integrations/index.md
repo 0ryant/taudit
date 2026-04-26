@@ -93,6 +93,34 @@ same invariant DSL, same exit-code contract
 ([`docs/verify.md`](../verify.md)). Adopting it now means your
 invariants port unchanged when axiom lands.
 
+## Cross-format finding dedup
+
+Every finding taudit emits carries the same stable 16-hex
+**fingerprint** in three different output formats:
+
+| Format       | Field                                                        |
+|--------------|--------------------------------------------------------------|
+| SARIF        | `partialFingerprints["primaryLocationLineHash"]` and `partialFingerprints["taudit/v1"]` |
+| JSON         | `findings[].fingerprint`                                     |
+| CloudEvents  | extension attribute `tauditfindingfingerprint`               |
+
+SIEMs ingesting from any of these channels can join on the
+fingerprint to dedup re-runs, route to the same suppression DB, and
+preserve user-managed state across CI invocations. GitHub Code
+Scanning uses `partialFingerprints` natively to carry suppressions
+and dismissals across SARIF uploads.
+
+The standalone Finding shape is published at
+[`schemas/finding.v1.json`](../../schemas/finding.v1.json) so
+downstream consumers (SIEM rules, suppression DBs, ticket sync) can
+validate finding payloads without loading the report wrapper or the
+CloudEvents envelope.
+
+See [`docs/finding-fingerprint.md`](../finding-fingerprint.md) for
+the formula, the stability guarantee, the SARIF baseline-mapping
+integration with GitHub Code Scanning, and the contract for future
+major-version formula bumps.
+
 ## Per-layer specs
 
 - **[`tsign-consumer.md`](tsign-consumer.md)** — input contract,

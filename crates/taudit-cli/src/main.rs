@@ -101,6 +101,22 @@ enum Cli {
         #[arg(long)]
         baseline: Option<PathBuf>,
 
+        /// Path to a CloudEvents JSONL file from a prior scan. Findings whose
+        /// `tauditfindingfingerprint` matches an event in the prior file are
+        /// dropped from the emitted output. Useful for incremental SIEM
+        /// ingest: scan a PR, dedupe against the previous PR's CloudEvents
+        /// stream, only emit NEW findings as events.
+        ///
+        /// Only takes effect with `--format cloudevents`. Ignored for other
+        /// formats (terminal/JSON/SARIF) since those have their own dedup
+        /// channels (baseline / SARIF `partialFingerprints` suppressions).
+        ///
+        /// Missing or empty prior files are treated as "no fingerprints to
+        /// dedup against" — the flag becomes a no-op rather than an error,
+        /// so first-time CI runs don't fail the pipeline.
+        #[arg(long)]
+        dedupe_against: Option<PathBuf>,
+
         /// Directory to write telemetry events (JSONL).
         /// Default: $TAUDIT_TELEMETRY_DIR or
         /// $XDG_STATE_HOME/taudit/telemetry or $HOME/.local/state/taudit/telemetry
@@ -440,6 +456,19 @@ impl Platform {
             Platform::GitLab => "gitlab-ci",
         }
     }
+
+    /// Canonical short token stamped into `graph.metadata["platform"]` and
+    /// surfaced as the CloudEvents `tauditplatform` extension attribute.
+    /// Returns `None` for the abstract `Auto` variant — callers must always
+    /// resolve to a concrete platform first.
+    fn metadata_token(&self) -> Option<&'static str> {
+        match self {
+            Platform::Auto => None,
+            Platform::GithubActions => Some("gha"),
+            Platform::AzureDevOps => Some("ado"),
+            Platform::GitLab => Some("gitlab"),
+        }
+    }
 }
 
 /// Path-based platform hint. Returns `Some(platform)` when the file path
@@ -641,6 +670,7 @@ struct ScanOpts {
     omit_empty: bool,
     collapse_template_instances: bool,
     baseline: Option<PathBuf>,
+    dedupe_against: Option<PathBuf>,
     telemetry_dir: Option<PathBuf>,
     receipt_dir: Option<PathBuf>,
     log_dir: Option<PathBuf>,
@@ -690,6 +720,7 @@ fn run() -> Result<()> {
             omit_empty,
             collapse_template_instances,
             baseline,
+            dedupe_against,
             telemetry_dir,
             receipt_dir,
             log_dir,
@@ -718,6 +749,7 @@ fn run() -> Result<()> {
                 omit_empty,
                 collapse_template_instances,
                 baseline,
+                dedupe_against,
                 telemetry_dir,
                 receipt_dir,
                 log_dir,
@@ -952,6 +984,7 @@ fn cmd_scan(opts: ScanOpts) -> Result<()> {
         omit_empty,
         collapse_template_instances: collapse_templates,
         baseline,
+        dedupe_against,
         telemetry_dir,
         receipt_dir,
         log_dir,
@@ -1024,6 +1057,20 @@ fn cmd_scan(opts: ScanOpts) -> Result<()> {
     // Load baseline fingerprints (category + message pairs to suppress)
     let baseline_fingerprints = load_baseline(baseline)?;
 
+    // Load --dedupe-against fingerprints. Only applies to the cloudevents
+    // emit path; we still load it for any format so a misuse warning can
+    // fire. Missing/empty file => empty set (intentional: first-run CI).
+    let dedupe_fingerprints: HashSet<String> = match dedupe_against.as_ref() {
+        Some(path) => load_dedupe_fingerprints(path)?,
+        None => HashSet::new(),
+    };
+    if dedupe_against.is_some() && !matches!(format, OutputFormat::Cloudevents) {
+        eprintln!(
+            "warning: --dedupe-against only takes effect with --format cloudevents (current format: {}); flag will be ignored",
+            format.as_str()
+        );
+    }
+
     let threshold = severity_threshold.map(|s| s.to_severity());
     let runtime_paths = resolve_runtime_artifact_paths(telemetry_dir, receipt_dir, log_dir);
 
@@ -1062,6 +1109,10 @@ fn cmd_scan(opts: ScanOpts) -> Result<()> {
 
     for tagged_path in &resolved {
         let path = tagged_path.path();
+        // Resolved (concrete) platform for THIS file. Threaded back from the
+        // per-file branches so we can stamp `graph.metadata["platform"]`
+        // regardless of whether `--platform auto` was used.
+        let mut resolved_for_file: Platform = platform.clone();
         let graph = if path.as_os_str() == "-" {
             let mut content = String::new();
             use std::io::Read;
@@ -1073,6 +1124,7 @@ fn cmd_scan(opts: ScanOpts) -> Result<()> {
             if platform == Platform::Auto {
                 let resolved_platform = resolve_platform(&platform, &content, None);
                 let per_file_parser = make_parser(&resolved_platform);
+                resolved_for_file = resolved_platform;
                 parse_content(per_file_parser.as_ref(), content, "<stdin>".to_string())?
             } else {
                 parse_content(parser, content, "<stdin>".to_string())?
@@ -1098,6 +1150,7 @@ fn cmd_scan(opts: ScanOpts) -> Result<()> {
             let parse_result = if platform == Platform::Auto {
                 let resolved_platform = resolve_platform(&platform, &content, Some(path.as_path()));
                 let per_file_parser = make_parser(&resolved_platform);
+                resolved_for_file = resolved_platform;
                 parse_content(
                     per_file_parser.as_ref(),
                     content,
@@ -1120,6 +1173,18 @@ fn cmd_scan(opts: ScanOpts) -> Result<()> {
                 },
             }
         };
+
+        // Stamp the resolved CI/CD platform into graph metadata so downstream
+        // sinks (CloudEvents) can route by platform without re-parsing the
+        // file path. Use the canonical short token: "ado", "gha", "gitlab".
+        // Skip when `Auto` somehow survived (no content to detect against).
+        let mut graph = graph;
+        if let Some(token) = resolved_for_file.metadata_token() {
+            graph
+                .metadata
+                .entry("platform".to_string())
+                .or_insert_with(|| token.to_string());
+        }
 
         if graph.completeness == taudit_core::graph::AuthorityCompleteness::Partial
             || graph.completeness == taudit_core::graph::AuthorityCompleteness::Unknown
@@ -1247,8 +1312,23 @@ fn cmd_scan(opts: ScanOpts) -> Result<()> {
                 sarif_buffer.push((graph, findings));
             }
             OutputFormat::Cloudevents => {
+                // --dedupe-against: drop findings whose fingerprint already
+                // appears in the prior CloudEvents JSONL. Empty set =>
+                // pass-through (first run / no prior file).
+                let to_emit: Vec<taudit_core::finding::Finding> = if dedupe_fingerprints.is_empty()
+                {
+                    findings
+                } else {
+                    findings
+                        .into_iter()
+                        .filter(|f| {
+                            let fp = taudit_core::finding::compute_fingerprint(f, &graph);
+                            !dedupe_fingerprints.contains(&fp)
+                        })
+                        .collect()
+                };
                 CloudEventsJsonlSink
-                    .emit(&mut writer, &graph, &findings)
+                    .emit(&mut writer, &graph, &to_emit)
                     .with_context(|| "Failed to write CloudEvents JSONL")?;
             }
         }
@@ -1872,6 +1952,76 @@ fn load_baseline(path: Option<PathBuf>) -> Result<BaselineSet> {
     }
 
     Ok(set)
+}
+
+/// Load `tauditfindingfingerprint` values from a CloudEvents JSONL file
+/// emitted by a prior `taudit scan --format cloudevents` run. Used by
+/// `--dedupe-against` to drop already-seen findings before re-emitting.
+///
+/// Liberal in what it accepts:
+///   * Missing file → empty set (first-run CI shouldn't fail).
+///   * Empty file → empty set.
+///   * Lines that don't parse as JSON or lack the fingerprint field are
+///     silently skipped (so a partial / truncated prior file doesn't
+///     break the current scan). A diagnostic is printed to stderr only
+///     if zero fingerprints could be loaded from a non-empty file —
+///     that's the case worth surfacing.
+fn load_dedupe_fingerprints(path: &PathBuf) -> Result<HashSet<String>> {
+    let mut out = HashSet::new();
+
+    let content = match std::fs::read_to_string(path) {
+        Ok(c) => c,
+        Err(err) if err.kind() == std::io::ErrorKind::NotFound => {
+            // Treat missing prior file as "no fingerprints" rather than an
+            // error. First-time CI runs hit this path and should succeed.
+            return Ok(out);
+        }
+        Err(err) => {
+            return Err(anyhow::Error::new(err).context(format!(
+                "Failed to read --dedupe-against file: {}",
+                path.display()
+            )));
+        }
+    };
+
+    if content.trim().is_empty() {
+        return Ok(out);
+    }
+
+    let mut malformed = 0usize;
+    for line in content.lines() {
+        if line.trim().is_empty() {
+            continue;
+        }
+        let event: serde_json::Value = match serde_json::from_str(line) {
+            Ok(v) => v,
+            Err(_) => {
+                malformed += 1;
+                continue;
+            }
+        };
+        if let Some(fp) = event
+            .get("tauditfindingfingerprint")
+            .and_then(|v| v.as_str())
+        {
+            // Accept only the documented shape (16 lowercase hex chars).
+            // Anything else is silently ignored to avoid a malformed prior
+            // file polluting the current run.
+            if fp.len() == 16 && fp.chars().all(|c| c.is_ascii_hexdigit()) {
+                out.insert(fp.to_string());
+            }
+        }
+    }
+
+    if out.is_empty() && malformed > 0 {
+        eprintln!(
+            "warning: --dedupe-against file {} had {malformed} malformed line{} and 0 usable fingerprints; treating as empty",
+            path.display(),
+            if malformed == 1 { "" } else { "s" }
+        );
+    }
+
+    Ok(out)
 }
 
 /// Remove findings whose (category, message) is present in `baseline`.
