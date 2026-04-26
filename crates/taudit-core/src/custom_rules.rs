@@ -1,4 +1,4 @@
-use crate::finding::{Finding, FindingCategory, Recommendation, Severity};
+use crate::finding::{Finding, FindingCategory, FindingExtras, Recommendation, Severity};
 use crate::graph::{AuthorityGraph, NodeKind, TrustZone};
 use crate::propagation::PropagationPath;
 use serde::de::{self, MapAccess, Visitor};
@@ -408,6 +408,7 @@ pub fn evaluate_custom_rules(
                         },
                     },
                     path: None,
+                    extras: FindingExtras::default(),
                 });
             }
             continue;
@@ -457,6 +458,7 @@ pub fn evaluate_custom_rules(
                     },
                 },
                 path: Some(path.clone()),
+                extras: FindingExtras::default(),
             });
         }
     }

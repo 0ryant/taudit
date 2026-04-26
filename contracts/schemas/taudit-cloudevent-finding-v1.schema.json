@@ -57,6 +57,11 @@
       "pattern": "^[0-9a-f]{16}$",
       "description": "Stable cross-run finding fingerprint (16 hex chars, SHA-256-derived). Byte-identical to SARIF `partialFingerprints[primaryLocationLineHash]` and JSON `findings[].fingerprint`. Use for SIEM dedup. Optional in v1 for backward-compat; always emitted by current taudit. See docs/finding-fingerprint.md."
     },
+    "tauditfindinggroup": {
+      "type": "string",
+      "format": "uuid",
+      "description": "Stable UUID v5 derived from the fingerprint. Two findings with the same fingerprint share a group id; SIEMs collapse N hops against one authority root into a single advisory by `SELECT DISTINCT ON (tauditfindinggroup)`. Optional in v1 for backward-compat. See docs/finding-output-enhancements.md."
+    },
     "correlationid": {
       "type": "string",
       "minLength": 1,

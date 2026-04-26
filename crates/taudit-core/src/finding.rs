@@ -3,6 +3,33 @@ use crate::propagation::PropagationPath;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 
+// ── Finding-output enhancements (v0.10) ────────────────────────────
+//
+// The blue-team corpus defense report (Section 3) recommends a small
+// set of additive `Finding` fields that consumers (SIEMs, dashboards,
+// triage queues) need but cannot derive cheaply. They are:
+//
+//   * `finding_group_id`       — stable UUID v5 over (namespace, fingerprint)
+//                                 so N hops against one secret cluster into
+//                                 a single advisory in downstream tooling.
+//   * `time_to_fix`             — coarse remediation effort enum so triage
+//                                 dashboards can sort by severity * effort.
+//   * `compensating_controls`   — human-readable list of detected controls
+//                                 that downgraded the finding's severity.
+//   * `suppressed`              — set by the `.taudit-suppressions.yml`
+//                                 applicator; preserves audit trail when a
+//                                 finding has been waived rather than fixed.
+//   * `original_severity`       — pre-downgrade severity; populated whenever
+//                                 the suppression applicator OR a compensating
+//                                 control modifies `severity`.
+//   * `suppression_reason`      — operator-supplied justification from the
+//                                 matching `.taudit-suppressions.yml` entry.
+//
+// All six fields live on `FindingExtras` and are flattened into JSON / SARIF
+// output via `#[serde(flatten)]`. New rules can populate them via
+// `Finding::with_time_to_fix(...)` / `Finding::with_compensating_controls(...)`
+// without touching the 31+ existing rule sites.
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum Severity {
@@ -186,6 +213,85 @@ pub enum Recommendation {
     },
 }
 
+/// Coarse-grained remediation effort. Surfaces in JSON `time_to_fix` and SARIF
+/// `properties.timeToFix` so triage dashboards can sort by `severity * effort`.
+///
+/// The four buckets are deliberately wide. Precise time estimates would invite
+/// argument; the buckets exist to separate "flip a flag" from "rewrite a job"
+/// from "renegotiate ops policy".
+///
+/// Per `MEMORY/.../blueteam-corpus-defense.md` Section 3 / Enhancement E-3.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum FixEffort {
+    /// ~5 minutes. Mechanical change to a single file (flip a flag, pin a SHA,
+    /// add a `permissions: {}` block). No structural risk.
+    Trivial,
+    /// ~1 hour. Refactor a step or job: split a script, add a fork-check,
+    /// move a secret to an environment binding.
+    Small,
+    /// ~1 day. Restructure a job or pipeline: introduce an environment gate,
+    /// move from inline scripts to a sandboxed action, add an OIDC role.
+    Medium,
+    /// ~1 week or more. Operational policy change: migrate from PATs to OIDC
+    /// across an org, change branch protection model, retire a service principal.
+    Large,
+}
+
+/// Optional finding metadata. Lives on every `Finding` via
+/// `#[serde(flatten)]` so consumers see the fields at the top of the
+/// finding object — same place they'd appear if declared inline on
+/// `Finding`. Default-constructed extras serialize to nothing (all
+/// `Option::None` and empty `Vec`s skip-serialize), so existing
+/// snapshots remain byte-stable until a rule populates a field.
+///
+/// **Why a wrapper struct?** The 30+ rule call sites use struct
+/// literal syntax. Adding fields directly to `Finding` would force
+/// every site to edit. With `extras: FindingExtras::default()`, new
+/// extras can be added in a single place.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct FindingExtras {
+    /// Stable UUID v5 over `(NAMESPACE, fingerprint)` — collapses
+    /// per-hop findings against the same authority root into one group
+    /// for SIEM display. See `compute_finding_group_id`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub finding_group_id: Option<String>,
+
+    /// Coarse remediation effort. See `FixEffort`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub time_to_fix: Option<FixEffort>,
+
+    /// Human-readable list of controls that already neutralise (or partially
+    /// neutralise) this finding — populated when a compensating-control
+    /// detector downgrades severity. Empty when no downgrade applied.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub compensating_controls: Vec<String>,
+
+    /// Set to `true` by the suppression applicator when a matching
+    /// `.taudit-suppressions.yml` entry exists AND the configured mode
+    /// is `Suppress`. The finding still appears in output (audit trail
+    /// preserved) but consumers can filter on this field.
+    #[serde(default, skip_serializing_if = "is_false")]
+    pub suppressed: bool,
+
+    /// Original pre-downgrade severity. Populated by the suppression
+    /// applicator OR a compensating-control detector when `severity`
+    /// is mutated. `None` means the current severity is the rule-emitted
+    /// value.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub original_severity: Option<Severity>,
+
+    /// Operator-supplied justification from the matching suppression
+    /// entry. `None` when no suppression applies.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub suppression_reason: Option<String>,
+}
+
+#[allow(clippy::trivially_copy_pass_by_ref)]
+fn is_false(b: &bool) -> bool {
+    !*b
+}
+
 /// A finding is a concrete, actionable authority issue.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Finding {
@@ -196,6 +302,88 @@ pub struct Finding {
     pub nodes_involved: Vec<NodeId>,
     pub message: String,
     pub recommendation: Recommendation,
+    /// Optional metadata (group id, time-to-fix, compensating controls,
+    /// suppression markers). Flattens into the JSON object so consumers
+    /// see top-level fields — see `FindingExtras` for individual semantics.
+    #[serde(flatten, default)]
+    pub extras: FindingExtras,
+}
+
+impl Finding {
+    /// Builder helper: attach a `time_to_fix` annotation to this finding.
+    /// Call sites: `let f = Finding { ... }.with_time_to_fix(FixEffort::Trivial);`
+    pub fn with_time_to_fix(mut self, effort: FixEffort) -> Self {
+        self.extras.time_to_fix = Some(effort);
+        self
+    }
+
+    /// Builder helper: append a compensating control description and
+    /// downgrade severity by one tier (Critical -> High -> Medium -> Low -> Info).
+    /// Records the original severity so the audit trail survives.
+    pub fn with_compensating_control(mut self, control: impl Into<String>) -> Self {
+        let original = self.severity;
+        self.extras.compensating_controls.push(control.into());
+        self.severity = downgrade_severity(self.severity);
+        if self.extras.original_severity.is_none() {
+            self.extras.original_severity = Some(original);
+        }
+        self
+    }
+}
+
+/// Move severity one rank toward `Info` (Critical -> High -> ... -> Info).
+/// `Info` stays `Info`. Used by both the suppression applicator and
+/// compensating-control detectors.
+pub fn downgrade_severity(s: Severity) -> Severity {
+    match s {
+        Severity::Critical => Severity::High,
+        Severity::High => Severity::Medium,
+        Severity::Medium => Severity::Low,
+        Severity::Low => Severity::Info,
+        Severity::Info => Severity::Info,
+    }
+}
+
+/// Stable UUID v5 over the finding fingerprint. Two findings whose
+/// fingerprints match (same rule + file + root authority) produce the
+/// same `finding_group_id` — that is the whole point: SIEMs and triage
+/// dashboards collapse N hops against a single secret into one row.
+///
+/// The UUID v5 namespace is a fixed UUID v4 derived once and embedded
+/// here. Treating the namespace as load-bearing is intentional: any
+/// future change here would break every consumer that has stored a
+/// `finding_group_id`. Bump only at a major version.
+pub fn compute_finding_group_id(fingerprint: &str) -> String {
+    // UUID v5 = SHA-1(namespace || name), with version + variant bits set.
+    // Implemented inline so taudit-core stays free of the `uuid` crate
+    // dependency (workspace already depends on it from the CLI; core
+    // remains zero-IO and minimal).
+    const NAMESPACE: [u8; 16] = [
+        0x6c, 0x6f, 0xd0, 0xa3, 0x82, 0x44, 0x4f, 0x29, 0xb1, 0x9a, 0x09, 0xc8, 0x7e, 0x49, 0x55,
+        0x21,
+    ];
+
+    use sha1::{Digest as Sha1Digest, Sha1};
+    let mut hasher = Sha1::new();
+    Sha1Digest::update(&mut hasher, NAMESPACE);
+    Sha1Digest::update(&mut hasher, fingerprint.as_bytes());
+    let hash = hasher.finalize();
+
+    let mut bytes = [0u8; 16];
+    bytes.copy_from_slice(&hash[..16]);
+    // RFC 4122 §4.3: set version to 5 (bits 12-15 of time_hi_and_version)
+    bytes[6] = (bytes[6] & 0x0f) | 0x50;
+    // RFC 4122 §4.4: set variant to RFC 4122 (bits 6-7 of clock_seq_hi)
+    bytes[8] = (bytes[8] & 0x3f) | 0x80;
+
+    format!(
+        "{:02x}{:02x}{:02x}{:02x}-{:02x}{:02x}-{:02x}{:02x}-{:02x}{:02x}-{:02x}{:02x}{:02x}{:02x}{:02x}{:02x}",
+        bytes[0], bytes[1], bytes[2], bytes[3],
+        bytes[4], bytes[5],
+        bytes[6], bytes[7],
+        bytes[8], bytes[9],
+        bytes[10], bytes[11], bytes[12], bytes[13], bytes[14], bytes[15],
+    )
 }
 
 // ── Finding fingerprint ────────────────────────────────────
@@ -344,6 +532,7 @@ mod fingerprint_tests {
             recommendation: Recommendation::Manual {
                 action: "fix it".to_string(),
             },
+            extras: FindingExtras::default(),
         }
     }
 
@@ -454,6 +643,51 @@ mod fingerprint_tests {
             compute_fingerprint(&f_plain, &graph),
             "custom rule id must distinguish from category fallback"
         );
+    }
+
+    #[test]
+    fn finding_group_id_is_deterministic_uuid_v5() {
+        // Same fingerprint -> same group id, byte-identical.
+        let g1 = compute_finding_group_id("5edb30f4db3b5fa3");
+        let g2 = compute_finding_group_id("5edb30f4db3b5fa3");
+        assert_eq!(g1, g2);
+        // UUID v5 shape: 8-4-4-4-12 hex chars with version=5 nibble.
+        assert_eq!(g1.len(), 36);
+        // Position 14 is the version nibble — must be '5' for v5.
+        assert_eq!(
+            g1.chars().nth(14),
+            Some('5'),
+            "expected v5 marker, got {g1}"
+        );
+        // Position 19 is the variant nibble — must be one of 8/9/a/b.
+        let variant = g1.chars().nth(19).unwrap();
+        assert!(
+            matches!(variant, '8' | '9' | 'a' | 'b'),
+            "expected RFC 4122 variant, got {variant}"
+        );
+        // Different fingerprint -> different group id.
+        assert_ne!(g1, compute_finding_group_id("a3c8d9e1f2b4c5d6"));
+    }
+
+    #[test]
+    fn with_time_to_fix_attaches_effort() {
+        let mut graph = AuthorityGraph::new(source(".github/workflows/ci.yml"));
+        let s = graph.add_node(NodeKind::Secret, "X", TrustZone::FirstParty);
+        let f = make_finding(FindingCategory::UnpinnedAction, "msg", vec![s])
+            .with_time_to_fix(FixEffort::Trivial);
+        assert_eq!(f.extras.time_to_fix, Some(FixEffort::Trivial));
+    }
+
+    #[test]
+    fn with_compensating_control_downgrades_and_records_original() {
+        let mut graph = AuthorityGraph::new(source(".github/workflows/ci.yml"));
+        let s = graph.add_node(NodeKind::Secret, "X", TrustZone::FirstParty);
+        let f = make_finding(FindingCategory::TriggerContextMismatch, "msg", vec![s])
+            .with_compensating_control("fork check present");
+        // Default High in make_finding -> downgraded to Medium.
+        assert_eq!(f.severity, Severity::Medium);
+        assert_eq!(f.extras.original_severity, Some(Severity::High));
+        assert_eq!(f.extras.compensating_controls.len(), 1);
     }
 
     #[test]

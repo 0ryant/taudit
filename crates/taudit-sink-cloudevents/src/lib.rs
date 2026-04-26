@@ -1,6 +1,8 @@
 use serde::Serialize;
 use taudit_core::error::TauditError;
-use taudit_core::finding::{compute_fingerprint, Finding, FindingCategory};
+use taudit_core::finding::{
+    compute_finding_group_id, compute_fingerprint, Finding, FindingCategory,
+};
 use taudit_core::graph::AuthorityGraph;
 use taudit_core::ports::ReportSink;
 
@@ -36,6 +38,13 @@ pub struct CloudEventV1 {
     /// attribute names must be lowercase with no separators — hence
     /// `tauditfindingfingerprint` rather than the dashed/snaked form.
     pub tauditfindingfingerprint: String,
+    /// Stable UUID v5 over the fingerprint. Same value as JSON
+    /// `findings[].finding_group_id` and SARIF `properties.findingGroupId`.
+    /// SIEMs `SELECT DISTINCT ON (tauditfindinggroup)` to collapse
+    /// per-hop findings against the same authority root into one event.
+    /// CloudEvents 1.0 attribute names must be lowercase with no
+    /// separators — hence `tauditfindinggroup` (no underscore).
+    pub tauditfindinggroup: String,
     /// Shared correlation key for a single operator flow.
     pub correlationid: String,
     /// Repository that emitted the event.
@@ -128,6 +137,11 @@ fn finding_to_event(
         data: Some(data),
         tauditcompleteness: Some(completeness_str.into()),
         tauditfindingfingerprint: compute_fingerprint(finding, graph),
+        tauditfindinggroup: finding
+            .extras
+            .finding_group_id
+            .clone()
+            .unwrap_or_else(|| compute_finding_group_id(&compute_fingerprint(finding, graph))),
         correlationid: correlation_id.to_string(),
         provenancerepo: PROVENANCE_REPO.into(),
         provenanceproducer: PROVENANCE_PRODUCER.into(),
@@ -170,7 +184,7 @@ impl<W: std::io::Write> ReportSink<W> for CloudEventsJsonlSink {
 mod tests {
     use super::*;
     use std::{fs, path::PathBuf};
-    use taudit_core::finding::{Recommendation, Severity};
+    use taudit_core::finding::{FindingExtras, Recommendation, Severity};
     use taudit_core::graph::PipelineSource;
 
     fn test_source() -> PipelineSource {
@@ -192,6 +206,7 @@ mod tests {
             recommendation: Recommendation::Manual {
                 action: "fix it".into(),
             },
+            extras: FindingExtras::default(),
         }
     }
 
