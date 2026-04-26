@@ -114,6 +114,128 @@ pub const META_FORK_CHECK: &str = "fork_check";
 /// platform-protected refs. Set by the GitLab parser. Absence on a
 /// deployment job is a control gap.
 pub const META_RULES_PROTECTED_ONLY: &str = "rules_protected_only";
+/// Graph-level metadata: comma-joined list of every entry under `on:` (e.g.
+/// `pull_request_target,issue_comment,workflow_run`). Distinct from
+/// `META_TRIGGER` (singular) which is set only for `pull_request_target` /
+/// ADO `pr` to preserve the existing `trigger_context_mismatch` contract.
+/// Consumers of this list (e.g. `risky_trigger_with_authority`) must split on
+/// `,` and treat each token as a trigger name.
+pub const META_TRIGGERS: &str = "triggers";
+/// Graph-level metadata: comma-joined list of `workflow_dispatch.inputs.*`
+/// names declared by the workflow. Empty / absent if the workflow has no
+/// `workflow_dispatch` trigger. Consumed by
+/// `manual_dispatch_input_to_url_or_command` to taint-track input flow into
+/// command lines, URLs, and `actions/checkout` refs.
+pub const META_DISPATCH_INPUTS: &str = "dispatch_inputs";
+/// Graph-level metadata: pipe-delimited list of `<job>\t<name>\t<source>`
+/// records, one per `jobs.<id>.outputs.<name>`. Records are joined with `|`,
+/// fields within a record with `\t`. `source` is one of `secret` (value
+/// reads `secrets.*`), `oidc` (value references `steps.*.outputs.*` from a
+/// step that holds an OIDC identity), `step_output` (any other
+/// `steps.*.outputs.*`), or `literal`. Plain-text rather than JSON to keep
+/// the parser crate free of `serde_json`. Consumed by
+/// `sensitive_value_in_job_output`.
+pub const META_JOB_OUTPUTS: &str = "job_outputs";
+/// Step-level metadata: the value passed to `actions/checkout`'s `with.ref`
+/// input (verbatim, including any `${{ … }}` expressions). Stamped only on
+/// `actions/checkout` steps that supply a `ref:`. Consumed by
+/// `manual_dispatch_input_to_url_or_command`.
+pub const META_CHECKOUT_REF: &str = "checkout_ref";
+/// Marks the synthetic Step node created for a job that delegates to a
+/// reusable workflow with `secrets: inherit`. The whole secret bag forwards
+/// to the callee regardless of what the callee actually consumes — when the
+/// caller is fired by an attacker-controllable trigger this is a wide-open
+/// exfiltration path. Set on the synthetic step node by the GHA parser.
+pub const META_SECRETS_INHERIT: &str = "secrets_inherit";
+/// Marks a Step that downloads a workflow artifact (typically
+/// `actions/download-artifact` or `dawidd6/action-download-artifact`).
+/// In `workflow_run`-triggered consumers, the originating run's artifacts
+/// were produced from PR context — the consumer must treat their content as
+/// untrusted input even when the consumer itself runs with elevated perms.
+pub const META_DOWNLOADS_ARTIFACT: &str = "downloads_artifact";
+/// Marks a Step whose body interprets artifact (or other untrusted file)
+/// content into a privileged sink — `unzip`/`tar -x`, `cat`/`jq` piping
+/// into `>> $GITHUB_ENV`/`>> $GITHUB_OUTPUT`, `eval`, posting to a PR
+/// comment via `actions/github-script` `body:`/`issue_body:`, or evaluating
+/// extracted text. Combined with `META_DOWNLOADS_ARTIFACT` upstream in the
+/// same job and a `workflow_run`/`pull_request_target` trigger this is the
+/// classic mypy_primer / coverage-comment artifact-RCE pattern.
+pub const META_INTERPRETS_ARTIFACT: &str = "interprets_artifact";
+/// Marks a Step that uses an interactive debug action (mxschmitt/action-tmate,
+/// lhotari/action-upterm, actions/tmate, etc.). The cell value is the action
+/// reference (e.g. `mxschmitt/action-tmate@v3`). A successful debug session
+/// gives the operator an external SSH endpoint with the runner's full
+/// environment loaded — every secret in scope, the checked-out HEAD, and
+/// write access to whatever the GITHUB_TOKEN holds.
+pub const META_INTERACTIVE_DEBUG: &str = "interactive_debug";
+/// Marks a Step that calls `actions/cache` (or `actions/cache/save` /
+/// `actions/cache/restore`). The cell value is the raw `key:` input from
+/// the step's `with:` block. Consumed by `pr_specific_cache_key_in_default_branch_consumer`
+/// to detect PR-derived cache keys (head_ref, head.ref, actor) that a
+/// default-branch run can later restore — classic cache poisoning.
+pub const META_CACHE_KEY: &str = "cache_key";
+/// Records the OIDC audience (`aud:`) value of an `id_tokens:` entry on an
+/// Identity node. GitLab CI emits one Identity per `id_tokens:` key; the
+/// audience is what trades for downstream cloud creds (Vault path, AWS role,
+/// etc), so audience reuse across MR-context and protected-context jobs is
+/// the precise privilege-overscope signal. Set by the GitLab parser.
+pub const META_OIDC_AUDIENCE: &str = "oidc_audience";
+/// Records a Step's `environment:url:` value verbatim. Stamped by the GitLab
+/// parser when the job declares an `environment:` mapping with a `url:`
+/// field. Consumed by `untrusted_ci_var_in_shell_interpolation` because
+/// `environment:url:` is rendered by the GitLab UI and any predefined-CI-var
+/// interpolated into it is a stored-XSS / open-redirect sink.
+pub const META_ENVIRONMENT_URL: &str = "environment_url";
+/// Graph-level metadata: JSON-encoded array of `include:` entries declared by
+/// a GitLab CI pipeline. Each entry is an object with fields:
+/// - `kind`: one of `local`, `remote`, `template`, `project`, `component`
+/// - `target`: the path/URL/project string
+/// - `git_ref`: the resolved `ref:` value (only meaningful for `project` and
+///   `remote`) — empty string when the include omits a `ref:`
+///
+/// Set by the GitLab parser; consumed by `unpinned_include_remote_or_branch_ref`.
+pub const META_GITLAB_INCLUDES: &str = "gitlab_includes";
+/// Marks a Step (GitLab job) that declares one or more `services:` entries
+/// matching `docker:*-dind` or `docker:dind`. Combined with secret-bearing
+/// HasAccessTo edges it indicates a runtime sandbox-escape primitive — any
+/// inline build step can `docker run -v /:/host` from inside dind.
+pub const META_GITLAB_DIND_SERVICE: &str = "gitlab_dind_service";
+/// Marks a Step (GitLab job) declared with `allow_failure: true`. Used by
+/// `security_job_silently_skipped` to detect scanner jobs that pass silently.
+pub const META_GITLAB_ALLOW_FAILURE: &str = "gitlab_allow_failure";
+/// Records the comma-joined list of `extends:` template names a GitLab job
+/// inherits from. Used by scanner-name pattern matching in
+/// `security_job_silently_skipped` because GitLab security templates are
+/// usually consumed via `extends:` rather than by job-name match.
+pub const META_GITLAB_EXTENDS: &str = "gitlab_extends";
+/// Marks a Step (GitLab job) that defines a `trigger:` block (downstream /
+/// child pipeline). Value is `"static"` for a fixed downstream `project:` or
+/// `include:` of in-tree YAML, and `"dynamic"` when the include source is an
+/// `artifact:` (dynamic child pipelines — code-injection sink).
+pub const META_GITLAB_TRIGGER_KIND: &str = "gitlab_trigger_kind";
+/// Records the literal `cache.key:` value declared on a GitLab job (or the
+/// empty string if no cache is declared). Consumed by
+/// `cache_key_crosses_trust_boundary` to detect cross-trust cache keys.
+pub const META_GITLAB_CACHE_KEY: &str = "gitlab_cache_key";
+/// Records the `cache.policy:` value declared on a GitLab job
+/// (`pull` / `push` / `pull-push` / `pull_push`). When absent, the GitLab
+/// runtime default is `pull-push`. Consumed by
+/// `cache_key_crosses_trust_boundary`.
+pub const META_GITLAB_CACHE_POLICY: &str = "gitlab_cache_policy";
+/// Records the deployment environment name on a Step
+/// (e.g. GitLab `environment.name:` / GHA `environment:`).
+/// Used by rules that gate on production-like environment names.
+pub const META_ENVIRONMENT_NAME: &str = "environment_name";
+/// Records the GitLab `artifacts.reports.dotenv:` file path for a Step.
+/// When set, the file's `KEY=value` lines are silently exported as
+/// pipeline variables for every downstream job that consumes this job
+/// via `needs:` or `dependencies:`. Consumed by
+/// `dotenv_artifact_flows_to_privileged_deployment`.
+pub const META_DOTENV_FILE: &str = "dotenv_file";
+/// Records, on a Step, the upstream job names this step consumes via
+/// GitLab `needs:` or `dependencies:`. Comma-separated job names.
+/// Used to build dotenv-flow dependency chains across stages.
+pub const META_NEEDS: &str = "needs";
 
 // ── Shared helpers ─────────────────────────────────────
 

@@ -2,6 +2,32 @@
 
 All notable changes to this project will be documented in this file.
 
+## v0.9.3 — 2026-04-26
+
+> Patch release that merges deferred additive rule work from `worktree-agent-af68e4b6acd4e6bdd` using a safe 3-way patch apply onto post-v0.9.2 main. Keeps v0.9.2 release contents/versions/docs intact while landing the council/red-team GHA+GitLab expansion.
+
+### Added — 20 new built-in authority invariants (deferred worktree batch)
+
+- **GHA authority/injection rules:** `risky_trigger_with_authority`, `sensitive_value_in_job_output`, `manual_dispatch_input_to_url_or_command`, `secrets_inherit_overscoped_passthrough`, `unsafe_pr_artifact_in_workflow_run_consumer`, `script_injection_via_untrusted_context`, `interactive_debug_action_in_authority_workflow`, `pr_specific_cache_key_in_default_branch_consumer`, `gh_cli_with_default_token_escalating`.
+- **GitLab authority/supply-chain rules:** `ci_job_token_to_external_api`, `id_token_audience_overscoped`, `untrusted_ci_var_in_shell_interpolation`, `unpinned_include_remote_or_branch_ref`, `dind_service_grants_host_authority`, `security_job_silently_skipped`, `child_pipeline_trigger_inherits_authority`, `cache_key_crosses_trust_boundary`, `pat_embedded_in_git_remote_url`, `ci_token_triggers_downstream_with_variable_passthrough`, `dotenv_artifact_flows_to_privileged_deployment`.
+
+### Changed
+
+- **Built-in invariant corpus** increased from **38** to **58**.
+- **Rule docs/index** expanded for the newly added rules under `docs/rules/`.
+- **Rule plumbing surfaces updated additively**: `FindingCategory` variants, parser metadata stamping, SARIF rule definitions, and CloudEvents category mapping.
+
+### Validation
+
+- Workspace tests: **494 passed, 0 failed**.
+- `cargo fmt --all` clean.
+- `cargo clippy --workspace --all-targets -- -D warnings` clean.
+
+### Notes
+
+- v0.9.2 versioning/CHANGELOG/ROADMAP content was intentionally preserved during merge conflict resolution (per release-trap constraints).
+- The known flaky test from v0.9.2 (`verify_violating_fixture_exits_one`) was not observed in this merge validation run.
+
 ## v0.9.2 — 2026-04-26
 
 > Patch release focused on correctness, integration readiness, and operator

@@ -1,9 +1,12 @@
 use std::collections::HashMap;
 
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use serde_yaml::Value;
 use taudit_core::error::TauditError;
 use taudit_core::graph::*;
+// Re-import explicitly to make the new constants visible at a glance.
+#[allow(unused_imports)]
+use taudit_core::graph::{META_DOTENV_FILE, META_ENVIRONMENT_NAME, META_NEEDS, META_SCRIPT_BODY};
 use taudit_core::ports::PipelineParser;
 
 /// GitLab CI YAML parser.
@@ -82,11 +85,19 @@ impl PipelineParser for GitlabParser {
             meta,
         );
 
-        // Top-level include: → mark Partial immediately
-        if mapping.contains_key("include") {
+        // Top-level include: → mark Partial immediately AND capture each
+        // entry's structure as graph metadata so include-pinning rules can
+        // reason about remote URLs and unpinned project refs.
+        if let Some(inc) = mapping.get("include") {
             graph.mark_partial(
                 "include: directive present — included templates not resolved".to_string(),
             );
+            let entries = extract_include_entries(inc);
+            if !entries.is_empty() {
+                if let Ok(json) = serde_json::to_string(&entries) {
+                    graph.metadata.insert(META_GITLAB_INCLUDES.into(), json);
+                }
+            }
         }
 
         // Global variables
@@ -128,7 +139,8 @@ impl PipelineParser for GitlabParser {
             };
 
             // extends: — job template inheritance, can't resolve statically
-            if job_map.contains_key("extends") {
+            let extends_names = extract_extends_list(job_map.get("extends"));
+            if !extends_names.is_empty() {
                 graph.mark_partial(format!(
                     "job '{job_name}' uses extends: — inherited configuration not resolved"
                 ));
@@ -181,6 +193,28 @@ impl PipelineParser for GitlabParser {
             let env_name = job_map
                 .get("environment")
                 .and_then(extract_environment_name);
+            let env_url = job_map.get("environment").and_then(extract_environment_url);
+
+            // Concatenated script body (before_script + script + after_script).
+            // Stamped on the Step node so script-aware rules (notably
+            // `untrusted_ci_var_in_shell_interpolation` and
+            // `ci_job_token_to_external_api`) can pattern-match without
+            // re-walking the YAML.
+            // Inline script body — concatenate before_script, script, after_script
+            // (each may be a string or a list-of-strings). Stamped on the Step so
+            // script-aware rules can pattern-match without re-parsing YAML.
+            let script_body = extract_script_body(job_map);
+
+            // GitLab `artifacts.reports.dotenv: <file>` — when set, the file's
+            // KEY=value lines are silently promoted to pipeline variables for
+            // any downstream job that consumes this one via `needs:` /
+            // `dependencies:`. Required input to
+            // `dotenv_artifact_flows_to_privileged_deployment`.
+            let dotenv_file = extract_dotenv_file(job_map);
+
+            // Upstream job names consumed via `needs:` / `dependencies:`.
+            // Used to build dotenv-flow chains across stages.
+            let needs = extract_needs(job_map);
 
             // Detect whether this job's `rules:` / `only:` clause restricts
             // execution to protected branches (or to the default branch,
@@ -193,7 +227,59 @@ impl PipelineParser for GitlabParser {
             let mut step_meta = HashMap::new();
             step_meta.insert(META_JOB_NAME.into(), job_name.to_string());
             if let Some(ref env) = env_name {
-                step_meta.insert("environment_name".into(), env.clone());
+                step_meta.insert(META_ENVIRONMENT_NAME.into(), env.clone());
+            }
+            if !script_body.is_empty() {
+                step_meta.insert(META_SCRIPT_BODY.into(), script_body);
+            }
+            if let Some(ref f) = dotenv_file {
+                step_meta.insert(META_DOTENV_FILE.into(), f.clone());
+            }
+            if !needs.is_empty() {
+                step_meta.insert(META_NEEDS.into(), needs.join(","));
+            }
+            if let Some(ref url) = env_url {
+                step_meta.insert(META_ENVIRONMENT_URL.into(), url.clone());
+            }
+            // Per-step MR trigger marker — graph-level META_TRIGGER applies to
+            // the file as a whole, but `id_token_audience_overscoped` needs to
+            // compare audience usage between MR-context and protected-context
+            // jobs in the same file.
+            if job_triggers_mr {
+                step_meta.insert(META_TRIGGER.into(), "merge_request".into());
+            }
+            // extends: list (comma-joined, in source order)
+            if !extends_names.is_empty() {
+                step_meta.insert(META_GITLAB_EXTENDS.into(), extends_names.join(","));
+            }
+            // allow_failure: true|false (only stamp when explicitly set so the
+            // rule can distinguish "absent" from "false")
+            if let Some(af) = job_map.get("allow_failure").and_then(|v| v.as_bool()) {
+                step_meta.insert(META_GITLAB_ALLOW_FAILURE.into(), af.to_string());
+            } else if job_map
+                .get("allow_failure")
+                .and_then(|v| v.as_mapping())
+                .is_some()
+            {
+                // `allow_failure: { exit_codes: [42] }` — conditional pass; treat
+                // as truthy for silent-skip detection.
+                step_meta.insert(META_GITLAB_ALLOW_FAILURE.into(), "true".into());
+            }
+            // dind sidecar detection: any service whose name matches docker:*-dind
+            if job_services_have_dind(job_map.get("services")) {
+                step_meta.insert(META_GITLAB_DIND_SERVICE.into(), "true".into());
+            }
+            // trigger: block — child / downstream pipeline
+            if let Some(kind) = classify_trigger(job_map.get("trigger")) {
+                step_meta.insert(META_GITLAB_TRIGGER_KIND.into(), kind.into());
+            }
+            // cache: structural capture (key + policy)
+            if let Some((cache_key, cache_policy)) = extract_cache_key_policy(job_map.get("cache"))
+            {
+                step_meta.insert(META_GITLAB_CACHE_KEY.into(), cache_key);
+                if let Some(p) = cache_policy {
+                    step_meta.insert(META_GITLAB_CACHE_POLICY.into(), p);
+                }
             }
             if protected_only {
                 step_meta.insert(META_RULES_PROTECTED_ONLY.into(), "true".into());
@@ -275,6 +361,98 @@ fn extract_environment_name(v: &Value) -> Option<String> {
         Value::Mapping(m) => m.get("name").and_then(|n| n.as_str()).map(String::from),
         _ => None,
     }
+}
+
+/// Extract `environment:url:` value (only present when environment is a mapping).
+fn extract_environment_url(v: &Value) -> Option<String> {
+    match v {
+        Value::Mapping(m) => m.get("url").and_then(|u| u.as_str()).map(String::from),
+        _ => None,
+    }
+}
+
+/// Concatenate `before_script`, `script`, and `after_script` of a job into one
+/// string body (separated by newlines). Each section may be a single string or
+/// a list of strings. Empty sections are skipped.
+fn extract_script_body(job_map: &serde_yaml::Mapping) -> String {
+    let mut lines: Vec<String> = Vec::new();
+    for key in &["before_script", "script", "after_script"] {
+        if let Some(v) = job_map.get(*key) {
+            collect_script_lines(v, &mut lines);
+        }
+    }
+    lines.join("\n")
+}
+
+/// Append script lines from a YAML value (string or sequence of strings).
+fn collect_script_lines(v: &Value, out: &mut Vec<String>) {
+    match v {
+        Value::String(s) => out.push(s.clone()),
+        Value::Sequence(seq) => {
+            for item in seq {
+                if let Some(s) = item.as_str() {
+                    out.push(s.to_string());
+                }
+            }
+        }
+        _ => {}
+    }
+}
+
+/// Extract `artifacts.reports.dotenv` filename. Value may be a single string
+/// or a list of strings — for the list form we join with `,`.
+fn extract_dotenv_file(job_map: &serde_yaml::Mapping) -> Option<String> {
+    let dotenv = job_map
+        .get("artifacts")?
+        .as_mapping()?
+        .get("reports")?
+        .as_mapping()?
+        .get("dotenv")?;
+    match dotenv {
+        Value::String(s) => Some(s.clone()),
+        Value::Sequence(seq) => {
+            let parts: Vec<String> = seq
+                .iter()
+                .filter_map(|v| v.as_str().map(String::from))
+                .collect();
+            if parts.is_empty() {
+                None
+            } else {
+                Some(parts.join(","))
+            }
+        }
+        _ => None,
+    }
+}
+
+/// Extract upstream job names from `needs:` and `dependencies:`.
+/// `needs:` may be a list of strings or a list of mappings with `job:`.
+/// `dependencies:` is a list of strings.
+fn extract_needs(job_map: &serde_yaml::Mapping) -> Vec<String> {
+    let mut out: Vec<String> = Vec::new();
+    if let Some(needs) = job_map.get("needs").and_then(|v| v.as_sequence()) {
+        for item in needs {
+            match item {
+                Value::String(s) => out.push(s.clone()),
+                Value::Mapping(m) => {
+                    if let Some(j) = m.get("job").and_then(|j| j.as_str()) {
+                        out.push(j.to_string());
+                    }
+                }
+                _ => {}
+            }
+        }
+    }
+    if let Some(deps) = job_map.get("dependencies").and_then(|v| v.as_sequence()) {
+        for item in deps {
+            if let Some(s) = item.as_str() {
+                out.push(s.to_string());
+            }
+        }
+    }
+    out.sort();
+    out.dedup();
+    out
 }
 
 /// Classify a variable name as a credential by checking for common fragments.
@@ -362,7 +540,9 @@ fn process_id_tokens(
             Some(s) => s,
             None => continue,
         };
-        // Extract audience for labelling
+        // Extract audience for labelling and as discrete metadata
+        // (rules like `id_token_audience_overscoped` need to compare audiences
+        // across jobs without re-parsing the label).
         let aud = v
             .as_mapping()
             .and_then(|m| m.get("aud"))
@@ -372,6 +552,7 @@ fn process_id_tokens(
         let mut meta = HashMap::new();
         meta.insert(META_OIDC.into(), "true".into());
         meta.insert(META_IDENTITY_SCOPE.into(), "broad".into());
+        meta.insert(META_OIDC_AUDIENCE.into(), aud.to_string());
         let id =
             graph.add_node_with_metadata(NodeKind::Identity, label, TrustZone::FirstParty, meta);
         ids.push(id);
@@ -545,6 +726,282 @@ fn has_mr_trigger_in_workflow(wf: &Value) -> bool {
         }
     }
     false
+}
+
+/// Structured representation of a single `include:` entry.
+///
+/// Serialised into `AuthorityGraph::metadata[META_GITLAB_INCLUDES]` so that
+/// downstream rules (e.g. `unpinned_include_remote_or_branch_ref`) can analyse
+/// remote-URL pins, project refs, and missing `ref:` defaults without re-parsing
+/// the YAML.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct IncludeEntry {
+    /// Include kind: `local`, `remote`, `template`, `project`, `component`, or
+    /// `unknown` for shapes we don't recognise.
+    pub kind: String,
+    /// The path / URL / project string the include points at.
+    pub target: String,
+    /// The resolved `ref:` value. Empty string when the include omits a `ref:`
+    /// (defaults to HEAD on the source repo, which is itself a finding).
+    pub git_ref: String,
+}
+
+/// Parse the top-level `include:` value into a flat list of `IncludeEntry`s.
+///
+/// `include:` accepts five shapes — string, sequence-of-strings, sequence-of-mappings,
+/// sequence-of-strings-mixed-with-mappings, and a single mapping. Normalise all of
+/// them into one flat list so the rule layer doesn't have to.
+pub fn extract_include_entries(v: &Value) -> Vec<IncludeEntry> {
+    let mut out = Vec::new();
+    match v {
+        // `include: 'path/to/local.yml'` — sugar for a local include
+        Value::String(s) => {
+            out.push(IncludeEntry {
+                kind: classify_string_include(s).into(),
+                target: s.clone(),
+                git_ref: String::new(),
+            });
+        }
+        Value::Sequence(seq) => {
+            for item in seq {
+                match item {
+                    Value::String(s) => {
+                        out.push(IncludeEntry {
+                            kind: classify_string_include(s).into(),
+                            target: s.clone(),
+                            git_ref: String::new(),
+                        });
+                    }
+                    Value::Mapping(m) => {
+                        if let Some(e) = include_entry_from_mapping(m) {
+                            out.push(e);
+                        }
+                    }
+                    _ => {}
+                }
+            }
+        }
+        Value::Mapping(m) => {
+            if let Some(e) = include_entry_from_mapping(m) {
+                out.push(e);
+            }
+        }
+        _ => {}
+    }
+    out
+}
+
+/// Heuristic: a top-level `include:` string that looks like an HTTPS URL is a
+/// `remote:` include in shorthand form; everything else is a `local:` path.
+fn classify_string_include(s: &str) -> &'static str {
+    let lower = s.to_ascii_lowercase();
+    if lower.starts_with("http://") || lower.starts_with("https://") {
+        "remote"
+    } else {
+        "local"
+    }
+}
+
+/// Lift one of the four mapping forms (`local:`, `remote:`, `template:`,
+/// `project:`, `component:`) into an `IncludeEntry`. Returns None when the
+/// mapping has none of the recognised keys.
+fn include_entry_from_mapping(m: &serde_yaml::Mapping) -> Option<IncludeEntry> {
+    let str_at = |key: &str| {
+        m.get(key)
+            .and_then(|v| v.as_str())
+            .map(str::to_string)
+            .unwrap_or_default()
+    };
+    if let Some(s) = m.get("local").and_then(|v| v.as_str()) {
+        return Some(IncludeEntry {
+            kind: "local".into(),
+            target: s.to_string(),
+            git_ref: String::new(),
+        });
+    }
+    if let Some(s) = m.get("remote").and_then(|v| v.as_str()) {
+        return Some(IncludeEntry {
+            kind: "remote".into(),
+            target: s.to_string(),
+            git_ref: String::new(),
+        });
+    }
+    if let Some(s) = m.get("template").and_then(|v| v.as_str()) {
+        return Some(IncludeEntry {
+            kind: "template".into(),
+            target: s.to_string(),
+            git_ref: String::new(),
+        });
+    }
+    if let Some(s) = m.get("component").and_then(|v| v.as_str()) {
+        // GitLab CI/CD components: source@version → version is the pin
+        let (target, git_ref) = match s.rsplit_once('@') {
+            Some((path, ver)) => (path.to_string(), ver.to_string()),
+            None => (s.to_string(), String::new()),
+        };
+        return Some(IncludeEntry {
+            kind: "component".into(),
+            target,
+            git_ref,
+        });
+    }
+    if m.contains_key("project") {
+        let project = str_at("project");
+        // ref: may be missing → empty string indicates HEAD/default branch,
+        // which is itself a supply-chain finding.
+        let git_ref = str_at("ref");
+        return Some(IncludeEntry {
+            kind: "project".into(),
+            target: project,
+            git_ref,
+        });
+    }
+    None
+}
+
+/// Extract a flat list of template names from an `extends:` value.
+/// `extends:` accepts a single string or a sequence of strings.
+fn extract_extends_list(v: Option<&Value>) -> Vec<String> {
+    let v = match v {
+        Some(v) => v,
+        None => return Vec::new(),
+    };
+    match v {
+        Value::String(s) => vec![s.clone()],
+        Value::Sequence(seq) => seq
+            .iter()
+            .filter_map(|i| i.as_str().map(str::to_string))
+            .collect(),
+        _ => Vec::new(),
+    }
+}
+
+/// Returns true when any entry in `services:` has an image name matching
+/// `docker:*-dind` (or bare `docker:dind`). Recognises both shapes:
+/// `services: [docker:dind]` and `services: [{name: docker:dind}]`.
+fn job_services_have_dind(services: Option<&Value>) -> bool {
+    let list = match services.and_then(|v| v.as_sequence()) {
+        Some(s) => s,
+        None => return false,
+    };
+    for item in list {
+        let img = match extract_image_str(item) {
+            Some(s) => s,
+            None => continue,
+        };
+        if image_is_dind(&img) {
+            return true;
+        }
+    }
+    false
+}
+
+/// Match `docker:dind`, `docker:24.0-dind`, `docker:24-dind`,
+/// `docker:24.0.7-dind-rootless`, etc. The discriminator is a `docker:` prefix
+/// AND `dind` appearing somewhere in the tag.
+fn image_is_dind(image: &str) -> bool {
+    let lower = image.to_ascii_lowercase();
+    // Match the official docker dind images and their digest-pinned variants.
+    // Strip any `@sha256:...` suffix before checking the tag.
+    let bare = match lower.split_once('@') {
+        Some((b, _)) => b,
+        None => &lower,
+    };
+    if !bare.starts_with("docker:") && !bare.starts_with("docker/") {
+        return false;
+    }
+    bare.contains("dind")
+}
+
+/// Classify a `trigger:` block as either `static` (in-tree YAML / fixed
+/// downstream project) or `dynamic` (include from a previous job's artifact —
+/// dynamic child pipelines, the code-injection sink). Returns None when no
+/// `trigger:` block is present.
+fn classify_trigger(trigger: Option<&Value>) -> Option<&'static str> {
+    let t = trigger?;
+    // Shorthand: `trigger: my/downstream/project` → static
+    if t.is_string() {
+        return Some("static");
+    }
+    let m = t.as_mapping()?;
+    // Look at every `include:` entry under trigger; if ANY one references an
+    // `artifact:` field, the child pipeline is dynamic.
+    if let Some(inc) = m.get("include") {
+        if include_has_artifact_source(inc) {
+            return Some("dynamic");
+        }
+    }
+    Some("static")
+}
+
+/// Walk a `trigger.include:` value (string / sequence / mapping) and return
+/// true when any entry's mapping carries an `artifact:` key.
+fn include_has_artifact_source(v: &Value) -> bool {
+    match v {
+        Value::Mapping(m) => m.contains_key("artifact"),
+        Value::Sequence(seq) => seq.iter().any(|i| {
+            i.as_mapping()
+                .map(|m| m.contains_key("artifact"))
+                .unwrap_or(false)
+        }),
+        _ => false,
+    }
+}
+
+/// Extract `(cache.key, cache.policy)` from a job's `cache:` value. Returns
+/// `None` when no cache is declared. `cache:` may be a sequence of mappings
+/// (multiple caches); we capture the first key/policy pair so the rule layer
+/// has at least one signal — multi-cache analysis is left to a future
+/// extension.
+///
+/// `cache.key:` may be:
+/// - a string: `key: vendor`
+/// - a mapping: `key: { files: [Gemfile.lock] }` → captured as `files:Gemfile.lock,...`
+/// - a mapping with `prefix:` → captured as `prefix:<value>`
+fn extract_cache_key_policy(v: Option<&Value>) -> Option<(String, Option<String>)> {
+    let v = v?;
+    let m = match v {
+        Value::Mapping(m) => m,
+        Value::Sequence(seq) => {
+            // First cache wins — same heuristic used elsewhere.
+            return seq
+                .iter()
+                .find_map(|i| i.as_mapping().and_then(extract_cache_key_policy_map));
+        }
+        _ => return None,
+    };
+    extract_cache_key_policy_map(m)
+}
+
+fn extract_cache_key_policy_map(m: &serde_yaml::Mapping) -> Option<(String, Option<String>)> {
+    let key = match m.get("key") {
+        Some(Value::String(s)) => s.clone(),
+        Some(Value::Number(n)) => n.to_string(),
+        Some(Value::Bool(b)) => b.to_string(),
+        Some(Value::Mapping(km)) => {
+            let mut parts = Vec::new();
+            if let Some(prefix) = km.get("prefix").and_then(|v| v.as_str()) {
+                parts.push(format!("prefix:{prefix}"));
+            }
+            if let Some(files) = km.get("files").and_then(|v| v.as_sequence()) {
+                let names: Vec<String> = files
+                    .iter()
+                    .filter_map(|f| f.as_str().map(str::to_string))
+                    .collect();
+                if !names.is_empty() {
+                    parts.push(format!("files:{}", names.join(",")));
+                }
+            }
+            if parts.is_empty() {
+                String::new()
+            } else {
+                parts.join(";")
+            }
+        }
+        _ => String::new(),
+    };
+    let policy = m.get("policy").and_then(|v| v.as_str()).map(str::to_string);
+    Some((key, policy))
 }
 
 #[cfg(test)]

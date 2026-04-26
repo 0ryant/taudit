@@ -1,12 +1,12 @@
 # taudit Rule Reference
 
-34 built-in rules. Run `taudit explain <rule-id>` for a description in the terminal.
+58 built-in rules. Run `taudit explain <rule-id>` for a description in the terminal.
 
 ## Top-level commands
 
 | Command | Purpose |
 |---------|---------|
-| `taudit scan` | Run the 17 built-in rules (and optional custom rules via `--rules-dir`); produces a report. |
+| `taudit scan` | Run the 58 built-in rules (and optional custom rules via `--rules-dir`); produces a report. |
 | [`taudit verify`](../verify.md) | Policy-driven enforcement entrypoint for CI gates. Exit 0 = clean, 1 = violation, 2 = config error. Runs only `--policy` invariants by default. |
 | `taudit map` | Render the authority graph (text table or DOT). |
 | `taudit diff` | Compare findings between two pipeline versions. |
@@ -41,7 +41,7 @@ Platforms: **GHA** = GitHub Actions · **ADO** = Azure DevOps · **GL** = GitLab
 | [secret_materialised_to_workspace_file](secret_materialised_to_workspace_file.md) | High | Credentials | ADO only |
 | [keyvault_secret_to_plaintext](keyvault_secret_to_plaintext.md) | Medium | Credentials | ADO only |
 | [terraform_auto_approve_in_prod](terraform_auto_approve_in_prod.md) | Critical | Configuration | ADO only |
-| [add_spn_with_inline_script](add_spn_with_inline_script.md) | High | Credentials | ADO only |
+| [addspn_with_inline_script](addspn_with_inline_script.md) | High | Credentials | ADO only |
 | [parameter_interpolation_into_shell](parameter_interpolation_into_shell.md) | Medium | Injection | ADO only |
 | [terraform_output_via_setvariable_shell_expansion](terraform_output_via_setvariable_shell_expansion.md) | High | Injection | ADO only |
 | [secret_via_env_gate_to_untrusted_consumer](secret_via_env_gate_to_untrusted_consumer.md) | Critical | Propagation | GHA |
@@ -50,6 +50,30 @@ Platforms: **GHA** = GitHub Actions · **ADO** = Azure DevOps · **GL** = GitLab
 | [long_lived_secret_without_oidc_recommendation](long_lived_secret_without_oidc_recommendation.md) | Info | Credentials | GHA, ADO, GL |
 | [pull_request_workflow_inconsistent_fork_check](pull_request_workflow_inconsistent_fork_check.md) | High / Medium | Privilege | GHA only |
 | [gitlab_deploy_job_missing_protected_branch_only](gitlab_deploy_job_missing_protected_branch_only.md) | Medium | Configuration | GitLab only |
+| [runtime_script_fetched_from_floating_url](runtime_script_fetched_from_floating_url.md) | High | Injection / Supply Chain | GHA |
+| [pr_trigger_with_floating_action_ref](pr_trigger_with_floating_action_ref.md) | Critical | Privilege / Supply Chain | GHA |
+| [untrusted_api_response_to_env_sink](untrusted_api_response_to_env_sink.md) | High | Injection | GHA |
+| [pr_build_pushes_image_with_floating_credentials](pr_build_pushes_image_with_floating_credentials.md) | High | Supply Chain / Credentials | GHA |
+| [risky_trigger_with_authority](risky_trigger_with_authority.md) | High | Privilege | GHA |
+| [sensitive_value_in_job_output](sensitive_value_in_job_output.md) | Critical / High | Credentials | GHA |
+| [manual_dispatch_input_to_url_or_command](manual_dispatch_input_to_url_or_command.md) | High | Injection | GHA |
+| [secrets_inherit_overscoped_passthrough](secrets_inherit_overscoped_passthrough.md) | High | Privilege | GHA |
+| [unsafe_pr_artifact_in_workflow_run_consumer](unsafe_pr_artifact_in_workflow_run_consumer.md) | High | Supply Chain | GHA |
+| [script_injection_via_untrusted_context](script_injection_via_untrusted_context.md) | Critical | Injection | GHA |
+| [interactive_debug_action_in_authority_workflow](interactive_debug_action_in_authority_workflow.md) | High | Credentials | GHA |
+| [pr_specific_cache_key_in_default_branch_consumer](pr_specific_cache_key_in_default_branch_consumer.md) | High | Supply Chain | GHA |
+| [gh_cli_with_default_token_escalating](gh_cli_with_default_token_escalating.md) | High | Privilege | GHA |
+| [ci_job_token_to_external_api](ci_job_token_to_external_api.md) | High | Credentials | GitLab CI |
+| [id_token_audience_overscoped](id_token_audience_overscoped.md) | High | Privilege | GitLab CI |
+| [untrusted_ci_var_in_shell_interpolation](untrusted_ci_var_in_shell_interpolation.md) | High | Injection | GitLab CI |
+| [unpinned_include_remote_or_branch_ref](unpinned_include_remote_or_branch_ref.md) | High | Supply Chain | GitLab CI |
+| [dind_service_grants_host_authority](dind_service_grants_host_authority.md) | High | Isolation | GitLab CI |
+| [security_job_silently_skipped](security_job_silently_skipped.md) | Medium | Supply Chain | GitLab CI |
+| [child_pipeline_trigger_inherits_authority](child_pipeline_trigger_inherits_authority.md) | High | Privilege | GitLab CI |
+| [cache_key_crosses_trust_boundary](cache_key_crosses_trust_boundary.md) | High | Supply Chain | GitLab CI |
+| [pat_embedded_in_git_remote_url](pat_embedded_in_git_remote_url.md) | High | Credentials | GitLab CI |
+| [ci_token_triggers_downstream_with_variable_passthrough](ci_token_triggers_downstream_with_variable_passthrough.md) | Medium | Propagation | GitLab CI |
+| [dotenv_artifact_flows_to_privileged_deployment](dotenv_artifact_flows_to_privileged_deployment.md) | High | Propagation | GitLab CI |
 
 ## Severity key
 
@@ -83,7 +107,7 @@ Several rules graduate severity based on context rather than emitting a fixed le
 
 ## Authority invariants
 
-The 17 rules above are taudit's **built-in authority invariants** —
+The 52 rules above are taudit's **built-in authority invariants** —
 declarative properties the authority graph must satisfy. You can extend
 this set with **custom authority invariants**: YAML files loaded with
 `taudit scan --invariants-dir <path>` that evaluate against the same

