@@ -277,8 +277,8 @@ pub fn load_rules_dir(dir: &Path) -> Result<Vec<CustomRule>, Vec<CustomRuleError
     let mut errors = Vec::new();
     for path in entries {
         match fs::read_to_string(&path) {
-            Ok(content) => match serde_yaml::from_str::<CustomRule>(&content) {
-                Ok(rule) => rules.push(rule),
+            Ok(content) => match parse_rules_multi_doc(&content) {
+                Ok(mut parsed) => rules.append(&mut parsed),
                 Err(err) => errors.push(CustomRuleError::YamlParse(path, err)),
             },
             Err(err) => errors.push(CustomRuleError::FileRead(path, err)),
@@ -290,6 +290,25 @@ pub fn load_rules_dir(dir: &Path) -> Result<Vec<CustomRule>, Vec<CustomRuleError
     } else {
         Err(errors)
     }
+}
+
+/// Parse a YAML string containing one or more `CustomRule` documents (separated
+/// by `---`). Single-doc files behave identically to the legacy
+/// `serde_yaml::from_str::<CustomRule>` path. Empty/whitespace-only documents
+/// (e.g. a leading `---` followed by a real doc) are skipped.
+pub fn parse_rules_multi_doc(content: &str) -> Result<Vec<CustomRule>, serde_yaml::Error> {
+    let mut rules = Vec::new();
+    for doc in serde_yaml::Deserializer::from_str(content) {
+        // An empty document deserializes as `Value::Null`; skip those so a
+        // leading `---` or trailing separator doesn't break the load.
+        let value = serde_yaml::Value::deserialize(doc)?;
+        if value.is_null() {
+            continue;
+        }
+        let rule: CustomRule = serde_yaml::from_value(value)?;
+        rules.push(rule);
+    }
+    Ok(rules)
 }
 
 impl NodeMatcher {
@@ -896,6 +915,100 @@ match:
         }
         let (graph, paths) = simple_first_to_untrusted_graph();
         assert_eq!(evaluate_custom_rules(&graph, &paths, &[rule]).len(), 1);
+    }
+
+    // ── Gap A: multi-doc YAML loading ───────────────────────
+
+    #[test]
+    fn multi_doc_yaml_loads_each_document_as_separate_rule() {
+        let yaml = r#"
+id: rule_a
+name: First rule
+severity: high
+category: authority_propagation
+match:
+  source:
+    node_type: secret
+---
+id: rule_b
+name: Second rule
+severity: critical
+category: untrusted_with_authority
+match:
+  sink:
+    trust_zone: untrusted
+---
+id: rule_c
+name: Third rule
+severity: medium
+category: unpinned_action
+"#;
+        let rules = parse_rules_multi_doc(yaml).expect("multi-doc must parse");
+        assert_eq!(rules.len(), 3, "expected 3 rules from 3-doc YAML");
+        assert_eq!(rules[0].id, "rule_a");
+        assert_eq!(rules[1].id, "rule_b");
+        assert_eq!(rules[2].id, "rule_c");
+        assert_eq!(rules[1].severity, Severity::Critical);
+    }
+
+    #[test]
+    fn single_doc_yaml_still_loads_identically() {
+        let yaml = r#"
+id: solo
+name: Solo rule
+severity: high
+category: authority_propagation
+"#;
+        let rules = parse_rules_multi_doc(yaml).expect("single-doc must parse");
+        assert_eq!(rules.len(), 1);
+        assert_eq!(rules[0].id, "solo");
+    }
+
+    #[test]
+    fn multi_doc_with_empty_leading_document_is_skipped() {
+        let yaml = r#"---
+---
+id: only
+name: only
+severity: low
+category: authority_propagation
+"#;
+        let rules = parse_rules_multi_doc(yaml).expect("must parse");
+        assert_eq!(rules.len(), 1);
+        assert_eq!(rules[0].id, "only");
+    }
+
+    #[test]
+    fn load_rules_dir_loads_multi_doc_files() {
+        let tmp =
+            std::env::temp_dir().join(format!("taudit-custom-rules-multi-{}", std::process::id()));
+        fs::create_dir_all(&tmp).unwrap();
+        let path = tmp.join("bundle.yml");
+        fs::write(
+            &path,
+            r#"
+id: a
+name: a
+severity: high
+category: authority_propagation
+---
+id: b
+name: b
+severity: medium
+category: unpinned_action
+---
+id: c
+name: c
+severity: low
+category: authority_propagation
+"#,
+        )
+        .unwrap();
+
+        let rules = load_rules_dir(&tmp).expect("multi-doc file must load");
+        assert_eq!(rules.len(), 3, "expected 3 rules from one bundled file");
+
+        let _ = fs::remove_dir_all(&tmp);
     }
 
     #[test]
