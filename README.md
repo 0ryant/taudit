@@ -1,8 +1,11 @@
 # taudit
 
-Show exactly how secrets and permissions move through your CI/CD pipeline — and where they cross trust boundaries.
+> **CI/CD is an untyped authority system. taudit makes it explicit, inspectable, and enforceable.**
+
+taudit models how authority — secrets, identities, tokens, image trust — propagates through a CI/CD pipeline as a deterministic, typed graph. The graph is the product. Findings, SARIF reports, the terminal scanner, and PR-gate enforcement are all consumers of that graph.
 
 ```
+$ taudit map --format dot .github/workflows/release.yml | dot -Tsvg > release.svg
 $ taudit scan .github/workflows/release.yml
 
 Authority Graph: .github/workflows/release.yml
@@ -27,9 +30,13 @@ MEDIUM  GITHUB_TOKEN (release-artifacts) propagated to actions/checkout@sha acro
 
 ## What it does
 
-taudit builds a directed **authority graph** from your pipeline YAML. Nodes are steps, secrets, identities, and actions. Edges model how authority propagates — which steps can access which secrets, which identities grant which permissions, where data flows across trust boundaries.
+taudit does three things, in this order:
 
-Then it walks the graph looking for:
+1. **Models authority propagation as a deterministic graph.** Typed `NodeKinds` (`Step`, `Secret`, `Identity`, `Image`, `Artifact`), explicit `TrustZones` (`FirstParty`, `ThirdParty`, `Untrusted`), and named `EdgeKinds` (`HasAccessTo`, `Produces`, `Consumes`, `UsesImage`, `DelegatesTo`, `PersistsTo`). Same YAML in, same graph out. See [`docs/authority-graph.md`](docs/authority-graph.md) for the full specification.
+2. **Detects 17 built-in authority invariants** across GitHub Actions, Azure DevOps, and GitLab CI. The graph is what makes the invariants tractable — each rule is a predicate over typed nodes and edges, not a regex over YAML.
+3. **Lets you write custom invariants** via declarative YAML rules (`--rules-dir`), and (in v1.0) gate PR merges with `taudit verify` against an explicit invariant set.
+
+### Built-in invariants
 
 | Rule | Severity | What it catches |
 |---|---|---|
@@ -49,10 +56,38 @@ Then it walks the graph looking for:
 | `variable_group_in_pr_job` | Critical | ADO variable group secrets reachable from a PR-triggered job |
 | `self_hosted_pool_pr_hijack` | Critical | PR pipeline runs on self-hosted agent and checks out the repository |
 | `service_connection_scope_mismatch` | High | Broad-scope ADO service connection reachable from a PR-triggered job |
+| `checkout_self_pr_exposure` | Critical | PR-triggered pipeline checks out the repo, landing attacker-controlled code on the runner |
 
-Run `taudit explain` to list all rules, or `taudit explain <rule>` for full description and remediation guidance.
+Run `taudit explain` to list all invariants, or `taudit explain <rule>` for full description and remediation guidance. Custom YAML invariants are loaded from `--rules-dir <path>` and participate in the same propagation engine — see [`docs/custom-rules.md`](docs/custom-rules.md).
 
 Severity is graduated from real-world signal: constrained identity to SHA-pinned action = Medium. Broad identity to unpinned action = Critical. The tool handles unknowns honestly — if it can't fully resolve the authority graph, it marks it `Partial`, tells you why, and caps findings at High until the graph is complete.
+
+## Stack positioning
+
+taudit is **the graph layer** of a small, composable stack. It is meant to be combined with sibling projects, not extended into them:
+
+- **taudit** — generates the typed authority graph and checks invariants over it.
+- **tsign** — attestation layer (sibling project). Consumes the graph to attach signed claims about which authority paths existed at build time.
+- **axiom** — enforcement brain (sibling project). Consumes graphs and attestations to make merge / deploy decisions across many repos.
+- **CI providers** (GitHub Actions, Azure DevOps, GitLab CI) — substrate. taudit reads their YAML; it does not replace them.
+
+The graph is the contract between these layers. Keeping it stable, versioned, and inspectable is a higher priority than adding new rules. See [`docs/positioning.md`](docs/positioning.md) for the full framing.
+
+## Outputs
+
+The graph is the artifact. Everything else is a view onto it.
+
+| Output | Command | Use case |
+|---|---|---|
+| **Graph export (DOT)** | `taudit map --format dot` | Visualize the authority graph; pipe into Graphviz |
+| **Graph export (JSON)** | `taudit scan --format json` | Programmatic consumption; full graph included in payload |
+| **Map view** | `taudit map` | Human-readable step × authority access table |
+| **Scan findings (terminal)** | `taudit scan` (default) | CI logs, human review |
+| **SARIF** | `taudit scan --format sarif` | GitHub code scanning and other SARIF consumers |
+| **CloudEvents JSONL** | `taudit scan --format cloudevents` | Event-driven pipelines, SIEM ingestion |
+| **Diff** | `taudit diff before.yml after.yml` | Authority changes between two pipeline revisions |
+| **Verify enforcement** | `taudit verify` *(v1.0)* | PR-gate against an explicit invariant set with semver-stable semantics |
+| **Dedicated graph command** | `taudit graph` *(v1.0)* | First-class graph generator separate from scan/map |
 
 ## Install
 
@@ -66,6 +101,32 @@ Or build from source:
 git clone https://github.com/0ryant/taudit.git
 cd taudit
 cargo install --path crates/taudit-cli
+```
+
+## Quickstart
+
+Lead with the graph. Everything else is downstream.
+
+```bash
+# 1. Generate the authority graph as a Graphviz DOT artifact and render it.
+#    (A dedicated `taudit graph` command lands in v1.0; today the graph export
+#    lives behind `taudit map --format dot`.)
+taudit map --format dot .github/workflows/release.yml | dot -Tsvg > release.svg
+
+# 2. Inspect the same graph as a human-readable access table.
+taudit map .github/workflows/release.yml
+
+# 3. Apply the 17 built-in authority invariants and emit findings.
+taudit scan .github/workflows/
+
+# 4. Same scan, machine-readable, with the full graph included in the JSON.
+taudit scan .github/workflows/ --format json > taudit.json
+
+# 5. Load custom invariants from a directory of YAML rule files.
+taudit scan .github/workflows/ --rules-dir .taudit/rules/
+
+# 6. Coming in v1.0 — gate PR merges against an explicit invariant set.
+#    taudit verify .github/workflows/ --policy .taudit/policy.yml
 ```
 
 ## Support
@@ -267,15 +328,17 @@ taudit scan . --ignore-file .taudit/ignore.yml
 
 ## How it works
 
-1. **Parse** — GitHub Actions or Azure DevOps YAML into typed nodes (steps, secrets, identities, images) with trust zone classification (FirstParty, ThirdParty, Untrusted). Platform is auto-detected by default (`--platform auto`); override with `--platform github-actions` or `--platform azure-devops`.
-2. **Build graph** — Directed edges model authority flow: `HasAccessTo`, `Produces`, `Consumes`, `UsesImage`, `DelegatesTo`, `PersistsTo`
-3. **Propagate** — BFS from authority-bearing sources (secrets, identities) through edges, flagging trust boundary crossings
-4. **Analyze** — 17 rules pattern-match against the graph, producing findings with severity, evidence paths, and remediation routing
+1. **Parse** — GitHub Actions, Azure DevOps, or GitLab CI YAML into typed nodes (steps, secrets, identities, images) with trust zone classification (FirstParty, ThirdParty, Untrusted). Platform is auto-detected by default (`--platform auto`); override with `--platform github-actions`, `--platform azure-devops`, or `--platform gitlab-ci`.
+2. **Build graph** — Directed edges model authority flow: `HasAccessTo`, `Produces`, `Consumes`, `UsesImage`, `DelegatesTo`, `PersistsTo`.
+3. **Propagate** — BFS from authority-bearing sources (secrets, identities) through edges, flagging trust boundary crossings.
+4. **Apply invariants** — 17 built-in invariants (plus any custom YAML rules) pattern-match against the graph, producing findings with severity, evidence paths, and remediation routing.
 
 Trust zones are explicit on every node:
 - **FirstParty** — code you own (`run:` steps, local actions)
 - **ThirdParty** — SHA-pinned external actions (immutable code)
 - **Untrusted** — tag-pinned actions, fork PRs, user input
+
+The graph is the artifact; steps 3 and 4 are consumers of it. See [`docs/authority-graph.md`](docs/authority-graph.md) for the typed schema.
 
 ## Outputs
 
@@ -299,17 +362,18 @@ fail loudly on a breaking change.
 ## Architecture
 
 ```
-taudit-core             graph, propagation engine, 17 rules, finding model (no I/O)
-taudit-parse-gha        GitHub Actions YAML → AuthorityGraph
-taudit-parse-ado        Azure DevOps YAML → AuthorityGraph
-taudit-report-terminal  colored terminal reporter
-taudit-report-json      JSON report adapter
-taudit-report-sarif     SARIF 2.1.0 adapter for code scanning platforms
-taudit-sink-cloudevents findings → CloudEvents JSONL event stream
-taudit-cli              composition root (clap, file I/O, wiring)
+taudit-core              graph, propagation engine, 17 invariants, finding model (no I/O)
+taudit-parse-gha         GitHub Actions YAML → AuthorityGraph
+taudit-parse-ado         Azure DevOps YAML → AuthorityGraph
+taudit-parse-gitlab      GitLab CI YAML → AuthorityGraph
+taudit-report-terminal   colored terminal reporter
+taudit-report-json       JSON report adapter
+taudit-report-sarif      SARIF 2.1.0 adapter for code scanning platforms
+taudit-sink-cloudevents  findings → CloudEvents JSONL event stream
+taudit-cli               composition root (clap, file I/O, wiring)
 ```
 
-8 crates, 186 tests, ~8,800 LOC. Ports and adapters — core has zero I/O dependencies.
+Ports and adapters — `taudit-core` has zero I/O dependencies, so the graph is reproducible from YAML in isolation.
 
 ## CI Integration
 
@@ -330,16 +394,9 @@ Exit codes: `0` = no findings above threshold, `1` = findings above threshold.
 - The `taudit` CLI crate version is the product/app version customers see.
 - Use `just versions` to print current crate versions.
 
-## Output formats
+## Report contract
 
-| Format | Flag | Use case |
-|---|---|---|
-| Terminal | `--format terminal` (default) | Human review, CI logs |
-| JSON | `--format json` | Programmatic consumption, full graph included, top-level `schema_version` |
-| SARIF | `--format sarif` | GitHub code scanning and SARIF consumers |
-| CloudEvents JSONL | `--format cloudevents` | Event-driven pipelines, SIEM ingestion |
-
-The stable JSON report contract is currently `schema_version: "v1"` and is defined in `contracts/schemas/taudit-report.schema.json`.
+The full output catalogue is in [Outputs](#outputs) above. The stable JSON report contract is currently `schema_version: "v1"` and lives at [`contracts/schemas/taudit-report.schema.json`](contracts/schemas/taudit-report.schema.json). A versioned graph schema (separate from the report contract) lands in v1.0 and will be the contract that downstream tools — tsign, axiom, anything else — depend on.
 
 ## What taudit is not
 
@@ -348,7 +405,7 @@ The stable JSON report contract is currently `schema_version: "v1"` and is defin
 - Not a policy engine (use [checkov](https://github.com/bridgecrewio/checkov))
 - Not a runtime monitor — taudit reads pipeline YAML, offline, always
 
-taudit models a finite set of authority primitives. When every primitive is captured and every failure class has rules, the model is complete. Unlike CVE databases, this problem has an end.
+taudit models a finite set of authority primitives. When every primitive is captured and every failure class has invariants, the model is complete. Unlike CVE databases, this problem has an end. See [`docs/positioning.md`](docs/positioning.md) for why this matters and how taudit fits into a wider stack.
 
 ## License
 
