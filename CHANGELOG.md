@@ -2,6 +2,19 @@
 
 All notable changes to this project will be documented in this file.
 
+## v1.0.1 — 2026-04-26
+
+> Competitive parity release: snapshot regression suite, multi-OS CI, SLSA L3 provenance, and parser fuzz harnesses.
+
+### Highlights
+
+- **76 cargo-insta snapshots**: Per-finding regression snapshots across GHA, ADO, and GitLab parsers. Any change to rule IDs, severities, fingerprints, or message copy fails CI explicitly. Gate: `cargo insta test --unreferenced reject`.
+- **Multi-OS CI matrix**: `cargo test --workspace` now passes on ubuntu, macos, and windows on every PR (`test-matrix` job with `fail-fast: false`).
+- **SLSA L3 provenance**: Every release now attaches SLSA L3 provenance via `slsa-framework/slsa-github-generator`. Verifiable with `slsa-verifier verify-artifact`.
+- **Parser fuzz harnesses**: Three `cargo-fuzz` targets (`parse_gha`, `parse_ado`, `parse_gitlab`) with 10 corpus seed files. CI smoke-runs each for 10 s on push to main.
+- **cargo-mutants gate**: Informational mutation coverage report for `taudit-core` runs on every push to main.
+- **572 tests**: 76 new snapshot assertions on top of the v1.0.0 baseline.
+
 ## v1.0.0 — 2026-04-26
 
 > Stable release. CLI contract, graph schema, and invariant DSL are now stable. 61 built-in rules across GitHub Actions, Azure DevOps, and GitLab CI. 540 tests.
