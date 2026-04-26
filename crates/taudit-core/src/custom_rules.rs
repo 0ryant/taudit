@@ -31,6 +31,13 @@ pub struct MatchSpec {
     pub sink: NodeMatcher,
     #[serde(default)]
     pub path: PathMatcher,
+    /// Graph-level metadata predicate. Applied to `AuthorityGraph::metadata`
+    /// (e.g. `META_TRIGGER`, `META_REPOSITORIES`). When present, ALL conditions
+    /// must hold *in addition to* source/sink/path. Reuses the same typed
+    /// predicate language as node-level metadata (`equals`, `not_equals`,
+    /// `contains`, `in`, plus `not:` negation).
+    #[serde(default)]
+    pub graph_metadata: MetadataMatcher,
 }
 
 /// A scalar-or-list helper. Lets YAML write `node_type: secret` (single value)
@@ -367,6 +374,14 @@ pub fn evaluate_custom_rules(
     let mut findings = Vec::new();
 
     for rule in rules {
+        // Graph-level metadata gate: if the predicate doesn't hold against
+        // `graph.metadata`, no path in this graph can match this rule. Skip
+        // the path loop entirely. An empty `graph_metadata:` (the common case
+        // for rules that don't care about graph-level state) trivially matches.
+        if !rule.match_spec.graph_metadata.matches(&graph.metadata) {
+            continue;
+        }
+
         for path in paths {
             let source_node = match graph.node(path.source) {
                 Some(n) => n,
@@ -466,6 +481,7 @@ mod tests {
                     not: None,
                 },
                 path: PathMatcher::default(),
+                graph_metadata: MetadataMatcher::default(),
             },
         };
 
@@ -494,6 +510,7 @@ mod tests {
                 },
                 sink: NodeMatcher::default(),
                 path: PathMatcher::default(),
+                graph_metadata: MetadataMatcher::default(),
             },
         };
 
@@ -570,6 +587,7 @@ match:
                 },
                 sink: NodeMatcher::default(),
                 path: PathMatcher::default(),
+                graph_metadata: MetadataMatcher::default(),
             },
         };
         assert_eq!(evaluate_custom_rules(&g, &paths, &[hit]).len(), 1);
@@ -597,6 +615,7 @@ match:
                 },
                 sink: NodeMatcher::default(),
                 path: PathMatcher::default(),
+                graph_metadata: MetadataMatcher::default(),
             },
         };
         assert!(evaluate_custom_rules(&g, &paths, &[miss]).is_empty());
@@ -914,6 +933,132 @@ match:
             other => panic!("expected list form, got {other:?}"),
         }
         let (graph, paths) = simple_first_to_untrusted_graph();
+        assert_eq!(evaluate_custom_rules(&graph, &paths, &[rule]).len(), 1);
+    }
+
+    // ── Gap B: graph-level metadata predicates ──────────────
+
+    /// Builds a graph with one PR-context source/sink path and lets tests set
+    /// graph-level metadata to pressure-test the new predicate.
+    fn pr_context_graph_with_meta(meta: &[(&str, &str)]) -> (AuthorityGraph, Vec<PropagationPath>) {
+        let mut g = AuthorityGraph::new(source());
+        let mut secret_meta = HashMap::new();
+        secret_meta.insert("variable_group".to_string(), "true".to_string());
+        let secret = g.add_node_with_metadata(
+            NodeKind::Secret,
+            "VG_SECRET",
+            TrustZone::FirstParty,
+            secret_meta,
+        );
+        let step = g.add_node(NodeKind::Step, "use", TrustZone::FirstParty);
+        let untrusted = g.add_node(NodeKind::Step, "third-party", TrustZone::Untrusted);
+        g.add_edge(step, secret, crate::graph::EdgeKind::HasAccessTo);
+        g.add_edge(step, untrusted, crate::graph::EdgeKind::DelegatesTo);
+        for (k, v) in meta {
+            g.metadata.insert((*k).to_string(), (*v).to_string());
+        }
+        let paths = propagation_analysis(&g, DEFAULT_MAX_HOPS);
+        (g, paths)
+    }
+
+    #[test]
+    fn graph_metadata_equals_matches_when_value_present() {
+        let (graph, paths) = pr_context_graph_with_meta(&[("trigger", "pr")]);
+        let yaml = r#"
+id: r
+name: r
+severity: high
+category: authority_propagation
+match:
+  graph_metadata:
+    trigger:
+      equals: pr
+  source:
+    metadata:
+      variable_group: "true"
+"#;
+        let rule: CustomRule = serde_yaml::from_str(yaml).expect("yaml parses");
+        assert_eq!(evaluate_custom_rules(&graph, &paths, &[rule]).len(), 1);
+    }
+
+    #[test]
+    fn graph_metadata_in_matches_any_of_listed_values() {
+        let (graph, paths) = pr_context_graph_with_meta(&[("trigger", "merge_request_event")]);
+        let yaml = r#"
+id: r
+name: r
+severity: high
+category: authority_propagation
+match:
+  graph_metadata:
+    trigger:
+      in: [pull_request_target, pr, merge_request_event]
+"#;
+        let rule: CustomRule = serde_yaml::from_str(yaml).expect("yaml parses");
+        assert!(!evaluate_custom_rules(&graph, &paths, &[rule]).is_empty());
+    }
+
+    #[test]
+    fn graph_metadata_negation_excludes_unwanted_trigger() {
+        // graph trigger=push, rule wants "not push" → must NOT fire.
+        let (graph, paths) = pr_context_graph_with_meta(&[("trigger", "push")]);
+        let yaml = r#"
+id: r
+name: r
+severity: high
+category: authority_propagation
+match:
+  graph_metadata:
+    not:
+      trigger:
+        equals: push
+"#;
+        let rule: CustomRule = serde_yaml::from_str(yaml).expect("yaml parses");
+        assert!(evaluate_custom_rules(&graph, &paths, &[rule]).is_empty());
+
+        // Inverse: trigger=pr, rule wants "not push" → fires.
+        let (graph2, paths2) = pr_context_graph_with_meta(&[("trigger", "pr")]);
+        let rule2: CustomRule = serde_yaml::from_str(yaml).expect("yaml parses");
+        assert!(!evaluate_custom_rules(&graph2, &paths2, &[rule2]).is_empty());
+    }
+
+    #[test]
+    fn graph_metadata_missing_key_does_not_match_no_crash() {
+        // Graph has no `trigger` metadata at all. `equals: pr` requires the key
+        // to be present with that value → no findings, no panic.
+        let (graph, paths) = pr_context_graph_with_meta(&[]);
+        assert!(!graph.metadata.contains_key("trigger"));
+        let yaml = r#"
+id: r
+name: r
+severity: high
+category: authority_propagation
+match:
+  graph_metadata:
+    trigger:
+      equals: pr
+"#;
+        let rule: CustomRule = serde_yaml::from_str(yaml).expect("yaml parses");
+        let findings = evaluate_custom_rules(&graph, &paths, &[rule]);
+        assert!(findings.is_empty(), "missing key must yield no findings");
+    }
+
+    #[test]
+    fn rules_without_graph_metadata_remain_backward_compatible() {
+        // No `graph_metadata:` block → trivially matches regardless of graph
+        // state. This is the v0.4-v0.9 behaviour and must keep working.
+        let (graph, paths) = pr_context_graph_with_meta(&[("trigger", "anything")]);
+        let yaml = r#"
+id: r
+name: r
+severity: high
+category: authority_propagation
+match:
+  source:
+    metadata:
+      variable_group: "true"
+"#;
+        let rule: CustomRule = serde_yaml::from_str(yaml).expect("yaml parses");
         assert_eq!(evaluate_custom_rules(&graph, &paths, &[rule]).len(), 1);
     }
 
