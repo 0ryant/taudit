@@ -359,6 +359,17 @@ Every JSON-shaped output carries a top-level `schema_version` (and, for
 new outputs, `schema_uri`) so consumers can pin to a major version and
 fail loudly on a breaking change.
 
+Every finding emitted by taudit carries a stable cross-run **fingerprint**
+that is byte-identical across SARIF (`partialFingerprints["taudit/v1"]`
+and `partialFingerprints["primaryLocationLineHash"]`), JSON
+(`findings[].fingerprint`), and CloudEvents
+(extension attribute `tauditfindingfingerprint`). SIEM and code-scanning
+consumers join on this value to deduplicate findings across re-runs and
+to preserve user-managed state (suppressions, dismissals). See
+[`docs/finding-fingerprint.md`](docs/finding-fingerprint.md) for the
+contract, the formula, and the SARIF baseline-mapping integration with
+GitHub Code Scanning.
+
 ## Architecture
 
 ```

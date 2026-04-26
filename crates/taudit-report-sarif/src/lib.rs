@@ -580,8 +580,20 @@ struct SarifResultProperties {
 
 #[derive(Serialize)]
 struct SarifPartialFingerprints {
+    /// SARIF-canonical key. GitHub Code Scanning's baseline-mapping
+    /// algorithm checks this first to decide "same finding as last run?".
+    /// Preserves UI-side state (suppressions, dismissals) across re-runs.
     #[serde(rename = "primaryLocationLineHash")]
     primary_location_line_hash: String,
+    /// Tool-namespaced, version-tagged handle. Byte-identical to
+    /// `primaryLocationLineHash` today; the version suffix lets a future
+    /// fingerprint-formula bump (v2) signal "old suppressions don't carry
+    /// over" via key change rather than a silent value change. Recommended
+    /// handle for SIEMs and external suppression DBs that aren't bound to
+    /// SARIF's specific baseline-mapping semantics.
+    /// See `docs/finding-fingerprint.md` § "SARIF baseline integration".
+    #[serde(rename = "taudit/v1")]
+    taudit_v1: String,
 }
 
 #[derive(Serialize)]
@@ -782,7 +794,13 @@ fn finding_to_result(
         }],
         properties: SarifResultProperties { security_severity },
         partial_fingerprints: SarifPartialFingerprints {
-            primary_location_line_hash: fingerprint,
+            // Both keys carry the SAME 16-hex value today. They diverge only
+            // when the fingerprint formula bumps to v2 in a future major —
+            // at which point the second key becomes `taudit/v2` and old
+            // suppressions stored against `taudit/v1` correctly fail to
+            // carry over. See docs/finding-fingerprint.md.
+            primary_location_line_hash: fingerprint.clone(),
+            taudit_v1: fingerprint,
         },
     }
 }
@@ -975,6 +993,21 @@ mod tests {
             .unwrap();
         assert_eq!(fp.len(), 16, "fingerprint should be 16 hex chars");
         assert!(fp.chars().all(|c| c.is_ascii_hexdigit()));
+
+        // The tool-namespaced `taudit/v1` key MUST also be present and
+        // byte-identical to `primaryLocationLineHash` today. The version
+        // suffix is what signals "old suppressions don't carry over" if
+        // a future major bumps the fingerprint formula.
+        // See docs/finding-fingerprint.md § "SARIF baseline integration".
+        let tv1 = r["partialFingerprints"]["taudit/v1"]
+            .as_str()
+            .expect("partialFingerprints must include taudit/v1");
+        assert_eq!(
+            tv1, fp,
+            "taudit/v1 must be byte-identical to primaryLocationLineHash within the v1 major"
+        );
+        assert_eq!(tv1.len(), 16);
+        assert!(tv1.chars().all(|c| c.is_ascii_hexdigit()));
     }
 
     #[test]

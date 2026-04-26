@@ -115,3 +115,67 @@ attribute is therefore named `tauditfindingfingerprint` rather than
 the more readable `taudit-finding-fingerprint` or
 `taudit_finding_fingerprint`. This matches the existing
 `tauditcompleteness` extension on the same envelope.
+
+## SARIF baseline integration (GitHub Code Scanning)
+
+SARIF consumers — most notably **GitHub Code Scanning** — use the
+`partialFingerprints` map to track findings across runs and to
+preserve user-managed state (suppressions, dismissals, "won't fix"
+status) when the same logical finding appears in a later scan.
+
+taudit emits its fingerprint into `partialFingerprints` under a
+versioned key:
+
+```json
+"partialFingerprints": {
+  "primaryLocationLineHash": "3f7c2a8b9d1e4f0c",
+  "taudit/v1": "3f7c2a8b9d1e4f0c"
+}
+```
+
+`primaryLocationLineHash` is the SARIF-canonical key that GitHub
+Code Scanning checks first. `taudit/v1` is a tool-namespaced key that
+gives consumers a stable, version-tagged handle independent of the
+SARIF baseline-mapping algorithm. Both values are byte-identical to
+the JSON `findings[].fingerprint` and CloudEvents
+`tauditfindingfingerprint` (see the table at the top of this doc).
+
+**How GitHub Code Scanning uses this:**
+
+* When a SARIF result has the same `partialFingerprints` value as a
+  result from a previous run, GitHub treats it as the same finding —
+  preserving suppressions, dismiss-as-false-positive state, and any
+  in-UI annotations the security team has applied.
+* When a result's `partialFingerprints` value is *new*, GitHub opens
+  it as a fresh alert.
+* When a previously-seen `partialFingerprints` value is absent from a
+  new run, GitHub closes the corresponding alert.
+
+This means: if the security team dismisses a finding in the GitHub UI
+as a known false positive, that dismissal survives every subsequent
+scan as long as the underlying issue's fingerprint is unchanged. No
+need for an external suppression DB for the GitHub-only flow.
+
+**Formula bumps and the `taudit/v1` key:**
+
+If a future major release of taudit changes the fingerprint algorithm
+(e.g. v2.0.0 narrows what "same finding" means by including the
+job/step name in the hash inputs), the second key in
+`partialFingerprints` becomes `taudit/v2`. Old `taudit/v1`
+suppressions stored in GitHub will no longer match — and that is the
+correct behaviour. A formula bump is a deliberate signal that the
+dedup semantic itself changed; carrying suppressions forward across
+that boundary would silently hide findings that the new algorithm
+considers distinct.
+
+The SARIF-canonical `primaryLocationLineHash` key tracks the
+*current* fingerprint regardless of which `taudit/vN` is active, so
+the GitHub baseline-mapping behaviour itself doesn't break — just the
+contract of "v1 suppressions persist forever" is intentionally
+voided at the major-version boundary, with the version key change as
+the visible signal.
+
+**For consumers other than GitHub Code Scanning:** the `taudit/vN`
+key in `partialFingerprints` is the recommended handle. It is
+stable, tool-owned, version-tagged, and not subject to SARIF spec
+re-interpretations of `primaryLocationLineHash` semantics.
