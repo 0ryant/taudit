@@ -36,6 +36,15 @@ pub struct CloudEventV1 {
     /// attribute names must be lowercase with no separators — hence
     /// `tauditfindingfingerprint` rather than the dashed/snaked form.
     pub tauditfindingfingerprint: String,
+    /// CI/CD platform of the underlying pipeline: `"ado"`, `"gha"`, or
+    /// `"gitlab"`. Lets SIEM correlation rules route events by platform
+    /// without re-parsing the `subject` (file path). Source: the resolved
+    /// `Platform` variant for the scanned file, surfaced via
+    /// `graph.metadata["platform"]`. Optional in v1 for backward-compat;
+    /// always emitted by current taudit when the parser stamped the
+    /// metadata key.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub tauditplatform: Option<String>,
     /// Shared correlation key for a single operator flow.
     pub correlationid: String,
     /// Repository that emitted the event.
@@ -117,6 +126,18 @@ fn finding_to_event(
         taudit_core::graph::AuthorityCompleteness::Unknown => "unknown",
     };
 
+    // Surface the resolved CI/CD platform as an extension attribute when the
+    // parser stamped `metadata["platform"]`. Permitted values: "ado", "gha",
+    // "gitlab". Anything else is dropped — better to omit than to ship a
+    // value SIEM rules can't pattern-match on.
+    let tauditplatform = graph
+        .metadata
+        .get("platform")
+        .and_then(|v| match v.as_str() {
+            "ado" | "gha" | "gitlab" => Some(v.clone()),
+            _ => None,
+        });
+
     CloudEventV1 {
         specversion: "1.0".into(),
         id: uuid::Uuid::new_v4().to_string(),
@@ -128,6 +149,7 @@ fn finding_to_event(
         data: Some(data),
         tauditcompleteness: Some(completeness_str.into()),
         tauditfindingfingerprint: compute_fingerprint(finding, graph),
+        tauditplatform,
         correlationid: correlation_id.to_string(),
         provenancerepo: PROVENANCE_REPO.into(),
         provenanceproducer: PROVENANCE_PRODUCER.into(),
@@ -494,6 +516,90 @@ mod tests {
         CloudEventsJsonlSink.emit(&mut buf, &graph, &[]).unwrap();
 
         assert!(buf.is_empty(), "no findings = no output");
+    }
+
+    #[test]
+    fn platform_metadata_surfaces_as_extension_attribute() {
+        // taudit-cli stamps `graph.metadata["platform"]` to the canonical
+        // short token after resolving the parser. The sink should mirror it
+        // verbatim onto the CloudEvent envelope so SIEMs can route by
+        // platform without re-parsing the subject.
+        for token in &["ado", "gha", "gitlab"] {
+            let mut graph = AuthorityGraph::new(test_source());
+            graph
+                .metadata
+                .insert("platform".to_string(), (*token).to_string());
+            let findings = vec![test_finding(
+                FindingCategory::AuthorityPropagation,
+                Severity::High,
+            )];
+
+            let mut buf = Vec::new();
+            CloudEventsJsonlSink
+                .emit(&mut buf, &graph, &findings)
+                .unwrap();
+
+            let event: serde_json::Value =
+                serde_json::from_str(std::str::from_utf8(&buf).unwrap().lines().next().unwrap())
+                    .unwrap();
+            assert_eq!(
+                event["tauditplatform"], *token,
+                "platform metadata must surface verbatim on the envelope"
+            );
+        }
+    }
+
+    #[test]
+    fn missing_platform_metadata_omits_extension_attribute() {
+        // Backward-compat: events for graphs that lack the metadata key
+        // simply omit the attribute. SIEM consumers see absence, not "null".
+        let graph = AuthorityGraph::new(test_source());
+        assert!(!graph.metadata.contains_key("platform"));
+        let findings = vec![test_finding(
+            FindingCategory::AuthorityPropagation,
+            Severity::High,
+        )];
+
+        let mut buf = Vec::new();
+        CloudEventsJsonlSink
+            .emit(&mut buf, &graph, &findings)
+            .unwrap();
+
+        let event: serde_json::Value =
+            serde_json::from_str(std::str::from_utf8(&buf).unwrap().lines().next().unwrap())
+                .unwrap();
+        assert!(
+            event.get("tauditplatform").is_none(),
+            "absent metadata must not emit the attribute (not even as null)"
+        );
+    }
+
+    #[test]
+    fn unrecognised_platform_value_is_dropped() {
+        // Defence-in-depth: a metadata key written by some future code path
+        // with a non-canonical value should not leak through. SIEM rules
+        // pattern-match on the closed enum {ado,gha,gitlab}.
+        let mut graph = AuthorityGraph::new(test_source());
+        graph
+            .metadata
+            .insert("platform".to_string(), "circleci".to_string());
+        let findings = vec![test_finding(
+            FindingCategory::AuthorityPropagation,
+            Severity::High,
+        )];
+
+        let mut buf = Vec::new();
+        CloudEventsJsonlSink
+            .emit(&mut buf, &graph, &findings)
+            .unwrap();
+
+        let event: serde_json::Value =
+            serde_json::from_str(std::str::from_utf8(&buf).unwrap().lines().next().unwrap())
+                .unwrap();
+        assert!(
+            event.get("tauditplatform").is_none(),
+            "unrecognised platform tokens must be dropped, not surfaced"
+        );
     }
 
     #[test]

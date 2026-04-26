@@ -431,6 +431,19 @@ impl Platform {
             Platform::GitLab => "gitlab-ci",
         }
     }
+
+    /// Canonical short token stamped into `graph.metadata["platform"]` and
+    /// surfaced as the CloudEvents `tauditplatform` extension attribute.
+    /// Returns `None` for the abstract `Auto` variant — callers must always
+    /// resolve to a concrete platform first.
+    fn metadata_token(&self) -> Option<&'static str> {
+        match self {
+            Platform::Auto => None,
+            Platform::GithubActions => Some("gha"),
+            Platform::AzureDevOps => Some("ado"),
+            Platform::GitLab => Some("gitlab"),
+        }
+    }
 }
 
 /// Detect the CI/CD platform from YAML content by inspecting top-level mapping keys.
@@ -939,6 +952,10 @@ fn cmd_scan(opts: ScanOpts) -> Result<()> {
 
     for tagged_path in &resolved {
         let path = tagged_path.path();
+        // Resolved (concrete) platform for THIS file. Threaded back from the
+        // per-file branches so we can stamp `graph.metadata["platform"]`
+        // regardless of whether `--platform auto` was used.
+        let mut resolved_for_file: Platform = platform.clone();
         let graph = if path.as_os_str() == "-" {
             let mut content = String::new();
             use std::io::Read;
@@ -950,6 +967,7 @@ fn cmd_scan(opts: ScanOpts) -> Result<()> {
             if platform == Platform::Auto {
                 let resolved_platform = resolve_platform(&platform, &content);
                 let per_file_parser = make_parser(&resolved_platform);
+                resolved_for_file = resolved_platform;
                 parse_content(per_file_parser.as_ref(), content, "<stdin>".to_string())?
             } else {
                 parse_content(parser, content, "<stdin>".to_string())?
@@ -975,6 +993,7 @@ fn cmd_scan(opts: ScanOpts) -> Result<()> {
             let parse_result = if platform == Platform::Auto {
                 let resolved_platform = resolve_platform(&platform, &content);
                 let per_file_parser = make_parser(&resolved_platform);
+                resolved_for_file = resolved_platform;
                 parse_content(
                     per_file_parser.as_ref(),
                     content,
@@ -997,6 +1016,18 @@ fn cmd_scan(opts: ScanOpts) -> Result<()> {
                 },
             }
         };
+
+        // Stamp the resolved CI/CD platform into graph metadata so downstream
+        // sinks (CloudEvents) can route by platform without re-parsing the
+        // file path. Use the canonical short token: "ado", "gha", "gitlab".
+        // Skip when `Auto` somehow survived (no content to detect against).
+        let mut graph = graph;
+        if let Some(token) = resolved_for_file.metadata_token() {
+            graph
+                .metadata
+                .entry("platform".to_string())
+                .or_insert_with(|| token.to_string());
+        }
 
         if graph.completeness == taudit_core::graph::AuthorityCompleteness::Partial
             || graph.completeness == taudit_core::graph::AuthorityCompleteness::Unknown
