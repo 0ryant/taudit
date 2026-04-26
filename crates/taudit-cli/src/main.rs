@@ -123,11 +123,15 @@ enum Cli {
         #[arg(long, short = 'o')]
         output: Option<PathBuf>,
 
-        /// Directory containing custom rule YAML files (`*.yml`, `*.yaml`).
-        /// Each file defines a single rule that fires on propagation paths
-        /// matching its source/sink/path predicates.
-        #[arg(long)]
-        rules_dir: Option<PathBuf>,
+        /// Directory containing Authority Invariant YAML files (`*.yml`,
+        /// `*.yaml`). Each file defines a single invariant that fires on
+        /// propagation paths matching its source/sink/path predicates.
+        ///
+        /// Accepts the deprecated alias `--rules-dir` for backwards
+        /// compatibility (slated for removal in v1.0). Using the alias
+        /// emits a one-shot stderr deprecation warning.
+        #[arg(long, alias = "rules-dir")]
+        invariants_dir: Option<PathBuf>,
     },
 
     /// Show authority map — which steps access which secrets/identities
@@ -391,7 +395,7 @@ struct ScanOpts {
     log_dir: Option<PathBuf>,
     platform: Platform,
     output: Option<PathBuf>,
-    rules_dir: Option<PathBuf>,
+    invariants_dir: Option<PathBuf>,
 }
 
 #[derive(Clone)]
@@ -439,7 +443,7 @@ fn run() -> Result<()> {
             log_dir,
             platform,
             output,
-            rules_dir,
+            invariants_dir,
         } => {
             // Color is on by default — CI log viewers (GHA, ADO) render ANSI from piped stdout.
             // Disable only when --no-color is passed or the NO_COLOR env var is set (no-color.org).
@@ -466,7 +470,7 @@ fn run() -> Result<()> {
                 log_dir,
                 platform,
                 output,
-                rules_dir,
+                invariants_dir,
             })
         }
         Cli::Completions { shell } => {
@@ -652,13 +656,27 @@ fn cmd_scan(opts: ScanOpts) -> Result<()> {
         log_dir,
         platform,
         output,
-        rules_dir,
+        invariants_dir,
     } = opts;
 
-    // Load custom rules up front so a bad --rules-dir fails before we touch
-    // any pipeline files. Errors are written to stderr in full and the process
-    // exits non-zero — never panic, and never silently ignore.
-    let custom_rules = match rules_dir.as_ref() {
+    // Deprecation warning: --rules-dir was renamed to --invariants-dir as
+    // part of the v0.7 Authority Invariants rebrand. The old form is kept
+    // as a clap alias and will be removed in v1.0. Detect which spelling
+    // the user typed by scanning argv directly — clap's derive parser
+    // doesn't expose that info on a derived enum field.
+    if invariants_dir.is_some()
+        && std::env::args().any(|a| a == "--rules-dir" || a.starts_with("--rules-dir="))
+    {
+        eprintln!(
+            "WARNING: --rules-dir is deprecated and will be removed in a future release (target: v1.0). Use --invariants-dir instead. See docs/authority-invariants.md."
+        );
+    }
+
+    // Load custom invariants up front so a bad --invariants-dir fails
+    // before we touch any pipeline files. Errors are written to stderr in
+    // full and the process exits non-zero — never panic, and never silently
+    // ignore.
+    let custom_rules = match invariants_dir.as_ref() {
         Some(dir) => match taudit_core::custom_rules::load_rules_dir(dir) {
             Ok(rules) => rules,
             Err(errors) => {
