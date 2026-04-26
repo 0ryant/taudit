@@ -1,7 +1,7 @@
 [package]
 name = "taudit-parse-ado"
 description = "Azure DevOps YAML pipeline to AuthorityGraph parser"
-version = "0.9.0"
+version = "0.9.1"
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
@@ -11,7 +11,7 @@ keywords.workspace = true
 categories.workspace = true
 
 [dependencies]
-taudit-core = { version = "0.9.0", path = "../taudit-core" }
+taudit-core = { version = "0.9.1", path = "../taudit-core" }
 serde = { workspace = true }
 serde_json = { workspace = true }
 serde_yaml = { workspace = true }

@@ -2,7 +2,7 @@
 
 Three horizons. Each is a superset of the previous.
 
-**Current state (v0.9.0):** 9 crates, ~300 tests, 27 built-in authority invariants + custom YAML invariant DSL (negation, typed metadata predicates, multi-value selectors), 3 parsers (GHA + ADO + GitLab CI), 9 commands (scan, verify, graph, map, diff, invariants, explain, version, completions), 4 output formats (terminal, JSON, CloudEvents JSONL, SARIF) + Graphviz DOT. v0.9.0 ships as the v1.0 release candidate — CLI contract, graph schema (`schemas/authority-graph.v1.json`), and invariant DSL are intended to be stable. Published to crates.io.
+**Current state (v0.9.1):** 9 crates, 350 tests, 32 built-in authority invariants + custom YAML invariant DSL (negation, typed metadata predicates, multi-value selectors, `graph_metadata:`, `standalone:`, multi-doc YAML), 3 parsers (GHA + ADO + GitLab CI), 9 commands (scan, verify, graph, map, diff, invariants, explain, version, completions), 4 output formats (terminal, JSON, CloudEvents JSONL, SARIF) + Graphviz DOT. Stable finding fingerprint (SHA-256) parity across all output formats. Reference consumers in Python/Go/TypeScript at `examples/consumers/`. Stack integration specs at `docs/integrations/`. v0.9.x ships as the v1.0 release candidate line — CLI contract, graph schema (`schemas/authority-graph.v1.json`), and invariant DSL are intended to be stable. Published to crates.io.
 
 **Effort key:** S = hours, M = days, L = week+
 

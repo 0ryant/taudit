@@ -2,6 +2,99 @@
 
 All notable changes to this project will be documented in this file.
 
+## v0.9.1 — 2026-04-26
+
+> Patch release. Same RC-for-v1.0 framing as v0.9.0. Adds 5 new authority
+> invariants, hardens the finding-fingerprint mechanism, ships reference
+> consumers + stack integration specs, expands the starter invariant
+> library, adds a Criterion benchmark suite, and tightens CI hygiene.
+
+### Added — 5 new authority invariants
+
+- **`pr_trigger_with_floating_action_ref`** (Critical, Privilege+Supply Chain) — the conjunction of `pull_request_target` / `issue_comment` / `workflow_run` trigger AND a non-SHA-pinned action use. Compromised action default branch yields full repo write on the target. Fires 83× across vuejs/core, svelte, grafana, neovim, pytorch in our 960-file GHA corpus — most-impactful new rule. Neither `risky_trigger_with_authority` nor `unpinned_action` catches the intersection alone.
+- **`runtime_script_fetched_from_floating_url`** (High, Injection) — `run:` block does `curl <url> | sh` / `wget … | bash` / `bash <(curl …)` where the URL points to a mutable branch ref.
+- **`untrusted_api_response_to_env_sink`** (High, Injection) — workflow captures external API value (`gh api`, `curl api.github.com`) into `$GITHUB_ENV`/`$GITHUB_OUTPUT`/`$GITHUB_PATH`. Poisoned API field injects environment variables into every subsequent step.
+- **`pr_build_pushes_image_with_floating_credentials`** (High, Supply Chain) — PR-triggered workflow uses non-SHA-pinned container-registry login action holding registry creds.
+- **`template_repo_ref_is_feature_branch`** (High, Supply Chain, ADO-only) — `resources.repositories[]` pinned to a feature/topic/dev branch (anything outside main/master/release/hotfix). Strictly stronger signal than `template_extends_unpinned_branch`; co-fires.
+- **`terraform_output_via_setvariable_shell_expansion`** (High, Injection, ADO) — two-step ADO chain: inline script captures `terraform output`, emits `##vso[task.setvariable]`, then a subsequent step expands `$(X)` in shell-expansion position. The setvariable hop launders attacker-controlled remote-backend Terraform state through pipeline-variable space.
+
+### Added — Authority Invariant DSL extensions
+
+- **Multi-document YAML loading** in `crates/taudit-core/src/custom_rules.rs` — multiple invariants per file via standard `---` separators.
+- **`graph_metadata:` predicate** — match against graph-level metadata (`META_TRIGGER`, `META_PERMISSIONS`, etc.) so invariants can express "in PR context AND with broad identity" cleanly. Closes the v1.0-blocker DSL gap flagged by the strategic ratification council.
+- **`standalone:` predicate** — match a single node's shape without requiring a propagation path (e.g. "any Image without `has_digest: true`"). Image nodes are now valid sinks.
+- All grammar additions are backward-compatible. `cmd_invariants_list` updated to use the multi-doc loader (drive-by fix discovered by starter library expansion).
+
+### Added — Stable finding fingerprint surface
+
+- **Fingerprint computation moved to `taudit-core`** (`compute_fingerprint(&Finding, &AuthorityGraph) -> String`). Replaces the previous `std::hash::DefaultHasher` (which Rust explicitly does not stabilize across compiler versions — latent v1.0 stability bug).
+- **SHA-256 truncated to 16 hex chars.** Canonical input: `v1\x1frule={id}\x1ffile={path}\x1fcategory={snake}\x1fnodes={root_authority OR sorted_unique_node_names}`.
+- **Surfaces in all three output formats:** SARIF `partialFingerprints[<key>]`, JSON `findings[].fingerprint`, CloudEvents `tauditfindingfingerprint` extension attribute. Schema bumps in `contracts/schemas/taudit-report.schema.json` and `contracts/schemas/taudit-cloudevent-finding-v1.schema.json`.
+- **Per-hop findings against the same authority collapse to one fingerprint** — one secret + four hops = one suppression key. Implements the blue team's "cluster authority_propagation" recommendation as a side effect.
+- 8 new tests including cross-format parity (SARIF/JSON/CloudEvents fingerprints byte-identical for the same finding).
+
+### Added — Reference consumers (`examples/consumers/`)
+
+- **Python** (`blast_radius.py`, 98 lines, stdlib only) — ranks Secret nodes by transitive blast radius.
+- **Go** (`main.go`, 133 lines, stdlib only) — finds OIDC identities reaching ThirdParty steps (cross-trust OIDC propagation).
+- **TypeScript** (`find-cycles.ts`, 137 lines, Deno stdlib) — Tarjan SCC for authority cycle detection.
+- Closes the strategic ratification council's "schema needs a reference consumer or it's a liability" critique. The v1 graph schema now has 3 second users.
+
+### Added — Stack integration specs (`docs/integrations/`)
+
+- **`tsign-consumer.md`** — proposed in-toto predicate `https://taudit.dev/attestations/authority-graph/v0.1` for sibling project tsign to attest authority graphs.
+- **`axiom-consumer.md`** — proposed cross-repo decision schema `decision_schema_version: "0.1.0"` (allow/block/flag_for_review with attestation chain).
+- **`index.md`** — overview of the 3-layer stack (taudit graph → tsign attest → axiom enforce).
+
+### Added — Starter invariant library expansion (`invariants/starter/`)
+
+- 7 new invariant files demonstrating every v0.9.0 DSL feature (`graph_metadata:`, `standalone:`, `not:`, typed metadata, multi-value lists, multi-doc YAML).
+- `bundled-strict-policy.yml` shows multi-doc syntax (3 invariants in one file).
+- Updated README with feature-coverage table and a "Choosing your first invariant" guide keyed to org type.
+- 15 custom + 32 built-in = 47 invariants when starter library is loaded.
+
+### Added — Criterion benchmark suite (`crates/*/benches/`)
+
+- Bench files for propagation engine, rule evaluation, custom-rule DSL, and per-platform parsers.
+- v0.9 baseline captured in `docs/perf-baseline.md`.
+- **Headline finding:** propagation BFS is `O(V+E)` at sparse edge density (real-workflow case) but degrades toward `O(V·E)` at dense-5x — n=100→10,000 jumps 289 µs to 1.08 s (~3,700× for 100× nodes). Documented as a v1.0 hardening candidate (potential DoS vector via crafted dense graphs).
+
+### Added — CI hardening
+
+- `.github/workflows/security.yml` — cargo-deny on PR/push + Monday cron + hard-fail self-scan via `taudit scan --severity-threshold high`.
+- `.github/workflows/quality.yml` — self-scan now uses release binary, emits SARIF artifact, gates on `taudit verify` against `invariants/starter/` and `invariants/policies/example-enterprise-ado.yml`.
+- `.github/workflows/release.yml` — CycloneDX 1.5 SBOM generation alongside existing SPDX 2.3, both attached to release.
+- `deny.toml` tightened: wildcards `deny`, unknown-git `deny`, allow-registry pinned to crates.io, closed SPDX list.
+- `docs/release-trust.md` — minisign signed-release recipe documented as future work; placeholder `release/taudit.pub` scaffolded.
+
+### Added — Self-hosting scan (`docs/self-hosting-scan.md`)
+
+- Initial scan of tsafe shows the ROADMAP "zero findings" gate not yet met: 90 findings (20 critical), all 20 criticals concentrated in `release-plz.yml` from unpinned `release-plz/action@v0.5`, `actions/checkout@v4`, `dtolnay/rust-toolchain@stable` receiving `CARGO_REGISTRY_TOKEN` + `GITHUB_TOKEN`. Inconsistent with every other tsafe workflow which already uses SHA pins. Single-file fix would close the gate.
+- runtime-isolation harness not present on the development machine; gate undetermined.
+
+### Fixed
+
+- **GHA parser tolerates `env: ${{ matrix }}`** — template-as-map at job/step env level no longer crashes; promotes graph to `Partial` instead.
+- **ADO parser tolerates root-level parameter conditional templates** — `parameters: ... - ${{ if eq(parameters.X, true) }}: - job: ...` no longer fails the scan; promotes to `Partial`.
+
+### Known v0.9.x → v1.0.0 backlog
+
+Surfaced during this release cycle by fuzzing, corpus rerun, red-team round 2, and self-hosting scan:
+
+1. **Parser regressions** — 205 GHA + 37 ADO-diverse files newly fail to parse on main vs v0.9.0 baseline (likely `EnvSpec` enum change). Net improvement on ADO main corpus (parser failures dropped 1 → 0).
+2. **`scan --format json` non-determinism** (fuzz B1) — same input, different node ordering across runs. Fingerprints are stable; raw graph isn't.
+3. **`detect_platform()` is content-only, never inspects path** (fuzz B2) — security-adjacent; stray `on:` in `.gitlab-ci.yml` flips parse to GHA, dropping GitLab job.
+4. **Pin validation is structural, not semantic** (fuzz B3) — `actions/setup-python@<40-zeros>` accepted as pinned.
+5. **`rule_id: null` in JSON output** (self-hosting scan) — text format shows correct categories; JSON consumers can't filter by rule.
+6. **SARIF fingerprint collision class** (red team R2 #2) — two genuinely different `authority_propagation` findings sharing a secret name produce identical fingerprints. (The new SHA-256 fingerprint replaces unstable DefaultHasher but doesn't fully eliminate this collision class.)
+7. **Trust-zone laundering via `$GITHUB_ENV`** (red team R2 #3) — secret written to env gate by first-party step + read by untrusted action = no `authority_propagation` finding. Composition gap between two correct rules.
+8. **Custom invariant injection** (red team R2 #1) — no provenance annotation distinguishing built-in vs custom rule findings.
+9. **Symlink traversal in `--invariants-dir`** (red team R2 #4) — symlinks followed without warning.
+10. **Cross-platform silent clean** (red team R2 #5) — file with `jobs:` (GHA) wrapping ADO content auto-detects as GHA, returns 0 findings + `completeness: complete`.
+11. **Dense-graph BFS perf cliff** (bench) — potential DoS vector via crafted graphs.
+
+These will be addressed in v0.9.x patches and inform the v1.0 promotion decision when the scheduled 2026-05-10 agent runs.
+
 ## v0.9.0 — 2026-04-26 (release candidate for v1.0)
 
 > v0.9.0 is the v1.0 release candidate. The CLI contract, graph schema, and
