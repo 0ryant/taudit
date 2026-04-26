@@ -104,6 +104,11 @@ where
 /// Returns true if `ref_str` is a SHA-pinned action reference.
 /// Checks: contains `@`, part after `@` is >= 40 hex chars.
 /// Single source of truth — used by both parser and rules.
+///
+/// This is a *structural* check — it accepts any 40+ hex character suffix
+/// without verifying the SHA refers to a real commit. For a semantic check
+/// that rejects obviously-bogus values like all-zero, see
+/// [`is_pin_semantically_valid`].
 pub fn is_sha_pinned(ref_str: &str) -> bool {
     ref_str.contains('@')
         && ref_str
@@ -114,14 +119,52 @@ pub fn is_sha_pinned(ref_str: &str) -> bool {
 }
 
 /// Returns true if `image` is pinned to a Docker digest.
-/// Docker digest format: `image@sha256:<64-hex-chars>`.
+/// Docker digest format: `image@sha256:<64-hex-chars-lowercase>`.
+///
+/// Truncated digests (e.g. `alpine@sha256:abc`) and uppercase hex are
+/// rejected — Docker requires the full 64-character lowercase hex form.
 pub fn is_docker_digest_pinned(image: &str) -> bool {
     image.contains("@sha256:")
         && image
             .split("@sha256:")
             .nth(1)
-            .map(|h| h.len() == 64 && h.chars().all(|c| c.is_ascii_hexdigit()))
+            .map(|h| {
+                h.len() == 64
+                    && h.chars()
+                        .all(|c| c.is_ascii_digit() || ('a'..='f').contains(&c))
+            })
             .unwrap_or(false)
+}
+
+/// Returns true if `ref_str` looks both structurally pinned AND semantically
+/// plausible. Layered on top of [`is_sha_pinned`] / [`is_docker_digest_pinned`]:
+/// a structurally valid pin can still be obviously bogus (e.g. an all-zero SHA
+/// is syntactically a 40-char hex string but does not refer to any real
+/// commit; an attacker could use it to fake a "pinned" appearance).
+///
+/// Rules that want to flag impersonation attempts (rather than just laziness)
+/// should call this in addition to / instead of the structural check.
+///
+/// Rejects:
+/// - All-zero SHA-1 references (`actions/foo@0000…0000`).
+/// - All-zero sha256 docker digests (`image@sha256:0000…0000`).
+///
+/// Anything else that passes the structural check passes here.
+pub fn is_pin_semantically_valid(ref_str: &str) -> bool {
+    // Docker digest form takes priority (the `@sha256:` prefix is unambiguous).
+    if ref_str.contains("@sha256:") {
+        if !is_docker_digest_pinned(ref_str) {
+            return false;
+        }
+        let digest = ref_str.split("@sha256:").nth(1).unwrap_or("");
+        return !digest.chars().all(|c| c == '0');
+    }
+
+    if !is_sha_pinned(ref_str) {
+        return false;
+    }
+    let sha = ref_str.split('@').next_back().unwrap_or("");
+    !sha.chars().all(|c| c == '0')
 }
 
 // ── Graph-level precision markers ───────────────────────
@@ -513,5 +556,104 @@ mod tests {
         assert!(TrustZone::ThirdParty.is_lower_than(&TrustZone::FirstParty));
         assert!(TrustZone::Untrusted.is_lower_than(&TrustZone::ThirdParty));
         assert!(!TrustZone::FirstParty.is_lower_than(&TrustZone::FirstParty));
+    }
+
+    // ── Pin validation (fuzz B3 regression) ─────────────────
+
+    #[test]
+    fn is_sha_pinned_accepts_lowercase_40_hex() {
+        // 40 lowercase hex — the canonical legitimate form.
+        assert!(is_sha_pinned(
+            "actions/checkout@abc1234567890abcdef1234567890abcdef123456"
+        ));
+        // Mixed case is still structurally pinned (legitimate — Git accepts both).
+        assert!(is_sha_pinned(
+            "actions/checkout@ABCDEF1234567890abcdef1234567890ABCDEF12"
+        ));
+    }
+
+    #[test]
+    fn is_sha_pinned_structural_accepts_all_zero() {
+        // Structural check is intentionally permissive — semantic rejection
+        // happens in is_pin_semantically_valid. Documented in B3.
+        assert!(is_sha_pinned(
+            "actions/setup-python@0000000000000000000000000000000000000000"
+        ));
+    }
+
+    #[test]
+    fn is_sha_pinned_rejects_short_or_non_hex() {
+        assert!(!is_sha_pinned("actions/checkout@v4"));
+        assert!(!is_sha_pinned("actions/setup-node@a1b2c3"));
+        // 60 chars but not all hex.
+        assert!(!is_sha_pinned(
+            "actions/checkout@somethingthatlookslikeashabutisntsha1234567890abcdef"
+        ));
+    }
+
+    #[test]
+    fn is_pin_semantically_valid_rejects_all_zero_sha() {
+        // Fuzz B3 reproducer.
+        assert!(!is_pin_semantically_valid(
+            "actions/setup-python@0000000000000000000000000000000000000000"
+        ));
+    }
+
+    #[test]
+    fn is_pin_semantically_valid_accepts_real_looking_sha() {
+        assert!(is_pin_semantically_valid(
+            "actions/checkout@abc1234567890abcdef1234567890abcdef123456"
+        ));
+    }
+
+    #[test]
+    fn is_pin_semantically_valid_rejects_unpinned() {
+        assert!(!is_pin_semantically_valid("actions/checkout@v4"));
+        assert!(!is_pin_semantically_valid("actions/setup-node@a1b2c3"));
+    }
+
+    #[test]
+    fn is_docker_digest_pinned_rejects_truncated() {
+        // Fuzz B3 reproducer: previously accepted, now rejected.
+        assert!(!is_docker_digest_pinned("alpine@sha256:abc"));
+        // 65 chars (one too long).
+        assert!(!is_docker_digest_pinned(
+            "alpine@sha256:abc123def456abc123def456abc123def456abc123def456abc123def456abcde"
+        ));
+        // 63 chars (one short).
+        assert!(!is_docker_digest_pinned(
+            "alpine@sha256:abc123def456abc123def456abc123def456abc123def456abc123def456abc"
+        ));
+    }
+
+    #[test]
+    fn is_docker_digest_pinned_accepts_full_64_lowercase() {
+        // Exactly 64 lowercase hex chars after `@sha256:`.
+        assert!(is_docker_digest_pinned(
+            "alpine@sha256:abc123def456abc123def456abc123def456abc123def456abc123def456abcd"
+        ));
+    }
+
+    #[test]
+    fn is_docker_digest_pinned_rejects_uppercase() {
+        // Docker requires lowercase — uppercase indicates a hand-crafted /
+        // tampered string and should not pass.
+        assert!(!is_docker_digest_pinned(
+            "alpine@sha256:ABC123DEF456ABC123DEF456ABC123DEF456ABC123DEF456ABC123DEF456ABCD"
+        ));
+    }
+
+    #[test]
+    fn is_pin_semantically_valid_rejects_all_zero_docker_digest() {
+        assert!(!is_pin_semantically_valid(
+            "alpine@sha256:0000000000000000000000000000000000000000000000000000000000000000"
+        ));
+    }
+
+    #[test]
+    fn is_pin_semantically_valid_accepts_real_docker_digest() {
+        assert!(is_pin_semantically_valid(
+            "alpine@sha256:abc123def456abc123def456abc123def456abc123def456abc123def456abcd"
+        ));
     }
 }

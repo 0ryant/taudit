@@ -234,6 +234,14 @@ pub struct PathMatcher {
 pub enum CustomRuleError {
     FileRead(PathBuf, io::Error),
     YamlParse(PathBuf, serde_yaml::Error),
+    /// A symlink in the rules directory resolved to a path outside the
+    /// declared `--invariants-dir` tree. Refused unless the caller opts in
+    /// via `allow_external_symlinks: true` (CLI flag
+    /// `--invariants-allow-external-symlinks`). See red-team R2 #4.
+    SymlinkOutsideDir {
+        link: PathBuf,
+        target: PathBuf,
+    },
 }
 
 impl fmt::Display for CustomRuleError {
@@ -253,6 +261,14 @@ impl fmt::Display for CustomRuleError {
                     path.display()
                 )
             }
+            CustomRuleError::SymlinkOutsideDir { link, target } => {
+                write!(
+                    f,
+                    "refusing to follow symlink {} → {} (target outside --invariants-dir; potential symlink traversal). Use --invariants-allow-external-symlinks to override.",
+                    link.display(),
+                    target.display()
+                )
+            }
         }
     }
 }
@@ -262,6 +278,7 @@ impl std::error::Error for CustomRuleError {
         match self {
             CustomRuleError::FileRead(_, err) => Some(err),
             CustomRuleError::YamlParse(_, err) => Some(err),
+            CustomRuleError::SymlinkOutsideDir { .. } => None,
         }
     }
 }
@@ -269,15 +286,97 @@ impl std::error::Error for CustomRuleError {
 /// Load all `*.yml` and `*.yaml` files from `dir`. Files are read in sorted
 /// order for deterministic output. Returns a list of all errors alongside
 /// successfully parsed rules — callers decide whether to fail fast or continue.
+///
+/// Symlinks pointing OUTSIDE `dir` are refused by default (red-team R2 #4).
+/// Use [`load_rules_dir_with_opts`] to opt into the legacy follow-everything
+/// behavior.
 pub fn load_rules_dir(dir: &Path) -> Result<Vec<CustomRule>, Vec<CustomRuleError>> {
+    load_rules_dir_with_opts(dir, false)
+}
+
+/// Like [`load_rules_dir`] but lets the caller decide what to do with
+/// symlinks that escape the declared directory.
+///
+/// - In-tree symlinks (canonicalized target lives under canonicalized `dir`)
+///   are always followed; a stderr warning is emitted naming the link and
+///   target so the user is never surprised.
+/// - Out-of-tree symlinks are:
+///   - REFUSED with a `CustomRuleError::SymlinkOutsideDir` when
+///     `allow_external_symlinks` is `false` (default — safe).
+///   - Followed, with a louder stderr warning, when
+///     `allow_external_symlinks` is `true` (caller opted in via
+///     `--invariants-allow-external-symlinks`).
+///
+/// Why: the loader walks `--invariants-dir` recursively and previously
+/// followed every symlink without checking. A symlink under the directory
+/// pointing OUT (e.g. to `/etc/passwd` or an attacker-controlled file)
+/// was silently read in. This function makes that escape opt-in.
+pub fn load_rules_dir_with_opts(
+    dir: &Path,
+    allow_external_symlinks: bool,
+) -> Result<Vec<CustomRule>, Vec<CustomRuleError>> {
     let mut entries: Vec<PathBuf> = Vec::new();
     let read_dir = match fs::read_dir(dir) {
         Ok(rd) => rd,
         Err(err) => return Err(vec![CustomRuleError::FileRead(dir.to_path_buf(), err)]),
     };
 
+    // Canonicalize the directory once so we can compare every symlink target
+    // against the same normalized prefix. If canonicalization fails (e.g. a
+    // broken symlink in the path), fall back to the literal path — better to
+    // be conservative and treat *every* symlink as out-of-tree than to crash.
+    let canonical_dir = fs::canonicalize(dir).unwrap_or_else(|_| dir.to_path_buf());
+
+    let mut errors: Vec<CustomRuleError> = Vec::new();
+
     for entry in read_dir.flatten() {
         let path = entry.path();
+
+        // is_symlink uses symlink_metadata under the hood — does not follow.
+        let is_symlink = entry
+            .file_type()
+            .map(|ft| ft.is_symlink())
+            .unwrap_or_else(|_| path.is_symlink());
+
+        if is_symlink {
+            // Resolve the symlink target. canonicalize() follows the chain.
+            // A broken symlink shows up as Err here — treat it like any other
+            // file-read error.
+            let canonical_target = match fs::canonicalize(&path) {
+                Ok(t) => t,
+                Err(err) => {
+                    errors.push(CustomRuleError::FileRead(path.clone(), err));
+                    continue;
+                }
+            };
+
+            let in_tree = canonical_target.starts_with(&canonical_dir);
+
+            if !in_tree {
+                if allow_external_symlinks {
+                    eprintln!(
+                        "WARNING: following external symlink {} → {} (allowed by --invariants-allow-external-symlinks)",
+                        path.display(),
+                        canonical_target.display()
+                    );
+                } else {
+                    errors.push(CustomRuleError::SymlinkOutsideDir {
+                        link: path,
+                        target: canonical_target,
+                    });
+                    continue;
+                }
+            } else {
+                eprintln!(
+                    "WARNING: following symlink {} → {}",
+                    path.display(),
+                    canonical_target.display()
+                );
+            }
+        }
+
+        // Use is_file (which follows symlinks) so the surviving symlinks-
+        // pointing-at-files behave the same as a regular file.
         if !path.is_file() {
             continue;
         }
@@ -289,7 +388,6 @@ pub fn load_rules_dir(dir: &Path) -> Result<Vec<CustomRule>, Vec<CustomRuleError
     entries.sort();
 
     let mut rules = Vec::new();
-    let mut errors = Vec::new();
     for path in entries {
         match fs::read_to_string(&path) {
             Ok(content) => match parse_rules_multi_doc(&content) {
@@ -1395,5 +1493,113 @@ match:
             msg.contains("metadata") || msg.contains("variant"),
             "parse should fail with a meaningful location: {msg}"
         );
+    }
+
+    // ── Symlink protection (red-team R2 #4) ─────────────────
+    //
+    // These tests use Unix symlinks. Skipped on Windows where the test
+    // harness usually lacks SeCreateSymbolicLinkPrivilege.
+
+    #[cfg(unix)]
+    fn unique_tmp(prefix: &str) -> PathBuf {
+        use std::sync::atomic::{AtomicU64, Ordering};
+        static COUNTER: AtomicU64 = AtomicU64::new(0);
+        let n = COUNTER.fetch_add(1, Ordering::SeqCst);
+        std::env::temp_dir().join(format!(
+            "taudit-symlink-{prefix}-{}-{n}",
+            std::process::id()
+        ))
+    }
+
+    #[cfg(unix)]
+    fn write_minimal_rule(path: &Path, id: &str) {
+        fs::write(
+            path,
+            format!("id: {id}\nname: {id}\nseverity: high\ncategory: authority_propagation\n"),
+        )
+        .unwrap();
+    }
+
+    #[test]
+    #[cfg(unix)]
+    fn load_rules_dir_follows_in_tree_symlink_with_warning() {
+        use std::os::unix::fs::symlink;
+
+        let tmp = unique_tmp("intree");
+        fs::create_dir_all(&tmp).unwrap();
+
+        let real = tmp.join("real.yml");
+        write_minimal_rule(&real, "in_tree");
+        let link = tmp.join("alias.yml");
+        symlink(&real, &link).unwrap();
+
+        // Default opts: in-tree symlinks are followed.
+        let rules = load_rules_dir(&tmp).expect("in-tree symlink must be loaded");
+        // Two entries: the real file + the alias symlink (loaded twice).
+        assert_eq!(
+            rules.len(),
+            2,
+            "expected 2 rules (real + alias), got {rules:?}"
+        );
+
+        let _ = fs::remove_dir_all(&tmp);
+    }
+
+    #[test]
+    #[cfg(unix)]
+    fn load_rules_dir_refuses_out_of_tree_symlink_by_default() {
+        use std::os::unix::fs::symlink;
+
+        let tmp = unique_tmp("outoftree-refuse");
+        fs::create_dir_all(&tmp).unwrap();
+
+        let outside_dir = unique_tmp("outoftree-target");
+        fs::create_dir_all(&outside_dir).unwrap();
+        let outside_file = outside_dir.join("evil.yml");
+        write_minimal_rule(&outside_file, "evil");
+
+        let link = tmp.join("legit.yml");
+        symlink(&outside_file, &link).unwrap();
+
+        let errs = load_rules_dir(&tmp).expect_err("out-of-tree symlink must be refused");
+        assert_eq!(errs.len(), 1);
+        assert!(
+            matches!(errs[0], CustomRuleError::SymlinkOutsideDir { .. }),
+            "expected SymlinkOutsideDir, got {:?}",
+            errs[0]
+        );
+        let msg = errs[0].to_string();
+        assert!(
+            msg.contains("legit.yml") && msg.contains("evil.yml"),
+            "error should name both link and target: {msg}"
+        );
+
+        let _ = fs::remove_dir_all(&tmp);
+        let _ = fs::remove_dir_all(&outside_dir);
+    }
+
+    #[test]
+    #[cfg(unix)]
+    fn load_rules_dir_follows_out_of_tree_symlink_with_override() {
+        use std::os::unix::fs::symlink;
+
+        let tmp = unique_tmp("outoftree-override");
+        fs::create_dir_all(&tmp).unwrap();
+
+        let outside_dir = unique_tmp("outoftree-target-override");
+        fs::create_dir_all(&outside_dir).unwrap();
+        let outside_file = outside_dir.join("external.yml");
+        write_minimal_rule(&outside_file, "external");
+
+        let link = tmp.join("aliased.yml");
+        symlink(&outside_file, &link).unwrap();
+
+        let rules = load_rules_dir_with_opts(&tmp, true)
+            .expect("override flag must allow external symlinks");
+        assert_eq!(rules.len(), 1);
+        assert_eq!(rules[0].id, "external");
+
+        let _ = fs::remove_dir_all(&tmp);
+        let _ = fs::remove_dir_all(&outside_dir);
     }
 }
