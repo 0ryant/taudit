@@ -445,6 +445,23 @@ impl PipelineParser for GhaParser {
             }
         }
 
+        // Cross-platform misclassification trap (red-team R2 #5): a YAML file
+        // wrapping ADO/GitLab content in a `jobs:` mapping deserializes here
+        // without errors but yields no recognisable Step nodes. Marking
+        // Partial surfaces the gap rather than silently returning a clean
+        // graph with completeness=complete (which a CI gate would treat as
+        // "passed").
+        let step_count = graph
+            .nodes
+            .iter()
+            .filter(|n| n.kind == NodeKind::Step)
+            .count();
+        if step_count == 0 && !workflow.jobs.is_empty() {
+            graph.mark_partial(
+                "jobs: parsed but produced 0 step nodes — possible non-GHA YAML wrong-platform-classified".to_string(),
+            );
+        }
+
         Ok(graph)
     }
 }
@@ -2204,5 +2221,62 @@ jobs:
                 step.name
             );
         }
+    }
+
+    // ── Cross-platform misclassification trap (red-team R2 #5) ─────
+
+    #[test]
+    fn jobs_without_steps_marks_partial() {
+        // `jobs:` is non-empty (parser deserializes them happily) but every
+        // job has no `steps:` block — the GHA parser produces 0 Step nodes.
+        // This is the canonical "wrong-platform smuggle" shape: an attacker
+        // gets a misclassified file past auto-detect, no recognisable steps
+        // get materialised, and the previous behaviour was completeness =
+        // complete + 0 findings = "passed". Now Partial.
+        let yaml = r#"
+on:
+  push:
+jobs:
+  build:
+    runs-on: ubuntu-latest
+"#;
+        let graph = parse(yaml);
+        let step_count = graph
+            .nodes
+            .iter()
+            .filter(|n| n.kind == NodeKind::Step)
+            .count();
+        assert_eq!(step_count, 0, "no steps: present means 0 Step nodes");
+        assert_eq!(
+            graph.completeness,
+            AuthorityCompleteness::Partial,
+            "0-step-nodes despite non-empty jobs: must mark Partial"
+        );
+        assert!(
+            graph
+                .completeness_gaps
+                .iter()
+                .any(|g| g.contains("0 step nodes")),
+            "completeness_gaps must mention 0 step nodes: {:?}",
+            graph.completeness_gaps
+        );
+    }
+
+    #[test]
+    fn empty_workflow_no_jobs_does_not_mark_partial_for_zero_steps() {
+        // An entirely empty workflow (no `jobs:` at all) has nothing to
+        // classify — completeness should not flip to Partial just because
+        // there are zero step nodes (the source had no carrier).
+        let yaml = "name: empty\non:\n  push:\n";
+        let graph = parse(yaml);
+        let zero_step_gap = graph
+            .completeness_gaps
+            .iter()
+            .any(|g| g.contains("0 step nodes"));
+        assert!(
+            !zero_step_gap,
+            "no jobs: in source means no 0-step gap reason; got: {:?}",
+            graph.completeness_gaps
+        );
     }
 }

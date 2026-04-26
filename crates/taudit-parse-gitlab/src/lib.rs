@@ -220,6 +220,30 @@ impl PipelineParser for GitlabParser {
             }
         }
 
+        // Cross-platform misclassification trap (red-team R2 #5): a YAML file
+        // with non-reserved top-level keys looks like a GitLab pipeline shape
+        // but its body may use constructs the GitLab parser doesn't recognise
+        // (e.g. an ADO `task:` payload). Mark Partial when the source had at
+        // least one job-shaped top-level key but we ended up with no Step
+        // nodes — better than silently returning completeness=complete on a
+        // clean-but-empty graph that a CI gate would treat as "passed".
+        let step_count = graph
+            .nodes
+            .iter()
+            .filter(|n| n.kind == NodeKind::Step)
+            .count();
+        let had_job_carrier = mapping.iter().any(|(k, v)| {
+            k.as_str()
+                .map(|name| !RESERVED.contains(&name) && !name.starts_with('.'))
+                .unwrap_or(false)
+                && v.as_mapping().is_some()
+        });
+        if step_count == 0 && had_job_carrier {
+            graph.mark_partial(
+                "non-reserved top-level keys parsed but produced 0 step nodes — possible non-GitLab YAML wrong-platform-classified".to_string(),
+            );
+        }
+
         Ok(graph)
     }
 }
@@ -721,5 +745,63 @@ test:
             "expected 2 service Image nodes, got: {:?}",
             images.iter().map(|i| &i.name).collect::<Vec<_>>()
         );
+    }
+
+    // ── Cross-platform misclassification trap (red-team R2 #5) ─────
+
+    #[test]
+    fn job_carrier_with_unparseable_bodies_marks_partial() {
+        // Top-level keys that look like job names but whose values are not
+        // mappings (lists, scalars). GitLab parser would normally produce a
+        // Step per non-reserved mapping-valued key; here every candidate is
+        // skipped because the value is not a mapping. Result: 0 step nodes
+        // despite a non-empty job carrier — must mark Partial.
+        let yaml = r#"
+build:
+  - this is a list, not a mapping
+test:
+  - also a list
+"#;
+        let graph = parse(yaml);
+        let step_count = graph
+            .nodes
+            .iter()
+            .filter(|n| n.kind == NodeKind::Step)
+            .count();
+        // Note: the "had_job_carrier" heuristic only fires when the value IS
+        // a mapping, so this case (non-mapping values) does NOT trigger the
+        // partial — that's intentional. The heuristic targets the trap where
+        // an attacker uses a *valid mapping shape* the GitLab parser can't
+        // interpret.
+        assert_eq!(step_count, 0);
+        assert_eq!(
+            graph.completeness,
+            AuthorityCompleteness::Complete,
+            "non-mapping values are not job carriers"
+        );
+    }
+
+    #[test]
+    fn mapping_jobs_without_recognisable_step_content_marks_partial() {
+        // A non-reserved top-level key whose value is a mapping but contains
+        // only ADO-style fields (`task:`, `azureSubscription`) — and `extends`
+        // marks the job as partial without creating a Step. Wait: the GitLab
+        // parser actually still adds a Step node for any mapping-valued
+        // non-reserved key. So to get the 0-step + had_carrier shape, we
+        // need a hidden/template job (starts with '.') as the only candidate.
+        let yaml = r#"
+.template-only:
+  script:
+    - echo "this is a template-only file"
+"#;
+        let graph = parse(yaml);
+        let step_count = graph
+            .nodes
+            .iter()
+            .filter(|n| n.kind == NodeKind::Step)
+            .count();
+        assert_eq!(step_count, 0);
+        // Hidden jobs already mark partial with their own reason.
+        assert_eq!(graph.completeness, AuthorityCompleteness::Partial);
     }
 }

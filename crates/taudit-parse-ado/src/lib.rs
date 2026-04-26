@@ -268,6 +268,26 @@ impl PipelineParser for AdoParser {
             );
         }
 
+        // Cross-platform misclassification trap (red-team R2 #5): a YAML file
+        // shaped like ADO at the top level (stages/jobs/steps present) but whose
+        // body uses constructs the ADO parser doesn't recognise will deserialize
+        // without errors and yield no Step nodes. Marking Partial surfaces the
+        // gap instead of returning completeness=complete on a clean-but-empty
+        // graph (which a CI gate would treat as "passed").
+        let step_count = graph
+            .nodes
+            .iter()
+            .filter(|n| n.kind == NodeKind::Step)
+            .count();
+        let had_step_carrier = pipeline.stages.as_ref().is_some_and(|s| !s.is_empty())
+            || pipeline.jobs.as_ref().is_some_and(|j| !j.is_empty())
+            || pipeline.steps.as_ref().is_some_and(|s| !s.is_empty());
+        if step_count == 0 && had_step_carrier {
+            graph.mark_partial(
+                "stages/jobs/steps parsed but produced 0 step nodes — possible non-ADO YAML wrong-platform-classified".to_string(),
+            );
+        }
+
         Ok(graph)
     }
 }
@@ -2105,5 +2125,77 @@ jobs:
         );
         assert_eq!(parse_template_alias("local/path.yml"), None);
         assert_eq!(parse_template_alias("path@"), None);
+    }
+
+    // ── Cross-platform misclassification trap (red-team R2 #5) ─────
+
+    #[test]
+    fn jobs_carrier_without_steps_marks_partial() {
+        // ADO `jobs:` carrier present but each job has no `steps:` and no
+        // `template:`. process_steps([]) adds nothing. Result: 0 Step nodes
+        // despite a non-empty job carrier — must mark Partial so a CI gate
+        // doesn't treat completeness=complete + 0 findings as "passed".
+        let yaml = r#"
+jobs:
+  - job: build
+    pool:
+      vmImage: ubuntu-latest
+"#;
+        let graph = parse(yaml);
+        let step_count = graph
+            .nodes
+            .iter()
+            .filter(|n| n.kind == NodeKind::Step)
+            .count();
+        assert_eq!(step_count, 0);
+        assert_eq!(graph.completeness, AuthorityCompleteness::Partial);
+        assert!(
+            graph
+                .completeness_gaps
+                .iter()
+                .any(|g| g.contains("0 step nodes")),
+            "completeness_gaps must mention 0 step nodes: {:?}",
+            graph.completeness_gaps
+        );
+    }
+
+    #[test]
+    fn jobs_carrier_with_empty_jobs_list_does_not_mark_partial() {
+        // Defensive: an empty `jobs:` list is NOT a carrier — there is no
+        // job content to be confused about. Stays Complete.
+        let yaml = r#"
+jobs: []
+"#;
+        let graph = parse(yaml);
+        let zero_step_gap = graph
+            .completeness_gaps
+            .iter()
+            .any(|g| g.contains("0 step nodes"));
+        assert!(
+            !zero_step_gap,
+            "empty jobs: list is not a carrier; got: {:?}",
+            graph.completeness_gaps
+        );
+    }
+
+    #[test]
+    fn empty_pipeline_does_not_mark_partial_for_zero_steps() {
+        // No top-level stages/jobs/steps at all — there's no carrier, so the
+        // 0-step-nodes guard must NOT fire. A genuinely empty pipeline stays
+        // Complete.
+        let yaml = r#"
+trigger:
+  - main
+"#;
+        let graph = parse(yaml);
+        let zero_step_gap = graph
+            .completeness_gaps
+            .iter()
+            .any(|g| g.contains("0 step nodes"));
+        assert!(
+            !zero_step_gap,
+            "no carrier means no 0-step gap reason; got: {:?}",
+            graph.completeness_gaps
+        );
     }
 }
