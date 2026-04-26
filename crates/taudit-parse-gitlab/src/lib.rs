@@ -68,6 +68,7 @@ impl PipelineParser for GitlabParser {
             .ok_or_else(|| TauditError::Parse("GitLab CI root must be a mapping".into()))?;
 
         let mut graph = AuthorityGraph::new(source.clone());
+        graph.metadata.insert(META_PLATFORM.into(), "gitlab".into());
 
         // CI_JOB_TOKEN is always present in every GitLab CI job — it's the built-in
         // platform token, equivalent to ADO's System.AccessToken or GHA's GITHUB_TOKEN.
@@ -181,11 +182,21 @@ impl PipelineParser for GitlabParser {
                 .get("environment")
                 .and_then(extract_environment_name);
 
+            // Detect whether this job's `rules:` / `only:` clause restricts
+            // execution to protected branches (or to the default branch,
+            // which is protected by GitLab default policy). Used by the
+            // `gitlab_deploy_job_missing_protected_branch_only` rule to
+            // detect deployment jobs that lack any branch guard.
+            let protected_only = job_has_protected_branch_restriction(job_map);
+
             // Create the Step node for this job
             let mut step_meta = HashMap::new();
             step_meta.insert(META_JOB_NAME.into(), job_name.to_string());
             if let Some(ref env) = env_name {
                 step_meta.insert("environment_name".into(), env.clone());
+            }
+            if protected_only {
+                step_meta.insert(META_RULES_PROTECTED_ONLY.into(), "true".into());
             }
             let step_id = graph.add_node_with_metadata(
                 NodeKind::Step,
@@ -432,6 +443,79 @@ fn only_has_merge_requests(v: &Value) -> bool {
                 return refs
                     .iter()
                     .any(|item| item.as_str() == Some("merge_requests"));
+            }
+            false
+        }
+        _ => false,
+    }
+}
+
+/// Returns true when a job's `rules:` or `only:` clause restricts execution
+/// to protected refs only. The set of accepted patterns is intentionally
+/// generous because the goal is to *credit* defensive intent, not to
+/// audit-grade verify that every protection actually exists in GitLab's
+/// branch-protection settings — that lives outside the YAML.
+///
+/// Patterns recognised as a protected-only restriction:
+///
+///   * any `rules: [{ if: ... $CI_COMMIT_REF_PROTECTED ... }]`
+///   * any `rules: [{ if: ... $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH ... }]`
+///     (default branch is GitLab-protected by default)
+///   * any `rules: [{ if: ... $CI_COMMIT_TAG ... }]` (tags are protected by default)
+///   * `only: [main]` / `only: [master]` / `only: tags`
+///   * `only: { refs: [main, /^release/.*/] }`
+///
+/// Hits any one of the above → true. Misses every one → false.
+fn job_has_protected_branch_restriction(job_map: &serde_yaml::Mapping) -> bool {
+    if let Some(rules) = job_map.get("rules").and_then(|v| v.as_sequence()) {
+        for rule in rules {
+            let Some(if_expr) = rule
+                .as_mapping()
+                .and_then(|m| m.get("if"))
+                .and_then(|v| v.as_str())
+            else {
+                continue;
+            };
+            if if_expr.contains("$CI_COMMIT_REF_PROTECTED")
+                || if_expr.contains("CI_COMMIT_REF_PROTECTED")
+            {
+                return true;
+            }
+            if if_expr.contains("$CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH")
+                || if_expr.contains("$CI_DEFAULT_BRANCH == $CI_COMMIT_BRANCH")
+            {
+                return true;
+            }
+            if if_expr.contains("$CI_COMMIT_TAG") {
+                return true;
+            }
+        }
+    }
+    if let Some(only) = job_map.get("only") {
+        if only_lists_protected_ref(only) {
+            return true;
+        }
+    }
+    false
+}
+
+/// Check `only:` for protected/default-branch refs (`main`, `master`, `tags`,
+/// or a `refs:` list containing those). Conservative — does NOT include
+/// `merge_requests` (that's the opposite signal).
+fn only_lists_protected_ref(v: &Value) -> bool {
+    fn is_protected_ref(s: &str) -> bool {
+        matches!(s, "main" | "master" | "tags") || s.starts_with("/^release")
+    }
+    match v {
+        Value::String(s) => is_protected_ref(s.as_str()),
+        Value::Sequence(seq) => seq
+            .iter()
+            .any(|item| item.as_str().map(is_protected_ref).unwrap_or(false)),
+        Value::Mapping(m) => {
+            if let Some(refs) = m.get("refs").and_then(|r| r.as_sequence()) {
+                return refs
+                    .iter()
+                    .any(|item| item.as_str().map(is_protected_ref).unwrap_or(false));
             }
             false
         }

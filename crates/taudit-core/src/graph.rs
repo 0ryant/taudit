@@ -89,6 +89,31 @@ pub const META_TERRAFORM_AUTO_APPROVE: &str = "terraform_auto_approve";
 /// the federated SPN (idToken / servicePrincipalKey / servicePrincipalId /
 /// tenantId) to the inline script body via environment variables.
 pub const META_ADD_SPN_TO_ENV: &str = "add_spn_to_environment";
+/// Graph-level metadata: identifies the source platform of the parsed
+/// pipeline. Set by every parser to its `platform()` value
+/// (`"github-actions"`, `"azure-devops"`, `"gitlab"`). Allows platform-scoped
+/// rules to gate their detection without parsing the source file path.
+pub const META_PLATFORM: &str = "platform";
+/// Graph-level metadata: marks a GitHub Actions workflow as having NO
+/// top-level `permissions:` block declared. Set by the GHA parser when
+/// `workflow.permissions` is absent so rules can detect the negative-space
+/// "no permissions block at all" pattern (which leaves `GITHUB_TOKEN` at its
+/// broad platform default — `contents: write`, `packages: write`, etc.).
+pub const META_NO_WORKFLOW_PERMISSIONS: &str = "no_workflow_permissions";
+/// Marks a Step in a GHA workflow as carrying an `if:` condition that
+/// references the standard fork-check pattern
+/// (`github.event.pull_request.head.repo.fork == false` or the equivalent
+/// `head.repo.full_name == github.repository`). Stamped by the GHA parser so
+/// rules can credit the step with the compensating control without
+/// re-parsing the YAML expression. Bool stored as `"true"`.
+pub const META_FORK_CHECK: &str = "fork_check";
+/// Marks a GitLab CI job (Step node) whose `rules:` or `only:` clause
+/// restricts execution to protected branches — either via an explicit
+/// `if: $CI_COMMIT_REF_PROTECTED == "true"` rule, an `if: $CI_COMMIT_BRANCH
+/// == $CI_DEFAULT_BRANCH` rule, or an `only: [main, ...]` allowlist of
+/// platform-protected refs. Set by the GitLab parser. Absence on a
+/// deployment job is a control gap.
+pub const META_RULES_PROTECTED_ONLY: &str = "rules_protected_only";
 
 // ── Shared helpers ─────────────────────────────────────
 

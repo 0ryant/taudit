@@ -3,10 +3,11 @@ use crate::graph::{
     is_docker_digest_pinned, is_sha_pinned, AuthorityCompleteness, AuthorityGraph, EdgeKind,
     IdentityScope, NodeId, NodeKind, TrustZone, META_ADD_SPN_TO_ENV, META_ATTESTS,
     META_CHECKOUT_SELF, META_CLI_FLAG_EXPOSED, META_CONTAINER, META_DIGEST, META_ENV_APPROVAL,
-    META_IDENTITY_SCOPE, META_IMPLICIT, META_JOB_NAME, META_OIDC, META_PERMISSIONS, META_READS_ENV,
-    META_REPOSITORIES, META_SCRIPT_BODY, META_SELF_HOSTED, META_SERVICE_CONNECTION,
-    META_SERVICE_CONNECTION_NAME, META_TERRAFORM_AUTO_APPROVE, META_TRIGGER, META_VARIABLE_GROUP,
-    META_WRITES_ENV_GATE,
+    META_FORK_CHECK, META_IDENTITY_SCOPE, META_IMPLICIT, META_JOB_NAME,
+    META_NO_WORKFLOW_PERMISSIONS, META_OIDC, META_PERMISSIONS, META_PLATFORM, META_READS_ENV,
+    META_REPOSITORIES, META_RULES_PROTECTED_ONLY, META_SCRIPT_BODY, META_SELF_HOSTED,
+    META_SERVICE_CONNECTION, META_SERVICE_CONNECTION_NAME, META_TERRAFORM_AUTO_APPROVE,
+    META_TRIGGER, META_VARIABLE_GROUP, META_WRITES_ENV_GATE,
 };
 use crate::propagation;
 
@@ -2422,25 +2423,37 @@ pub fn terraform_auto_approve_in_prod(graph: &AuthorityGraph) -> Vec<Finding> {
             _ => continue,
         };
 
-        // Skip when the step is in an environment-gated job — the manual
-        // approval is the change-control we're worried about being missing.
+        // Compensating control: an `environment:` binding routes the apply
+        // through ADO's approval / check pipeline. Whether that environment
+        // *actually* has approvers configured is invisible from YAML — so
+        // downgrade Critical → Medium instead of skipping outright (the
+        // previous behaviour silently dropped the finding even when the
+        // environment was a CI-only approval-free passthrough).
         let env_gated = step
             .metadata
             .get(META_ENV_APPROVAL)
             .map(|v| v == "true")
             .unwrap_or(false);
-        if env_gated {
-            continue;
-        }
+        let (severity, suffix) = if env_gated {
+            (
+                Severity::Medium,
+                " — `environment:` binding present (verify approvers are configured in the ADO Environments UI)",
+            )
+        } else {
+            (
+                Severity::Critical,
+                " — any committer can rewrite prod infrastructure",
+            )
+        };
 
         findings.push(Finding {
-            severity: Severity::Critical,
+            severity,
             category: FindingCategory::TerraformAutoApproveInProd,
             path: None,
             nodes_involved: vec![step.id],
             message: format!(
-                "Step '{}' runs `terraform apply -auto-approve` against production service connection '{}' with no environment approval gate — any committer can rewrite prod infrastructure",
-                step.name, conn_name
+                "Step '{}' runs `terraform apply -auto-approve` against production service connection '{}'{}",
+                step.name, conn_name, suffix
             ),
             recommendation: Recommendation::Manual {
                 action: "Move the apply step into a deployment job whose `environment:` is configured with required approvers in ADO, OR remove `-auto-approve` and run apply behind a manual checkpoint task. Combine with a non-shared agent pool so committers cannot pre-stage payloads.".into(),
@@ -3174,6 +3187,598 @@ pub fn secret_via_env_gate_to_untrusted_consumer(graph: &AuthorityGraph) -> Vec<
     findings
 }
 
+// ── Positive invariants (negative-space rules) ───────────────────
+//
+// These rules fire on the ABSENCE of an expected defensive control rather
+// than on the presence of a misconfigured one. They are derived from the
+// blue-team corpus defense report — patterns observed across thousands of
+// pipelines where the well-defended workflows had a control the others were
+// missing.
+//
+// Each function gates strictly on `META_PLATFORM` so a single pipeline file
+// is only evaluated by the rules that apply to its source platform.
+
+/// Returns true when a graph belongs to the named platform. Falls back to
+/// false (rule no-ops) when no platform stamp is present — keeps existing
+/// hand-built test graphs from accidentally tripping platform-scoped rules.
+fn graph_is_platform(graph: &AuthorityGraph, platform: &str) -> bool {
+    graph
+        .metadata
+        .get(META_PLATFORM)
+        .map(|p| p == platform)
+        .unwrap_or(false)
+}
+
+/// Rule: GHA workflow declares no top-level `permissions:` block AND no
+/// per-job permissions block. With nothing declared, `GITHUB_TOKEN` falls
+/// back to the broad platform default (`contents: write`, `packages: write`,
+/// metadata read, etc.) on every trigger. Explicit declarations make the
+/// blast radius legible to the next reviewer; absence makes it invisible.
+///
+/// Detection:
+///   * `META_PLATFORM == "github-actions"` (gates ADO/GitLab out)
+///   * Graph carries `META_NO_WORKFLOW_PERMISSIONS == "true"` (parser-set
+///     when `workflow.permissions` is absent)
+///   * No Identity node whose name starts with `GITHUB_TOKEN (` (those are
+///     the per-job override identities the parser creates when a job
+///     declares its own permissions block)
+///
+/// Severity: Medium. Not a direct exploit path on its own but compounds
+/// every other finding in the same workflow.
+pub fn no_workflow_level_permissions_block(graph: &AuthorityGraph) -> Vec<Finding> {
+    if !graph_is_platform(graph, "github-actions") {
+        return Vec::new();
+    }
+    let no_workflow_perms = graph
+        .metadata
+        .get(META_NO_WORKFLOW_PERMISSIONS)
+        .map(|v| v == "true")
+        .unwrap_or(false);
+    if !no_workflow_perms {
+        return Vec::new();
+    }
+    // Empty graphs (variable-only YAML files mis-detected as GHA, parse
+    // failures that left the graph empty, etc.) carry no real authority
+    // surface to be over-broad over. Skip them. A real workflow always
+    // produces at least one Step node.
+    if graph.nodes_of_kind(NodeKind::Step).next().is_none() {
+        return Vec::new();
+    }
+    // Per-job permissions blocks create Identity nodes named
+    // `GITHUB_TOKEN (<job_name>)`. If any exists, the workflow has at least
+    // one job-scoped permissions block — don't fire.
+    let has_job_level_perms = graph.nodes_of_kind(NodeKind::Identity).any(|n| {
+        n.name.starts_with("GITHUB_TOKEN (")
+            || (n.name == "GITHUB_TOKEN" && n.metadata.contains_key(META_PERMISSIONS))
+    });
+    if has_job_level_perms {
+        return Vec::new();
+    }
+    vec![Finding {
+        severity: Severity::Medium,
+        category: FindingCategory::NoWorkflowLevelPermissionsBlock,
+        path: None,
+        nodes_involved: Vec::new(),
+        message: "Workflow declares no top-level or per-job `permissions:` block — GITHUB_TOKEN \
+             falls back to the broad platform default (contents: write, packages: write, …) \
+             on every trigger. Explicit permissions make the blast radius legible to triage."
+            .into(),
+        recommendation: Recommendation::ReducePermissions {
+            current: "platform default (broad)".into(),
+            minimum: "permissions: {} at top level, then add the minimum per-job — e.g. \
+                      `permissions: { contents: read }`"
+                .into(),
+        },
+        source: FindingSource::BuiltIn,
+    }]
+}
+
+/// Rule: ADO job referencing a production-named service connection has no
+/// `environment:` binding. Strictly broader than
+/// `terraform_auto_approve_in_prod` — fires on any prod-SC step (Terraform,
+/// ARM, AzureCLI, AzurePowerShell, custom) whose enclosing job lacks the
+/// approval gate, regardless of whether `-auto-approve` is set.
+///
+/// Detection (per Step):
+///   * `META_PLATFORM == "azure-devops"`
+///   * Step carries `META_SERVICE_CONNECTION_NAME` matching prod pattern,
+///     OR an `Identity` connected via `HasAccessTo` whose name matches
+///     the same pattern AND carries `META_SERVICE_CONNECTION == "true"`.
+///   * Step does NOT carry `META_ENV_APPROVAL` (parser tags every step
+///     inside an environment-bound deployment job).
+///
+/// One finding per matching step (matching `terraform_auto_approve_in_prod`
+/// granularity). Severity: High.
+pub fn prod_deploy_job_no_environment_gate(graph: &AuthorityGraph) -> Vec<Finding> {
+    if !graph_is_platform(graph, "azure-devops") {
+        return Vec::new();
+    }
+    let mut findings = Vec::new();
+    for step in graph.nodes_of_kind(NodeKind::Step) {
+        let env_gated = step
+            .metadata
+            .get(META_ENV_APPROVAL)
+            .map(|v| v == "true")
+            .unwrap_or(false);
+        if env_gated {
+            continue;
+        }
+        let direct = step.metadata.get(META_SERVICE_CONNECTION_NAME).cloned();
+        let edge_conn = graph
+            .edges_from(step.id)
+            .filter(|e| e.kind == EdgeKind::HasAccessTo)
+            .filter_map(|e| graph.node(e.to))
+            .find(|n| {
+                n.kind == NodeKind::Identity
+                    && n.metadata
+                        .get(META_SERVICE_CONNECTION)
+                        .map(|v| v == "true")
+                        .unwrap_or(false)
+            })
+            .map(|n| n.name.clone());
+        let conn_name = match direct.or(edge_conn) {
+            Some(n) if looks_like_prod_connection(&n) => n,
+            _ => continue,
+        };
+        findings.push(Finding {
+            severity: Severity::High,
+            category: FindingCategory::ProdDeployJobNoEnvironmentGate,
+            path: None,
+            nodes_involved: vec![step.id],
+            message: format!(
+                "Step '{}' targets production service connection '{}' but its job has no \
+                 `environment:` binding — every pipeline trigger applies changes with no \
+                 approval queue and no entry in the ADO Environments audit trail",
+                step.name, conn_name
+            ),
+            recommendation: Recommendation::Manual {
+                action: "Move the step into a deployment job whose `environment:` is configured \
+                         with required approvers in ADO. Even if `-auto-approve` is acceptable \
+                         (e.g. `terraform apply tfplan`), the environment binding gives the \
+                         platform a chokepoint for approvals, audit, and concurrency limits."
+                    .into(),
+            },
+            source: FindingSource::BuiltIn,
+        });
+    }
+    findings
+}
+
+/// Rule: long-lived static credential in scope but the graph has no OIDC
+/// identity. Advisory uplift on top of `long_lived_credential` that wires
+/// the existing `Recommendation::FederateIdentity` variant — emits one Info
+/// finding per static credential whose name suggests a cloud provider that
+/// supports OIDC (AWS / GCP / Azure).
+///
+/// Heuristic: AWS / GCP / Azure tokens usually carry the provider name in
+/// the variable identifier (`AWS_*`, `GCP_*`, `GCLOUD_*`, `GOOGLE_*`,
+/// `AZURE_*`, `ARM_*`). When such a name appears AND no OIDC identity
+/// exists in the graph, the migration to federation is the actionable
+/// remediation. The recommendation enum has carried `FederateIdentity` for
+/// two releases without any rule emitting it.
+///
+/// Severity: Info (advisory). The underlying credential is already flagged
+/// at higher severity by `long_lived_credential`.
+pub fn long_lived_secret_without_oidc_recommendation(graph: &AuthorityGraph) -> Vec<Finding> {
+    // Skip if any OIDC identity already exists — the workflow is already on
+    // a federated path; the static credential it carries is presumably a
+    // legacy artifact unrelated to the OIDC integration.
+    let has_oidc = graph.nodes_of_kind(NodeKind::Identity).any(|n| {
+        n.metadata
+            .get(META_OIDC)
+            .map(|v| v == "true")
+            .unwrap_or(false)
+    });
+    if has_oidc {
+        return Vec::new();
+    }
+    let mut findings = Vec::new();
+    for secret in graph.nodes_of_kind(NodeKind::Secret) {
+        let upper = secret.name.to_uppercase();
+        let provider: Option<(&str, &str)> = if upper.starts_with("AWS_")
+            || upper.contains("AWS_ACCESS_KEY")
+            || upper.contains("AWS_SECRET")
+        {
+            Some(("AWS", "GitHub Actions OIDC + sts:AssumeRoleWithWebIdentity (id-token: write + aws-actions/configure-aws-credentials)"))
+        } else if upper.starts_with("GCP_")
+            || upper.starts_with("GCLOUD_")
+            || upper.starts_with("GOOGLE_")
+            || upper.contains("GCP_SERVICE_ACCOUNT")
+            || upper.contains("GOOGLE_CREDENTIALS")
+        {
+            Some(("GCP", "GCP Workload Identity Federation (google-github-actions/auth with workload_identity_provider)"))
+        } else if upper.starts_with("AZURE_")
+            || upper.starts_with("ARM_")
+            || upper.contains("AZURE_CLIENT_SECRET")
+        {
+            Some((
+                "Azure",
+                "Azure federated credential (azure/login with client-id, no client-secret)",
+            ))
+        } else {
+            None
+        };
+        let Some((cloud, oidc_provider)) = provider else {
+            continue;
+        };
+        findings.push(Finding {
+            severity: Severity::Info,
+            category: FindingCategory::LongLivedSecretWithoutOidcRecommendation,
+            path: None,
+            nodes_involved: vec![secret.id],
+            message: format!(
+                "Long-lived {cloud} credential '{}' is in scope and no OIDC identity exists \
+                 in this workflow — {cloud} supports OIDC federation, so this credential could \
+                 be replaced with a short-lived token issued at runtime",
+                secret.name
+            ),
+            recommendation: Recommendation::FederateIdentity {
+                static_secret: secret.name.clone(),
+                oidc_provider: oidc_provider.into(),
+            },
+            source: FindingSource::BuiltIn,
+        });
+    }
+    findings
+}
+
+/// Rule: GHA workflow with multiple privileged jobs where SOME steps carry
+/// the standard fork-check `if:` and OTHERS do not — intra-file
+/// inconsistency in defensive posture. The org has the right instinct
+/// (some jobs are guarded) but applied it unevenly. Surfaces the unguarded
+/// privileged jobs by name so a reviewer can fix the gap in one PR.
+///
+/// Detection:
+///   * `META_PLATFORM == "github-actions"`
+///   * Trigger contains `pull_request` or `pull_request_target`
+///   * Multiple jobs hold authority (steps with `HasAccessTo` to a Secret
+///     or Identity)
+///   * At least one such job's privileged steps ALL carry
+///     `META_FORK_CHECK == "true"`
+///   * AND at least one OTHER privileged job has NO step carrying that
+///     marker
+///
+/// Severity: High. Severity floors at Medium when the inconsistency is
+/// limited to a single unguarded job (one-off oversight) vs. multiple
+/// (systemic gap).
+pub fn pull_request_workflow_inconsistent_fork_check(graph: &AuthorityGraph) -> Vec<Finding> {
+    if !graph_is_platform(graph, "github-actions") {
+        return Vec::new();
+    }
+    let trigger = match graph.metadata.get(META_TRIGGER) {
+        Some(t) => t.as_str(),
+        None => return Vec::new(),
+    };
+    let in_pr_context = trigger.split(',').any(|t| {
+        let t = t.trim();
+        matches!(t, "pull_request" | "pull_request_target")
+    });
+    if !in_pr_context {
+        return Vec::new();
+    }
+
+    // For each privileged step, record (job_name, has_fork_check). A job is
+    // "guarded" iff every privileged step in it carries the marker.
+    use std::collections::BTreeMap;
+    let mut per_job: BTreeMap<String, (bool, bool)> = BTreeMap::new(); // job -> (any_guarded, any_unguarded)
+
+    for step in graph.nodes_of_kind(NodeKind::Step) {
+        let holds_authority = graph.edges_from(step.id).any(|e| {
+            e.kind == EdgeKind::HasAccessTo
+                && graph
+                    .node(e.to)
+                    .map(|n| matches!(n.kind, NodeKind::Secret | NodeKind::Identity))
+                    .unwrap_or(false)
+        });
+        if !holds_authority {
+            continue;
+        }
+        let job = step
+            .metadata
+            .get(META_JOB_NAME)
+            .cloned()
+            .unwrap_or_else(|| step.name.clone());
+        let guarded = step
+            .metadata
+            .get(META_FORK_CHECK)
+            .map(|v| v == "true")
+            .unwrap_or(false);
+        let entry = per_job.entry(job).or_insert((false, false));
+        if guarded {
+            entry.0 = true;
+        } else {
+            entry.1 = true;
+        }
+    }
+
+    // Need >= 2 distinct privileged jobs; >= 1 fully-guarded job and >= 1
+    // job with at least one unguarded privileged step.
+    if per_job.len() < 2 {
+        return Vec::new();
+    }
+    let fully_guarded: Vec<&String> = per_job
+        .iter()
+        .filter(|(_, (g, u))| *g && !*u)
+        .map(|(k, _)| k)
+        .collect();
+    let unguarded: Vec<&String> = per_job
+        .iter()
+        .filter(|(_, (_, u))| *u)
+        .map(|(k, _)| k)
+        .collect();
+    if fully_guarded.is_empty() || unguarded.is_empty() {
+        return Vec::new();
+    }
+    let severity = if unguarded.len() >= 2 {
+        Severity::High
+    } else {
+        Severity::Medium
+    };
+    let guarded_label = fully_guarded
+        .iter()
+        .map(|s| s.as_str())
+        .collect::<Vec<_>>()
+        .join(", ");
+    let unguarded_label = unguarded
+        .iter()
+        .map(|s| s.as_str())
+        .collect::<Vec<_>>()
+        .join(", ");
+    vec![Finding {
+        severity,
+        category: FindingCategory::PullRequestWorkflowInconsistentForkCheck,
+        path: None,
+        nodes_involved: Vec::new(),
+        message: format!(
+            "PR-triggered workflow ('{trigger}') applies the standard fork-check \
+             (`github.event.pull_request.head.repo.fork == false` or equivalent) on \
+             privileged jobs [{guarded_label}] but NOT on [{unguarded_label}] — the \
+             unguarded jobs hold authority that fork PRs can reach"
+        ),
+        recommendation: Recommendation::Manual {
+            action: format!(
+                "Add `if: github.event.pull_request.head.repo.fork == false` (or \
+                 `github.event.pull_request.head.repo.full_name == github.repository`) to the \
+                 privileged steps in [{unguarded_label}]. Match the pattern already used by \
+                 [{guarded_label}] in the same workflow."
+            ),
+        },
+        source: FindingSource::BuiltIn,
+    }]
+}
+
+/// Rule: GitLab job with a production-named `environment:` binding has no
+/// `rules:` / `only:` clause restricting it to protected branches. The job
+/// runs (or attempts to run) on every pipeline trigger; if branch
+/// protection is later relaxed the deploy becomes runnable from
+/// unprotected branches without any code change.
+///
+/// Detection (per Step in a GitLab graph):
+///   * `META_PLATFORM == "gitlab"`
+///   * Step carries `environment_name` matching a production token
+///     (`prod`, `production`, `prd`)
+///   * Step does NOT carry `META_RULES_PROTECTED_ONLY`
+///
+/// Severity: Medium.
+pub fn gitlab_deploy_job_missing_protected_branch_only(graph: &AuthorityGraph) -> Vec<Finding> {
+    if !graph_is_platform(graph, "gitlab") {
+        return Vec::new();
+    }
+    let mut findings = Vec::new();
+    for step in graph.nodes_of_kind(NodeKind::Step) {
+        let env_name = match step.metadata.get("environment_name") {
+            Some(n) => n.clone(),
+            None => continue,
+        };
+        if !looks_like_prod_connection(&env_name) {
+            continue;
+        }
+        let protected = step
+            .metadata
+            .get(META_RULES_PROTECTED_ONLY)
+            .map(|v| v == "true")
+            .unwrap_or(false);
+        if protected {
+            continue;
+        }
+        findings.push(Finding {
+            severity: Severity::Medium,
+            category: FindingCategory::GitlabDeployJobMissingProtectedBranchOnly,
+            path: None,
+            nodes_involved: vec![step.id],
+            message: format!(
+                "GitLab deploy job '{}' targets production environment '{}' but has no \
+                 `rules:` / `only:` clause restricting it to protected branches — every MR \
+                 and every push will attempt to run the deploy",
+                step.name, env_name
+            ),
+            recommendation: Recommendation::Manual {
+                action: "Add `rules: - if: '$CI_COMMIT_REF_PROTECTED == \"true\"'` to the job, \
+                         or `only: [main]` for the simplest case. This survives future \
+                         changes to branch-protection settings."
+                    .into(),
+            },
+            source: FindingSource::BuiltIn,
+        });
+    }
+    findings
+}
+
+// ── Compensating-control suppressions ────────────────────────
+//
+// These suppressions DOWNGRADE or REMOVE existing-rule findings when the
+// graph carries a control that neutralises (or substantially mitigates)
+// the underlying risk. Applied as a post-processing pass so each
+// suppression can see both the finding and the surrounding graph state.
+//
+// Design intent (from the blue-team corpus defense report):
+//   * downgrade > suppress: keep the finding visible at a lower severity
+//     so it still surfaces in audits, but stop competing for triage time
+//     with un-mitigated criticals
+//   * never *delete* a finding silently — every suppression appends an
+//     explanation suffix to the message describing the compensating
+//     control taudit credited
+//
+// Suppressions implemented here:
+//   1. `checkout_self_pr_exposure` downgraded when the same job has no
+//      privileged steps (no Secret/Identity access and no env-gate writes).
+//   2. `trigger_context_mismatch` downgraded when every privileged step
+//      in the workflow carries the standard fork-check `if:`.
+//   3. `over_privileged_identity` suppressed when the workflow-level
+//      identity is broad but at least one job-level override narrows the
+//      scope (job-level wins at runtime).
+//   4. `terraform_auto_approve_in_prod` downgraded — not skipped — when an
+//      `environment:` gate is present (replaces the previous early-skip
+//      which discarded the finding entirely).
+fn apply_compensating_controls(graph: &AuthorityGraph, findings: &mut [Finding]) {
+    // Pre-compute graph-level signals once so the per-finding loop stays
+    // O(N findings) rather than O(N findings × M nodes).
+    let mut all_authority_steps_have_fork_check = true;
+    let mut any_authority_step_seen = false;
+    for step in graph.nodes_of_kind(NodeKind::Step) {
+        let holds_authority = graph.edges_from(step.id).any(|e| {
+            e.kind == EdgeKind::HasAccessTo
+                && graph
+                    .node(e.to)
+                    .map(|n| matches!(n.kind, NodeKind::Secret | NodeKind::Identity))
+                    .unwrap_or(false)
+        });
+        if !holds_authority {
+            continue;
+        }
+        any_authority_step_seen = true;
+        let guarded = step
+            .metadata
+            .get(META_FORK_CHECK)
+            .map(|v| v == "true")
+            .unwrap_or(false);
+        if !guarded {
+            all_authority_steps_have_fork_check = false;
+        }
+    }
+    let fork_check_universal = any_authority_step_seen && all_authority_steps_have_fork_check;
+
+    // For Suppression 1, build per-job: does any step in the job have
+    // access to a Secret/Identity OR write to the env gate?
+    use std::collections::{BTreeMap, BTreeSet};
+    let mut job_has_privileged_step: BTreeMap<String, bool> = BTreeMap::new();
+    for step in graph.nodes_of_kind(NodeKind::Step) {
+        let job = match step.metadata.get(META_JOB_NAME) {
+            Some(j) => j.clone(),
+            None => continue,
+        };
+        let privileged = graph.edges_from(step.id).any(|e| {
+            e.kind == EdgeKind::HasAccessTo
+                && graph
+                    .node(e.to)
+                    .map(|n| matches!(n.kind, NodeKind::Secret | NodeKind::Identity))
+                    .unwrap_or(false)
+        }) || step
+            .metadata
+            .get(META_WRITES_ENV_GATE)
+            .map(|v| v == "true")
+            .unwrap_or(false);
+        let entry = job_has_privileged_step.entry(job).or_insert(false);
+        if privileged {
+            *entry = true;
+        }
+    }
+
+    // For Suppression 3 — over_privileged_identity — collect the names of
+    // narrower per-job identity overrides so we can credit them when the
+    // broad workflow-level identity fires.
+    let job_level_narrow_overrides: BTreeSet<String> = graph
+        .nodes_of_kind(NodeKind::Identity)
+        .filter(|n| {
+            n.name.starts_with("GITHUB_TOKEN (")
+                && n.metadata
+                    .get(META_IDENTITY_SCOPE)
+                    .map(|s| s == "constrained")
+                    .unwrap_or(false)
+        })
+        .map(|n| n.name.clone())
+        .collect();
+
+    for finding in findings.iter_mut() {
+        match finding.category {
+            // ── Suppression 1: checkout_self_pr_exposure
+            FindingCategory::CheckoutSelfPrExposure => {
+                // Identify the checkout step (first node in nodes_involved)
+                // and look up its job. If the job has no privileged steps,
+                // the checkout is read-only — downgrade to Info.
+                let job = finding
+                    .nodes_involved
+                    .first()
+                    .and_then(|id| graph.node(*id))
+                    .and_then(|n| n.metadata.get(META_JOB_NAME).cloned());
+                let job_privileged = job
+                    .as_ref()
+                    .and_then(|j| job_has_privileged_step.get(j).copied())
+                    .unwrap_or(true); // unknown → conservative: keep High
+                if !job_privileged {
+                    finding.severity = Severity::Info;
+                    finding.message.push_str(
+                        " (downgraded: no privileged steps in same job — \
+                                   checkout is read-only for lint/test/analysis)",
+                    );
+                }
+            }
+            // ── Suppression 2: trigger_context_mismatch
+            FindingCategory::TriggerContextMismatch => {
+                if fork_check_universal {
+                    // Critical → Medium (not Info — the trigger choice itself
+                    // is still risky enough to keep visible for audit).
+                    finding.severity = match finding.severity {
+                        Severity::Critical => Severity::Medium,
+                        s => downgrade_one_step(s),
+                    };
+                    finding.message.push_str(
+                        " (downgraded: every privileged job in this workflow carries the \
+                         standard fork-check `if:` — fork PRs cannot reach the privileged steps)",
+                    );
+                }
+            }
+            // ── Suppression 3: over_privileged_identity
+            FindingCategory::OverPrivilegedIdentity => {
+                // Only relevant when the firing identity IS the
+                // workflow-level GITHUB_TOKEN AND at least one job has its
+                // own narrower override.
+                let firing_node_name = finding
+                    .nodes_involved
+                    .first()
+                    .and_then(|id| graph.node(*id))
+                    .map(|n| n.name.clone());
+                let is_workflow_level_token = firing_node_name.as_deref() == Some("GITHUB_TOKEN");
+                if is_workflow_level_token && !job_level_narrow_overrides.is_empty() {
+                    // Suppress by reducing to Info — the runtime identity
+                    // any job actually uses is the narrower job-level one.
+                    finding.severity = Severity::Info;
+                    let mut narrower: Vec<&str> = job_level_narrow_overrides
+                        .iter()
+                        .map(|s| s.as_str())
+                        .collect();
+                    narrower.sort_unstable();
+                    finding.message.push_str(&format!(
+                        " (suppressed: job-level permissions narrow this scope at runtime — \
+                         see {})",
+                        narrower.join(", ")
+                    ));
+                }
+            }
+            // ── Suppression 4: terraform_auto_approve_in_prod
+            //
+            // The pre-existing rule already early-skipped
+            // env-gated steps, so it never emits a finding to downgrade.
+            // Downgrade is wired into the rule body itself (search for
+            // `env_gated`) — kept as a no-op match arm here so future
+            // contributors can find the suppression-pass alongside the
+            // others.
+            FindingCategory::TerraformAutoApproveInProd => { /* see rule body */ }
+            _ => {}
+        }
+    }
+}
+
 pub fn run_all_rules(graph: &AuthorityGraph, max_hops: usize) -> Vec<Finding> {
     let mut findings = Vec::new();
     // MVP rules
@@ -3213,6 +3818,19 @@ pub fn run_all_rules(graph: &AuthorityGraph, max_hops: usize) -> Vec<Finding> {
     findings.extend(pr_build_pushes_image_with_floating_credentials(graph));
     // Composition-gap rule: env-gate laundering into untrusted consumer.
     findings.extend(secret_via_env_gate_to_untrusted_consumer(graph));
+    // Blue-team positive invariants (negative-space rules — fire on absence
+    // of expected defenses)
+    findings.extend(no_workflow_level_permissions_block(graph));
+    findings.extend(prod_deploy_job_no_environment_gate(graph));
+    findings.extend(long_lived_secret_without_oidc_recommendation(graph));
+    findings.extend(pull_request_workflow_inconsistent_fork_check(graph));
+    findings.extend(gitlab_deploy_job_missing_protected_branch_only(graph));
+
+    // Blue-team compensating-control suppressions (downgrade or suppress
+    // existing-rule findings when a control elsewhere in the graph
+    // neutralises the risk). Applied AFTER all rules emit so the
+    // suppressions can see every finding alongside the graph.
+    apply_compensating_controls(graph, &mut findings);
 
     apply_confidence_cap(graph, &mut findings);
 
@@ -5008,7 +5626,10 @@ mod tests {
     }
 
     #[test]
-    fn terraform_auto_approve_with_env_gate_does_not_fire() {
+    fn terraform_auto_approve_with_env_gate_downgrades_to_medium() {
+        // Per blue-team CC-4: env gate is a partial control (the gate's
+        // approver list is invisible from YAML), so the finding stays
+        // visible at Medium rather than disappearing entirely.
         let mut g = AuthorityGraph::new(source("azure-pipelines.yml"));
         step_with_meta(
             &mut g,
@@ -5021,10 +5642,19 @@ mod tests {
         );
 
         let findings = terraform_auto_approve_in_prod(&g);
-        assert!(
-            findings.is_empty(),
-            "env-gated apply must not fire — gate is the change-control"
+        assert_eq!(
+            findings.len(),
+            1,
+            "env-gated apply must still emit a finding"
         );
+        assert_eq!(
+            findings[0].severity,
+            Severity::Medium,
+            "env-gated apply downgrades Critical → Medium (compensating control credit)"
+        );
+        assert!(findings[0]
+            .message
+            .contains("`environment:` binding present"));
     }
 
     #[test]
@@ -5882,5 +6512,453 @@ mod tests {
                 .any(|f| f.category == FindingCategory::SecretViaEnvGateToUntrustedConsumer),
             "secret_via_env_gate_to_untrusted_consumer must run via run_all_rules"
         );
+    }
+
+    // ── no_workflow_level_permissions_block ──────────────────
+
+    fn graph_with_platform(platform: &str, file: &str) -> AuthorityGraph {
+        let mut g = AuthorityGraph::new(source(file));
+        g.metadata.insert(META_PLATFORM.into(), platform.into());
+        g
+    }
+
+    #[test]
+    fn no_workflow_perms_fires_on_gha_when_marker_present_and_no_token_identity() {
+        let mut g = graph_with_platform("github-actions", ".github/workflows/ci.yml");
+        g.metadata
+            .insert(META_NO_WORKFLOW_PERMISSIONS.into(), "true".into());
+        // A real workflow always has at least one Step. The empty-graph
+        // guard inside the rule excludes mis-classified variable-only YAML.
+        g.add_node(NodeKind::Step, "build[0]", TrustZone::FirstParty);
+        // No GITHUB_TOKEN identity nodes at all (parser would skip creating
+        // them when there's no permissions block anywhere).
+
+        let findings = no_workflow_level_permissions_block(&g);
+        assert_eq!(findings.len(), 1);
+        assert_eq!(findings[0].severity, Severity::Medium);
+        assert_eq!(
+            findings[0].category,
+            FindingCategory::NoWorkflowLevelPermissionsBlock
+        );
+    }
+
+    #[test]
+    fn no_workflow_perms_does_not_fire_on_empty_graph() {
+        // Empty graph (variable-only YAML mis-detected as GHA, parse
+        // failure, etc.) has no real authority surface — must skip.
+        let mut g = graph_with_platform("github-actions", "vars.yml");
+        g.metadata
+            .insert(META_NO_WORKFLOW_PERMISSIONS.into(), "true".into());
+        assert!(no_workflow_level_permissions_block(&g).is_empty());
+    }
+
+    #[test]
+    fn no_workflow_perms_does_not_fire_when_a_job_declares_permissions() {
+        // Workflow has no top-level permissions, but one job does — the rule
+        // must not fire because the per-job override is what runs.
+        let mut g = graph_with_platform("github-actions", ".github/workflows/ci.yml");
+        g.metadata
+            .insert(META_NO_WORKFLOW_PERMISSIONS.into(), "true".into());
+        let mut meta = std::collections::HashMap::new();
+        meta.insert(META_PERMISSIONS.into(), "{ contents: read }".into());
+        meta.insert(META_IDENTITY_SCOPE.into(), "constrained".into());
+        g.add_node_with_metadata(
+            NodeKind::Identity,
+            "GITHUB_TOKEN (build)",
+            TrustZone::FirstParty,
+            meta,
+        );
+
+        let findings = no_workflow_level_permissions_block(&g);
+        assert!(findings.is_empty());
+    }
+
+    #[test]
+    fn no_workflow_perms_does_not_fire_on_ado_or_gitlab() {
+        let mut g = graph_with_platform("azure-devops", "azure-pipelines.yml");
+        g.metadata
+            .insert(META_NO_WORKFLOW_PERMISSIONS.into(), "true".into());
+        assert!(no_workflow_level_permissions_block(&g).is_empty());
+
+        let mut g = graph_with_platform("gitlab", ".gitlab-ci.yml");
+        g.metadata
+            .insert(META_NO_WORKFLOW_PERMISSIONS.into(), "true".into());
+        assert!(no_workflow_level_permissions_block(&g).is_empty());
+    }
+
+    // ── prod_deploy_job_no_environment_gate ───────────────────
+
+    #[test]
+    fn prod_deploy_no_env_gate_fires_on_ado_prod_sc_without_env_marker() {
+        let mut g = graph_with_platform("azure-devops", "azure-pipelines.yml");
+        step_with_meta(
+            &mut g,
+            "AzureCLI : Deploy",
+            &[(META_SERVICE_CONNECTION_NAME, "platform-prod-sc")],
+        );
+        let findings = prod_deploy_job_no_environment_gate(&g);
+        assert_eq!(findings.len(), 1);
+        assert_eq!(findings[0].severity, Severity::High);
+        assert_eq!(
+            findings[0].category,
+            FindingCategory::ProdDeployJobNoEnvironmentGate
+        );
+        assert!(findings[0].message.contains("platform-prod-sc"));
+    }
+
+    #[test]
+    fn prod_deploy_no_env_gate_skips_when_env_marker_present() {
+        let mut g = graph_with_platform("azure-devops", "azure-pipelines.yml");
+        step_with_meta(
+            &mut g,
+            "AzureCLI : Deploy",
+            &[
+                (META_SERVICE_CONNECTION_NAME, "platform-prod-sc"),
+                (META_ENV_APPROVAL, "true"),
+            ],
+        );
+        assert!(prod_deploy_job_no_environment_gate(&g).is_empty());
+    }
+
+    #[test]
+    fn prod_deploy_no_env_gate_skips_dev_connection() {
+        let mut g = graph_with_platform("azure-devops", "azure-pipelines.yml");
+        step_with_meta(
+            &mut g,
+            "AzureCLI : Deploy",
+            &[(META_SERVICE_CONNECTION_NAME, "platform-dev-sc")],
+        );
+        assert!(prod_deploy_job_no_environment_gate(&g).is_empty());
+    }
+
+    #[test]
+    fn prod_deploy_no_env_gate_via_edge_to_prod_identity() {
+        let mut g = graph_with_platform("azure-devops", "azure-pipelines.yml");
+        let step = step_with_meta(&mut g, "AzureCLI : Deploy", &[]);
+        let mut id_meta = std::collections::HashMap::new();
+        id_meta.insert(META_SERVICE_CONNECTION.into(), "true".into());
+        let conn = g.add_node_with_metadata(
+            NodeKind::Identity,
+            "alz-infra-sc-prd-uks",
+            TrustZone::FirstParty,
+            id_meta,
+        );
+        g.add_edge(step, conn, EdgeKind::HasAccessTo);
+        let findings = prod_deploy_job_no_environment_gate(&g);
+        assert_eq!(findings.len(), 1);
+        assert!(findings[0].message.contains("alz-infra-sc-prd-uks"));
+    }
+
+    // ── long_lived_secret_without_oidc_recommendation ─────────
+
+    #[test]
+    fn ll_secret_without_oidc_emits_for_aws_secret_with_no_oidc_in_graph() {
+        let mut g = graph_with_platform("github-actions", ".github/workflows/ci.yml");
+        g.add_node(NodeKind::Secret, "AWS_ACCESS_KEY_ID", TrustZone::FirstParty);
+
+        let findings = long_lived_secret_without_oidc_recommendation(&g);
+        assert_eq!(findings.len(), 1);
+        assert_eq!(findings[0].severity, Severity::Info);
+        assert!(matches!(
+            findings[0].recommendation,
+            Recommendation::FederateIdentity { .. }
+        ));
+    }
+
+    #[test]
+    fn ll_secret_without_oidc_skips_when_oidc_identity_present() {
+        let mut g = graph_with_platform("github-actions", ".github/workflows/ci.yml");
+        g.add_node(NodeKind::Secret, "AWS_ACCESS_KEY_ID", TrustZone::FirstParty);
+        let mut meta = std::collections::HashMap::new();
+        meta.insert(META_OIDC.into(), "true".into());
+        g.add_node_with_metadata(
+            NodeKind::Identity,
+            "AWS/deploy-role",
+            TrustZone::FirstParty,
+            meta,
+        );
+
+        assert!(long_lived_secret_without_oidc_recommendation(&g).is_empty());
+    }
+
+    #[test]
+    fn ll_secret_without_oidc_skips_unrecognised_secret_names() {
+        let mut g = graph_with_platform("github-actions", ".github/workflows/ci.yml");
+        g.add_node(NodeKind::Secret, "INTERNAL_KEY", TrustZone::FirstParty);
+        // Not AWS/GCP/Azure-shaped — no actionable OIDC migration path.
+        assert!(long_lived_secret_without_oidc_recommendation(&g).is_empty());
+    }
+
+    // ── pull_request_workflow_inconsistent_fork_check ─────────
+
+    #[test]
+    fn inconsistent_fork_check_fires_when_one_job_guarded_one_unguarded() {
+        let mut g = graph_with_platform("github-actions", ".github/workflows/pr.yml");
+        g.metadata
+            .insert(META_TRIGGER.into(), "pull_request".into());
+        let secret = g.add_node(NodeKind::Secret, "DEPLOY", TrustZone::FirstParty);
+        let s_guarded = step_with_meta(
+            &mut g,
+            "build[0]",
+            &[(META_JOB_NAME, "build"), (META_FORK_CHECK, "true")],
+        );
+        let s_unguarded = step_with_meta(&mut g, "deploy[0]", &[(META_JOB_NAME, "deploy")]);
+        g.add_edge(s_guarded, secret, EdgeKind::HasAccessTo);
+        g.add_edge(s_unguarded, secret, EdgeKind::HasAccessTo);
+
+        let findings = pull_request_workflow_inconsistent_fork_check(&g);
+        assert_eq!(findings.len(), 1);
+        assert_eq!(
+            findings[0].category,
+            FindingCategory::PullRequestWorkflowInconsistentForkCheck
+        );
+        assert!(findings[0].message.contains("deploy"));
+        assert!(findings[0].message.contains("build"));
+    }
+
+    #[test]
+    fn inconsistent_fork_check_skips_when_all_jobs_guarded() {
+        let mut g = graph_with_platform("github-actions", ".github/workflows/pr.yml");
+        g.metadata
+            .insert(META_TRIGGER.into(), "pull_request".into());
+        let secret = g.add_node(NodeKind::Secret, "DEPLOY", TrustZone::FirstParty);
+        let s1 = step_with_meta(
+            &mut g,
+            "build[0]",
+            &[(META_JOB_NAME, "build"), (META_FORK_CHECK, "true")],
+        );
+        let s2 = step_with_meta(
+            &mut g,
+            "deploy[0]",
+            &[(META_JOB_NAME, "deploy"), (META_FORK_CHECK, "true")],
+        );
+        g.add_edge(s1, secret, EdgeKind::HasAccessTo);
+        g.add_edge(s2, secret, EdgeKind::HasAccessTo);
+        assert!(pull_request_workflow_inconsistent_fork_check(&g).is_empty());
+    }
+
+    #[test]
+    fn inconsistent_fork_check_skips_when_no_job_guarded() {
+        // Both unguarded → not "inconsistent" (the org never tried). Other
+        // rules cover the underlying risk.
+        let mut g = graph_with_platform("github-actions", ".github/workflows/pr.yml");
+        g.metadata
+            .insert(META_TRIGGER.into(), "pull_request".into());
+        let secret = g.add_node(NodeKind::Secret, "DEPLOY", TrustZone::FirstParty);
+        let s1 = step_with_meta(&mut g, "build[0]", &[(META_JOB_NAME, "build")]);
+        let s2 = step_with_meta(&mut g, "deploy[0]", &[(META_JOB_NAME, "deploy")]);
+        g.add_edge(s1, secret, EdgeKind::HasAccessTo);
+        g.add_edge(s2, secret, EdgeKind::HasAccessTo);
+        assert!(pull_request_workflow_inconsistent_fork_check(&g).is_empty());
+    }
+
+    #[test]
+    fn inconsistent_fork_check_skips_non_pr_trigger() {
+        let mut g = graph_with_platform("github-actions", ".github/workflows/push.yml");
+        g.metadata.insert(META_TRIGGER.into(), "push".into());
+        let secret = g.add_node(NodeKind::Secret, "DEPLOY", TrustZone::FirstParty);
+        let s1 = step_with_meta(
+            &mut g,
+            "build[0]",
+            &[(META_JOB_NAME, "build"), (META_FORK_CHECK, "true")],
+        );
+        let s2 = step_with_meta(&mut g, "deploy[0]", &[(META_JOB_NAME, "deploy")]);
+        g.add_edge(s1, secret, EdgeKind::HasAccessTo);
+        g.add_edge(s2, secret, EdgeKind::HasAccessTo);
+        assert!(pull_request_workflow_inconsistent_fork_check(&g).is_empty());
+    }
+
+    // ── gitlab_deploy_job_missing_protected_branch_only ────────
+
+    #[test]
+    fn gitlab_deploy_no_protected_only_fires_on_prod_env_without_marker() {
+        let mut g = graph_with_platform("gitlab", ".gitlab-ci.yml");
+        step_with_meta(&mut g, "deploy-prod", &[("environment_name", "production")]);
+        let findings = gitlab_deploy_job_missing_protected_branch_only(&g);
+        assert_eq!(findings.len(), 1);
+        assert_eq!(findings[0].severity, Severity::Medium);
+        assert_eq!(
+            findings[0].category,
+            FindingCategory::GitlabDeployJobMissingProtectedBranchOnly
+        );
+    }
+
+    #[test]
+    fn gitlab_deploy_no_protected_only_skips_when_marker_present() {
+        let mut g = graph_with_platform("gitlab", ".gitlab-ci.yml");
+        step_with_meta(
+            &mut g,
+            "deploy-prod",
+            &[
+                ("environment_name", "production"),
+                (META_RULES_PROTECTED_ONLY, "true"),
+            ],
+        );
+        assert!(gitlab_deploy_job_missing_protected_branch_only(&g).is_empty());
+    }
+
+    #[test]
+    fn gitlab_deploy_no_protected_only_skips_dev_environment() {
+        let mut g = graph_with_platform("gitlab", ".gitlab-ci.yml");
+        step_with_meta(&mut g, "deploy-staging", &[("environment_name", "staging")]);
+        assert!(gitlab_deploy_job_missing_protected_branch_only(&g).is_empty());
+    }
+
+    // ── compensating-control suppressions ─────────────────────
+
+    #[test]
+    fn suppression_checkout_pr_downgraded_when_no_privileged_steps_in_job() {
+        // Build a graph where checkout_self_pr_exposure would fire BUT the
+        // job has no secret access and no env-gate writes.
+        let mut g = graph_with_platform("github-actions", ".github/workflows/lint.yml");
+        g.metadata
+            .insert(META_TRIGGER.into(), "pull_request_target".into());
+        let _checkout = step_with_meta(
+            &mut g,
+            "lint[0]",
+            &[(META_JOB_NAME, "lint"), (META_CHECKOUT_SELF, "true")],
+        );
+        // A second non-privileged step in the same job.
+        step_with_meta(&mut g, "lint[1]", &[(META_JOB_NAME, "lint")]);
+
+        let mut findings = checkout_self_pr_exposure(&g);
+        assert_eq!(findings.len(), 1);
+        assert_eq!(findings[0].severity, Severity::High); // pre-suppression
+        apply_compensating_controls(&g, &mut findings);
+        assert_eq!(
+            findings[0].severity,
+            Severity::Info,
+            "checkout in a job with no privileged steps must downgrade to Info"
+        );
+        assert!(findings[0].message.contains("downgraded"));
+    }
+
+    #[test]
+    fn suppression_checkout_pr_unchanged_when_job_has_privileged_step() {
+        let mut g = graph_with_platform("github-actions", ".github/workflows/build.yml");
+        g.metadata
+            .insert(META_TRIGGER.into(), "pull_request_target".into());
+        let secret = g.add_node(NodeKind::Secret, "DEPLOY_TOKEN", TrustZone::FirstParty);
+        let checkout = step_with_meta(
+            &mut g,
+            "build[0]",
+            &[(META_JOB_NAME, "build"), (META_CHECKOUT_SELF, "true")],
+        );
+        let priv_step = step_with_meta(&mut g, "build[1]", &[(META_JOB_NAME, "build")]);
+        g.add_edge(priv_step, secret, EdgeKind::HasAccessTo);
+        // checkout step itself has no edges
+        let _ = checkout;
+
+        let mut findings = checkout_self_pr_exposure(&g);
+        assert_eq!(findings.len(), 1);
+        let pre = findings[0].severity;
+        apply_compensating_controls(&g, &mut findings);
+        assert_eq!(
+            findings[0].severity, pre,
+            "must NOT downgrade when same job has privileged steps"
+        );
+    }
+
+    #[test]
+    fn suppression_trigger_context_downgraded_when_all_priv_jobs_fork_checked() {
+        // pull_request_target trigger + every privileged step has fork-check.
+        let mut g = graph_with_platform("github-actions", ".github/workflows/prt.yml");
+        g.metadata
+            .insert(META_TRIGGER.into(), "pull_request_target".into());
+        let secret = g.add_node(NodeKind::Secret, "DEPLOY", TrustZone::FirstParty);
+        let s = step_with_meta(
+            &mut g,
+            "build[0]",
+            &[(META_JOB_NAME, "build"), (META_FORK_CHECK, "true")],
+        );
+        g.add_edge(s, secret, EdgeKind::HasAccessTo);
+
+        let mut findings = trigger_context_mismatch(&g);
+        assert_eq!(findings.len(), 1);
+        assert_eq!(findings[0].severity, Severity::Critical);
+        apply_compensating_controls(&g, &mut findings);
+        assert_eq!(
+            findings[0].severity,
+            Severity::Medium,
+            "trigger_context_mismatch must downgrade Critical → Medium when fork-check universal"
+        );
+        assert!(findings[0].message.contains("downgraded"));
+    }
+
+    #[test]
+    fn suppression_trigger_context_unchanged_when_some_priv_steps_unguarded() {
+        let mut g = graph_with_platform("github-actions", ".github/workflows/prt.yml");
+        g.metadata
+            .insert(META_TRIGGER.into(), "pull_request_target".into());
+        let secret = g.add_node(NodeKind::Secret, "DEPLOY", TrustZone::FirstParty);
+        let s_guard = step_with_meta(
+            &mut g,
+            "build[0]",
+            &[(META_JOB_NAME, "build"), (META_FORK_CHECK, "true")],
+        );
+        let s_no_guard = step_with_meta(&mut g, "deploy[0]", &[(META_JOB_NAME, "deploy")]);
+        g.add_edge(s_guard, secret, EdgeKind::HasAccessTo);
+        g.add_edge(s_no_guard, secret, EdgeKind::HasAccessTo);
+
+        let mut findings = trigger_context_mismatch(&g);
+        let pre = findings[0].severity;
+        apply_compensating_controls(&g, &mut findings);
+        assert_eq!(findings[0].severity, pre);
+    }
+
+    #[test]
+    fn suppression_overpriv_identity_demoted_when_job_has_narrow_override() {
+        // Workflow-level GITHUB_TOKEN is broad; one job has constrained override.
+        let mut g = graph_with_platform("github-actions", ".github/workflows/ci.yml");
+        let mut wf_meta = std::collections::HashMap::new();
+        wf_meta.insert(META_PERMISSIONS.into(), "write-all".into());
+        wf_meta.insert(META_IDENTITY_SCOPE.into(), "broad".into());
+        let wf_token = g.add_node_with_metadata(
+            NodeKind::Identity,
+            "GITHUB_TOKEN",
+            TrustZone::FirstParty,
+            wf_meta,
+        );
+        let mut job_meta = std::collections::HashMap::new();
+        job_meta.insert(META_PERMISSIONS.into(), "{ contents: read }".into());
+        job_meta.insert(META_IDENTITY_SCOPE.into(), "constrained".into());
+        g.add_node_with_metadata(
+            NodeKind::Identity,
+            "GITHUB_TOKEN (build)",
+            TrustZone::FirstParty,
+            job_meta,
+        );
+        let step = g.add_node(NodeKind::Step, "build", TrustZone::FirstParty);
+        g.add_edge(step, wf_token, EdgeKind::HasAccessTo);
+
+        let mut findings = over_privileged_identity(&g);
+        // Filter to only the workflow-level finding (the constrained job-level
+        // override won't fire over_privileged_identity by itself).
+        let wf_findings_count = findings
+            .iter()
+            .filter(|f| {
+                f.nodes_involved
+                    .first()
+                    .and_then(|id| g.node(*id))
+                    .map(|n| n.name == "GITHUB_TOKEN")
+                    .unwrap_or(false)
+            })
+            .count();
+        assert_eq!(wf_findings_count, 1);
+        apply_compensating_controls(&g, &mut findings);
+        let demoted = findings.iter().find(|f| {
+            f.nodes_involved
+                .first()
+                .and_then(|id| g.node(*id))
+                .map(|n| n.name == "GITHUB_TOKEN")
+                .unwrap_or(false)
+        });
+        let demoted = demoted.expect("workflow-level token finding still present");
+        assert_eq!(
+            demoted.severity,
+            Severity::Info,
+            "workflow-level over_priv must downgrade to Info when narrower job override exists"
+        );
+        assert!(demoted.message.contains("suppressed"));
     }
 }

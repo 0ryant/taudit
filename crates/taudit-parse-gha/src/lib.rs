@@ -36,6 +36,19 @@ impl PipelineParser for GhaParser {
         let extra_docs = de.next().is_some();
 
         let mut graph = AuthorityGraph::new(source.clone());
+        graph
+            .metadata
+            .insert(META_PLATFORM.into(), "github-actions".into());
+        if workflow.permissions.is_none() {
+            // Negative-space marker: lets the
+            // `no_workflow_level_permissions_block` rule detect the absence
+            // of any top-level `permissions:` declaration without re-reading
+            // the source YAML. The same rule will additionally check for the
+            // absence of any per-job permissions block.
+            graph
+                .metadata
+                .insert(META_NO_WORKFLOW_PERMISSIONS.into(), "true".into());
+        }
         if extra_docs {
             graph.mark_partial(
                 "file contains multiple YAML documents (--- separator) — only the first was analyzed".to_string(),
@@ -265,6 +278,23 @@ impl PipelineParser for GhaParser {
                         if !body.is_empty() {
                             node.metadata.insert(META_SCRIPT_BODY.into(), body.clone());
                         }
+                    }
+                    // Fork-check stamping. A step inherits its job-level
+                    // `if:` (if any) plus its own `if:`. Either one carrying
+                    // the standard fork-check pattern is sufficient — both
+                    // forms guard the step from running on fork-PR contexts.
+                    let job_check = job
+                        .if_cond
+                        .as_deref()
+                        .map(is_fork_check_expression)
+                        .unwrap_or(false);
+                    let step_check = step
+                        .if_cond
+                        .as_deref()
+                        .map(is_fork_check_expression)
+                        .unwrap_or(false);
+                    if job_check || step_check {
+                        node.metadata.insert(META_FORK_CHECK.into(), "true".into());
                     }
                 }
 
@@ -518,6 +548,40 @@ impl PipelineParser for GhaParser {
 
 /// Returns true if the workflow's `on:` triggers include `pull_request_target`.
 /// GHA `on:` is polymorphic: string, sequence, or mapping.
+/// Returns true when a GHA `if:` expression matches the standard fork-check
+/// pattern: `github.event.pull_request.head.repo.fork == false` (or the
+/// negated `!= true`), or the equivalent
+/// `github.event.pull_request.head.repo.full_name == github.repository`.
+/// Whitespace is normalised before matching so the canonical Grafana form
+/// (`if: github.event.pull_request.head.repo.full_name == github.repository`)
+/// is detected alongside the more terse `repo.fork == false` variant.
+///
+/// The check is conservative — it requires the canonical predicate on the
+/// raw expression. Wrapping the predicate inside a larger boolean
+/// expression that ANDs additional clauses (e.g. `&& github.actor != ...`)
+/// is still detected because the substring match on the canonical form is
+/// preserved. ORing it away (`|| true`) would defeat the check, but that
+/// pattern is not seen in practice and would itself be a code-review red
+/// flag.
+pub fn is_fork_check_expression(expr: &str) -> bool {
+    let normalised: String = expr.split_whitespace().collect::<Vec<_>>().join(" ");
+    let lower = normalised.to_lowercase();
+    // `repo.fork == false` (and the negated `!= true`)
+    if lower.contains("github.event.pull_request.head.repo.fork == false")
+        || lower.contains("github.event.pull_request.head.repo.fork != true")
+    {
+        return true;
+    }
+    // `head.repo.full_name == github.repository` — Grafana canonical form.
+    // Tolerate either ordering of the equality operands.
+    if lower.contains("github.event.pull_request.head.repo.full_name == github.repository")
+        || lower.contains("github.repository == github.event.pull_request.head.repo.full_name")
+    {
+        return true;
+    }
+    false
+}
+
 fn trigger_has_pull_request_target(triggers: &serde_yaml::Value) -> bool {
     const PRT: &str = "pull_request_target";
     match triggers {
@@ -1176,6 +1240,13 @@ pub struct GhaJob {
     /// (`[self-hosted, linux]`), or absent for reusable workflows.
     #[serde(rename = "runs-on", default)]
     pub runs_on: Option<serde_yaml::Value>,
+    /// Job-level `if:` condition. Captured verbatim so rules can scan for
+    /// the standard fork-check pattern
+    /// (`github.event.pull_request.head.repo.fork == false` or the
+    /// equivalent `head.repo.full_name == github.repository`). Job-level
+    /// `if:` applies to every step the job contains.
+    #[serde(rename = "if", default)]
+    pub if_cond: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -1190,6 +1261,10 @@ pub struct GhaStep {
     pub env: Option<EnvSpec>,
     #[serde(rename = "with", default)]
     pub with: Option<HashMap<String, String>>,
+    /// Step-level `if:` condition. Captured verbatim so rules can detect
+    /// the standard fork-check pattern.
+    #[serde(rename = "if", default)]
+    pub if_cond: Option<String>,
 }
 
 #[cfg(test)]

@@ -106,6 +106,17 @@ fn event_type(category: FindingCategory) -> String {
         FindingCategory::SecretViaEnvGateToUntrustedConsumer => {
             "secret_via_env_gate_to_untrusted_consumer"
         }
+        FindingCategory::NoWorkflowLevelPermissionsBlock => "no_workflow_level_permissions_block",
+        FindingCategory::ProdDeployJobNoEnvironmentGate => "prod_deploy_job_no_environment_gate",
+        FindingCategory::LongLivedSecretWithoutOidcRecommendation => {
+            "long_lived_secret_without_oidc_recommendation"
+        }
+        FindingCategory::PullRequestWorkflowInconsistentForkCheck => {
+            "pull_request_workflow_inconsistent_fork_check"
+        }
+        FindingCategory::GitlabDeployJobMissingProtectedBranchOnly => {
+            "gitlab_deploy_job_missing_protected_branch_only"
+        }
         #[allow(deprecated)]
         FindingCategory::EgressBlindspot => "egress_blindspot",
         #[allow(deprecated)]
