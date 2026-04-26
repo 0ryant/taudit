@@ -402,6 +402,80 @@ pub const RULE_DEFS: &[RuleDef] = &[
         security_severity: "5.0",
         tags: &["security", "injection", "azure-devops"],
     },
+    RuleDef {
+        id: "runtime_script_fetched_from_floating_url",
+        name: "RuntimeScriptFetchedFromFloatingUrl",
+        short_description:
+            "A `run:` step downloads and executes a script from a mutable URL (curl|bash from a branch ref).",
+        full_description:
+            "A workflow step pipes a remotely-fetched script directly into a shell \
+             interpreter (`curl … | bash`, `wget … | sh`, `bash <(curl …)`, \
+             `deno run https://…`) where the URL is not pinned to a tag or commit SHA — \
+             typically containing `refs/heads/`, `/main/`, or `/master/`. Whoever can land \
+             a commit on the referenced branch (including the upstream maintainers, but \
+             also any attacker who compromises the upstream account) executes arbitrary \
+             code on the runner with the workflow's full token scope. Pin to a release tag \
+             or, better, to a commit SHA, and verify the download against a checksum.",
+        default_level: "error",
+        security_severity: "7.5",
+        tags: &["security", "injection", "supply-chain", "github-actions"],
+    },
+    RuleDef {
+        id: "pr_trigger_with_floating_action_ref",
+        name: "PrTriggerWithFloatingActionRef",
+        short_description:
+            "High-authority PR trigger combined with a non-SHA-pinned action ref — single-PR RCE chain.",
+        full_description:
+            "The workflow uses a high-authority PR-class trigger (`pull_request_target`, \
+             `issue_comment`, or `workflow_run`) that runs in the base repository context \
+             with full `GITHUB_TOKEN` write permissions, and at least one step references \
+             an action by a mutable ref (`@main`, `@master`, `@v1`) instead of a 40-char \
+             commit SHA. Anyone who can push to the referenced action branch executes code \
+             with full write access on the target repository — a one-PR exploit chain. \
+             Either drop the privileged trigger (use `pull_request` for CI) or pin every \
+             action in the workflow to a commit SHA.",
+        default_level: "error",
+        security_severity: "9.0",
+        tags: &["security", "privilege-escalation", "supply-chain", "github-actions"],
+    },
+    RuleDef {
+        id: "untrusted_api_response_to_env_sink",
+        name: "UntrustedApiResponseToEnvSink",
+        short_description:
+            "API response derived from PR metadata is written to $GITHUB_ENV — environment injection vector.",
+        full_description:
+            "A `workflow_run`-triggered workflow captures output from a GitHub API call \
+             (`gh pr view`, `gh api`, `curl api.github.com`) and pipes it into \
+             `$GITHUB_ENV`, `$GITHUB_OUTPUT`, or `$GITHUB_PATH` without sanitisation. \
+             Because the API response embeds attacker-influenced fields (branch name, PR \
+             title, head commit message), a value crafted to contain a newline plus \
+             `KEY=value` injects an environment variable into every subsequent step in \
+             the same job — including steps that hold the repository write token. \
+             Validate with a strict regex before redirecting to the env file, or write \
+             only known-numeric fields (PR number, commit timestamp).",
+        default_level: "error",
+        security_severity: "7.5",
+        tags: &["security", "injection", "github-actions"],
+    },
+    RuleDef {
+        id: "pr_build_pushes_image_with_floating_credentials",
+        name: "PrBuildPushesImageWithFloatingCredentials",
+        short_description:
+            "PR-triggered workflow logs into a container registry via a non-SHA-pinned action.",
+        full_description:
+            "A `pull_request`-triggered workflow uses a container-registry login action \
+             (`docker/login-action`, `aws-actions/amazon-ecr-login`, `azure/docker-login`, \
+             `google-github-actions/auth`) pinned to a mutable ref. The login action \
+             receives either an OIDC token (when `id-token: write` is granted) or a \
+             long-lived registry credential. A compromise of the action's branch lets an \
+             attacker exfiltrate that credential, and any subsequent `docker push` \
+             publishes a PR-controlled image to a shared registry — poisoning every \
+             downstream consumer. Pin every login action to a commit SHA and gate the \
+             push step on `if: github.event.pull_request.head.repo.fork == false`.",
+        default_level: "error",
+        security_severity: "7.5",
+        tags: &["security", "supply-chain", "credentials", "github-actions"],
+    },
 ];
 
 // ── SARIF 2.1.0 schema structs ──────────────────────────
@@ -938,6 +1012,10 @@ mod tests {
             FindingCategory::TerraformAutoApproveInProd,
             FindingCategory::AddSpnWithInlineScript,
             FindingCategory::ParameterInterpolationIntoShell,
+            FindingCategory::RuntimeScriptFetchedFromFloatingUrl,
+            FindingCategory::PrTriggerWithFloatingActionRef,
+            FindingCategory::UntrustedApiResponseToEnvSink,
+            FindingCategory::PrBuildPushesImageWithFloatingCredentials,
         ];
 
         for cat in categories {

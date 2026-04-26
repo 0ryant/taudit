@@ -59,7 +59,34 @@ impl PipelineParser for GhaParser {
             .map(trigger_has_pull_request_target)
             .unwrap_or(false);
 
-        if is_pull_request_target {
+        // Record every recognised trigger as a comma-separated list so rules
+        // can reason about combinations (e.g. `pull_request_target`,
+        // `pull_request`, `workflow_run`, `issue_comment`). Backwards-compatible:
+        // existing single-value consumers that match exact strings on
+        // `pull_request_target` are preserved by writing that token first when
+        // present.
+        let trigger_list = collect_trigger_names(workflow.triggers.as_ref());
+        if !trigger_list.is_empty() {
+            // Place pull_request_target first so consumers that use string
+            // equality (older rules) still match the canonical legacy value.
+            let mut ordered: Vec<&str> = Vec::new();
+            if trigger_list.iter().any(|t| t == "pull_request_target") {
+                ordered.push("pull_request_target");
+            }
+            for t in &trigger_list {
+                if t != "pull_request_target" {
+                    ordered.push(t);
+                }
+            }
+            // If we only have `pull_request_target`, write it bare so the
+            // legacy `== "pull_request_target"` predicate keeps working.
+            let value = if ordered.len() == 1 {
+                ordered[0].to_string()
+            } else {
+                ordered.join(",")
+            };
+            graph.metadata.insert(META_TRIGGER.into(), value);
+        } else if is_pull_request_target {
             graph
                 .metadata
                 .insert(META_TRIGGER.into(), "pull_request_target".into());
@@ -218,9 +245,18 @@ impl PipelineParser for GhaParser {
                 let step_id = graph.add_node(NodeKind::Step, step_name, trust_zone);
 
                 // Stamp parent job name so consumers (e.g. `taudit map --job`)
-                // can attribute steps back to their containing job.
+                // can attribute steps back to their containing job. Also
+                // stamp the raw `run:` script body so script-aware rules
+                // (runtime_script_fetched_from_floating_url,
+                // untrusted_api_response_to_env_sink) can pattern-match on
+                // the actual command text the runner will execute.
                 if let Some(node) = graph.nodes.get_mut(step_id) {
                     node.metadata.insert(META_JOB_NAME.into(), job_name.clone());
+                    if let Some(ref body) = step.run {
+                        if !body.is_empty() {
+                            node.metadata.insert(META_SCRIPT_BODY.into(), body.clone());
+                        }
+                    }
                 }
 
                 // Link step to action image
@@ -427,6 +463,40 @@ fn trigger_has_pull_request_target(triggers: &serde_yaml::Value) -> bool {
             .any(|(k, _)| k.as_str().map(|s| s == PRT).unwrap_or(false)),
         _ => false,
     }
+}
+
+/// Collects every trigger name from a workflow's `on:` field. Returns the
+/// canonical event tokens (`pull_request`, `pull_request_target`,
+/// `workflow_run`, `issue_comment`, `push`, etc.) in source order, deduped.
+fn collect_trigger_names(triggers: Option<&serde_yaml::Value>) -> Vec<String> {
+    let mut out: Vec<String> = Vec::new();
+    let mut push_unique = |s: &str| {
+        if !s.is_empty() && !out.iter().any(|e| e == s) {
+            out.push(s.to_string());
+        }
+    };
+    let Some(val) = triggers else {
+        return out;
+    };
+    match val {
+        serde_yaml::Value::String(s) => push_unique(s),
+        serde_yaml::Value::Sequence(seq) => {
+            for v in seq {
+                if let Some(s) = v.as_str() {
+                    push_unique(s);
+                }
+            }
+        }
+        serde_yaml::Value::Mapping(map) => {
+            for (k, _) in map {
+                if let Some(s) = k.as_str() {
+                    push_unique(s);
+                }
+            }
+        }
+        _ => {}
+    }
+    out
 }
 
 /// Returns true if `runs-on` names a self-hosted runner.
@@ -660,6 +730,14 @@ fn try_inline_composite_action(
             // Inlined sub-steps belong to the calling job — propagate parent
             // job name so per-job filtering captures composite-action steps too.
             node.metadata.insert(META_JOB_NAME.into(), job_name.into());
+            // Stamp the script body for inlined `run:` steps so script-aware
+            // rules see them too.
+            if let Some(body) = run {
+                if !body.is_empty() {
+                    node.metadata
+                        .insert(META_SCRIPT_BODY.into(), body.to_string());
+                }
+            }
         }
 
         // DelegatesTo edge: calling step → inlined sub-step.

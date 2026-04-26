@@ -2290,6 +2290,422 @@ pub fn parameter_interpolation_into_shell(graph: &AuthorityGraph) -> Vec<Finding
 }
 
 /// Run all rules against a graph.
+// ── runtime_script_fetched_from_floating_url ──────────────────
+//
+// Detect `run:` blocks that download a remote script from a non-pinned URL
+// and pipe it directly to a shell interpreter. This is a pure HTTP supply-chain
+// vector — neither `unpinned_action` (which inspects `uses:`) nor
+// `floating_image` (containers) covers it.
+//
+// Detection primitive (URL must be both):
+//   1. shell-style fetch+execute: `curl … | bash`, `wget … | sh`,
+//      `bash <(curl …)`, or `deno run https://…`
+//   2. URL is mutable: contains `refs/heads/`, `/main/`, `/master/`,
+//      `/develop/`, `/HEAD/`, OR is a raw `git clone`/`fetch` from a
+//      branch URL with no version pin.
+//
+// Severity: High (one upstream commit lands code on every consumer).
+fn body_has_pipe_to_shell_with_floating_url(body: &str) -> bool {
+    // Cheap pre-filter to keep the regex-free scan fast.
+    let lower = body;
+    let has_curl_or_wget = lower.contains("curl") || lower.contains("wget");
+    let has_pipe_shell = lower.contains("| bash")
+        || lower.contains("|bash")
+        || lower.contains("| sh")
+        || lower.contains("|sh")
+        || lower.contains("<(curl")
+        || lower.contains("<(wget");
+    let has_deno_remote = lower.contains("deno run http://") || lower.contains("deno run https://");
+
+    if !((has_curl_or_wget && has_pipe_shell) || has_deno_remote) {
+        return false;
+    }
+
+    // For each line that contains a fetch+pipe or a deno-remote run, check
+    // whether the URL on that line is mutable.
+    for line in body.lines() {
+        let line_has_pipe_shell = line.contains("| bash")
+            || line.contains("|bash")
+            || line.contains("| sh")
+            || line.contains("|sh")
+            || line.contains("<(curl")
+            || line.contains("<(wget");
+        let line_has_deno_remote =
+            line.contains("deno run http://") || line.contains("deno run https://");
+
+        if !(line_has_pipe_shell || line_has_deno_remote) {
+            continue;
+        }
+
+        if line_url_is_mutable(line) {
+            return true;
+        }
+    }
+    false
+}
+
+fn line_url_is_mutable(line: &str) -> bool {
+    // Mutable URL markers.
+    const MUTABLE_PATHS: &[&str] = &[
+        "refs/heads/",
+        "/HEAD/",
+        "/main/",
+        "/master/",
+        "/develop/",
+        "/trunk/",
+        "/latest/",
+    ];
+    for marker in MUTABLE_PATHS {
+        if line.contains(marker) {
+            return true;
+        }
+    }
+    // Bare `raw.githubusercontent.com/<owner>/<repo>/<ref>/...` where <ref>
+    // is the literal `main`/`master` segment was caught above. We could be
+    // looser and flag any URL with no version-like segment, but that
+    // sacrifices precision — the marker list above is the conservative core.
+    false
+}
+
+/// Rule: a `run:` step pipes a remotely-fetched script into a shell, where
+/// the URL is pinned to a mutable branch ref. The remote host's branch tip
+/// becomes a write-anywhere primitive on the runner.
+///
+/// Severity: High.
+pub fn runtime_script_fetched_from_floating_url(graph: &AuthorityGraph) -> Vec<Finding> {
+    let mut findings = Vec::new();
+
+    for step in graph.nodes_of_kind(NodeKind::Step) {
+        let body = match step.metadata.get(META_SCRIPT_BODY) {
+            Some(b) if !b.is_empty() => b,
+            _ => continue,
+        };
+
+        if !body_has_pipe_to_shell_with_floating_url(body) {
+            continue;
+        }
+
+        findings.push(Finding {
+            severity: Severity::High,
+            category: FindingCategory::RuntimeScriptFetchedFromFloatingUrl,
+            path: None,
+            nodes_involved: vec![step.id],
+            message: format!(
+                "Step '{}' downloads and executes a script from a mutable URL (curl|bash, wget|sh, or `deno run` against a branch ref) — whoever controls that branch executes arbitrary code on the runner",
+                step.name
+            ),
+            recommendation: Recommendation::Manual {
+                action: "Pin the URL to a release tag or commit SHA (e.g. .../v1.2.3/install.sh) and verify the download against a known checksum before executing it. Avoid `curl … | bash` entirely where possible — fetch to a file, inspect, then run.".into(),
+            },
+        });
+    }
+
+    findings
+}
+
+// ── pr_trigger_with_floating_action_ref ────────────────────────
+//
+// Detect the high-severity conjunction: workflow runs in privileged base-repo
+// context (`pull_request_target` / `issue_comment` / `workflow_run`) AND uses
+// at least one action by mutable ref (not SHA). Either condition alone is a
+// finding from another rule; the conjunction is critical because the trigger
+// grants write-token authority *and* the floating action lets an attacker
+// substitute the executed code.
+fn trigger_is_privileged_pr_class(trigger: &str) -> bool {
+    // META_TRIGGER may be a single trigger or a comma-separated list.
+    trigger.split(',').any(|t| {
+        let t = t.trim();
+        matches!(t, "pull_request_target" | "issue_comment" | "workflow_run")
+    })
+}
+
+/// Rule: privileged PR-class trigger combined with a non-SHA-pinned action ref.
+///
+/// Severity: Critical (full repo write token + attacker-controlled action code).
+pub fn pr_trigger_with_floating_action_ref(graph: &AuthorityGraph) -> Vec<Finding> {
+    let trigger = match graph.metadata.get(META_TRIGGER) {
+        Some(t) => t.as_str(),
+        None => return Vec::new(),
+    };
+    if !trigger_is_privileged_pr_class(trigger) {
+        return Vec::new();
+    }
+
+    let mut findings = Vec::new();
+    let mut seen = std::collections::HashSet::new();
+
+    for image in graph.nodes_of_kind(NodeKind::Image) {
+        // Skip first-party (local actions, self-hosted runner labels).
+        if image.trust_zone == TrustZone::FirstParty {
+            continue;
+        }
+        // Skip container images (covered by floating_image).
+        if image
+            .metadata
+            .get(META_CONTAINER)
+            .map(|v| v == "true")
+            .unwrap_or(false)
+        {
+            continue;
+        }
+        // Skip self-hosted-runner Image nodes (those are FirstParty anyway,
+        // but be defensive against future refactors).
+        if image.metadata.contains_key(META_SELF_HOSTED) {
+            continue;
+        }
+        // Already SHA-pinned → safe.
+        if is_sha_pinned(&image.name) {
+            continue;
+        }
+        // Dedupe per action reference.
+        if !seen.insert(&image.name) {
+            continue;
+        }
+
+        findings.push(Finding {
+            severity: Severity::Critical,
+            category: FindingCategory::PrTriggerWithFloatingActionRef,
+            path: None,
+            nodes_involved: vec![image.id],
+            message: format!(
+                "Workflow trigger '{trigger}' runs in privileged base-repo context and step uses unpinned action '{}' — anyone who can push to that action's branch executes arbitrary code with full repo write token",
+                image.name
+            ),
+            recommendation: Recommendation::PinAction {
+                current: image.name.clone(),
+                pinned: format!(
+                    "{}@<sha256-digest>",
+                    image.name.split('@').next().unwrap_or(&image.name)
+                ),
+            },
+        });
+    }
+
+    findings
+}
+
+// ── untrusted_api_response_to_env_sink ────────────────────────
+//
+// Detect `workflow_run` consumer workflows that capture an external API
+// response (gh CLI, curl against api.github.com) and write it into the GHA
+// environment file. A poisoned API field (branch name, PR title, commit
+// message) injects environment variables into every subsequent step in the
+// same job.
+fn body_writes_api_response_to_env_sink(body: &str) -> bool {
+    // First, the sink: a redirect to one of the GHA gate files.
+    let writes_env_sink = body.contains("$GITHUB_ENV")
+        || body.contains("${GITHUB_ENV}")
+        || body.contains("$GITHUB_OUTPUT")
+        || body.contains("${GITHUB_OUTPUT}")
+        || body.contains("$GITHUB_PATH")
+        || body.contains("${GITHUB_PATH}");
+    if !writes_env_sink {
+        return false;
+    }
+
+    // Then, an API source on the same body: gh CLI or a direct REST call.
+    let calls_api = body.contains("gh pr view")
+        || body.contains("gh pr list")
+        || body.contains("gh api ")
+        || body.contains("gh issue view")
+        || body.contains("api.github.com");
+    if !calls_api {
+        return false;
+    }
+
+    // Tier-1 precision: same-line conjunction (the canonical case in corpus,
+    // e.g. `gh pr view --jq '"PR_NUMBER=\(.number)"' >> $GITHUB_ENV`).
+    let lines: Vec<&str> = body.lines().collect();
+    for line in &lines {
+        let line_calls_api = line.contains("gh pr view")
+            || line.contains("gh pr list")
+            || line.contains("gh api ")
+            || line.contains("gh issue view")
+            || line.contains("api.github.com");
+        let line_writes_sink = line.contains("$GITHUB_ENV")
+            || line.contains("${GITHUB_ENV}")
+            || line.contains("$GITHUB_OUTPUT")
+            || line.contains("${GITHUB_OUTPUT}")
+            || line.contains("$GITHUB_PATH")
+            || line.contains("${GITHUB_PATH}");
+        if line_calls_api && line_writes_sink {
+            return true;
+        }
+    }
+
+    // Tier-2 precision: API call captures into a variable, and a *nearby*
+    // line redirects that same variable to the env sink. Without dataflow,
+    // we approximate "nearby" as: an API line and a sink line within 6 lines
+    // of each other. This catches multi-step capture-then-write idioms while
+    // keeping false-positive risk acceptable.
+    let mut last_api_line: Option<usize> = None;
+    for (i, line) in lines.iter().enumerate() {
+        let line_calls_api = line.contains("gh pr view")
+            || line.contains("gh pr list")
+            || line.contains("gh api ")
+            || line.contains("gh issue view")
+            || line.contains("api.github.com");
+        if line_calls_api {
+            last_api_line = Some(i);
+        }
+        let line_writes_sink = line.contains("$GITHUB_ENV")
+            || line.contains("${GITHUB_ENV}")
+            || line.contains("$GITHUB_OUTPUT")
+            || line.contains("${GITHUB_OUTPUT}")
+            || line.contains("$GITHUB_PATH")
+            || line.contains("${GITHUB_PATH}");
+        if line_writes_sink {
+            if let Some(api_idx) = last_api_line {
+                if i.saturating_sub(api_idx) <= 6 {
+                    return true;
+                }
+            }
+        }
+    }
+
+    false
+}
+
+/// Rule: workflow_run-triggered workflow writes an API response value to the
+/// GHA environment gate. Branch name / PR title in the response can carry
+/// newline-injected env-var assignments.
+///
+/// Severity: High.
+pub fn untrusted_api_response_to_env_sink(graph: &AuthorityGraph) -> Vec<Finding> {
+    let trigger = match graph.metadata.get(META_TRIGGER) {
+        Some(t) => t.as_str(),
+        None => return Vec::new(),
+    };
+    let trigger_in_scope = trigger.split(',').any(|t| {
+        let t = t.trim();
+        matches!(t, "workflow_run" | "pull_request_target" | "issue_comment")
+    });
+    if !trigger_in_scope {
+        return Vec::new();
+    }
+
+    let mut findings = Vec::new();
+
+    for step in graph.nodes_of_kind(NodeKind::Step) {
+        let body = match step.metadata.get(META_SCRIPT_BODY) {
+            Some(b) if !b.is_empty() => b,
+            _ => continue,
+        };
+
+        if !body_writes_api_response_to_env_sink(body) {
+            continue;
+        }
+
+        findings.push(Finding {
+            severity: Severity::High,
+            category: FindingCategory::UntrustedApiResponseToEnvSink,
+            path: None,
+            nodes_involved: vec![step.id],
+            message: format!(
+                "Step '{}' captures a GitHub API response (gh CLI or api.github.com) into the GHA env gate ($GITHUB_ENV/$GITHUB_OUTPUT/$GITHUB_PATH) under trigger '{trigger}' — attacker-influenced fields (branch name, PR title) can inject environment variables for every subsequent step in the same job",
+                step.name
+            ),
+            recommendation: Recommendation::Manual {
+                action: "Validate the API field with a strict regex before redirecting (e.g. only `[0-9]+` for a PR number), or write only known-numeric fields. Never pipe free-form fields like branch name or PR title directly into $GITHUB_ENV.".into(),
+            },
+        });
+    }
+
+    findings
+}
+
+// ── pr_build_pushes_image_with_floating_credentials ────────────
+//
+// Detect: workflow triggered by a PR-class event uses a container-registry
+// login action that is NOT SHA-pinned. The login action receives credentials
+// (OIDC token or static registry secret) — a compromise of the action's
+// branch lets an attacker exfiltrate them.
+fn is_registry_login_action(action: &str) -> bool {
+    let bare = action.split('@').next().unwrap_or(action);
+    matches!(
+        bare,
+        "docker/login-action"
+            | "aws-actions/amazon-ecr-login"
+            | "aws-actions/configure-aws-credentials"
+            | "azure/docker-login"
+            | "azure/login"
+            | "google-github-actions/auth"
+            | "google-github-actions/setup-gcloud"
+    ) || bare.ends_with("/login-to-gar")
+        || bare.ends_with("/dockerhub-login")
+        || bare.ends_with("/login-to-ecr")
+        || bare.ends_with("/login-to-acr")
+}
+
+fn trigger_includes_pull_request(trigger: &str) -> bool {
+    trigger.split(',').any(|t| {
+        let t = t.trim();
+        // Match `pull_request` and `pull_request_target` — both are PR-class.
+        t == "pull_request" || t == "pull_request_target"
+    })
+}
+
+/// Rule: PR-triggered workflow uses a non-SHA-pinned container-registry login
+/// action. Compound vector: floating action holds registry creds + PR-controlled
+/// image content reaches a shared registry.
+///
+/// Severity: High.
+pub fn pr_build_pushes_image_with_floating_credentials(graph: &AuthorityGraph) -> Vec<Finding> {
+    let trigger = match graph.metadata.get(META_TRIGGER) {
+        Some(t) => t.as_str(),
+        None => return Vec::new(),
+    };
+    if !trigger_includes_pull_request(trigger) {
+        return Vec::new();
+    }
+
+    let mut findings = Vec::new();
+    let mut seen = std::collections::HashSet::new();
+
+    for image in graph.nodes_of_kind(NodeKind::Image) {
+        if image.trust_zone == TrustZone::FirstParty {
+            continue;
+        }
+        if image
+            .metadata
+            .get(META_CONTAINER)
+            .map(|v| v == "true")
+            .unwrap_or(false)
+        {
+            continue;
+        }
+        if !is_registry_login_action(&image.name) {
+            continue;
+        }
+        if is_sha_pinned(&image.name) {
+            continue;
+        }
+        if !seen.insert(&image.name) {
+            continue;
+        }
+
+        findings.push(Finding {
+            severity: Severity::High,
+            category: FindingCategory::PrBuildPushesImageWithFloatingCredentials,
+            path: None,
+            nodes_involved: vec![image.id],
+            message: format!(
+                "PR-triggered workflow ('{trigger}') uses unpinned registry-login action '{}' — a compromise of that action's branch exfiltrates registry credentials or OIDC tokens, and any PR-controlled image content then reaches a shared registry",
+                image.name
+            ),
+            recommendation: Recommendation::PinAction {
+                current: image.name.clone(),
+                pinned: format!(
+                    "{}@<sha256-digest>",
+                    image.name.split('@').next().unwrap_or(&image.name)
+                ),
+            },
+        });
+    }
+
+    findings
+}
+
 pub fn run_all_rules(graph: &AuthorityGraph, max_hops: usize) -> Vec<Finding> {
     let mut findings = Vec::new();
     // MVP rules
@@ -2321,6 +2737,11 @@ pub fn run_all_rules(graph: &AuthorityGraph, max_hops: usize) -> Vec<Finding> {
     findings.extend(terraform_auto_approve_in_prod(graph));
     findings.extend(addspn_with_inline_script(graph));
     findings.extend(parameter_interpolation_into_shell(graph));
+    // GHA red-team-derived rules
+    findings.extend(runtime_script_fetched_from_floating_url(graph));
+    findings.extend(pr_trigger_with_floating_action_ref(graph));
+    findings.extend(untrusted_api_response_to_env_sink(graph));
+    findings.extend(pr_build_pushes_image_with_floating_credentials(graph));
 
     apply_confidence_cap(graph, &mut findings);
 
@@ -4229,6 +4650,234 @@ mod tests {
         g.add_node(NodeKind::Step, "task-step", TrustZone::Untrusted);
 
         let findings = parameter_interpolation_into_shell(&g);
+        assert!(findings.is_empty());
+    }
+
+    // ── runtime_script_fetched_from_floating_url ───────────────
+
+    fn step_with_body(body: &str) -> AuthorityGraph {
+        let mut g = AuthorityGraph::new(source("ci.yml"));
+        let id = g.add_node(NodeKind::Step, "install", TrustZone::FirstParty);
+        if let Some(node) = g.nodes.get_mut(id) {
+            node.metadata
+                .insert(META_SCRIPT_BODY.into(), body.to_string());
+        }
+        g
+    }
+
+    #[test]
+    fn floating_curl_pipe_bash_master_is_flagged() {
+        let g = step_with_body(
+            "curl -fsSL https://raw.githubusercontent.com/tilt-dev/tilt/master/scripts/install.sh | bash",
+        );
+        let findings = runtime_script_fetched_from_floating_url(&g);
+        assert_eq!(findings.len(), 1);
+        assert_eq!(findings[0].severity, Severity::High);
+        assert_eq!(
+            findings[0].category,
+            FindingCategory::RuntimeScriptFetchedFromFloatingUrl
+        );
+    }
+
+    #[test]
+    fn floating_deno_run_main_is_flagged() {
+        let g = step_with_body(
+            "deno run https://raw.githubusercontent.com/denoland/deno/refs/heads/main/tools/verify_pr_title.js \"$PR_TITLE\"",
+        );
+        let findings = runtime_script_fetched_from_floating_url(&g);
+        assert_eq!(findings.len(), 1);
+    }
+
+    #[test]
+    fn pinned_curl_url_with_tag_not_flagged() {
+        let g = step_with_body(
+            "curl -fsSL https://raw.githubusercontent.com/tilt-dev/tilt/v0.33.10/scripts/install.sh | bash",
+        );
+        let findings = runtime_script_fetched_from_floating_url(&g);
+        assert!(findings.is_empty(), "tag-pinned URL must not fire");
+    }
+
+    #[test]
+    fn curl_without_pipe_to_shell_not_flagged() {
+        // `curl -O` writes to disk; the script isn't executed inline.
+        let g = step_with_body(
+            "curl -sSLO https://raw.githubusercontent.com/rust-lang/rust/master/src/tools/linkchecker/linkcheck.sh",
+        );
+        let findings = runtime_script_fetched_from_floating_url(&g);
+        assert!(findings.is_empty(), "download-only must not fire");
+    }
+
+    #[test]
+    fn bash_process_substitution_curl_main_is_flagged() {
+        let g = step_with_body(
+            "bash <(curl -s https://raw.githubusercontent.com/some/repo/main/install.sh)",
+        );
+        let findings = runtime_script_fetched_from_floating_url(&g);
+        assert_eq!(findings.len(), 1);
+    }
+
+    // ── pr_trigger_with_floating_action_ref ────────────────────
+
+    fn graph_with_trigger_and_action(trigger: &str, action: &str) -> AuthorityGraph {
+        let mut g = AuthorityGraph::new(source("pr.yml"));
+        g.metadata.insert(META_TRIGGER.into(), trigger.into());
+        g.add_node(NodeKind::Image, action, TrustZone::ThirdParty);
+        g
+    }
+
+    #[test]
+    fn pull_request_target_with_floating_main_action_flagged_critical() {
+        let g = graph_with_trigger_and_action("pull_request_target", "actions/checkout@main");
+        let findings = pr_trigger_with_floating_action_ref(&g);
+        assert_eq!(findings.len(), 1);
+        assert_eq!(findings[0].severity, Severity::Critical);
+        assert_eq!(
+            findings[0].category,
+            FindingCategory::PrTriggerWithFloatingActionRef
+        );
+    }
+
+    #[test]
+    fn pull_request_target_with_sha_pinned_action_not_flagged() {
+        let g = graph_with_trigger_and_action(
+            "pull_request_target",
+            "denoland/setup-deno@667a34cdef165d8d2b2e98dde39547c9daac7282",
+        );
+        let findings = pr_trigger_with_floating_action_ref(&g);
+        assert!(findings.is_empty());
+    }
+
+    #[test]
+    fn issue_comment_with_floating_action_flagged() {
+        let g = graph_with_trigger_and_action("issue_comment", "foo/bar@v1");
+        let findings = pr_trigger_with_floating_action_ref(&g);
+        assert_eq!(findings.len(), 1);
+    }
+
+    #[test]
+    fn pull_request_only_does_not_trigger_critical_compound_rule() {
+        // `pull_request` (without `_target`) is the safe trigger — no base
+        // repo write. Rule 4 must not fire on it.
+        let g = graph_with_trigger_and_action("pull_request", "foo/bar@main");
+        let findings = pr_trigger_with_floating_action_ref(&g);
+        assert!(
+            findings.is_empty(),
+            "pull_request alone must not produce a critical compound finding"
+        );
+    }
+
+    #[test]
+    fn comma_separated_trigger_with_pull_request_target_flagged() {
+        let g = graph_with_trigger_and_action(
+            "pull_request_target,push,workflow_dispatch",
+            "foo/bar@main",
+        );
+        let findings = pr_trigger_with_floating_action_ref(&g);
+        assert_eq!(findings.len(), 1);
+    }
+
+    // ── untrusted_api_response_to_env_sink ─────────────────────
+
+    fn graph_with_trigger_and_step_body(trigger: &str, body: &str) -> AuthorityGraph {
+        let mut g = AuthorityGraph::new(source("consumer.yml"));
+        g.metadata.insert(META_TRIGGER.into(), trigger.into());
+        let id = g.add_node(NodeKind::Step, "capture", TrustZone::FirstParty);
+        if let Some(node) = g.nodes.get_mut(id) {
+            node.metadata
+                .insert(META_SCRIPT_BODY.into(), body.to_string());
+        }
+        g
+    }
+
+    #[test]
+    fn workflow_run_gh_pr_view_to_github_env_flagged() {
+        let body = "gh pr view --repo \"$REPO\" \"$PR_BRANCH\" --json 'number' --jq '\"PR_NUMBER=\\(.number)\"' >> $GITHUB_ENV";
+        let g = graph_with_trigger_and_step_body("workflow_run", body);
+        let findings = untrusted_api_response_to_env_sink(&g);
+        assert_eq!(findings.len(), 1);
+        assert_eq!(findings[0].severity, Severity::High);
+    }
+
+    #[test]
+    fn workflow_run_without_env_sink_not_flagged() {
+        let body = "gh pr view --repo \"$REPO\" \"$PR_BRANCH\" --json number";
+        let g = graph_with_trigger_and_step_body("workflow_run", body);
+        let findings = untrusted_api_response_to_env_sink(&g);
+        assert!(findings.is_empty());
+    }
+
+    #[test]
+    fn push_trigger_writing_to_env_not_flagged() {
+        // Trigger is not in scope (push isn't a cross-workflow trust boundary)
+        let body = "gh pr view --json number --jq .number >> $GITHUB_ENV";
+        let g = graph_with_trigger_and_step_body("push", body);
+        let findings = untrusted_api_response_to_env_sink(&g);
+        assert!(findings.is_empty());
+    }
+
+    #[test]
+    fn workflow_run_multiline_capture_then_write_flagged() {
+        let body = "VAL=$(gh api repos/foo/bar/pulls/$PR --jq .head.ref)\necho \"BRANCH=$VAL\" >> $GITHUB_ENV";
+        let g = graph_with_trigger_and_step_body("workflow_run", body);
+        let findings = untrusted_api_response_to_env_sink(&g);
+        assert_eq!(findings.len(), 1);
+    }
+
+    // ── pr_build_pushes_image_with_floating_credentials ────────
+
+    fn graph_pr_with_login_action(trigger: &str, action: &str) -> AuthorityGraph {
+        let mut g = AuthorityGraph::new(source("pr-build.yml"));
+        g.metadata.insert(META_TRIGGER.into(), trigger.into());
+        g.add_node(NodeKind::Image, action, TrustZone::ThirdParty);
+        g
+    }
+
+    #[test]
+    fn pr_with_floating_login_to_gar_flagged() {
+        let g = graph_pr_with_login_action(
+            "pull_request",
+            "grafana/shared-workflows/actions/login-to-gar@main",
+        );
+        let findings = pr_build_pushes_image_with_floating_credentials(&g);
+        assert_eq!(findings.len(), 1);
+        assert_eq!(findings[0].severity, Severity::High);
+        assert_eq!(
+            findings[0].category,
+            FindingCategory::PrBuildPushesImageWithFloatingCredentials
+        );
+    }
+
+    #[test]
+    fn pr_with_floating_docker_login_action_flagged() {
+        let g = graph_pr_with_login_action("pull_request", "docker/login-action@v3");
+        let findings = pr_build_pushes_image_with_floating_credentials(&g);
+        assert_eq!(findings.len(), 1);
+    }
+
+    #[test]
+    fn pr_with_sha_pinned_docker_login_not_flagged() {
+        let g = graph_pr_with_login_action(
+            "pull_request",
+            "docker/login-action@343f7c4344506bcbf9b4de18042ae17996df046d",
+        );
+        let findings = pr_build_pushes_image_with_floating_credentials(&g);
+        assert!(findings.is_empty());
+    }
+
+    #[test]
+    fn push_trigger_with_floating_login_action_not_flagged() {
+        // Outside PR context — different rule (unpinned_action) covers it.
+        let g = graph_pr_with_login_action("push", "docker/login-action@v3");
+        let findings = pr_build_pushes_image_with_floating_credentials(&g);
+        assert!(findings.is_empty());
+    }
+
+    #[test]
+    fn pr_with_unrelated_unpinned_action_not_flagged() {
+        // Rule scopes itself to registry-login actions only; generic actions
+        // are covered by `unpinned_action` and `pr_trigger_with_floating_action_ref`.
+        let g = graph_pr_with_login_action("pull_request", "actions/checkout@v4");
+        let findings = pr_build_pushes_image_with_floating_credentials(&g);
         assert!(findings.is_empty());
     }
 }

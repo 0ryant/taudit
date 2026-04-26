@@ -78,6 +78,14 @@ fn event_type(category: FindingCategory) -> String {
         FindingCategory::TerraformAutoApproveInProd => "terraform_auto_approve_in_prod",
         FindingCategory::AddSpnWithInlineScript => "add_spn_with_inline_script",
         FindingCategory::ParameterInterpolationIntoShell => "parameter_interpolation_into_shell",
+        FindingCategory::RuntimeScriptFetchedFromFloatingUrl => {
+            "runtime_script_fetched_from_floating_url"
+        }
+        FindingCategory::PrTriggerWithFloatingActionRef => "pr_trigger_with_floating_action_ref",
+        FindingCategory::UntrustedApiResponseToEnvSink => "untrusted_api_response_to_env_sink",
+        FindingCategory::PrBuildPushesImageWithFloatingCredentials => {
+            "pr_build_pushes_image_with_floating_credentials"
+        }
         #[allow(deprecated)]
         FindingCategory::EgressBlindspot => "egress_blindspot",
         #[allow(deprecated)]

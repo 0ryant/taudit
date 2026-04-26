@@ -119,6 +119,27 @@ pub enum FindingCategory {
     /// via `${{ parameters.X }}` into an inline shell/PowerShell script body —
     /// shell injection vector for anyone with "queue build".
     ParameterInterpolationIntoShell,
+    /// A `run:` block fetches a remote script from a mutable URL (`refs/heads/`,
+    /// `/main/`, `/master/`) and pipes it directly to a shell interpreter
+    /// (`curl … | bash`, `wget … | sh`, `bash <(curl …)`, `deno run https://…`).
+    /// Whoever controls that URL's content controls execution on the runner.
+    RuntimeScriptFetchedFromFloatingUrl,
+    /// Workflow trigger combines high-authority PR events
+    /// (`pull_request_target`, `issue_comment`, or `workflow_run`) with a step
+    /// whose `uses:` ref is a mutable branch/tag (not a 40-char SHA). Compromise
+    /// of the action's default branch yields full repo write on the target repo.
+    PrTriggerWithFloatingActionRef,
+    /// A `workflow_run`-triggered workflow captures a value from an external
+    /// API response (`gh pr view`, `gh api`, `curl api.github.com`) and writes
+    /// it into `$GITHUB_ENV`/`$GITHUB_OUTPUT`/`$GITHUB_PATH` without sanitisation.
+    /// A poisoned API field (branch name, title) injects environment variables
+    /// into every subsequent step in the same job.
+    UntrustedApiResponseToEnvSink,
+    /// A `pull_request`-triggered workflow logs into a container registry via a
+    /// floating (non-SHA-pinned) login action. The compromised action receives
+    /// OIDC tokens or registry credentials, and the workflow then pushes a
+    /// PR-controlled image to a shared registry.
+    PrBuildPushesImageWithFloatingCredentials,
     // Reserved — requires ADO/GH API enrichment beyond pipeline YAML
     /// Requires runtime network telemetry or policy enrichment — not detectable from YAML alone.
     #[doc(hidden)]
