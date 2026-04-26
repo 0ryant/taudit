@@ -116,6 +116,17 @@ enum Cli {
         /// so first-time CI runs don't fail the pipeline.
         #[arg(long)]
         dedupe_against: Option<PathBuf>,
+        /// Override the baseline-aware diff-shaped default and emit every
+        /// finding (the v0.9.x absolute behaviour). Has no effect when the
+        /// pipeline has no `.taudit/baselines/<hash>.json` entry.
+        #[arg(long, default_value_t = false)]
+        show_all: bool,
+
+        /// Repository root under which `.taudit/baselines/` lives. Defaults
+        /// to the current working directory; baselines are looked up by
+        /// SHA-256 of the scanned file's bytes.
+        #[arg(long)]
+        baseline_root: Option<PathBuf>,
 
         /// Directory to write telemetry events (JSONL).
         /// Default: $TAUDIT_TELEMETRY_DIR or
@@ -406,6 +417,33 @@ enum Cli {
         /// How to apply matched suppressions. See `taudit scan --help`.
         #[arg(long, default_value = "downgrade")]
         suppression_mode: SuppressionModeArg,
+
+        /// Force every violation to count toward exit 1, ignoring any
+        /// `.taudit/baselines/<hash>.json` entries. Useful for org-wide
+        /// enforcement runs that intentionally bypass per-team waivers.
+        /// CRITICAL findings without a valid waiver always count toward
+        /// exit 1 regardless of this flag.
+        #[arg(long, default_value_t = false)]
+        gate_on_all: bool,
+
+        /// Repository root under which `.taudit/baselines/` lives. Defaults
+        /// to the current working directory.
+        #[arg(long)]
+        baseline_root: Option<PathBuf>,
+    },
+
+    /// Manage per-pipeline baselines under `.taudit/baselines/`.
+    ///
+    /// Baselines snapshot the findings present on a pipeline at adoption time
+    /// so subsequent scans diff against them, surfacing only NEW findings.
+    /// Pre-existing findings are reported but do not fail `verify` exit-1
+    /// — UNLESS they are critical and have not been explicitly waived with
+    /// `severity_override: critical` + `reason` + `expires_at` <= 90 days.
+    ///
+    /// See docs/baselines.md for the full workflow and security guarantees.
+    Baseline {
+        #[command(subcommand)]
+        action: BaselineAction,
     },
 }
 
@@ -468,6 +506,124 @@ enum SuppressionsAction {
         /// Disable ANSI color codes. Also honored via the NO_COLOR env var.
         #[arg(long, default_value_t = false)]
         no_color: bool,
+    },
+}
+
+#[derive(clap::Subcommand)]
+enum BaselineAction {
+    /// Snapshot CURRENT findings on the given pipelines into
+    /// `.taudit/baselines/<pipeline-content-hash>.json`. One file per
+    /// pipeline. Idempotent: re-running on an unchanged pipeline rewrites
+    /// the same file with a refreshed `captured_at` timestamp. Exits 0.
+    Init {
+        /// Pipeline path(s). Files or directories.
+        #[arg(required = true)]
+        paths: Vec<PathBuf>,
+
+        /// Repository root under which `.taudit/baselines/` is created.
+        /// Defaults to the current working directory.
+        #[arg(long)]
+        root: Option<PathBuf>,
+
+        /// Identity recorded in the baseline's `captured_by` field. Defaults
+        /// to `$USER@$HOSTNAME` when both are set, else `$USER`, else
+        /// `unknown@local`.
+        #[arg(long)]
+        captured_by: Option<String>,
+
+        /// CI/CD platform. Default: auto (detects from YAML content).
+        #[arg(long, default_value = "auto")]
+        platform: Platform,
+
+        /// Maximum propagation depth for BFS analysis.
+        #[arg(long, default_value_t = DEFAULT_MAX_HOPS)]
+        max_hops: usize,
+
+        /// Directory containing Authority Invariant YAML files (`*.yml`,
+        /// `*.yaml`). Same semantics as `taudit scan --invariants-dir`.
+        #[arg(long)]
+        invariants_dir: Option<PathBuf>,
+    },
+
+    /// Append a single finding to a baseline as a waiver. Requires a
+    /// `--reason` (>=10 chars) of justification. To waive a critical
+    /// finding, also pass `--severity-override critical` and
+    /// `--expires-at <ISO-8601>` (must be <=90 days away).
+    Accept {
+        /// Pipeline path the finding belongs to. The baseline file is
+        /// resolved by hashing this file's current content.
+        #[arg(long)]
+        pipeline: PathBuf,
+
+        /// 16-hex finding fingerprint to waive.
+        #[arg(long)]
+        fingerprint: String,
+
+        /// Snake-case rule id (recorded for human review).
+        #[arg(long)]
+        rule_id: String,
+
+        /// Severity at the time of acceptance.
+        #[arg(long)]
+        severity: SeverityLevel,
+
+        /// Free-form justification (>=10 chars). Empty / `wip` / `todo` /
+        /// `fix later` strings are rejected.
+        #[arg(long)]
+        reason: String,
+
+        /// Acknowledge a critical-severity bypass. Required when waiving an
+        /// originally-critical finding; otherwise the critical falls
+        /// through to exit 1 even with the entry in the baseline.
+        #[arg(long)]
+        severity_override: Option<SeverityLevel>,
+
+        /// ISO-8601 expiry timestamp. Mandatory when
+        /// `--severity-override critical`; must be <=90 days from now.
+        #[arg(long)]
+        expires_at: Option<String>,
+
+        /// Repository root under which `.taudit/baselines/` lives.
+        /// Defaults to the current working directory.
+        #[arg(long)]
+        root: Option<PathBuf>,
+    },
+
+    /// Scan the given pipelines, compare to their baselines, and print a
+    /// per-pipeline summary: `<pipeline>: N NEW, M FIXED, K PRE-EXISTING
+    /// (W waived, U unwaived)`. Exits 0; use `taudit verify` to gate CI.
+    Diff {
+        /// Pipeline path(s). Files or directories.
+        #[arg(required = true)]
+        paths: Vec<PathBuf>,
+
+        /// Repository root under which `.taudit/baselines/` lives.
+        /// Defaults to the current working directory.
+        #[arg(long)]
+        root: Option<PathBuf>,
+
+        /// CI/CD platform. Default: auto (detects from YAML content).
+        #[arg(long, default_value = "auto")]
+        platform: Platform,
+
+        /// Maximum propagation depth for BFS analysis.
+        #[arg(long, default_value_t = DEFAULT_MAX_HOPS)]
+        max_hops: usize,
+
+        /// Directory containing Authority Invariant YAML files.
+        #[arg(long)]
+        invariants_dir: Option<PathBuf>,
+    },
+
+    /// List all waivers across every baseline under `.taudit/baselines/`,
+    /// sorted by `expires_at` ASC (expiring/expired first). Flags critical
+    /// waivers that have no `expires_at` (config error — they are not
+    /// protecting anything).
+    Review {
+        /// Repository root under which `.taudit/baselines/` lives.
+        /// Defaults to the current working directory.
+        #[arg(long)]
+        root: Option<PathBuf>,
     },
 }
 
@@ -776,6 +932,8 @@ struct ScanOpts {
     collapse_template_instances: bool,
     baseline: Option<PathBuf>,
     dedupe_against: Option<PathBuf>,
+    show_all: bool,
+    baseline_root: Option<PathBuf>,
     telemetry_dir: Option<PathBuf>,
     receipt_dir: Option<PathBuf>,
     log_dir: Option<PathBuf>,
@@ -829,6 +987,8 @@ fn run() -> Result<()> {
             collapse_template_instances,
             baseline,
             dedupe_against,
+            show_all,
+            baseline_root,
             telemetry_dir,
             receipt_dir,
             log_dir,
@@ -861,6 +1021,8 @@ fn run() -> Result<()> {
                 collapse_template_instances,
                 baseline,
                 dedupe_against,
+                show_all,
+                baseline_root,
                 telemetry_dir,
                 receipt_dir,
                 log_dir,
@@ -951,6 +1113,8 @@ fn run() -> Result<()> {
             output,
             suppressions,
             suppression_mode,
+            gate_on_all,
+            baseline_root,
         } => {
             if no_color || std::env::var_os("NO_COLOR").is_some() {
                 colored::control::set_override(false);
@@ -968,6 +1132,8 @@ fn run() -> Result<()> {
                 output,
                 suppressions,
                 suppression_mode,
+                gate_on_all,
+                baseline_root,
             })
         }
         Cli::Suppressions {
@@ -1007,6 +1173,7 @@ fn run() -> Result<()> {
                 cmd_suppressions_review(suppressions)
             }
         },
+        Cli::Baseline { action } => cmd_baseline(action),
     }
 }
 
@@ -1140,6 +1307,8 @@ fn cmd_scan(opts: ScanOpts) -> Result<()> {
         collapse_template_instances: collapse_templates,
         baseline,
         dedupe_against,
+        show_all,
+        baseline_root,
         telemetry_dir,
         receipt_dir,
         log_dir,
@@ -1277,6 +1446,11 @@ fn cmd_scan(opts: ScanOpts) -> Result<()> {
         // per-file branches so we can stamp `graph.metadata["platform"]`
         // regardless of whether `--platform auto` was used.
         let mut resolved_for_file: Platform = platform.clone();
+        // We retain `pipeline_content` so the per-pipeline baseline lookup
+        // can hash it without a second filesystem read. Stdin pipelines
+        // never have a baseline (no stable filename), so `pipeline_content`
+        // stays `None` for them and the lookup is skipped.
+        let mut pipeline_content: Option<String> = None;
         let graph = if path.as_os_str() == "-" {
             let mut content = String::new();
             use std::io::Read;
@@ -1311,6 +1485,9 @@ fn cmd_scan(opts: ScanOpts) -> Result<()> {
                     }
                 },
             };
+            // Stash for the per-pipeline baseline lookup later in this
+            // iteration. Cloned because parse_content takes ownership.
+            pipeline_content = Some(content.clone());
             let parse_result = if platform == Platform::Auto {
                 let resolved_platform = resolve_platform(&platform, &content, Some(path.as_path()));
                 let per_file_parser = make_parser(&resolved_platform);
@@ -1385,7 +1562,7 @@ fn cmd_scan(opts: ScanOpts) -> Result<()> {
         let after_ignore = ignore_result.findings;
         let suppressed_ignore = ignore_result.suppressed_count;
 
-        // Apply baseline suppression
+        // Apply baseline suppression (legacy --baseline JSON-report flag)
         let (findings, suppressed_baseline) = apply_baseline(after_ignore, &baseline_fingerprints);
 
         // Apply .taudit-suppressions.yml waivers. Critical waivers without
@@ -1421,6 +1598,38 @@ fn cmd_scan(opts: ScanOpts) -> Result<()> {
             }
             waived
         };
+        // Apply per-pipeline baseline (`.taudit/baselines/<hash>.json`).
+        // Default behaviour: if a baseline exists for this pipeline, switch
+        // to diff-shaped output — only NEW findings (plus any CRITICAL
+        // pre-existing findings without a valid waiver) are surfaced.
+        // `--show-all` opts back into the legacy absolute view.
+        let (findings, suppressed_pipeline_baseline, pipeline_baseline_banner) = if show_all
+            || pipeline_content.is_none()
+        {
+            (findings, 0usize, None)
+        } else {
+            let outcome = apply_pipeline_baseline(
+                findings,
+                &graph,
+                pipeline_content.as_deref().unwrap_or(""),
+                baseline_root.as_deref(),
+                /* gate_on_all */ false,
+            )?;
+            let banner = if outcome.baseline_present {
+                Some(format!(
+                        "baseline-aware: {} pre-existing suppressed, {} fixed (use --show-all to see everything)",
+                        outcome.preexisting_suppressed, outcome.fixed,
+                    ))
+            } else {
+                None
+            };
+            (outcome.kept, outcome.preexisting_suppressed, banner)
+        };
+        // Surface the banner once per pipeline on stderr so it doesn't
+        // pollute machine-readable output formats.
+        if let Some(banner) = pipeline_baseline_banner.as_deref() {
+            eprintln!("{}: {banner}", path.display());
+        }
 
         // v0.7: scan no longer gates on findings. We still observe whether
         // the user-supplied threshold would have triggered the legacy v0.6
@@ -1457,7 +1666,10 @@ fn cmd_scan(opts: ScanOpts) -> Result<()> {
         };
 
         findings_total += findings.len();
-        suppressed_total += suppressed_ignore + suppressed_baseline + suppressed_threshold;
+        suppressed_total += suppressed_ignore
+            + suppressed_baseline
+            + suppressed_pipeline_baseline
+            + suppressed_threshold;
 
         match format {
             OutputFormat::Terminal => {
@@ -1642,6 +1854,12 @@ struct VerifyOpts {
     output: Option<PathBuf>,
     suppressions: Option<PathBuf>,
     suppression_mode: SuppressionModeArg,
+    /// Force every violation to drive exit 1, ignoring per-pipeline
+    /// `.taudit/baselines/<hash>.json` waivers. Critical findings without a
+    /// valid waiver always count toward exit 1 regardless of this flag.
+    gate_on_all: bool,
+    /// Optional override of `.taudit/` location. Defaults to CWD.
+    baseline_root: Option<PathBuf>,
 }
 
 /// One policy violation surfaced by `verify`. Carries enough detail for the
@@ -1756,6 +1974,8 @@ fn run_verify_io<W: std::io::Write>(opts: &VerifyOpts, writer: &mut W) -> i32 {
             },
         };
 
+        // Retain the content for the per-pipeline baseline lookup below.
+        let content_for_baseline = content.clone();
         let parse_result = if opts.platform == Platform::Auto {
             let resolved_platform =
                 resolve_platform(&opts.platform, &content, Some(path.as_path()));
@@ -1834,6 +2054,55 @@ fn run_verify_io<W: std::io::Write>(opts: &VerifyOpts, writer: &mut W) -> i32 {
         if let Some(ref t) = threshold {
             findings.retain(|f| f.severity <= *t);
         }
+
+        // Apply the per-pipeline baseline. Default behaviour: keep only
+        // NEW findings + CRITICAL pre-existing findings without a valid
+        // waiver (council's load-bearing constraint). `--gate-on-all`
+        // bypasses suppression but critical-without-valid-waiver still
+        // counts. Errors here are non-fatal — log and fall through to the
+        // unfiltered behaviour so a corrupt baseline doesn't break verify.
+        let findings = match apply_pipeline_baseline(
+            findings,
+            &graph,
+            &content_for_baseline,
+            opts.baseline_root.as_deref(),
+            opts.gate_on_all,
+        ) {
+            Ok(outcome) => {
+                if outcome.baseline_present && !opts.gate_on_all {
+                    eprintln!(
+                        "{}: baseline-aware verify ({} pre-existing suppressed, {} fixed)",
+                        path.display(),
+                        outcome.preexisting_suppressed,
+                        outcome.fixed,
+                    );
+                }
+                outcome.kept
+            }
+            Err(err) => {
+                eprintln!(
+                    "warning: failed to apply baseline for {}: {err}",
+                    path.display()
+                );
+                // Fall through to no-baseline behaviour. We re-derive the
+                // unfiltered list by re-running the rules — but `findings`
+                // was moved into apply_pipeline_baseline. Since this branch
+                // is only reachable on a corrupt baseline file (very rare),
+                // we re-run the inexpensive rule pass to recover.
+                let mut rebuilt = taudit_core::custom_rules::evaluate_custom_rules(
+                    &graph,
+                    &propagation_paths,
+                    &custom_rules,
+                );
+                if opts.include_builtin {
+                    rebuilt.extend(rules::run_all_rules(&graph, opts.max_hops));
+                }
+                if let Some(ref t) = threshold {
+                    rebuilt.retain(|f| f.severity <= *t);
+                }
+                rebuilt
+            }
+        };
 
         // Project Findings into Violations and stash for SARIF emission.
         for f in &findings {
@@ -2347,6 +2616,98 @@ fn apply_baseline(
     }
 
     (kept, suppressed)
+}
+
+/// Outcome of applying a per-pipeline `.taudit/baselines/<hash>.json` to a
+/// fresh finding set. Drives both `scan`'s diff-shaped default output and
+/// `verify`'s "exit-1 only on NEW (or critical-without-valid-waiver)"
+/// contract.
+struct PipelineBaselineOutcome {
+    /// Findings to surface to the user / counted toward exit 1. This is the
+    /// union of (NEW findings) + (CRITICAL pre-existing findings whose
+    /// baseline entry does not carry a valid waiver).
+    pub kept: Vec<taudit_core::finding::Finding>,
+    /// How many findings were summarised away as pre-existing (no longer
+    /// shown / no longer driving exit 1). Surfaced in the banner.
+    pub preexisting_suppressed: usize,
+    /// How many baseline entries no longer match a current finding —
+    /// the underlying issue was fixed. Surfaced in the banner.
+    pub fixed: usize,
+    /// True iff a baseline file was actually loaded for this pipeline.
+    /// When false, the caller should fall through to existing behaviour.
+    pub baseline_present: bool,
+}
+
+/// Apply the per-pipeline baseline (if one exists at
+/// `<root>/.taudit/baselines/<sha256>.json`) to `findings`. When
+/// `gate_on_all` is true, the baseline is loaded only to compute the
+/// fixed/preexisting counts for the banner — `kept` retains every finding.
+/// Critical findings without a valid waiver are ALWAYS retained in `kept`
+/// regardless of `gate_on_all` (council's load-bearing constraint).
+fn apply_pipeline_baseline(
+    findings: Vec<taudit_core::finding::Finding>,
+    graph: &taudit_core::graph::AuthorityGraph,
+    content: &str,
+    baseline_root: Option<&std::path::Path>,
+    gate_on_all: bool,
+) -> Result<PipelineBaselineOutcome> {
+    let root = match baseline_root {
+        Some(p) => p.to_path_buf(),
+        None => std::env::current_dir().with_context(|| "Failed to resolve current directory")?,
+    };
+    let hash = taudit_core::baselines::compute_pipeline_hash(content);
+    let target = taudit_core::baselines::baseline_path_for(&root, &hash);
+    let baseline = match taudit_core::baselines::Baseline::load(&target)
+        .map_err(|e| anyhow::anyhow!("Failed to load baseline {}: {e}", target.display()))?
+    {
+        Some(b) => b,
+        None => {
+            return Ok(PipelineBaselineOutcome {
+                kept: findings,
+                preexisting_suppressed: 0,
+                fixed: 0,
+                baseline_present: false,
+            })
+        }
+    };
+    let now = chrono::Utc::now();
+    let diff = taudit_core::baselines::diff(&findings, &baseline, graph);
+    if gate_on_all {
+        return Ok(PipelineBaselineOutcome {
+            kept: findings,
+            preexisting_suppressed: 0,
+            fixed: diff.fixed.len(),
+            baseline_present: true,
+        });
+    }
+    let blockers = diff.critical_without_valid_waiver(&baseline, graph, now);
+    // Union NEW + (preexisting critical without valid waiver). Preserve
+    // input order: walk `findings` once, keep iff in NEW or in blockers.
+    let new_set: std::collections::HashSet<String> = diff
+        .new
+        .iter()
+        .map(|f| taudit_core::baselines::compute_finding_fingerprint(f, graph))
+        .collect();
+    let blocker_set: std::collections::HashSet<String> = blockers
+        .iter()
+        .map(|f| taudit_core::baselines::compute_finding_fingerprint(f, graph))
+        .collect();
+    let mut kept = Vec::new();
+    let mut suppressed = 0usize;
+    for f in findings {
+        let fp = taudit_core::baselines::compute_finding_fingerprint(&f, graph);
+        if new_set.contains(&fp) || blocker_set.contains(&fp) {
+            kept.push(f);
+        } else {
+            suppressed += 1;
+        }
+    }
+    Ok(PipelineBaselineOutcome {
+        kept,
+        preexisting_suppressed: suppressed,
+        fixed: diff.fixed.len(),
+        baseline_present: true,
+    })
 }
 
 fn finding_category(category: &taudit_core::finding::FindingCategory) -> String {
@@ -3525,6 +3886,437 @@ fn walkdir(dir: &PathBuf) -> Result<Vec<PathBuf>> {
     Ok(files)
 }
 
+// ── Baseline subcommand ─────────────────────────────────────
+//
+// Per-pipeline state lives at `<root>/.taudit/baselines/<hash>.json` (one
+// file per pipeline, keyed by SHA-256 of the pipeline content). The
+// fingerprint algorithm is shared with SARIF/JSON/CloudEvents — see
+// `taudit_core::baselines` for the load-bearing decisions.
+
+fn cmd_baseline(action: BaselineAction) -> Result<()> {
+    match action {
+        BaselineAction::Init {
+            paths,
+            root,
+            captured_by,
+            platform,
+            max_hops,
+            invariants_dir,
+        } => cmd_baseline_init(paths, root, captured_by, platform, max_hops, invariants_dir),
+        BaselineAction::Accept {
+            pipeline,
+            fingerprint,
+            rule_id,
+            severity,
+            reason,
+            severity_override,
+            expires_at,
+            root,
+        } => cmd_baseline_accept(
+            pipeline,
+            fingerprint,
+            rule_id,
+            severity,
+            reason,
+            severity_override,
+            expires_at,
+            root,
+        ),
+        BaselineAction::Diff {
+            paths,
+            root,
+            platform,
+            max_hops,
+            invariants_dir,
+        } => cmd_baseline_diff(paths, root, platform, max_hops, invariants_dir),
+        BaselineAction::Review { root } => cmd_baseline_review(root),
+    }
+}
+
+/// Resolve the repository root for baseline storage. Defaults to CWD when
+/// the user did not pass `--root`.
+fn baseline_root(root: Option<PathBuf>) -> Result<PathBuf> {
+    match root {
+        Some(p) => Ok(p),
+        None => std::env::current_dir().with_context(|| "Failed to resolve current directory"),
+    }
+}
+
+/// Pick a sensible `captured_by` identity: `--captured-by` wins, then
+/// `$USER@$HOSTNAME`, then `$USER`, else `unknown@local`.
+fn resolve_captured_by(supplied: Option<String>) -> String {
+    if let Some(s) = supplied {
+        return s;
+    }
+    let user = std::env::var("USER").ok();
+    let host = std::env::var("HOSTNAME").ok();
+    match (user, host) {
+        (Some(u), Some(h)) if !u.is_empty() && !h.is_empty() => format!("{u}@{h}"),
+        (Some(u), _) if !u.is_empty() => u,
+        _ => "unknown@local".to_string(),
+    }
+}
+
+/// Free-form description of the loaded rule set, recorded in
+/// `captured_with.rules_version`. Built-ins are counted from the explain
+/// table; custom rules are counted from the loaded set.
+fn rules_version_label(custom_count: usize) -> String {
+    // 32 built-in invariants is the v0.9.x count surfaced by `taudit explain`.
+    // Stable enough to hard-code; if the count drifts we update this in lock-
+    // step with the explain table.
+    const BUILTIN_COUNT: usize = 32;
+    if custom_count == 0 {
+        format!("{BUILTIN_COUNT}-builtin")
+    } else {
+        format!("{BUILTIN_COUNT}-builtin+{custom_count}-custom")
+    }
+}
+
+/// Run the loaded rules over a parsed graph, returning the full finding set
+/// (built-ins plus custom). Mirrors what `cmd_scan` does internally so the
+/// baseline captures the same fingerprints `scan` would emit.
+fn run_all_findings(
+    graph: &taudit_core::graph::AuthorityGraph,
+    custom_rules: &[taudit_core::custom_rules::CustomRule],
+    max_hops: usize,
+) -> Vec<taudit_core::finding::Finding> {
+    let mut findings = rules::run_all_rules(graph, max_hops);
+    if !custom_rules.is_empty() {
+        let paths = taudit_core::propagation::propagation_analysis(graph, max_hops);
+        findings.extend(taudit_core::custom_rules::evaluate_custom_rules(
+            graph,
+            paths.as_slice(),
+            custom_rules,
+        ));
+    }
+    findings
+}
+
+/// Load custom invariants from `--invariants-dir` or return an empty Vec.
+/// Errors are bubbled as exit-2 the same way `scan` and `verify` do.
+fn load_custom_rules(
+    invariants_dir: Option<&PathBuf>,
+) -> Result<Vec<taudit_core::custom_rules::CustomRule>> {
+    match invariants_dir {
+        Some(dir) => taudit_core::custom_rules::load_rules_dir(dir).map_err(|errs| {
+            let joined = errs
+                .iter()
+                .map(|e| e.to_string())
+                .collect::<Vec<_>>()
+                .join("; ");
+            anyhow::anyhow!("failed to load invariants from {}: {joined}", dir.display())
+        }),
+        None => Ok(Vec::new()),
+    }
+}
+
+fn cmd_baseline_init(
+    paths: Vec<PathBuf>,
+    root: Option<PathBuf>,
+    captured_by: Option<String>,
+    platform: Platform,
+    max_hops: usize,
+    invariants_dir: Option<PathBuf>,
+) -> Result<()> {
+    let root = baseline_root(root)?;
+    let captured_by = resolve_captured_by(captured_by);
+    let custom_rules = load_custom_rules(invariants_dir.as_ref())?;
+    let rules_label = rules_version_label(custom_rules.len());
+    let now = chrono::Utc::now();
+    let resolved = resolve_paths_tagged(&paths)?;
+
+    let mut written = 0usize;
+    let mut skipped = 0usize;
+
+    for tagged in &resolved {
+        let path = tagged.path();
+        let content = match std::fs::read_to_string(path) {
+            Ok(c) => c,
+            Err(err) => match tagged {
+                ResolvedPath::Discovered(_) => {
+                    eprintln!("warning: skipping {}: {err}", path.display());
+                    skipped += 1;
+                    continue;
+                }
+                ResolvedPath::Explicit(_) => {
+                    return Err(anyhow::Error::new(err)
+                        .context(format!("Failed to read {}", path.display())));
+                }
+            },
+        };
+
+        let resolved_platform = resolve_platform(&platform, &content, Some(path));
+        let parser = make_parser(&resolved_platform);
+        let graph =
+            match parse_content(parser.as_ref(), content.clone(), path.display().to_string()) {
+                Ok(g) => g,
+                Err(err) => match tagged {
+                    ResolvedPath::Discovered(_) => {
+                        eprintln!("warning: skipping {}: {err:#}", path.display());
+                        skipped += 1;
+                        continue;
+                    }
+                    ResolvedPath::Explicit(_) => return Err(err),
+                },
+            };
+
+        let findings = run_all_findings(&graph, &custom_rules, max_hops);
+
+        let baseline = taudit_core::baselines::Baseline::from_findings(
+            &path.display().to_string(),
+            &content,
+            &graph,
+            &findings,
+            &captured_by,
+            env!("CARGO_PKG_VERSION"),
+            &rules_label,
+            now,
+        );
+        let target =
+            taudit_core::baselines::baseline_path_for(&root, &baseline.pipeline_content_hash);
+        baseline
+            .save(&target)
+            .with_context(|| format!("Failed to write baseline {}", target.display()))?;
+        println!(
+            "wrote {} ({} finding{})",
+            target.display(),
+            baseline.baseline_findings.len(),
+            if baseline.baseline_findings.len() == 1 {
+                ""
+            } else {
+                "s"
+            }
+        );
+        written += 1;
+    }
+
+    println!(
+        "{written} baseline{} written{}",
+        if written == 1 { "" } else { "s" },
+        if skipped > 0 {
+            format!(", {skipped} skipped")
+        } else {
+            String::new()
+        }
+    );
+    Ok(())
+}
+
+#[allow(clippy::too_many_arguments)]
+fn cmd_baseline_accept(
+    pipeline: PathBuf,
+    fingerprint: String,
+    rule_id: String,
+    severity: SeverityLevel,
+    reason: String,
+    severity_override: Option<SeverityLevel>,
+    expires_at: Option<String>,
+    root: Option<PathBuf>,
+) -> Result<()> {
+    let root = baseline_root(root)?;
+    let content = std::fs::read_to_string(&pipeline)
+        .with_context(|| format!("Failed to read pipeline {}", pipeline.display()))?;
+    let hash = taudit_core::baselines::compute_pipeline_hash(&content);
+    let target = taudit_core::baselines::baseline_path_for(&root, &hash);
+
+    let mut baseline = match taudit_core::baselines::Baseline::load(&target)? {
+        Some(b) => b,
+        None => anyhow::bail!(
+            "no baseline at {} — run `taudit baseline init {}` first",
+            target.display(),
+            pipeline.display()
+        ),
+    };
+
+    let expires_dt: Option<chrono::DateTime<chrono::Utc>> = match expires_at {
+        Some(s) => Some(parse_iso8601(&s)?),
+        None => None,
+    };
+    let now = chrono::Utc::now();
+
+    baseline
+        .accept(
+            &fingerprint,
+            &rule_id,
+            severity.to_severity(),
+            &reason,
+            severity_override.as_ref().map(|s| s.to_severity()),
+            expires_dt,
+            now,
+        )
+        .map_err(|e| anyhow::anyhow!("{e}"))?;
+
+    baseline.save(&target)?;
+    println!("accepted {fingerprint} into {}", target.display());
+    Ok(())
+}
+
+fn cmd_baseline_diff(
+    paths: Vec<PathBuf>,
+    root: Option<PathBuf>,
+    platform: Platform,
+    max_hops: usize,
+    invariants_dir: Option<PathBuf>,
+) -> Result<()> {
+    let root = baseline_root(root)?;
+    let custom_rules = load_custom_rules(invariants_dir.as_ref())?;
+    let resolved = resolve_paths_tagged(&paths)?;
+    let now = chrono::Utc::now();
+
+    for tagged in &resolved {
+        let path = tagged.path();
+        let content = match std::fs::read_to_string(path) {
+            Ok(c) => c,
+            Err(err) => match tagged {
+                ResolvedPath::Discovered(_) => {
+                    eprintln!("warning: skipping {}: {err}", path.display());
+                    continue;
+                }
+                ResolvedPath::Explicit(_) => {
+                    return Err(anyhow::Error::new(err)
+                        .context(format!("Failed to read {}", path.display())));
+                }
+            },
+        };
+        let resolved_platform = resolve_platform(&platform, &content, Some(path));
+        let parser = make_parser(&resolved_platform);
+        let graph = parse_content(parser.as_ref(), content.clone(), path.display().to_string())?;
+        let findings = run_all_findings(&graph, &custom_rules, max_hops);
+
+        let hash = taudit_core::baselines::compute_pipeline_hash(&content);
+        let target = taudit_core::baselines::baseline_path_for(&root, &hash);
+        match taudit_core::baselines::Baseline::load(&target)? {
+            Some(baseline) => {
+                let diff = taudit_core::baselines::diff(&findings, &baseline, &graph);
+                let unwaived = diff.preexisting.len() - diff.waived_count;
+                let blockers = diff.critical_without_valid_waiver(&baseline, &graph, now);
+                println!(
+                    "{}: {} NEW, {} FIXED, {} PRE-EXISTING ({} waived, {} unwaived){}",
+                    path.display(),
+                    diff.new.len(),
+                    diff.fixed.len(),
+                    diff.preexisting.len(),
+                    diff.waived_count,
+                    unwaived,
+                    if blockers.is_empty() {
+                        String::new()
+                    } else {
+                        format!(" — {} CRITICAL without valid waiver", blockers.len())
+                    },
+                );
+            }
+            None => {
+                println!(
+                    "{}: no baseline at {} (run `taudit baseline init {}`)",
+                    path.display(),
+                    target.display(),
+                    path.display()
+                );
+            }
+        }
+    }
+    println!("Use 'taudit baseline review' to see waivers.");
+    Ok(())
+}
+
+fn cmd_baseline_review(root: Option<PathBuf>) -> Result<()> {
+    let root = baseline_root(root)?;
+    let dir = taudit_core::baselines::baselines_dir(&root);
+    if !dir.exists() {
+        println!("no baselines at {} (nothing to review)", dir.display());
+        return Ok(());
+    }
+    let mut waivers: Vec<(String, taudit_core::baselines::BaselineFinding)> = Vec::new();
+    for entry in std::fs::read_dir(&dir)
+        .with_context(|| format!("Failed to read baselines dir {}", dir.display()))?
+    {
+        let entry = entry?;
+        let path = entry.path();
+        if path.extension().and_then(|s| s.to_str()) != Some("json") {
+            continue;
+        }
+        let baseline = match taudit_core::baselines::Baseline::load(&path)? {
+            Some(b) => b,
+            None => continue,
+        };
+        for f in &baseline.baseline_findings {
+            if f.reason_waived.is_some() {
+                waivers.push((baseline.pipeline_path.clone(), f.clone()));
+            }
+        }
+    }
+
+    if waivers.is_empty() {
+        println!("no waivers across {} baselines", count_baselines(&dir)?);
+        return Ok(());
+    }
+
+    // Sort: expired first, then expiring soonest. Entries without expires_at
+    // sort to the end, but critical-without-expires_at is flagged inline.
+    waivers.sort_by(|a, b| match (a.1.expires_at, b.1.expires_at) {
+        (Some(x), Some(y)) => x.cmp(&y),
+        (Some(_), None) => std::cmp::Ordering::Less,
+        (None, Some(_)) => std::cmp::Ordering::Greater,
+        (None, None) => std::cmp::Ordering::Equal,
+    });
+
+    let now = chrono::Utc::now();
+    let mut errors = 0usize;
+    println!("waiver review ({} entries)", waivers.len());
+    for (pipeline, w) in &waivers {
+        let expiry = match w.expires_at {
+            Some(t) => {
+                if t <= now {
+                    format!("EXPIRED {}", t.to_rfc3339())
+                } else {
+                    format!("expires {}", t.to_rfc3339())
+                }
+            }
+            None => "no expires_at".to_string(),
+        };
+        let critical_without_expiry =
+            w.severity_override == Some(Severity::Critical) && w.expires_at.is_none();
+        let flag = if critical_without_expiry {
+            errors += 1;
+            " [ERROR: critical waiver without expires_at]"
+        } else {
+            ""
+        };
+        println!(
+            "  {} :: {} :: {} :: {} :: {}{}",
+            pipeline,
+            w.fingerprint,
+            w.rule_id,
+            expiry,
+            w.reason_waived.as_deref().unwrap_or(""),
+            flag
+        );
+    }
+    if errors > 0 {
+        anyhow::bail!("{errors} critical waiver(s) without expires_at — fix before merge");
+    }
+    Ok(())
+}
+
+fn count_baselines(dir: &std::path::Path) -> Result<usize> {
+    let mut n = 0usize;
+    for entry in std::fs::read_dir(dir)
+        .with_context(|| format!("Failed to read baselines dir {}", dir.display()))?
+    {
+        let entry = entry?;
+        if entry.path().extension().and_then(|s| s.to_str()) == Some("json") {
+            n += 1;
+        }
+    }
+    Ok(n)
+}
+
+fn parse_iso8601(s: &str) -> Result<chrono::DateTime<chrono::Utc>> {
+    chrono::DateTime::parse_from_rfc3339(s)
+        .map(|d| d.with_timezone(&chrono::Utc))
+        .with_context(|| format!("--expires-at must be RFC3339 / ISO-8601 (got {s:?})"))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -3855,6 +4647,8 @@ mod tests {
             output: None,
             suppressions: None,
             suppression_mode: SuppressionModeArg::Downgrade,
+            gate_on_all: false,
+            baseline_root: None,
         };
 
         let mut buf = Vec::new();
@@ -3886,6 +4680,8 @@ mod tests {
             output: None,
             suppressions: None,
             suppression_mode: SuppressionModeArg::Downgrade,
+            gate_on_all: false,
+            baseline_root: None,
         };
 
         let mut buf = Vec::new();
@@ -3915,6 +4711,8 @@ mod tests {
             output: None,
             suppressions: None,
             suppression_mode: SuppressionModeArg::Downgrade,
+            gate_on_all: false,
+            baseline_root: None,
         };
 
         let mut buf = Vec::new();
@@ -3938,6 +4736,8 @@ mod tests {
             output: None,
             suppressions: None,
             suppression_mode: SuppressionModeArg::Downgrade,
+            gate_on_all: false,
+            baseline_root: None,
         };
 
         let mut buf = Vec::new();
@@ -3970,10 +4770,214 @@ mod tests {
             output: None,
             suppressions: None,
             suppression_mode: SuppressionModeArg::Downgrade,
+            gate_on_all: false,
+            baseline_root: None,
         };
 
         let mut buf = Vec::new();
         let code = run_verify_io(&opts, &mut buf);
         assert_eq!(code, 0, "info-severity violation should be filtered out");
+    }
+
+    // ── Per-pipeline baseline contract tests ────────────────
+    //
+    // Council's load-bearing constraints:
+    //   1. No `.taudit/` directory ⇒ behave exactly as today (OSS default).
+    //   2. With baseline ⇒ pre-existing findings no longer drive exit 1.
+    //   3. Critical-without-valid-waiver ALWAYS drives exit 1 anyway.
+    //   4. `--gate-on-all` overrides (1)+(2); (3) still applies.
+
+    fn baseline_test_dir(label: &str) -> PathBuf {
+        let nanos = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .map(|d| d.as_nanos())
+            .unwrap_or(0);
+        let dir = std::env::temp_dir().join(format!(
+            "taudit-baseline-cli-{}-{nanos}-{label}",
+            std::process::id()
+        ));
+        std::fs::create_dir_all(&dir).expect("tmp dir create");
+        dir
+    }
+
+    #[test]
+    fn verify_with_no_baseline_dir_behaves_exactly_as_today() {
+        // OSS-friendly default: absent `.taudit/` ⇒ baseline machinery is a
+        // no-op. This is the council's #4 load-bearing constraint.
+        let dir = baseline_test_dir("no-baseline");
+        let pipeline = dir.join("leaky.yml");
+        std::fs::write(&pipeline, leaky_pipeline_yaml()).unwrap();
+        let policy = dir.join("policy.yml");
+        std::fs::write(&policy, untrusted_sink_invariant_yaml()).unwrap();
+
+        let opts = VerifyOpts {
+            paths: vec![pipeline],
+            policy,
+            format: VerifyFormat::Text,
+            platform: Platform::GithubActions,
+            max_hops: DEFAULT_MAX_HOPS,
+            include_builtin: false,
+            severity_threshold: None,
+            output: None,
+            suppressions: None,
+            suppression_mode: SuppressionModeArg::Downgrade,
+            gate_on_all: false,
+            baseline_root: Some(dir.clone()),
+        };
+
+        let mut buf = Vec::new();
+        let code = run_verify_io(&opts, &mut buf);
+        // No `.taudit/baselines/` directory under `dir` ⇒ verify falls
+        // through to today's behaviour and the leaky fixture fails 1.
+        assert_eq!(code, 1, "absent baseline must not change exit code");
+    }
+
+    #[test]
+    fn verify_with_baseline_suppresses_preexisting_high_findings() {
+        let dir = baseline_test_dir("with-baseline");
+        let pipeline = dir.join("leaky.yml");
+        std::fs::write(&pipeline, leaky_pipeline_yaml()).unwrap();
+        let policy = dir.join("policy.yml");
+        std::fs::write(&policy, untrusted_sink_invariant_yaml()).unwrap();
+
+        // Capture the baseline (rule fires at high severity, no critical).
+        cmd_baseline_init(
+            vec![pipeline.clone()],
+            Some(dir.clone()),
+            Some("test@local".to_string()),
+            Platform::GithubActions,
+            DEFAULT_MAX_HOPS,
+            None, /* invariants_dir */
+        )
+        .expect("init");
+        // Custom policy is high-severity (`untrusted_sink_invariant_yaml`),
+        // so baseline init via built-ins is a near-empty diff. To exercise
+        // the suppression path we directly capture the policy findings into
+        // a baseline. Easier: just re-run verify; the leaky fixture's
+        // built-in `authority_propagation` is critical and would not be
+        // waived. The custom-policy invariant is the only thing verify sees
+        // because include_builtin=false.
+
+        // Capture custom-policy findings into the baseline. We call init
+        // again with the same invariants_dir (custom invariant lives in a
+        // dir, so write it to one).
+        let policy_dir = dir.join("invariants");
+        std::fs::create_dir_all(&policy_dir).unwrap();
+        std::fs::write(policy_dir.join("any.yml"), untrusted_sink_invariant_yaml()).unwrap();
+        cmd_baseline_init(
+            vec![pipeline.clone()],
+            Some(dir.clone()),
+            Some("test@local".to_string()),
+            Platform::GithubActions,
+            DEFAULT_MAX_HOPS,
+            Some(policy_dir.clone()),
+        )
+        .expect("init w/ custom rules");
+
+        let opts = VerifyOpts {
+            paths: vec![pipeline],
+            policy,
+            format: VerifyFormat::Text,
+            platform: Platform::GithubActions,
+            max_hops: DEFAULT_MAX_HOPS,
+            include_builtin: false,
+            severity_threshold: None,
+            output: None,
+            suppressions: None,
+            suppression_mode: SuppressionModeArg::Downgrade,
+            gate_on_all: false,
+            baseline_root: Some(dir),
+        };
+
+        let mut buf = Vec::new();
+        let code = run_verify_io(&opts, &mut buf);
+        // The high-severity finding now lives in the baseline ⇒ no NEW
+        // violations ⇒ exit 0. (The built-in critical isn't on the verify
+        // path because include_builtin=false.)
+        assert_eq!(
+            code,
+            0,
+            "preexisting high finding must be suppressed by baseline (output: {})",
+            String::from_utf8_lossy(&buf)
+        );
+    }
+
+    #[test]
+    fn verify_gate_on_all_overrides_baseline_suppression() {
+        let dir = baseline_test_dir("gate-on-all");
+        let pipeline = dir.join("leaky.yml");
+        std::fs::write(&pipeline, leaky_pipeline_yaml()).unwrap();
+        let policy = dir.join("policy.yml");
+        std::fs::write(&policy, untrusted_sink_invariant_yaml()).unwrap();
+        let policy_dir = dir.join("invariants");
+        std::fs::create_dir_all(&policy_dir).unwrap();
+        std::fs::write(policy_dir.join("any.yml"), untrusted_sink_invariant_yaml()).unwrap();
+        cmd_baseline_init(
+            vec![pipeline.clone()],
+            Some(dir.clone()),
+            Some("test@local".to_string()),
+            Platform::GithubActions,
+            DEFAULT_MAX_HOPS,
+            Some(policy_dir),
+        )
+        .expect("init");
+
+        let opts = VerifyOpts {
+            paths: vec![pipeline],
+            policy,
+            format: VerifyFormat::Text,
+            platform: Platform::GithubActions,
+            max_hops: DEFAULT_MAX_HOPS,
+            include_builtin: false,
+            severity_threshold: None,
+            output: None,
+            suppressions: None,
+            suppression_mode: SuppressionModeArg::Downgrade,
+            gate_on_all: true, // bypass baseline suppression
+            baseline_root: Some(dir),
+        };
+
+        let mut buf = Vec::new();
+        let code = run_verify_io(&opts, &mut buf);
+        // `--gate-on-all` ignores the baseline ⇒ pre-existing high finding
+        // counts again ⇒ exit 1.
+        assert_eq!(
+            code,
+            1,
+            "--gate-on-all must override baseline suppression (output: {})",
+            String::from_utf8_lossy(&buf)
+        );
+    }
+
+    #[test]
+    fn baseline_init_writes_one_file_per_pipeline() {
+        let dir = baseline_test_dir("init-writes");
+        let p1 = dir.join("a.yml");
+        let p2 = dir.join("b.yml");
+        std::fs::write(&p1, leaky_pipeline_yaml()).unwrap();
+        // `b.yml` differs by a single comment so the content hash changes.
+        std::fs::write(&p2, format!("# variant\n{}", leaky_pipeline_yaml())).unwrap();
+
+        cmd_baseline_init(
+            vec![p1.clone(), p2.clone()],
+            Some(dir.clone()),
+            Some("test@local".to_string()),
+            Platform::GithubActions,
+            DEFAULT_MAX_HOPS,
+            None,
+        )
+        .expect("init");
+
+        let baselines = dir.join(".taudit").join("baselines");
+        let entries: Vec<_> = std::fs::read_dir(&baselines)
+            .expect("baselines dir")
+            .filter_map(Result::ok)
+            .collect();
+        assert_eq!(
+            entries.len(),
+            2,
+            "expected one baseline per pipeline, got {}",
+            entries.len()
+        );
     }
 }

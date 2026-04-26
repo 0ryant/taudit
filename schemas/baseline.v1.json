@@ -1,0 +1,105 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://github.com/0ryant/taudit/schemas/baseline.v1.json",
+  "title": "taudit Pipeline Baseline",
+  "description": "Per-pipeline baseline file written by `taudit baseline init` and updated by `taudit baseline accept`. Stored at `.taudit/baselines/<pipeline-content-hash>.json`. Diffed by `taudit baseline diff` and `taudit verify`. Stable contract — additive 1.x.y changes are non-breaking; 2.0.0 means breaking changes.",
+  "version": "1.0.0",
+  "type": "object",
+  "required": [
+    "schema_version",
+    "pipeline_path",
+    "pipeline_content_hash",
+    "captured_at",
+    "captured_by",
+    "captured_with",
+    "baseline_findings"
+  ],
+  "additionalProperties": false,
+  "properties": {
+    "schema_version": {
+      "type": "string",
+      "pattern": "^1\\.[0-9]+\\.[0-9]+$",
+      "description": "Semver of this schema. Must start with `1.` for now."
+    },
+    "pipeline_path": {
+      "type": "string",
+      "description": "Path of the pipeline as the user sees it (e.g. `.github/workflows/release.yml`). Informational; the canonical key is `pipeline_content_hash`."
+    },
+    "pipeline_content_hash": {
+      "type": "string",
+      "pattern": "^sha256:[0-9a-f]{64}$",
+      "description": "SHA-256 of the pipeline file's bytes at `init` time, prefixed with `sha256:`. Renaming the pipeline file preserves the baseline because the hash key is stable."
+    },
+    "captured_at": {
+      "type": "string",
+      "format": "date-time",
+      "description": "ISO-8601 timestamp at which this baseline was first written."
+    },
+    "captured_by": {
+      "type": "string",
+      "description": "Identity that ran `taudit baseline init` (typically a git author email)."
+    },
+    "captured_with": {
+      "type": "object",
+      "required": ["taudit_version", "rules_version"],
+      "additionalProperties": false,
+      "properties": {
+        "taudit_version": {
+          "type": "string",
+          "description": "Semver of the taudit binary that produced this baseline."
+        },
+        "rules_version": {
+          "type": "string",
+          "description": "Free-form description of the rule set at capture time (e.g. `32-builtin`, `32-builtin+5-custom`)."
+        }
+      }
+    },
+    "baseline_findings": {
+      "type": "array",
+      "description": "Sorted ASC by `fingerprint` for deterministic git diffs.",
+      "items": { "$ref": "#/definitions/BaselineFinding" }
+    }
+  },
+  "definitions": {
+    "BaselineFinding": {
+      "type": "object",
+      "required": ["fingerprint", "rule_id", "severity", "first_seen_at"],
+      "additionalProperties": false,
+      "properties": {
+        "fingerprint": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{16}$",
+          "description": "16-hex SHA-256 fingerprint matching the SARIF `partialFingerprints.primaryLocationLineHash`, the JSON `findings[].fingerprint`, and the CloudEvents `tauditfindingfingerprint` extension. The shared test `baseline_fingerprint_matches_sarif_fingerprint` enforces byte-equality across formats."
+        },
+        "rule_id": {
+          "type": "string",
+          "description": "Snake-case rule id. Either a custom rule id parsed from a `[id] message` prefix, or the snake_case `FindingCategory`."
+        },
+        "severity": {
+          "type": "string",
+          "enum": ["critical", "high", "medium", "low", "info"],
+          "description": "Severity captured at `init` time. Drives the critical-bypass check."
+        },
+        "first_seen_at": {
+          "type": "string",
+          "format": "date-time",
+          "description": "When this entry was first added (init or accept)."
+        },
+        "reason_waived": {
+          "type": ["string", "null"],
+          "description": "Free-form justification. Required (>=10 chars) when entry is added by `taudit baseline accept`. `null` for plain pre-existing entries from `init`."
+        },
+        "severity_override": {
+          "type": ["string", "null"],
+          "enum": [null, "critical", "high", "medium", "low", "info"],
+          "description": "Acknowledges that a Critical finding is being bypassed intentionally. Required for any waiver of an originally-critical finding; if absent, the critical falls through to exit 1 even if it appears in the baseline."
+        },
+        "expires_at": {
+          "type": ["string", "null"],
+          "format": "date-time",
+          "description": "Hard deadline for the waiver. Mandatory when `severity_override = critical`; must be <=90 days from `first_seen_at`. Past this timestamp the waiver no longer protects."
+        }
+      }
+    }
+  }
+}
