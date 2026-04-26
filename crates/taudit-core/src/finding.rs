@@ -99,6 +99,12 @@ pub enum FindingCategory {
     VariableGroupInPrJob,
     /// Self-hosted agent pool used in a PR-triggered job that also checks out the repository.
     SelfHostedPoolPrHijack,
+    /// ADO self-hosted pool without workspace isolation (`clean: true`/`all`).
+    /// Shared self-hosted agents retain their workspace across pipeline runs.
+    /// Without `workspace: { clean: all }`, a PR build can deposit malicious
+    /// files that persist for the next (possibly privileged) pipeline run,
+    /// enabling workspace poisoning attacks.
+    SharedSelfHostedPoolNoIsolation,
     /// Broad-scope ADO service connection reachable from a PR-triggered job without OIDC.
     ServiceConnectionScopeMismatch,
     /// ADO `resources.repositories[]` entry referenced by an `extends:`,
@@ -359,6 +365,17 @@ pub enum FindingCategory {
     /// commit messages), the dotenv flow is a covert privilege escalation
     /// channel into the deployment job.
     DotenvArtifactFlowsToPrivilegedDeployment,
+    /// ADO inline script sets a sensitive-named pipeline variable via
+    /// `##vso[task.setvariable variable=<NAME>]` with `issecret=false` or
+    /// without the `issecret` flag at all. Without `issecret=true` the
+    /// variable value is printed in plaintext to the pipeline log and is
+    /// not masked in downstream step output.
+    SetvariableIssecretFalse,
+    /// A GHA `uses:` action reference contains a non-ASCII character —
+    /// possible Unicode confusable / homoglyph impersonating a trusted
+    /// action (e.g. Cyrillic `a` instead of Latin `a`, or U+2215
+    /// DIVISION SLASH instead of U+002F SOLIDUS).
+    HomoglyphInActionRef,
     // Reserved — requires ADO/GH API enrichment beyond pipeline YAML
     /// Requires runtime network telemetry or policy enrichment — not detectable from YAML alone.
     #[doc(hidden)]

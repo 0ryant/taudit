@@ -2,8 +2,8 @@ use crate::finding::{
     Finding, FindingCategory, FindingExtras, FindingSource, Recommendation, Severity,
 };
 use crate::graph::{
-    is_docker_digest_pinned, is_sha_pinned, AuthorityCompleteness, AuthorityGraph, EdgeKind,
-    IdentityScope, NodeId, NodeKind, TrustZone, META_ADD_SPN_TO_ENV, META_ATTESTS, META_CACHE_KEY,
+    is_docker_digest_pinned, is_pin_semantically_valid, AuthorityGraph, EdgeKind, IdentityScope,
+    NodeId, NodeKind, TrustZone, META_ADD_SPN_TO_ENV, META_ATTESTS, META_CACHE_KEY,
     META_CHECKOUT_REF, META_CHECKOUT_SELF, META_CLI_FLAG_EXPOSED, META_CONTAINER, META_DIGEST,
     META_DISPATCH_INPUTS, META_DOTENV_FILE, META_DOWNLOADS_ARTIFACT, META_ENVIRONMENT_NAME,
     META_ENVIRONMENT_URL, META_ENV_APPROVAL, META_FORK_CHECK, META_GITLAB_ALLOW_FAILURE,
@@ -14,27 +14,9 @@ use crate::graph::{
     META_READS_ENV, META_REPOSITORIES, META_RULES_PROTECTED_ONLY, META_SCRIPT_BODY,
     META_SECRETS_INHERIT, META_SELF_HOSTED, META_SERVICE_CONNECTION, META_SERVICE_CONNECTION_NAME,
     META_TERRAFORM_AUTO_APPROVE, META_TRIGGER, META_TRIGGERS, META_VARIABLE_GROUP,
-    META_WRITES_ENV_GATE,
+    META_WORKSPACE_CLEAN, META_WRITES_ENV_GATE,
 };
 use crate::propagation;
-
-fn cap_severity(severity: Severity, max_severity: Severity) -> Severity {
-    if severity < max_severity {
-        max_severity
-    } else {
-        severity
-    }
-}
-
-fn apply_confidence_cap(graph: &AuthorityGraph, findings: &mut [Finding]) {
-    if graph.completeness != AuthorityCompleteness::Partial {
-        return;
-    }
-
-    for finding in findings {
-        finding.severity = cap_severity(finding.severity, Severity::High);
-    }
-}
 
 /// MVP Rule 1: Authority (secret/identity) propagated across a trust boundary.
 ///
@@ -390,7 +372,7 @@ pub fn unpinned_action(graph: &AuthorityGraph) -> Vec<Finding> {
 
         let has_digest = image.metadata.contains_key(META_DIGEST);
 
-        if has_digest || is_sha_pinned(&image.name) {
+        if has_digest || is_pin_semantically_valid(&image.name) {
             continue;
         }
 
@@ -602,18 +584,18 @@ pub fn artifact_boundary_crossing(graph: &AuthorityGraph) -> Vec<Finding> {
             }
 
             for consumer in &consumers {
-                if consumer.trust_zone.is_lower_than(&producer.trust_zone) {
+                if producer.trust_zone.is_lower_than(&consumer.trust_zone) {
                     findings.push(Finding {
                         severity: Severity::High,
                         category: FindingCategory::ArtifactBoundaryCrossing,
                         path: None,
                         nodes_involved: vec![producer.id, artifact.id, consumer.id],
                         message: format!(
-                            "Artifact '{}' produced by privileged step '{}' consumed by '{}' ({:?} -> {:?})",
+                            "Untrusted artifact '{}' produced by '{}' ({:?}) consumed by privileged step '{}' ({:?})",
                             artifact.name,
                             producer.name,
-                            consumer.name,
                             producer.trust_zone,
+                            consumer.name,
                             consumer.trust_zone
                         ),
                         recommendation: Recommendation::TsafeRemediation {
@@ -1337,6 +1319,71 @@ pub fn self_hosted_pool_pr_hijack(graph: &AuthorityGraph) -> Vec<Finding> {
         source: FindingSource::BuiltIn,
         extras: FindingExtras::default(),
 }]
+}
+
+// ── shared_self_hosted_pool_no_isolation ──────────────────────────────────────
+//
+// ADO self-hosted agent pools retain their workspace between pipeline runs.
+// Without `workspace: { clean: all }` a build that runs on the shared agent
+// can leave behind malicious files, compiled artefacts, or git hooks that
+// persist for the next run — which may be a privileged deployment pipeline.
+//
+// Microsoft-hosted agents are ephemeral (Image node has no META_SELF_HOSTED).
+
+/// Rule G1: ADO self-hosted pool without workspace isolation.
+///
+/// Fires when any Image node (pool) in an ADO pipeline has `META_SELF_HOSTED`
+/// set but does NOT have `META_WORKSPACE_CLEAN` set.  Microsoft-hosted pools
+/// are ephemeral and are never flagged.
+pub fn shared_self_hosted_pool_no_isolation(graph: &AuthorityGraph) -> Vec<Finding> {
+    let platform = graph.metadata.get(META_PLATFORM).map(|s| s.as_str());
+    if platform != Some("azure-devops") {
+        return Vec::new();
+    }
+
+    let mut findings = Vec::new();
+
+    for pool in graph.nodes_of_kind(NodeKind::Image) {
+        let is_self_hosted = pool
+            .metadata
+            .get(META_SELF_HOSTED)
+            .map(|v| v == "true")
+            .unwrap_or(false);
+
+        if !is_self_hosted {
+            continue;
+        }
+
+        let has_clean = pool
+            .metadata
+            .get(META_WORKSPACE_CLEAN)
+            .map(|v| v == "true")
+            .unwrap_or(false);
+
+        if has_clean {
+            continue;
+        }
+
+        findings.push(Finding {
+            severity: Severity::High,
+            category: FindingCategory::SharedSelfHostedPoolNoIsolation,
+            path: None,
+            nodes_involved: vec![pool.id],
+            message: format!(
+                "Self-hosted pool '{}' has no workspace isolation (workspace: {{clean: all/true}} not set); \
+                a previous pipeline run can pollute the workspace for the next — including privileged deployment jobs",
+                pool.name
+            ),
+            recommendation: Recommendation::Manual {
+                action: "Add `workspace: { clean: all }` to every job that uses a self-hosted pool, \
+                    or migrate to Microsoft-hosted (ephemeral) agents for untrusted builds.".into(),
+            },
+            source: FindingSource::BuiltIn,
+            extras: FindingExtras::default(),
+        });
+    }
+
+    findings
 }
 
 /// Rule: ADO service connection with broad/unknown scope and no OIDC federation,
@@ -3072,8 +3119,8 @@ pub fn pr_trigger_with_floating_action_ref(graph: &AuthorityGraph) -> Vec<Findin
         if image.metadata.contains_key(META_SELF_HOSTED) {
             continue;
         }
-        // Already SHA-pinned → safe.
-        if is_sha_pinned(&image.name) {
+        // Already SHA-pinned (semantically valid) → safe.
+        if is_pin_semantically_valid(&image.name) {
             continue;
         }
         // Dedupe per action reference.
@@ -3100,6 +3147,60 @@ pub fn pr_trigger_with_floating_action_ref(graph: &AuthorityGraph) -> Vec<Findin
             source: FindingSource::BuiltIn,
                 extras: FindingExtras::default(),
 });
+    }
+
+    findings
+}
+
+// ── homoglyph_in_action_ref ──────────────────────────────────
+//
+// Detect `uses:` action references containing non-ASCII characters.
+// Legitimate action references (owner/repo@ref) are purely ASCII.
+// Non-ASCII characters indicate a possible Unicode confusable / homoglyph
+// attack where a malicious action name visually impersonates a trusted one.
+
+/// Rule G2: action reference contains non-ASCII characters (possible homoglyph).
+///
+/// Iterates every `Image` node in the graph (which represent `uses:` action
+/// refs) and flags any whose name contains at least one non-ASCII code point.
+/// Severity: High — potential supply-chain impersonation attack.
+pub fn check_homoglyph_in_action_ref(graph: &AuthorityGraph) -> Vec<Finding> {
+    let platform = graph.metadata.get(META_PLATFORM).map(|s| s.as_str());
+    if platform != Some("github-actions") {
+        return Vec::new();
+    }
+
+    let mut findings = Vec::new();
+
+    for image in graph.nodes_of_kind(NodeKind::Image) {
+        if image.name.is_ascii() {
+            continue;
+        }
+
+        // Collect the offending non-ASCII characters for the message.
+        let bad_chars: Vec<String> = image
+            .name
+            .chars()
+            .filter(|c| !c.is_ascii())
+            .map(|c| format!("U+{:04X} '{}'", c as u32, c))
+            .collect();
+        let char_list = bad_chars.join(", ");
+
+        findings.push(Finding {
+            severity: Severity::High,
+            category: FindingCategory::HomoglyphInActionRef,
+            path: None,
+            nodes_involved: vec![image.id],
+            message: format!(
+                "Action reference '{}' contains non-ASCII character(s) (possible homoglyph/confusable): {}",
+                image.name, char_list
+            ),
+            recommendation: Recommendation::Manual {
+                action: "Replace the action reference with the genuine ASCII action name. Verify the action owner/repo on github.com and ensure every character in the `uses:` field is plain ASCII.".into(),
+            },
+            source: FindingSource::BuiltIn,
+            extras: FindingExtras::default(),
+        });
     }
 
     findings
@@ -3300,7 +3401,7 @@ pub fn pr_build_pushes_image_with_floating_credentials(graph: &AuthorityGraph) -
         if !is_registry_login_action(&image.name) {
             continue;
         }
-        if is_sha_pinned(&image.name) {
+        if is_pin_semantically_valid(&image.name) {
             continue;
         }
         if !seen.insert(&image.name) {
@@ -3331,6 +3432,113 @@ pub fn pr_build_pushes_image_with_floating_credentials(graph: &AuthorityGraph) -
     findings
 }
 
+/// Rule: ADO `##vso[task.setvariable]` with a sensitive-named variable
+/// that omits `issecret=true` (either `issecret=false` or no `issecret`
+/// flag at all). Without the flag the variable value is printed in
+/// plaintext to the pipeline log and is not masked in downstream step
+/// output.
+///
+/// Detection (per Step):
+///   * `META_PLATFORM == "azure-devops"` (gates GHA/GitLab out)
+///   * Step carries a non-empty `META_SCRIPT_BODY`
+///   * Body contains `##vso[task.setvariable variable=NAME ...]` where
+///     NAME (case-insensitive) matches a sensitive keyword: `password`,
+///     `passwd`, `token`, `secret`, `key`, `credential`, `cert`,
+///     `api_key`, `apikey`, `auth`
+///   * The directive does NOT contain `issecret=true` (case-insensitive)
+///     between `variable=NAME` and the closing `]`
+///
+/// Severity: High.
+pub fn setvariable_issecret_false(graph: &AuthorityGraph) -> Vec<Finding> {
+    if !graph_is_platform(graph, "azure-devops") {
+        return Vec::new();
+    }
+
+    const SENSITIVE_KEYWORDS: &[&str] = &[
+        "password",
+        "passwd",
+        "token",
+        "secret",
+        "key",
+        "credential",
+        "cert",
+        "api_key",
+        "apikey",
+        "auth",
+    ];
+
+    let needle = "##vso[task.setvariable variable=";
+
+    let mut findings = Vec::new();
+
+    for step in graph.nodes_of_kind(NodeKind::Step) {
+        let body = match step.metadata.get(META_SCRIPT_BODY) {
+            Some(b) if !b.trim().is_empty() => b,
+            _ => continue,
+        };
+
+        let lower = body.to_lowercase();
+        let mut cursor = 0;
+
+        while let Some(rel) = lower[cursor..].find(needle) {
+            let start = cursor + rel + needle.len();
+            let tail = &lower[start..];
+
+            // Extract variable name (terminated by `;`, `]`, or whitespace).
+            let name_end = tail
+                .find(|c: char| c == ';' || c == ']' || c.is_whitespace())
+                .unwrap_or(tail.len());
+            let var_name = &tail[..name_end];
+
+            if var_name.is_empty() {
+                cursor = start + name_end;
+                continue;
+            }
+
+            // Check if variable name contains a sensitive keyword.
+            let is_sensitive = SENSITIVE_KEYWORDS.iter().any(|kw| var_name.contains(kw));
+
+            if !is_sensitive {
+                cursor = start + name_end;
+                continue;
+            }
+
+            // Grab the rest of the directive up to `]` to check for issecret.
+            let directive_end = tail.find(']').unwrap_or(tail.len());
+            let directive_tail = &tail[..directive_end];
+            let has_issecret_true = directive_tail.contains("issecret=true");
+
+            if !has_issecret_true {
+                // Recover the original-case variable name from the body.
+                let orig_name = &body[start..start + name_end];
+
+                findings.push(Finding {
+                    severity: Severity::High,
+                    category: FindingCategory::SetvariableIssecretFalse,
+                    path: None,
+                    nodes_involved: vec![step.id],
+                    message: format!(
+                        "ADO setvariable with sensitive name '{}' uses issecret=false or omits issecret flag, value printed in plaintext logs",
+                        orig_name,
+                    ),
+                    recommendation: Recommendation::Manual {
+                        action: format!(
+                            "Add `issecret=true` to the setvariable directive: `##vso[task.setvariable variable={};issecret=true]`",
+                            orig_name,
+                        ),
+                    },
+                    source: FindingSource::BuiltIn,
+                    extras: FindingExtras::default(),
+                });
+            }
+
+            cursor = start + name_end;
+        }
+    }
+
+    findings
+}
+
 pub fn run_all_rules(graph: &AuthorityGraph, max_hops: usize) -> Vec<Finding> {
     let mut findings = Vec::new();
     // MVP rules
@@ -3351,6 +3559,7 @@ pub fn run_all_rules(graph: &AuthorityGraph, max_hops: usize) -> Vec<Finding> {
     findings.extend(checkout_self_pr_exposure(graph));
     findings.extend(variable_group_in_pr_job(graph));
     findings.extend(self_hosted_pool_pr_hijack(graph));
+    findings.extend(shared_self_hosted_pool_no_isolation(graph));
     findings.extend(service_connection_scope_mismatch(graph));
     findings.extend(template_extends_unpinned_branch(graph));
     findings.extend(template_repo_ref_is_feature_branch(graph));
@@ -3360,12 +3569,14 @@ pub fn run_all_rules(graph: &AuthorityGraph, max_hops: usize) -> Vec<Finding> {
     findings.extend(secret_to_inline_script_env_export(graph));
     findings.extend(secret_materialised_to_workspace_file(graph));
     findings.extend(keyvault_secret_to_plaintext(graph));
+    findings.extend(setvariable_issecret_false(graph));
     findings.extend(terraform_auto_approve_in_prod(graph));
     findings.extend(addspn_with_inline_script(graph));
     findings.extend(parameter_interpolation_into_shell(graph));
     // GHA red-team-derived rules
     findings.extend(runtime_script_fetched_from_floating_url(graph));
     findings.extend(pr_trigger_with_floating_action_ref(graph));
+    findings.extend(check_homoglyph_in_action_ref(graph));
     findings.extend(untrusted_api_response_to_env_sink(graph));
     findings.extend(pr_build_pushes_image_with_floating_credentials(graph));
     findings.extend(secret_via_env_gate_to_untrusted_consumer(graph));
@@ -3410,8 +3621,6 @@ pub fn run_all_rules(graph: &AuthorityGraph, max_hops: usize) -> Vec<Finding> {
     // existing-rule findings when a control elsewhere in the graph
     // neutralises the risk).
     apply_compensating_controls(graph, &mut findings);
-
-    apply_confidence_cap(graph, &mut findings);
 
     findings.sort_by_key(|f| f.severity);
 
@@ -6591,12 +6800,13 @@ mod tests {
     }
 
     #[test]
-    fn artifact_crossing_detected() {
+    fn artifact_crossing_untrusted_producer_firstparty_consumer_fires() {
+        // Untrusted producer -> first-party consumer: should fire (poisoned artifact attack)
         let mut g = AuthorityGraph::new(source("ci.yml"));
-        let secret = g.add_node(NodeKind::Secret, "KEY", TrustZone::FirstParty);
-        let build = g.add_node(NodeKind::Step, "build", TrustZone::FirstParty);
-        let artifact = g.add_node(NodeKind::Artifact, "dist.zip", TrustZone::FirstParty);
-        let deploy = g.add_node(NodeKind::Step, "deploy", TrustZone::ThirdParty);
+        let secret = g.add_node(NodeKind::Secret, "KEY", TrustZone::Untrusted);
+        let build = g.add_node(NodeKind::Step, "pr-build", TrustZone::Untrusted);
+        let artifact = g.add_node(NodeKind::Artifact, "dist.zip", TrustZone::Untrusted);
+        let deploy = g.add_node(NodeKind::Step, "deploy", TrustZone::FirstParty);
 
         g.add_edge(build, secret, EdgeKind::HasAccessTo);
         g.add_edge(build, artifact, EdgeKind::Produces);
@@ -6607,6 +6817,27 @@ mod tests {
         assert_eq!(
             findings[0].category,
             FindingCategory::ArtifactBoundaryCrossing
+        );
+    }
+
+    #[test]
+    fn artifact_crossing_firstparty_producer_untrusted_consumer_silent() {
+        // First-party producer -> untrusted consumer: should NOT fire (benign direction)
+        let mut g = AuthorityGraph::new(source("ci.yml"));
+        let secret = g.add_node(NodeKind::Secret, "KEY", TrustZone::FirstParty);
+        let build = g.add_node(NodeKind::Step, "build", TrustZone::FirstParty);
+        let artifact = g.add_node(NodeKind::Artifact, "dist.zip", TrustZone::FirstParty);
+        let deploy = g.add_node(NodeKind::Step, "deploy", TrustZone::Untrusted);
+
+        g.add_edge(build, secret, EdgeKind::HasAccessTo);
+        g.add_edge(build, artifact, EdgeKind::Produces);
+        g.add_edge(artifact, deploy, EdgeKind::Consumes);
+
+        let findings = artifact_boundary_crossing(&g);
+        assert_eq!(
+            findings.len(),
+            0,
+            "first-party -> untrusted should not fire"
         );
     }
 
@@ -6798,7 +7029,7 @@ mod tests {
     }
 
     #[test]
-    fn partial_graph_caps_critical_findings_at_high() {
+    fn partial_graph_preserves_critical_findings() {
         let mut g = AuthorityGraph::new(source("ci.yml"));
         g.mark_partial("matrix strategy hides some authority paths");
 
@@ -6816,8 +7047,29 @@ mod tests {
         assert!(findings
             .iter()
             .any(|f| f.category == FindingCategory::UntrustedWithAuthority));
-        assert!(findings.iter().all(|f| f.severity >= Severity::High));
-        assert!(!findings.iter().any(|f| f.severity == Severity::Critical));
+        assert!(
+            findings.iter().any(|f| f.severity == Severity::Critical),
+            "partial graph completeness must not down-rank critical findings"
+        );
+    }
+
+    #[test]
+    fn unknown_graph_preserves_critical_findings() {
+        let mut g = AuthorityGraph::new(source("ci.yml"));
+        g.completeness = crate::graph::AuthorityCompleteness::Unknown;
+
+        let identity = g.add_node(NodeKind::Identity, "GITHUB_TOKEN", TrustZone::FirstParty);
+        let step = g.add_node(NodeKind::Step, "deploy", TrustZone::Untrusted);
+        let image = g.add_node(NodeKind::Image, "evil/action@main", TrustZone::Untrusted);
+
+        g.add_edge(step, identity, EdgeKind::HasAccessTo);
+        g.add_edge(step, image, EdgeKind::UsesImage);
+
+        let findings = run_all_rules(&g, 4);
+        assert!(
+            findings.iter().any(|f| f.severity == Severity::Critical),
+            "unknown graph completeness must not down-rank critical findings"
+        );
     }
 
     #[test]
@@ -9810,6 +10062,125 @@ mod tests {
         assert!(
             findings.is_empty(),
             "setvariable without terraform-output signal must not fire; got: {findings:#?}"
+        );
+    }
+
+    // ── setvariable_issecret_false ──────────────────────────
+
+    /// Helper: create an ADO-platform graph with a single Step whose
+    /// `META_SCRIPT_BODY` is set to the given script.
+    fn ado_graph_with_script(script: &str) -> AuthorityGraph {
+        let mut g = graph_with_platform("azure-devops", "ado-pipeline.yml");
+        let mut meta = std::collections::HashMap::new();
+        meta.insert(META_SCRIPT_BODY.into(), script.into());
+        g.add_node_with_metadata(NodeKind::Step, "script-step", TrustZone::FirstParty, meta);
+        g
+    }
+
+    #[test]
+    fn setvariable_issecret_false_fires_on_explicit_false() {
+        let g = ado_graph_with_script(
+            r###"echo "##vso[task.setvariable variable=MY_TOKEN;issecret=false]$(token)""###,
+        );
+        let findings = setvariable_issecret_false(&g);
+        assert_eq!(findings.len(), 1, "got: {findings:#?}");
+        assert_eq!(findings[0].severity, Severity::High);
+        assert_eq!(
+            findings[0].category,
+            FindingCategory::SetvariableIssecretFalse
+        );
+        assert!(findings[0].message.contains("MY_TOKEN"));
+    }
+
+    #[test]
+    fn setvariable_issecret_false_skips_issecret_true() {
+        let g = ado_graph_with_script(
+            r###"echo "##vso[task.setvariable variable=MY_TOKEN;issecret=true]$(token)""###,
+        );
+        let findings = setvariable_issecret_false(&g);
+        assert!(
+            findings.is_empty(),
+            "issecret=true must not fire; got: {findings:#?}"
+        );
+    }
+
+    #[test]
+    fn setvariable_issecret_false_skips_non_sensitive_name() {
+        let g = ado_graph_with_script(
+            r###"echo "##vso[task.setvariable variable=BUILD_NUMBER]$(rev)""###,
+        );
+        let findings = setvariable_issecret_false(&g);
+        assert!(
+            findings.is_empty(),
+            "non-sensitive name must not fire; got: {findings:#?}"
+        );
+    }
+
+    #[test]
+    fn setvariable_issecret_false_fires_when_flag_omitted() {
+        let g = ado_graph_with_script(
+            r###"echo "##vso[task.setvariable variable=DB_PASSWORD]$(db_pass)""###,
+        );
+        let findings = setvariable_issecret_false(&g);
+        assert_eq!(findings.len(), 1, "got: {findings:#?}");
+        assert!(findings[0].message.contains("DB_PASSWORD"));
+    }
+
+    // ── homoglyph_in_action_ref ──────────────────────────────────
+
+    fn gha_graph_with_action(action: &str) -> AuthorityGraph {
+        let mut g = AuthorityGraph::new(source("ci.yml"));
+        g.metadata
+            .insert(META_PLATFORM.into(), "github-actions".into());
+        g.add_node(NodeKind::Image, action, TrustZone::ThirdParty);
+        g
+    }
+
+    #[test]
+    fn pure_ascii_action_ref_not_flagged() {
+        let g = gha_graph_with_action("actions/checkout@v4");
+        let findings = check_homoglyph_in_action_ref(&g);
+        assert!(
+            findings.is_empty(),
+            "pure ASCII action ref must not fire; got: {findings:#?}"
+        );
+    }
+
+    #[test]
+    fn division_slash_homoglyph_flagged() {
+        // U+2215 DIVISION SLASH instead of U+002F SOLIDUS
+        let g = gha_graph_with_action("actions\u{2215}checkout@v4");
+        let findings = check_homoglyph_in_action_ref(&g);
+        assert_eq!(findings.len(), 1, "got: {findings:#?}");
+        assert_eq!(findings[0].category, FindingCategory::HomoglyphInActionRef);
+        assert_eq!(findings[0].severity, Severity::High);
+        assert!(findings[0].message.contains("U+2215"));
+    }
+
+    #[test]
+    fn cyrillic_a_homoglyph_flagged() {
+        // Cyrillic small letter a (U+0430) instead of Latin a (U+0061)
+        let g = gha_graph_with_action("\u{0430}ctions/checkout@v4");
+        let findings = check_homoglyph_in_action_ref(&g);
+        assert_eq!(findings.len(), 1, "got: {findings:#?}");
+        assert_eq!(findings[0].category, FindingCategory::HomoglyphInActionRef);
+        assert!(findings[0].message.contains("U+0430"));
+    }
+
+    #[test]
+    fn homoglyph_rule_skips_non_gha_platform() {
+        let mut g = AuthorityGraph::new(source("ado.yml"));
+        g.metadata
+            .insert(META_PLATFORM.into(), "azure-devops".into());
+        g.add_node(
+            NodeKind::Image,
+            "\u{0430}ctions/checkout@v4",
+            TrustZone::ThirdParty,
+        );
+        let findings = check_homoglyph_in_action_ref(&g);
+        assert!(
+            findings.is_empty(),
+            "non-GHA platform must not fire; got: {findings:#?}"
         );
     }
 }

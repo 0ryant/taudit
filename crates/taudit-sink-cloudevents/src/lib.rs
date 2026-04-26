@@ -171,6 +171,9 @@ fn event_type(category: FindingCategory) -> String {
         FindingCategory::DotenvArtifactFlowsToPrivilegedDeployment => {
             "dotenv_artifact_flows_to_privileged_deployment"
         }
+        FindingCategory::SharedSelfHostedPoolNoIsolation => "shared_self_hosted_pool_no_isolation",
+        FindingCategory::SetvariableIssecretFalse => "setvariable_issecret_false",
+        FindingCategory::HomoglyphInActionRef => "homoglyph_in_action_ref",
         #[allow(deprecated)]
         FindingCategory::EgressBlindspot => "egress_blindspot",
         #[allow(deprecated)]
