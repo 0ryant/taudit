@@ -3617,21 +3617,22 @@ pub fn run_all_rules(graph: &AuthorityGraph, max_hops: usize) -> Vec<Finding> {
     ));
     findings.extend(dotenv_artifact_flows_to_privileged_deployment(graph));
 
-    // Blue-team compensating-control suppressions (downgrade or suppress
-    // existing-rule findings when a control elsewhere in the graph
-    // neutralises the risk).
-    apply_compensating_controls(graph, &mut findings);
-
-    // Deduplicate structurally identical findings — BFS propagation can visit
-    // the same (step, secret) pair via two distinct graph paths, producing
-    // findings with identical category + nodes + message. Key on all three
-    // so distinct per-variable findings (same step, different message) are
-    // preserved. Belt-and-suspenders: dedup here so every output format
-    // (JSON, SARIF, terminal) sees a clean list regardless of root-cause.
+    // Deduplicate structurally identical findings BEFORE compensating controls.
+    // Order matters: compensating controls append to finding messages (e.g.
+    // " [compensating control: ...]"), so deduping after them would fail to
+    // collapse two BFS-duplicate findings where one CC-modified and the other
+    // did not. Key on (category, nodes_involved, message) so distinct
+    // per-variable findings on the same step are preserved.
     let mut seen_keys: std::collections::HashSet<(FindingCategory, Vec<NodeId>, String)> =
         std::collections::HashSet::new();
     findings
         .retain(|f| seen_keys.insert((f.category, f.nodes_involved.clone(), f.message.clone())));
+
+    // Blue-team compensating-control suppressions (downgrade or suppress
+    // existing-rule findings when a control elsewhere in the graph
+    // neutralises the risk). Applied after dedup so each unique finding
+    // gets exactly one CC evaluation.
+    apply_compensating_controls(graph, &mut findings);
 
     findings.sort_by_key(|f| f.severity);
 
@@ -6853,6 +6854,46 @@ mod tests {
         );
     }
 
+    // ── Bug regression: run_all_rules dedup ─────────────────────────────────
+
+    #[test]
+    fn run_all_rules_deduplicates_structurally_identical_findings() {
+        // Regression for Bug 3: BFS can visit the same (step, secret) pair via
+        // two distinct graph paths. Both visits produce a finding with identical
+        // category + nodes_involved + message. run_all_rules must emit exactly
+        // one copy regardless of path count.
+        let mut g = AuthorityGraph::new(source("ci.yml"));
+        g.metadata
+            .insert(META_PLATFORM.into(), "azure-devops".into());
+        let secret = g.add_node(NodeKind::Secret, "MY_SECRET", TrustZone::FirstParty);
+        let intermediate = g.add_node(NodeKind::Step, "middle-step", TrustZone::FirstParty);
+        let sink = g.add_node(NodeKind::Step, "sink-step", TrustZone::Untrusted);
+
+        // Two paths from secret → sink: direct and via intermediate.
+        g.add_edge(sink, secret, EdgeKind::HasAccessTo);
+        g.add_edge(intermediate, secret, EdgeKind::HasAccessTo);
+        g.add_edge(sink, intermediate, EdgeKind::HasAccessTo);
+
+        let findings = run_all_rules(&g, 4);
+
+        // Count findings whose nodes_involved contain the sink step.
+        let sink_findings: Vec<_> = findings
+            .iter()
+            .filter(|f| f.nodes_involved.contains(&sink))
+            .filter(|f| f.nodes_involved.contains(&secret))
+            .collect();
+
+        // Regardless of path count through the graph, each unique
+        // (category, nodes, message) triple must appear at most once.
+        let unique_messages: std::collections::HashSet<_> =
+            sink_findings.iter().map(|f| &f.message).collect();
+        assert_eq!(
+            sink_findings.len(),
+            unique_messages.len(),
+            "duplicate findings must be deduplicated; got: {findings:#?}"
+        );
+    }
+
     #[test]
     fn artifact_crossing_same_job_does_not_fire() {
         // Upload and download in the same job is a legitimate temp-file pattern.
@@ -7580,6 +7621,31 @@ mod tests {
         assert!(
             findings.is_empty(),
             "no PR trigger → variable_group_in_pr_job must not fire"
+        );
+    }
+
+    #[test]
+    fn variable_group_in_pr_job_no_fire_when_pr_none() {
+        // Regression for Bug 1: pr: none in ADO means no PR trigger — the parser
+        // must not set META_TRIGGER, so variable_group_in_pr_job must not fire.
+        // This test validates at the rule level: no META_TRIGGER → no firing.
+        let mut g = AuthorityGraph::new(source("weekly-report.yml"));
+        // No META_TRIGGER inserted — mirrors what the parser produces for pr: none.
+        let mut secret_meta = std::collections::HashMap::new();
+        secret_meta.insert(META_VARIABLE_GROUP.into(), "true".into());
+        let secret = g.add_node_with_metadata(
+            NodeKind::Secret,
+            "ado-report-secrets",
+            TrustZone::FirstParty,
+            secret_meta,
+        );
+        let step = g.add_node(NodeKind::Step, "report-step", TrustZone::FirstParty);
+        g.add_edge(step, secret, EdgeKind::HasAccessTo);
+
+        let findings = variable_group_in_pr_job(&g);
+        assert!(
+            findings.is_empty(),
+            "pr: none (no META_TRIGGER) → variable_group_in_pr_job must not fire; got: {findings:#?}"
         );
     }
 

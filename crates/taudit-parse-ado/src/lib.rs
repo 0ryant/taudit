@@ -93,9 +93,17 @@ impl PipelineParser for AdoParser {
         }
 
         // Detect PR trigger — sets graph-level META_TRIGGER for trigger_context_mismatch.
-        // `pr: none` deserialises as Some(Value::Null); guard against that so a pipeline
-        // that explicitly opts out of PR triggers is not treated as PR-triggered.
-        let has_pr_trigger = pipeline.pr.as_ref().map(|v| !v.is_null()).unwrap_or(false);
+        // A genuine ADO PR trigger is always a mapping (`pr:\n  branches:...`) or a
+        // sequence (`pr:\n  - main`). Scalar opt-out forms — `pr: none`, `pr: ~`,
+        // `pr: false`, `pr: ""` — must NOT be treated as active triggers.
+        // Checking is_mapping()||is_sequence() is more robust than enumerating every
+        // scalar opt-out value (serde_yaml 0.9 parses "none" as a string, "~" as a
+        // string, and `null` as null — the shape test handles all forms uniformly).
+        let has_pr_trigger = pipeline
+            .pr
+            .as_ref()
+            .map(|v| v.is_mapping() || v.is_sequence())
+            .unwrap_or(false);
         if has_pr_trigger {
             graph.metadata.insert(META_TRIGGER.into(), "pr".into());
         }
@@ -335,9 +343,11 @@ fn ado_permissions_are_broad(perms: &serde_yaml::Value) -> bool {
     if let Some(map) = perms.as_mapping() {
         map.values().any(|v| v.as_str() == Some("write"))
     } else {
-        // Scalar `none` / null / unknown shape — conservatively treat as not broad
-        // only when the value is the string "none" or YAML null.
-        !matches!(perms.as_str(), Some("none") | Some("") | None)
+        // Scalar form: ADO accepts "read", "write", "none" as pipeline-level
+        // permission values. "read" and "none" are constrained; "write" is
+        // broad. Anything else (null, tilde, empty, unrecognised string) is
+        // conservatively treated as broad (unknown = risky).
+        matches!(perms.as_str(), Some("write"))
     }
 }
 
@@ -2625,6 +2635,186 @@ jobs: []
             !zero_step_gap,
             "empty jobs: list is not a carrier; got: {:?}",
             graph.completeness_gaps
+        );
+    }
+
+    // ── Bug regression: pr: none not suppressing PR-specific rules ──────────
+
+    #[test]
+    fn pr_none_does_not_set_meta_trigger() {
+        // `pr: none` is an explicit opt-out. Parser must require a mapping or
+        // sequence for a real PR trigger; scalars are all opt-outs.
+        let yaml = r#"
+schedules:
+  - cron: "0 5 * * 1"
+pr: none
+trigger: none
+steps:
+  - script: echo hello
+"#;
+        let graph = parse(yaml);
+        assert!(
+            !graph.metadata.contains_key(META_TRIGGER),
+            "pr: none must not set META_TRIGGER; got: {:?}",
+            graph.metadata.get(META_TRIGGER)
+        );
+    }
+
+    #[test]
+    fn pr_tilde_does_not_set_meta_trigger() {
+        // `pr: ~` is YAML null written as tilde — also an opt-out.
+        let yaml = "pr: ~\nsteps:\n  - script: echo hello\n";
+        let graph = parse(yaml);
+        assert!(
+            !graph.metadata.contains_key(META_TRIGGER),
+            "pr: ~ must not set META_TRIGGER; got: {:?}",
+            graph.metadata.get(META_TRIGGER)
+        );
+    }
+
+    #[test]
+    fn pr_false_does_not_set_meta_trigger() {
+        // `pr: false` — boolean false means disabled.
+        let yaml = "pr: false\nsteps:\n  - script: echo hello\n";
+        let graph = parse(yaml);
+        assert!(
+            !graph.metadata.contains_key(META_TRIGGER),
+            "pr: false must not set META_TRIGGER; got: {:?}",
+            graph.metadata.get(META_TRIGGER)
+        );
+    }
+
+    #[test]
+    fn pr_sequence_sets_meta_trigger() {
+        // Shorthand sequence form: `pr:\n  - main` is also a real PR trigger.
+        let yaml = "pr:\n  - main\nsteps:\n  - script: echo hello\n";
+        let graph = parse(yaml);
+        assert_eq!(
+            graph.metadata.get(META_TRIGGER).map(|s| s.as_str()),
+            Some("pr"),
+            "pr: [main] must set META_TRIGGER=pr"
+        );
+    }
+
+    #[test]
+    fn pr_with_branches_sets_meta_trigger() {
+        // Positive guard: a real PR trigger mapping must still set META_TRIGGER.
+        let yaml = r#"
+pr:
+  branches:
+    include:
+      - main
+steps:
+  - script: echo hello
+"#;
+        let graph = parse(yaml);
+        assert_eq!(
+            graph.metadata.get(META_TRIGGER).map(|s| s.as_str()),
+            Some("pr"),
+            "real pr: block must set META_TRIGGER=pr"
+        );
+    }
+
+    // ── Bug regression: permissions: contents: none parsed as empty string ──
+
+    #[test]
+    fn pipeline_level_permissions_none_constrains_token() {
+        // `permissions: contents: none` at pipeline level must downgrade
+        // System.AccessToken from broad → constrained so over_privileged_identity
+        // does not fire on an already-locked-down pipeline.
+        let yaml = r#"
+trigger: none
+permissions:
+  contents: none
+steps:
+  - script: echo hello
+"#;
+        let graph = parse(yaml);
+        let token = graph
+            .nodes_of_kind(NodeKind::Identity)
+            .find(|n| n.name == "System.AccessToken")
+            .expect("System.AccessToken must always be present");
+        assert_eq!(
+            token.metadata.get(META_IDENTITY_SCOPE).map(|s| s.as_str()),
+            Some("constrained"),
+            "permissions: contents: none must constrain the token; got: {:?}",
+            token.metadata.get(META_IDENTITY_SCOPE)
+        );
+    }
+
+    #[test]
+    fn pipeline_level_permissions_write_keeps_token_broad() {
+        // A pipeline with write permissions must keep System.AccessToken broad.
+        let yaml = r#"
+trigger: none
+permissions:
+  contents: write
+steps:
+  - script: echo hello
+"#;
+        let graph = parse(yaml);
+        let token = graph
+            .nodes_of_kind(NodeKind::Identity)
+            .find(|n| n.name == "System.AccessToken")
+            .expect("System.AccessToken must always be present");
+        assert_eq!(
+            token.metadata.get(META_IDENTITY_SCOPE).map(|s| s.as_str()),
+            Some("broad"),
+            "permissions: contents: write must keep the token broad; got: {:?}",
+            token.metadata.get(META_IDENTITY_SCOPE)
+        );
+    }
+
+    #[test]
+    fn pipeline_level_permissions_read_scalar_constrains_token() {
+        // `permissions: read` (scalar, not a map) must also downgrade the token.
+        // Previously the scalar branch treated "read" as broad (incorrect).
+        let yaml = "trigger: none\npermissions: read\nsteps:\n  - script: echo hello\n";
+        let graph = parse(yaml);
+        let token = graph
+            .nodes_of_kind(NodeKind::Identity)
+            .find(|n| n.name == "System.AccessToken")
+            .expect("System.AccessToken must always be present");
+        assert_eq!(
+            token.metadata.get(META_IDENTITY_SCOPE).map(|s| s.as_str()),
+            Some("constrained"),
+            "permissions: read must constrain the token; got: {:?}",
+            token.metadata.get(META_IDENTITY_SCOPE)
+        );
+    }
+
+    #[test]
+    fn pipeline_level_permissions_write_scalar_keeps_token_broad() {
+        // `permissions: write` (scalar) keeps the token broad.
+        let yaml = "trigger: none\npermissions: write\nsteps:\n  - script: echo hello\n";
+        let graph = parse(yaml);
+        let token = graph
+            .nodes_of_kind(NodeKind::Identity)
+            .find(|n| n.name == "System.AccessToken")
+            .expect("System.AccessToken must always be present");
+        assert_eq!(
+            token.metadata.get(META_IDENTITY_SCOPE).map(|s| s.as_str()),
+            Some("broad"),
+            "permissions: write scalar must keep token broad; got: {:?}",
+            token.metadata.get(META_IDENTITY_SCOPE)
+        );
+    }
+
+    #[test]
+    fn pipeline_level_permissions_contents_read_constrains_token() {
+        // Map form with contents: read — should constrain.
+        let yaml =
+            "trigger: none\npermissions:\n  contents: read\nsteps:\n  - script: echo hello\n";
+        let graph = parse(yaml);
+        let token = graph
+            .nodes_of_kind(NodeKind::Identity)
+            .find(|n| n.name == "System.AccessToken")
+            .expect("System.AccessToken must always be present");
+        assert_eq!(
+            token.metadata.get(META_IDENTITY_SCOPE).map(|s| s.as_str()),
+            Some("constrained"),
+            "permissions: contents: read must constrain; got: {:?}",
+            token.metadata.get(META_IDENTITY_SCOPE)
         );
     }
 
