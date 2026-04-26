@@ -268,6 +268,13 @@ enum Cli {
     /// Print taudit product version.
     Version,
 
+    /// Check for a newer taudit release and print upgrade instructions.
+    ///
+    /// Queries crates.io for the latest published version. Exits 0 whether
+    /// or not an upgrade is available. Set TAUDIT_NO_UPDATE_CHECK=1 to
+    /// disable the background check that also runs after `scan` and `verify`.
+    Update,
+
     /// Emit a CellOS execution-cell spec that runs taudit scan.
     EmitSpec {
         /// Pipeline path to scan inside the cell (file or directory)
@@ -1082,7 +1089,24 @@ fn main() {
 fn run() -> Result<()> {
     let cli = Cli::parse();
 
-    match cli {
+    // Spawn a background version check for the substantive commands so it
+    // doesn't block startup. The handle is joined after the command finishes.
+    // The check is skipped entirely when TAUDIT_NO_UPDATE_CHECK is set, when
+    // CI=true (most CI systems set this), or for quick/read-only commands.
+    let version_check_handle = match &cli {
+        Cli::Scan { .. } | Cli::Verify { .. } | Cli::Version => {
+            if std::env::var_os("TAUDIT_NO_UPDATE_CHECK").is_none()
+                && std::env::var_os("CI").is_none()
+            {
+                Some(std::thread::spawn(check_latest_version))
+            } else {
+                None
+            }
+        }
+        _ => None,
+    };
+
+    let result = match cli {
         Cli::Scan {
             paths,
             format,
@@ -1152,6 +1176,7 @@ fn run() -> Result<()> {
             Ok(())
         }
         Cli::Version => cmd_version(),
+        Cli::Update => cmd_update(),
         Cli::EmitSpec {
             target,
             id,
@@ -1331,7 +1356,21 @@ fn run() -> Result<()> {
                 format: format.to_module(),
             }),
         },
+    };
+
+    // After the command finishes, collect the background version check and
+    // print a one-line nudge if a newer release is available.
+    if let Some(handle) = version_check_handle {
+        if let Ok(Some(latest)) = handle.join() {
+            let current = env!("CARGO_PKG_VERSION");
+            eprintln!(
+                "\n  taudit {latest} is available (you have {current}). \
+                 Run: cargo install taudit --version {latest} --locked"
+            );
+        }
     }
+
+    result
 }
 
 fn cmd_diff(
@@ -3339,6 +3378,51 @@ fn version_report() -> String {
 
 fn cmd_version() -> Result<()> {
     println!("{}", version_report());
+    Ok(())
+}
+
+/// Query crates.io for the latest published version of taudit.
+/// Returns `Some(version_string)` only when a **newer** version exists.
+/// Returns `None` on any error (network unavailable, timeout, parse failure).
+/// Designed to be called from a background thread — never panics.
+fn check_latest_version() -> Option<String> {
+    let current = env!("CARGO_PKG_VERSION");
+    let resp = ureq::get("https://crates.io/api/v1/crates/taudit")
+        .timeout(std::time::Duration::from_secs(3))
+        .set(
+            "User-Agent",
+            &format!("taudit/{current} (version-check; https://github.com/0ryant/taudit)"),
+        )
+        .call()
+        .ok()?;
+    let json: serde_json::Value = resp.into_json().ok()?;
+    let latest = json["crate"]["newest_version"].as_str()?.to_string();
+    if latest != current {
+        Some(latest)
+    } else {
+        None
+    }
+}
+
+fn cmd_update() -> Result<()> {
+    let current = env!("CARGO_PKG_VERSION");
+    print!("Checking crates.io for updates… ");
+    match check_latest_version() {
+        Some(latest) => {
+            println!("update available!");
+            println!("  Current : {current}");
+            println!("  Latest  : {latest}");
+            println!();
+            println!("  Run: cargo install taudit --version {latest} --locked");
+        }
+        None => {
+            if std::env::var_os("TAUDIT_NO_UPDATE_CHECK").is_some() {
+                println!("skipped (TAUDIT_NO_UPDATE_CHECK is set)");
+            } else {
+                println!("you are up to date ({current})");
+            }
+        }
+    }
     Ok(())
 }
 
