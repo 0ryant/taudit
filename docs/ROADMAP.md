@@ -2,7 +2,7 @@
 
 Three horizons. Each is a superset of the previous.
 
-**Current state (v0.5.0):** 9 crates, 221 tests, ~10,800 LOC, 17 built-in analysis rules + custom YAML rule loading, 3 parsers (GHA + ADO + GitLab CI), 6 commands (scan, map, diff, explain, version, completions), 4 output formats (terminal, JSON, CloudEvents JSONL, SARIF) + Graphviz DOT. Published to crates.io. AAA gate closed. Working toward Roadmap 3: Done.
+**Current state (v0.5.0):** 9 crates, 221 tests, ~10,800 LOC, 17 built-in authority invariants + custom YAML invariant loading, 3 parsers (GHA + ADO + GitLab CI), 6 commands (scan, map, diff, explain, version, completions), 4 output formats (terminal, JSON, CloudEvents JSONL, SARIF) + Graphviz DOT graph export. Published to crates.io. AAA gate closed. Working toward Roadmap 3: Done.
 
 **Effort key:** S = hours, M = days, L = week+
 
@@ -10,9 +10,40 @@ Three horizons. Each is a superset of the previous.
 
 ---
 
+## Strategic framing
+
+taudit's category is not "pipeline security scanner." Its category is **authority modelling for CI/CD**. Most security tools scan configs and pattern-match. taudit treats a pipeline as a typed graph of authority propagation — `NodeKinds` × `TrustZones` × `EdgeKinds` — and lets every other behaviour (scan, map, SARIF, custom invariants, PR-gate verify) be a consumer of that graph.
+
+The frame: **CI/CD is an untyped authority system. taudit makes it explicit, inspectable, and enforceable.** That puts taudit alongside type systems, policy engines, and trust systems — not alongside linters.
+
+**Stack positioning.** taudit is the graph layer of a small composable stack. **tsign** (sibling project) is the attestation layer that signs claims about which authority paths existed at build time. **axiom** (sibling project) is the enforcement brain that consumes graphs and attestations across many repos to make merge / deploy decisions. The CI providers (GHA, ADO, GitLab) are substrate. Keeping the graph stable, versioned, and inspectable is therefore a higher-priority deliverable than any individual new invariant.
+
+**What "Done" actually means now.** A re-publishable contract. An authoritative authority-graph specification, a reference implementation that is `Complete` (not `Partial`) across three platforms, a stable invariant DSL, and `taudit verify` with semver-stable semantics. A downstream tool should be able to depend on taudit's graph schema the same way you depend on a programming language's grammar — versioned, breaking changes only on a major bump.
+
+See [`positioning.md`](positioning.md) for the long-form framing and [`authority-graph.md`](authority-graph.md) for the specification.
+
+---
+
+## Near term: the v1.0 charter
+
+Before chasing more invariants or platforms, v1.0 turns the existing authority model into a contract. No date — this is a quality bar, not a release calendar.
+
+| # | Item | Effort | Status |
+|---|------|--------|--------|
+| **V1-1** | **Versioned graph schema** — JSON Schema for the `AuthorityGraph` (`NodeKinds`, `TrustZones`, `EdgeKinds`, completeness flags, metadata keys), published under `contracts/schemas/`, validated in CI. Becomes the contract downstream tools depend on. | M | Not started |
+| **V1-2** | **Stable invariant DSL** — promote the v0.4.0 custom-rule YAML loader to a v1 schema with documented predicate vocabulary; semver-stable; future fields are additive. | M | Not started |
+| **V1-3** | **`taudit verify` command** — explicit invariant-set gate for PRs. Inputs: graph + invariant set (built-ins + custom). Output: pass / fail per invariant, machine-readable. Semver-stable exit-code semantics. | M | Not started |
+| **V1-4** | **`taudit graph` command** — first-class graph generator separate from `scan` and `map`. Default emits the v1 graph schema as JSON; `--format dot` for Graphviz. The graph artifact stops being a side effect of other commands. | S | Not started |
+| **V1-5** | **Three-platform parity at `Complete`** — every parser (GHA, ADO, GitLab) reaches `AuthorityCompleteness::Complete` on its supported feature surface, with every gap explicitly modelled rather than silently approximated. | L | In progress |
+| **V1-6** | **Re-publishable contract docs** — `docs/authority-graph.md` (specification), `docs/positioning.md` (framing), versioned changelog for the graph schema separate from product CHANGELOG. | S | In progress |
+
+When all six land, taudit is no longer "a pipeline scanner with extra structure" — it is the authority graph layer of the broader stack, and tsign / axiom / future consumers can build on a stable surface.
+
+---
+
 ## Roadmap 1: MVP — Credible on Real Pipelines
 
-> Gate: a security engineer at your employer can run `taudit scan` on every repo, trust the output, and understand what the tool does and doesn't know.
+> Frame: the authority graph is real, deterministic, and trustworthy on the workflows engineers actually run. Gate: a security engineer at your employer can run `taudit scan` on every repo, trust the output, and understand what the model does and doesn't know.
 
 ### Already shipped
 
@@ -79,7 +110,7 @@ Three horizons. Each is a superset of the previous.
 
 ## Roadmap 2: AAA — Competitive with Commercial Tools
 
-> Gate: a platform engineering team adopts taudit as their standard pipeline security tool, replacing manual review.
+> Frame: the authority graph is consumable from where engineers already work — code-scanning tabs, PRs, CI logs, custom rules — and is rich enough across two platforms to displace manual review. Gate: a platform engineering team adopts taudit as their standard pipeline authority tool, replacing manual review.
 
 Organized by impact tier. Each tier unlocks a class of adoption.
 
@@ -191,9 +222,9 @@ Identity modelling is the biggest long-term risk. Modern pipelines use OIDC toke
 
 ## Roadmap 3: Done — Feature Complete
 
-> Gate: taudit models every authority primitive in the three major CI/CD platforms, covers every failure class from the doctrine, integrates with the operator's existing toolchain, and scans itself.
+> Frame: the authority model is a re-publishable contract. Three platforms reach `AuthorityCompleteness::Complete`, the invariant DSL is stable, `taudit verify` is semver-stable, and downstream tools (tsign, axiom) can depend on the graph schema the way you depend on a language grammar. Gate: taudit models every authority primitive in the three major CI/CD platforms, covers every failure class from the doctrine, integrates with the operator's existing toolchain, and scans itself.
 
-"Done" is reachable because taudit's scope is bounded by the authority model, not the security landscape. Unlike CVE scanners (infinite new CVEs) or policy engines (infinite policies), taudit models a finite set of authority primitives. When every primitive is captured and every failure class has rules, the model is complete.
+"Done" is reachable because taudit's scope is bounded by the authority model, not the security landscape. Unlike CVE scanners (infinite new CVEs) or policy engines (infinite policies), taudit models a finite set of authority primitives. When every primitive is captured and every failure class has invariants, the model is complete.
 
 ### What "Done" adds beyond AAA
 
@@ -217,11 +248,11 @@ Identity modelling is the biggest long-term risk. Modern pipelines use OIDC toke
 - [ ] **taudit scans tsafe** — zero findings
 - [ ] **taudit scans runtime isolation harness** — zero findings
 
-**Complete rule coverage:**
+**Complete authority invariant coverage:**
 
 - [ ] All 9 finding categories implemented with tests
-- [ ] **Policy-as-code** — YAML rule definitions loaded at runtime
-- [ ] **Rule documentation** — each rule has a doc page explaining what it detects, why, and how to fix
+- [ ] **First-class invariant DSL** — declarative invariants over the typed graph (`source` / `sink` / `path` predicates over `NodeKinds` × `TrustZones` × `EdgeKinds`), loaded from YAML at runtime, with semver-stable schema. The v0.4.0 custom-rule loader is the prototype; v1.0 makes the surface a contract.
+- [ ] **Invariant documentation** — each built-in and custom invariant has a doc page explaining what it detects, why, and how to fix
 
 **Complete output coverage:**
 
