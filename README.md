@@ -331,12 +331,12 @@ taudit remediate suggest .github/workflows/
 # Read-only patch preview
 taudit remediate diff .github/workflows/
 
-# Apply conservative remediations with backup + validation
-taudit remediate apply .github/workflows/ --policy invariants/starter/
+# Apply conservative remediations with backup + validation (write-path opt-in)
+taudit remediate --unstable apply .github/workflows/ --policy invariants/starter/
 
 # List backups and roll back by id
 taudit remediate list-backups
-taudit remediate rollback --backup-id <id>
+taudit remediate --unstable rollback --backup-id <id>
 ```
 
 Backups and manifests are written under `.taudit/backups/` by default. See [docs/remediation.md](docs/remediation.md) for safety guarantees, failure modes, and rollback playbook.

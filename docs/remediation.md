@@ -16,13 +16,13 @@ The command group is designed for low break risk:
 ```text
 taudit remediate suggest [PATH...] [--format text|json]
 taudit remediate diff [PATH...] [--format text|json]
-taudit remediate apply [PATH...] --policy <FILE_OR_DIR>
+taudit remediate --unstable apply [PATH...] --policy <FILE_OR_DIR>
                      [--format text|json]
                      [--min-confidence <0..1>]
                      [--allow-risky]
                      [--force]
                      [--backup-root <DIR>]
-taudit remediate rollback --backup-id <ID> [--backup-root <DIR>] [--force]
+taudit remediate --unstable rollback --backup-id <ID> [--backup-root <DIR>] [--force]
 taudit remediate list-backups [--backup-root <DIR>] [--format text|json]
 ```
 
@@ -51,7 +51,7 @@ This reduces default token scope without changing the workflow execution graph.
 
 ### Apply flow
 
-`taudit remediate apply` performs:
+`taudit remediate --unstable apply` performs:
 
 1. Build candidate patch plan.
 2. Filter by risk/confidence:
@@ -69,7 +69,7 @@ This reduces default token scope without changing the workflow execution graph.
 
 ### Rollback flow
 
-`taudit remediate rollback --backup-id <ID>`:
+`taudit remediate --unstable rollback --backup-id <ID>`:
 
 1. Loads backup manifest.
 2. Verifies each target file hash matches expected post-apply hash.
@@ -142,7 +142,7 @@ taudit remediate list-backups
 2. Roll back specific operation:
 
 ```bash
-taudit remediate rollback --backup-id <id>
+taudit remediate --unstable rollback --backup-id <id>
 ```
 
 3. If local edits intentionally changed the file after apply, re-run with `--force`.

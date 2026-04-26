@@ -43,6 +43,61 @@ fn write_policy(base: &Path) -> PathBuf {
 }
 
 #[test]
+fn apply_without_unstable_flag_exits_two() {
+    let dir = unique_tmp_dir("apply-no-unstable");
+    let wf = write_fixture_workflow(&dir);
+    let policy = write_policy(&dir);
+
+    let out = taudit_in(
+        &dir,
+        &[
+            "remediate",
+            "apply",
+            wf.to_str().expect("path"),
+            "--policy",
+            policy.to_str().expect("path"),
+        ],
+    );
+    assert_eq!(
+        out.status.code(),
+        Some(2),
+        "apply without --unstable must exit 2; stderr: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(
+        stderr.contains("--unstable"),
+        "error message must mention --unstable; got: {stderr}"
+    );
+}
+
+#[test]
+fn rollback_without_unstable_flag_exits_two() {
+    let dir = unique_tmp_dir("rollback-no-unstable");
+
+    let out = taudit_in(
+        &dir,
+        &[
+            "remediate",
+            "rollback",
+            "--backup-id",
+            "20260101T000000Z-1234-abc",
+        ],
+    );
+    assert_eq!(
+        out.status.code(),
+        Some(2),
+        "rollback without --unstable must exit 2; stderr: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(
+        stderr.contains("--unstable"),
+        "error message must mention --unstable; got: {stderr}"
+    );
+}
+
+#[test]
 fn suggest_is_read_only() {
     let dir = unique_tmp_dir("suggest-read-only");
     let wf = write_fixture_workflow(&dir);
