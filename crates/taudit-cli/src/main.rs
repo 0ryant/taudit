@@ -353,7 +353,7 @@ enum Cli {
     /// Inspect or list authority invariants (built-in and custom).
     ///
     /// Authority invariants are declarative properties that the pipeline
-    /// authority graph must satisfy. taudit ships 17 built-in invariants and
+    /// authority graph must satisfy. taudit ships 61 built-in invariants and
     /// loads any custom invariants from `--invariants-dir`.
     Invariants {
         #[command(subcommand)]
@@ -363,7 +363,7 @@ enum Cli {
     /// Enforce policy invariants — exit non-zero on any violation.
     ///
     /// `verify` is the policy-driven enforcement entrypoint for CI required
-    /// checks and merge gates. Unlike `scan` (which always runs the 17
+    /// checks and merge gates. Unlike `scan` (which always runs the 61
     /// built-in rules), `verify` runs ONLY the user-supplied invariants in
     /// `--policy` unless `--include-builtin` is set.
     ///
@@ -393,7 +393,7 @@ enum Cli {
         #[arg(long, default_value_t = DEFAULT_MAX_HOPS)]
         max_hops: usize,
 
-        /// Also run the 17 built-in rules. Their findings count toward
+        /// Also run the 61 built-in rules. Their findings count toward
         /// violations alongside the `--policy` invariants. Default: false
         /// (verify is policy-only).
         #[arg(long, default_value_t = false)]
@@ -2181,7 +2181,7 @@ fn run_verify_io<W: std::io::Write>(opts: &VerifyOpts, writer: &mut W) -> i32 {
             &custom_rules,
         );
 
-        // Optionally fold in the 17 built-in rules.
+        // Optionally fold in the 61 built-in rules.
         if opts.include_builtin {
             findings.extend(rules::run_all_rules(&graph, opts.max_hops));
         }

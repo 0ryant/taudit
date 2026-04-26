@@ -467,17 +467,21 @@ impl PipelineParser for GhaParser {
                         // Only create an artifact edge when `name:` is explicitly
                         // set. Anonymous uploads (no name) can't be correlated with
                         // a specific download and would silently merge unrelated
-                        // jobs — skip them to avoid false positives (A-1).
+                        // jobs — skip them to avoid false positives.
                         if let Some(artifact_name) = step
                             .with
                             .as_ref()
                             .and_then(|w| w.get("name"))
                             .map(|s| s.as_str())
                         {
+                            // Artifact inherits the producer step's trust zone so
+                            // future rules checking the artifact node see the right
+                            // provenance (BUG-3 fix).
                             let art_id = find_or_create_artifact(
                                 &mut graph,
                                 &mut artifact_ids,
                                 artifact_name,
+                                trust_zone,
                             );
                             graph.add_edge(step_id, art_id, EdgeKind::Produces);
                         }
@@ -488,17 +492,21 @@ impl PipelineParser for GhaParser {
                         // Same rationale: omitting `name:` means "download all
                         // artifacts" (wildcard), which we can't correlate to a
                         // specific producer — skip to avoid incorrect Consumes
-                        // edges (A-3).
+                        // edges — skip to avoid incorrect Consumes edges.
                         if let Some(artifact_name) = step
                             .with
                             .as_ref()
                             .and_then(|w| w.get("name"))
                             .map(|s| s.as_str())
                         {
+                            // If the upload step hasn't been seen yet, use Untrusted
+                            // as a conservative default. The zone will be correct when
+                            // the upload is processed first (the common cross-job flow).
                             let art_id = find_or_create_artifact(
                                 &mut graph,
                                 &mut artifact_ids,
                                 artifact_name,
+                                TrustZone::Untrusted,
                             );
                             graph.add_edge(art_id, step_id, EdgeKind::Consumes);
                         }
@@ -1359,11 +1367,12 @@ fn find_or_create_artifact(
     graph: &mut AuthorityGraph,
     cache: &mut HashMap<String, NodeId>,
     name: &str,
+    zone: TrustZone,
 ) -> NodeId {
     if let Some(&id) = cache.get(name) {
         return id;
     }
-    let id = graph.add_node(NodeKind::Artifact, name, TrustZone::FirstParty);
+    let id = graph.add_node(NodeKind::Artifact, name, zone);
     cache.insert(name.to_string(), id);
     id
 }
@@ -3049,9 +3058,9 @@ jobs:
 
     #[test]
     fn upload_artifact_without_name_creates_no_edge() {
-        // A-1 regression guard: upload-artifact with no `name:` must not create
-        // an Artifact node or Produces edge (anonymous uploads can't be correlated
-        // and would silently merge unrelated jobs).
+        // upload-artifact with no `name:` must not create an Artifact node or
+        // Produces edge (anonymous uploads can't be correlated and would silently
+        // merge unrelated jobs).
         let yaml = r#"
 jobs:
   build:
@@ -3079,9 +3088,9 @@ jobs:
 
     #[test]
     fn download_artifact_without_name_creates_no_edge() {
-        // A-3 regression guard: download-artifact with no `name:` means "download
-        // all" (wildcard) — we can't correlate it to a specific producer, so no
-        // Consumes edge should be created.
+        // download-artifact with no `name:` means "download all" (wildcard) —
+        // we can't correlate it to a specific producer, so no Consumes edge
+        // should be created.
         let yaml = r#"
 jobs:
   deploy:

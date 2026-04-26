@@ -50,7 +50,7 @@ recursively.
 
 | Aspect | `scan` | `verify` |
 |--------|--------|----------|
-| Default rule set | 17 built-in rules always run | Only `--policy` invariants run |
+| Default rule set | 61 built-in rules always run | Only `--policy` invariants run |
 | Built-in rules | Always on | Off by default; opt in with `--include-builtin` |
 | Exit code | 0/1 driven by `--severity-threshold` over all findings | 0/1/2 contract above |
 | Primary audience | Engineers triaging risk | CI required checks, merge gates |
@@ -137,7 +137,7 @@ is byte-compatible with SARIF emitted by `scan`.
 | `--policy <FILE_OR_DIR>` | Required. Source of invariants. |
 | `--format text\|json\|sarif` | Output format. Default `text`. |
 | `--platform auto\|github-actions\|azure-devops\|gitlab` | Pipeline format. Default `auto`. |
-| `--include-builtin` | Also run the 17 built-in rules; their findings count toward violations. |
+| `--include-builtin` | Also run the 61 built-in rules; their findings count toward violations. |
 | `--severity-threshold <level>` | Only count violations at or above this severity. |
 | `--max-hops <N>` | Cap propagation BFS depth (default `taudit_core::propagation::DEFAULT_MAX_HOPS`). |
 | `--no-color` | Disable ANSI in `text` output. Also honoured via `NO_COLOR`. |
@@ -180,7 +180,7 @@ jobs:
     steps:
       - uses: actions/checkout@a5ac7e51b41094c92402da3b24376905380afc29
       - name: Install taudit
-        run: cargo install taudit --version 0.5.0 --locked
+        run: cargo install taudit --version 0.9.4 --locked
       - name: Verify pipeline policy
         run: taudit verify --policy .taudit/policy/ .github/workflows/
 ```
@@ -194,7 +194,7 @@ config error) blocks the merge.
 verify-pipeline-policy:
   stage: test
   script:
-    - cargo install taudit --version 0.5.0 --locked
+    - cargo install taudit --version 0.9.4 --locked
     - taudit verify --policy .taudit/policy/ .gitlab-ci.yml
   rules:
     - if: $CI_PIPELINE_SOURCE == "merge_request_event"
@@ -208,7 +208,7 @@ verify-pipeline-policy:
   inputs:
     targetType: inline
     script: |
-      cargo install taudit --version 0.5.0 --locked
+      cargo install taudit --version 0.9.4 --locked
       taudit verify --policy .taudit/policy/ azure-pipelines.yml
 ```
 

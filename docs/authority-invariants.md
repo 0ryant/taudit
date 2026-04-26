@@ -7,7 +7,7 @@ system to catch the moment a production token reaches a tag-pinned action.
 declarative property the authority graph must satisfy; taudit emits a
 finding for every propagation path that violates one.
 
-taudit ships **17 built-in invariants** covering the common shapes
+taudit ships **61 built-in invariants** covering the common shapes
 (propagation across trust boundaries, broad scopes, unpinned actions,
 PR-context exposure, persisted credentials, etc.). On top of those, you
 can write **custom authority invariants** as YAML files and load them with

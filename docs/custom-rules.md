@@ -7,7 +7,7 @@
 ## TL;DR
 
 - The mechanism is unchanged: YAML files in a directory, one invariant per
-  file, evaluated against propagation paths alongside the 17 built-ins.
+  file, evaluated against propagation paths alongside the 61 built-ins.
 - The CLI flag has been renamed: `--invariants-dir` is the new spelling.
   `--rules-dir` is preserved as an alias and will keep working
   indefinitely.

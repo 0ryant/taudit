@@ -26,7 +26,7 @@ parse  →  graph  →  invariants  →  verify  →  enforce
 
 1. **Parse** GitHub Actions, Azure DevOps, or GitLab CI YAML into the typed authority graph.
 2. **Generate** the graph as a first-class artifact (DOT, JSON, SARIF).
-3. **Apply invariants** — 17 built-in checks today, plus custom rules loaded from YAML.
+3. **Apply invariants** — 61 built-in checks, plus custom rules loaded from YAML.
 4. **Verify** — `taudit verify` (v1.0) gates PRs against an explicit invariant set instead of fuzzy severity thresholds.
 5. **Enforce** — exit codes, SARIF for code-scanning, CloudEvents for SIEM, PR-bot diffs for review.
 

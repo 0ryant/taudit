@@ -69,7 +69,7 @@ axiom/
 ```yaml
 # policies/default.yml
 version: 0.1
-include_builtin: true                    # taudit's 17 built-ins on by default
+include_builtin: true                    # taudit's 61 built-ins on by default
 require:
   - id: no_pr_target_with_secrets
   - id: no_unpinned_actions

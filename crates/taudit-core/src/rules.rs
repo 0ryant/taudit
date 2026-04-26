@@ -571,6 +571,23 @@ pub fn artifact_boundary_crossing(graph: &AuthorityGraph) -> Vec<Finding> {
 
         for producer in &producers {
             for consumer in &consumers {
+                // Skip intra-job pairs: upload → download within the same job
+                // is a legitimate temp-file pattern. The trust crossing is only
+                // meaningful when the artifact crosses a job boundary.
+                let prod_job = producer
+                    .metadata
+                    .get(META_JOB_NAME)
+                    .map(String::as_str)
+                    .unwrap_or("");
+                let cons_job = consumer
+                    .metadata
+                    .get(META_JOB_NAME)
+                    .map(String::as_str)
+                    .unwrap_or("");
+                if !prod_job.is_empty() && prod_job == cons_job {
+                    continue;
+                }
+
                 if producer.trust_zone.is_lower_than(&consumer.trust_zone) {
                     findings.push(Finding {
                         severity: Severity::High,
@@ -586,7 +603,7 @@ pub fn artifact_boundary_crossing(graph: &AuthorityGraph) -> Vec<Finding> {
                             consumer.trust_zone
                         ),
                         recommendation: Recommendation::Manual {
-                            action: "Pin the upload step to a SHA-tagged action (e.g. actions/upload-artifact@<sha>) to elevate it to TrustZone::ThirdParty, removing the trust boundary crossing.".into(),
+                            action: "Ensure the artifact producer runs in a trusted job; restrict which jobs can consume the artifact using platform-specific controls (e.g. environment protection rules, manual approval gates).".into(),
                         },
                         source: FindingSource::BuiltIn,
                         extras: FindingExtras::default(),
@@ -3424,7 +3441,7 @@ pub fn pr_build_pushes_image_with_floating_credentials(graph: &AuthorityGraph) -
 ///   * Body contains `##vso[task.setvariable variable=NAME ...]` where
 ///     NAME (case-insensitive) matches a sensitive keyword: `password`,
 ///     `passwd`, `token`, `secret`, `key`, `credential`, `cert`,
-///     `api_key`, `apikey`, `auth`
+///     `apikey`, `auth`
 ///   * The directive does NOT contain `issecret=true` (case-insensitive)
 ///     between `variable=NAME` and the closing `]`
 ///
@@ -3476,15 +3493,10 @@ pub fn setvariable_issecret_false(graph: &AuthorityGraph) -> Vec<Finding> {
                 continue;
             }
 
-            // Check if variable name contains a sensitive keyword using token
-            // (word-boundary) matching. Split on `_` and `-` so that "key"
-            // matches "STORAGE_ACCOUNT_KEY" (token: "key") but NOT
-            // "keyvaultname" (tokens: ["keyvaultname"] with no exact match).
-            // var_name is already lowercased via `lower` above.
-            let tokens: Vec<&str> = var_name.split(|c| c == '_' || c == '-').collect();
-            let is_sensitive = tokens
-                .iter()
-                .any(|tok| SENSITIVE_KEYWORDS.iter().any(|kw| kw == tok));
+            // Token-split on `_`/`-` so "key" matches STORAGE_ACCOUNT_KEY but not "keyvaultname".
+            let is_sensitive = var_name
+                .split(['_', '-'])
+                .any(|tok| SENSITIVE_KEYWORDS.contains(&tok));
 
             if !is_sensitive {
                 cursor = start + name_end;
@@ -6809,10 +6821,8 @@ mod tests {
     }
 
     #[test]
-    #[test]
     fn artifact_crossing_no_authority_still_fires() {
-        // A-6 fix: rule fires even when producer has NO HasAccessTo edge.
-        // The crossing itself is the risk; no GITHUB_TOKEN gate needed.
+        // The crossing itself is the risk; no HasAccessTo edge required to fire.
         let mut g = AuthorityGraph::new(source("ci.yml"));
         let build = g.add_node(NodeKind::Step, "pr-build", TrustZone::Untrusted);
         let artifact = g.add_node(NodeKind::Artifact, "dist.zip", TrustZone::Untrusted);
@@ -6829,6 +6839,40 @@ mod tests {
         assert_eq!(
             findings[0].category,
             FindingCategory::ArtifactBoundaryCrossing
+        );
+    }
+
+    #[test]
+    fn artifact_crossing_same_job_does_not_fire() {
+        // Upload and download in the same job is a legitimate temp-file pattern.
+        // META_JOB_NAME guard must suppress the finding.
+        let mut g = AuthorityGraph::new(source("ci.yml"));
+        let build = g.add_node_with_metadata(
+            NodeKind::Step,
+            "pr-build",
+            TrustZone::Untrusted,
+            [
+                (META_JOB_NAME.to_string(), "build".to_string()),
+            ]
+            .into(),
+        );
+        let artifact = g.add_node(NodeKind::Artifact, "dist.zip", TrustZone::Untrusted);
+        let deploy = g.add_node_with_metadata(
+            NodeKind::Step,
+            "deploy",
+            TrustZone::FirstParty,
+            [
+                (META_JOB_NAME.to_string(), "build".to_string()), // SAME job
+            ]
+            .into(),
+        );
+        g.add_edge(build, artifact, EdgeKind::Produces);
+        g.add_edge(artifact, deploy, EdgeKind::Consumes);
+        let findings = artifact_boundary_crossing(&g);
+        assert_eq!(
+            findings.len(),
+            0,
+            "intra-job upload→download must not fire; got: {findings:#?}"
         );
     }
 
