@@ -16,3 +16,18 @@ serde_json = { workspace = true }
 serde_yaml = { workspace = true }
 sha2 = { workspace = true }
 thiserror = { workspace = true }
+
+[dev-dependencies]
+criterion = "0.5"
+
+[[bench]]
+name = "bench_propagation"
+harness = false
+
+[[bench]]
+name = "bench_rules"
+harness = false
+
+[[bench]]
+name = "bench_custom_rules"
+harness = false
