@@ -151,27 +151,35 @@ jobs:
       # Fuzz smoke: build each parser fuzz target with nightly and run for
       # 10 s per target. Catches panics on startup and trivial crash inputs
       # without running a full fuzzing campaign.
+      # Runs on push to main only — nightly install + 30s fuzz time is too
+      # slow to impose on every PR.
       - name: Install nightly toolchain and cargo-fuzz
+        if: github.event_name == 'push'
         run: |
           rustup toolchain install nightly --no-self-update
           cargo +nightly install cargo-fuzz --locked
 
       - name: fuzz smoke (parse_gha — 10 s)
+        if: github.event_name == 'push'
         run: cargo +nightly fuzz run parse_gha -- -max_total_time=10
         working-directory: crates/taudit-parse-gha
 
       - name: fuzz smoke (parse_ado — 10 s)
+        if: github.event_name == 'push'
         run: cargo +nightly fuzz run parse_ado -- -max_total_time=10
         working-directory: crates/taudit-parse-ado
 
       - name: fuzz smoke (parse_gitlab — 10 s)
+        if: github.event_name == 'push'
         run: cargo +nightly fuzz run parse_gitlab -- -max_total_time=10
         working-directory: crates/taudit-parse-gitlab
 
-      # Mutation coverage for the rule engine (informational — exits 0
-      # even with surviving mutants; use as a baseline before gating).
+      # Mutation coverage for the rule engine — informational, exits 0.
+      # Runs on push to main only; skip on PRs to avoid 20-40 min CI cost.
       - name: Install cargo-mutants
+        if: github.event_name == 'push'
         run: cargo install cargo-mutants --locked
 
       - name: mutation coverage (taudit-core — informational)
+        if: github.event_name == 'push'
         run: cargo mutants -p taudit-core --timeout 60
