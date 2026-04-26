@@ -1,8 +1,8 @@
 use serde::Serialize;
 use taudit_core::custom_rules::CustomRule;
 use taudit_core::error::TauditError;
-use taudit_core::finding::{Finding, FindingCategory, Severity};
-use taudit_core::graph::{AuthorityGraph, NodeKind};
+use taudit_core::finding::{compute_fingerprint, Finding, FindingCategory, Severity};
+use taudit_core::graph::AuthorityGraph;
 use taudit_core::ports::ReportSink;
 
 const SARIF_SCHEMA: &str = "https://schemastore.azurewebsites.net/schemas/json/sarif-2.1.0.json";
@@ -759,37 +759,12 @@ fn finding_to_result(
 
     let uri = source_file.to_string();
 
-    // Prefer a fingerprint keyed on (rule_id, root_authority_node_name) so that
-    // every per-hop finding sourced from the same secret/identity collapses to
-    // a single GitHub Code Scanning alert. Fall back to the legacy
-    // (rule_id, uri, message) key when no authority node is involved
-    // (e.g. authority_cycle, floating_image, unpinned_action).
-    let root_authority_name: Option<&str> = finding
-        .nodes_involved
-        .iter()
-        .filter_map(|id| graph.node(*id))
-        .find(|n| matches!(n.kind, NodeKind::Secret | NodeKind::Identity))
-        .map(|n| n.name.as_str());
-
-    let fingerprint = {
-        use std::collections::hash_map::DefaultHasher;
-        use std::hash::{Hash, Hasher};
-        let mut h = DefaultHasher::new();
-        rule_id.hash(&mut h);
-        match root_authority_name {
-            Some(name) => {
-                "::".hash(&mut h);
-                name.hash(&mut h);
-            }
-            None => {
-                "::".hash(&mut h);
-                uri.hash(&mut h);
-                "::".hash(&mut h);
-                finding.message.hash(&mut h);
-            }
-        }
-        format!("{:016x}", h.finish())
-    };
+    // Single source of truth for the fingerprint lives in
+    // `taudit_core::finding::compute_fingerprint`. Same value also surfaces
+    // in the JSON report (`findings[].fingerprint`) and the CloudEvents
+    // sink (`tauditfindingfingerprint` extension attribute) so SIEMs can
+    // dedup across formats. See `docs/finding-fingerprint.md`.
+    let fingerprint = compute_fingerprint(finding, graph);
 
     SarifResult {
         rule_id,
