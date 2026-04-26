@@ -1,10 +1,11 @@
 use crate::finding::{Finding, FindingCategory, Recommendation, Severity};
 use crate::graph::{
     is_docker_digest_pinned, is_sha_pinned, AuthorityCompleteness, AuthorityGraph, EdgeKind,
-    IdentityScope, NodeId, NodeKind, TrustZone, META_ATTESTS, META_CHECKOUT_SELF,
-    META_CLI_FLAG_EXPOSED, META_CONTAINER, META_DIGEST, META_ENV_APPROVAL, META_IDENTITY_SCOPE,
-    META_IMPLICIT, META_OIDC, META_PERMISSIONS, META_SELF_HOSTED, META_SERVICE_CONNECTION,
-    META_TRIGGER, META_VARIABLE_GROUP, META_WRITES_ENV_GATE,
+    IdentityScope, NodeId, NodeKind, TrustZone, META_ADD_SPN_TO_ENV, META_ATTESTS,
+    META_CHECKOUT_SELF, META_CLI_FLAG_EXPOSED, META_CONTAINER, META_DIGEST, META_ENV_APPROVAL,
+    META_IDENTITY_SCOPE, META_IMPLICIT, META_OIDC, META_PERMISSIONS, META_SCRIPT_BODY,
+    META_SELF_HOSTED, META_SERVICE_CONNECTION, META_SERVICE_CONNECTION_NAME,
+    META_TERRAFORM_AUTO_APPROVE, META_TRIGGER, META_VARIABLE_GROUP, META_WRITES_ENV_GATE,
 };
 use crate::propagation;
 
@@ -1192,6 +1193,259 @@ pub fn service_connection_scope_mismatch(graph: &AuthorityGraph) -> Vec<Finding>
     findings
 }
 
+/// Returns true when `name` (case-insensitive) looks like a production
+/// service-connection name. Matches `prod` / `production` / `prd` either as
+/// the entire name, a token surrounded by `-`/`_`, or a leading/trailing
+/// segment (`prod-foo`, `foo-prd`). Conservative: avoids matching
+/// substrings like "approver" or "reproduce".
+fn looks_like_prod_connection(name: &str) -> bool {
+    let lower = name.to_lowercase();
+    let token_match = |s: &str| {
+        lower == s
+            || lower.contains(&format!("-{s}-"))
+            || lower.contains(&format!("_{s}_"))
+            || lower.ends_with(&format!("-{s}"))
+            || lower.ends_with(&format!("_{s}"))
+            || lower.starts_with(&format!("{s}-"))
+            || lower.starts_with(&format!("{s}_"))
+    };
+    token_match("prod") || token_match("production") || token_match("prd")
+}
+
+/// Returns true when an inline script body looks like it laundering federated
+/// SPN/OIDC token material into a pipeline variable via
+/// `##vso[task.setvariable]`. Used to escalate addspn_with_inline_script's
+/// message wording when explicit laundering is detected.
+fn script_launders_spn_token(s: &str) -> bool {
+    let lower = s.to_lowercase();
+    if !lower.contains("##vso[task.setvariable") {
+        return false;
+    }
+    let token_markers = [
+        "$env:idtoken",
+        "$env:serviceprincipalkey",
+        "$env:serviceprincipalid",
+        "$env:tenantid",
+        "arm_oidc_token",
+        "arm_client_id",
+        "arm_client_secret",
+        "arm_tenant_id",
+    ];
+    token_markers.iter().any(|m| lower.contains(m))
+}
+
+/// Rule: `terraform apply -auto-approve` against a production service
+/// connection without an environment approval gate.
+///
+/// Combines three signals on a Step node:
+///   1. `META_TERRAFORM_AUTO_APPROVE` = "true" (set by the parser when an
+///      inline script runs `terraform apply --auto-approve`, or a
+///      `TerraformCLI@N` task has `command: apply` + commandOptions
+///      containing `auto-approve`).
+///   2. `META_SERVICE_CONNECTION_NAME` matches a production-named pattern
+///      (`prod`, `production`, `prd`), OR the step is linked via
+///      `HasAccessTo` to an Identity service-connection node whose name
+///      matches that pattern.
+///   3. The step is NOT inside an `environment:`-bound deployment job
+///      (parser sets `META_ENV_APPROVAL` for those steps).
+///
+/// Severity: Critical. Bypasses the only ADO-side change-control on
+/// infra rewrites.
+pub fn terraform_auto_approve_in_prod(graph: &AuthorityGraph) -> Vec<Finding> {
+    let mut findings = Vec::new();
+
+    for step in graph.nodes_of_kind(NodeKind::Step) {
+        let auto_approve = step
+            .metadata
+            .get(META_TERRAFORM_AUTO_APPROVE)
+            .map(|v| v == "true")
+            .unwrap_or(false);
+        if !auto_approve {
+            continue;
+        }
+
+        // Step's own service-connection name (set by parser from
+        // azureSubscription / connectedServiceName / etc).
+        let direct_conn = step.metadata.get(META_SERVICE_CONNECTION_NAME).cloned();
+
+        // Walk HasAccessTo edges to find a service-connection Identity. This
+        // catches steps that don't carry the name on themselves but inherit
+        // an Identity node via the parser's edge.
+        let edge_conn = graph
+            .edges_from(step.id)
+            .filter(|e| e.kind == EdgeKind::HasAccessTo)
+            .filter_map(|e| graph.node(e.to))
+            .find(|n| {
+                n.kind == NodeKind::Identity
+                    && n.metadata
+                        .get(META_SERVICE_CONNECTION)
+                        .map(|v| v == "true")
+                        .unwrap_or(false)
+            })
+            .map(|n| n.name.clone());
+
+        let conn_name = match direct_conn.or(edge_conn) {
+            Some(n) if looks_like_prod_connection(&n) => n,
+            _ => continue,
+        };
+
+        // Skip when the step is in an environment-gated job — the manual
+        // approval is the change-control we're worried about being missing.
+        let env_gated = step
+            .metadata
+            .get(META_ENV_APPROVAL)
+            .map(|v| v == "true")
+            .unwrap_or(false);
+        if env_gated {
+            continue;
+        }
+
+        findings.push(Finding {
+            severity: Severity::Critical,
+            category: FindingCategory::TerraformAutoApproveInProd,
+            path: None,
+            nodes_involved: vec![step.id],
+            message: format!(
+                "Step '{}' runs `terraform apply -auto-approve` against production service connection '{}' with no environment approval gate — any committer can rewrite prod infrastructure",
+                step.name, conn_name
+            ),
+            recommendation: Recommendation::Manual {
+                action: "Move the apply step into a deployment job whose `environment:` is configured with required approvers in ADO, OR remove `-auto-approve` and run apply behind a manual checkpoint task. Combine with a non-shared agent pool so committers cannot pre-stage payloads.".into(),
+            },
+        });
+    }
+
+    findings
+}
+
+/// Rule: `AzureCLI@2` task with `addSpnToEnvironment: true` AND an inline
+/// script body. The inline script can launder federated SPN material
+/// (`$env:idToken`, `$env:servicePrincipalKey`, `$env:tenantId`) into normal
+/// pipeline variables via `##vso[task.setvariable]`, leaking OIDC tokens to
+/// downstream tasks/artifacts un-masked.
+///
+/// Severity: High. Escalates message wording when the script body contains
+/// explicit laundering patterns (`##vso[task.setvariable ...]` writing one
+/// of the well-known token env vars or `ARM_OIDC_TOKEN`).
+pub fn addspn_with_inline_script(graph: &AuthorityGraph) -> Vec<Finding> {
+    let mut findings = Vec::new();
+
+    for step in graph.nodes_of_kind(NodeKind::Step) {
+        let add_spn = step
+            .metadata
+            .get(META_ADD_SPN_TO_ENV)
+            .map(|v| v == "true")
+            .unwrap_or(false);
+        if !add_spn {
+            continue;
+        }
+
+        let body = match step.metadata.get(META_SCRIPT_BODY) {
+            Some(b) if !b.trim().is_empty() => b,
+            _ => continue,
+        };
+
+        let launders = script_launders_spn_token(body);
+        let suffix = if launders {
+            " — explicit token laundering detected (##vso[task.setvariable] writes federated token material)"
+        } else {
+            ""
+        };
+
+        findings.push(Finding {
+            severity: Severity::High,
+            category: FindingCategory::AddSpnWithInlineScript,
+            path: None,
+            nodes_involved: vec![step.id],
+            message: format!(
+                "Step '{}' runs an inline script with addSpnToEnvironment:true — the federated SPN (idToken/servicePrincipalKey/tenantId) is exposed to script-controlled code and can be exfiltrated via setvariable{}",
+                step.name, suffix
+            ),
+            recommendation: Recommendation::Manual {
+                action: "Replace the inline script with `scriptPath:` pointing to a reviewed file in-repo, OR drop `addSpnToEnvironment: true` and use the task's first-class auth surface. Never emit federated token material via `##vso[task.setvariable]` — those values are inherited by every downstream task and may appear in logs.".into(),
+            },
+        });
+    }
+
+    findings
+}
+
+/// Rule: free-form `type: string` parameter (no `values:` allowlist)
+/// interpolated via `${{ parameters.<name> }}` directly into an inline
+/// shell/PowerShell script body. ADO does not escape parameter values in
+/// YAML emission, so any user with "queue build" can inject shell.
+///
+/// Detection requires the parser to populate
+/// `AuthorityGraph::parameters` (currently ADO only) and to stamp Step
+/// nodes with `META_SCRIPT_BODY`.
+///
+/// Severity: Medium.
+pub fn parameter_interpolation_into_shell(graph: &AuthorityGraph) -> Vec<Finding> {
+    if graph.parameters.is_empty() {
+        return Vec::new();
+    }
+
+    // Free-form string parameters: type is `string` (or unspecified — ADO's
+    // default) AND no `values:` allowlist.
+    let free_form: Vec<&str> = graph
+        .parameters
+        .iter()
+        .filter(|(_, spec)| {
+            !spec.has_values_allowlist
+                && (spec.param_type.is_empty() || spec.param_type.eq_ignore_ascii_case("string"))
+        })
+        .map(|(name, _)| name.as_str())
+        .collect();
+
+    if free_form.is_empty() {
+        return Vec::new();
+    }
+
+    let mut findings = Vec::new();
+
+    for step in graph.nodes_of_kind(NodeKind::Step) {
+        let body = match step.metadata.get(META_SCRIPT_BODY) {
+            Some(b) if !b.is_empty() => b,
+            _ => continue,
+        };
+
+        // Find every free-form parameter that appears interpolated in the
+        // script body. Match both `${{ parameters.X }}` and `${{parameters.X}}`.
+        let mut hits: Vec<&str> = Vec::new();
+        for &name in &free_form {
+            let needle_a = format!("${{{{ parameters.{name} }}}}");
+            let needle_b = format!("${{{{parameters.{name}}}}}");
+            if body.contains(&needle_a) || body.contains(&needle_b) {
+                hits.push(name);
+            }
+        }
+
+        if hits.is_empty() {
+            continue;
+        }
+
+        hits.sort();
+        hits.dedup();
+        let names = hits.join(", ");
+
+        findings.push(Finding {
+            severity: Severity::Medium,
+            category: FindingCategory::ParameterInterpolationIntoShell,
+            path: None,
+            nodes_involved: vec![step.id],
+            message: format!(
+                "Step '{}' interpolates free-form string parameter(s) [{}] into an inline script — anyone with 'queue build' permission can inject shell commands",
+                step.name, names
+            ),
+            recommendation: Recommendation::Manual {
+                action: "Add a `values:` allowlist to the parameter declaration to constrain accepted inputs, OR pass the parameter through the step's `env:` block so the runtime quotes it as a shell variable instead of YAML-interpolating raw text.".into(),
+            },
+        });
+    }
+
+    findings
+}
+
 /// Run all rules against a graph.
 pub fn run_all_rules(graph: &AuthorityGraph, max_hops: usize) -> Vec<Finding> {
     let mut findings = Vec::new();
@@ -1214,6 +1468,9 @@ pub fn run_all_rules(graph: &AuthorityGraph, max_hops: usize) -> Vec<Finding> {
     findings.extend(variable_group_in_pr_job(graph));
     findings.extend(self_hosted_pool_pr_hijack(graph));
     findings.extend(service_connection_scope_mismatch(graph));
+    findings.extend(terraform_auto_approve_in_prod(graph));
+    findings.extend(addspn_with_inline_script(graph));
+    findings.extend(parameter_interpolation_into_shell(graph));
 
     apply_confidence_cap(graph, &mut findings);
 
@@ -2270,5 +2527,352 @@ mod tests {
         assert_eq!(downgrade_one_step(Severity::Medium), Severity::Low);
         assert_eq!(downgrade_one_step(Severity::Low), Severity::Low);
         assert_eq!(downgrade_one_step(Severity::Info), Severity::Info);
+    }
+
+    // ── terraform_auto_approve_in_prod ──────────────────────
+
+    fn step_with_meta(g: &mut AuthorityGraph, name: &str, meta: &[(&str, &str)]) -> NodeId {
+        let mut m = std::collections::HashMap::new();
+        for (k, v) in meta {
+            m.insert((*k).to_string(), (*v).to_string());
+        }
+        g.add_node_with_metadata(NodeKind::Step, name, TrustZone::FirstParty, m)
+    }
+
+    #[test]
+    fn terraform_auto_approve_against_prod_connection_fires() {
+        let mut g = AuthorityGraph::new(source("azure-pipelines.yml"));
+        step_with_meta(
+            &mut g,
+            "Terraform : Apply",
+            &[
+                (META_TERRAFORM_AUTO_APPROVE, "true"),
+                (META_SERVICE_CONNECTION_NAME, "sharedservice-w365-prod-sc"),
+            ],
+        );
+
+        let findings = terraform_auto_approve_in_prod(&g);
+        assert_eq!(findings.len(), 1);
+        assert_eq!(findings[0].severity, Severity::Critical);
+        assert_eq!(
+            findings[0].category,
+            FindingCategory::TerraformAutoApproveInProd
+        );
+        assert!(
+            findings[0].message.contains("sharedservice-w365-prod-sc"),
+            "message should name the connection, got: {}",
+            findings[0].message
+        );
+    }
+
+    #[test]
+    fn terraform_auto_approve_via_edge_to_service_connection_identity() {
+        let mut g = AuthorityGraph::new(source("azure-pipelines.yml"));
+        let step = step_with_meta(
+            &mut g,
+            "Terraform : Apply",
+            &[(META_TERRAFORM_AUTO_APPROVE, "true")],
+        );
+        let mut id_meta = std::collections::HashMap::new();
+        id_meta.insert(META_SERVICE_CONNECTION.into(), "true".into());
+        let conn = g.add_node_with_metadata(
+            NodeKind::Identity,
+            "alz-infra-sc-prd-uks",
+            TrustZone::FirstParty,
+            id_meta,
+        );
+        g.add_edge(step, conn, EdgeKind::HasAccessTo);
+
+        let findings = terraform_auto_approve_in_prod(&g);
+        assert_eq!(findings.len(), 1);
+        assert!(findings[0].message.contains("alz-infra-sc-prd-uks"));
+    }
+
+    #[test]
+    fn terraform_auto_approve_with_env_gate_does_not_fire() {
+        let mut g = AuthorityGraph::new(source("azure-pipelines.yml"));
+        step_with_meta(
+            &mut g,
+            "Terraform : Apply",
+            &[
+                (META_TERRAFORM_AUTO_APPROVE, "true"),
+                (META_SERVICE_CONNECTION_NAME, "platform-prod-sc"),
+                (META_ENV_APPROVAL, "true"),
+            ],
+        );
+
+        let findings = terraform_auto_approve_in_prod(&g);
+        assert!(
+            findings.is_empty(),
+            "env-gated apply must not fire — gate is the change-control"
+        );
+    }
+
+    #[test]
+    fn terraform_auto_approve_against_non_prod_does_not_fire() {
+        let mut g = AuthorityGraph::new(source("azure-pipelines.yml"));
+        step_with_meta(
+            &mut g,
+            "Terraform : Apply",
+            &[
+                (META_TERRAFORM_AUTO_APPROVE, "true"),
+                (META_SERVICE_CONNECTION_NAME, "platform-dev-sc"),
+            ],
+        );
+
+        let findings = terraform_auto_approve_in_prod(&g);
+        assert!(findings.is_empty(), "dev connection must not match prod");
+    }
+
+    #[test]
+    fn terraform_apply_without_auto_approve_does_not_fire() {
+        let mut g = AuthorityGraph::new(source("azure-pipelines.yml"));
+        step_with_meta(
+            &mut g,
+            "Terraform : Apply",
+            &[(META_SERVICE_CONNECTION_NAME, "platform-prod-sc")],
+        );
+
+        let findings = terraform_auto_approve_in_prod(&g);
+        assert!(findings.is_empty());
+    }
+
+    #[test]
+    fn looks_like_prod_connection_matches_real_world_names() {
+        assert!(looks_like_prod_connection("sharedservice-w365-prod-sc"));
+        assert!(looks_like_prod_connection("alz-infra-sc-prd"));
+        assert!(looks_like_prod_connection("prod-tenant-arm"));
+        assert!(looks_like_prod_connection("PROD"));
+        assert!(looks_like_prod_connection("my_prod_arm"));
+        // Negatives — substrings inside other words must not match
+        assert!(!looks_like_prod_connection("approver-sc"));
+        assert!(!looks_like_prod_connection("reproducer-sc"));
+        assert!(!looks_like_prod_connection("dev-sc"));
+        assert!(!looks_like_prod_connection("staging"));
+    }
+
+    // ── addspn_with_inline_script ───────────────────────────
+
+    #[test]
+    fn addspn_with_inline_script_fires_with_basic_body() {
+        let mut g = AuthorityGraph::new(source("azure-pipelines.yml"));
+        step_with_meta(
+            &mut g,
+            "ado : azure : login (federated)",
+            &[
+                (META_ADD_SPN_TO_ENV, "true"),
+                (META_SCRIPT_BODY, "az account show --query id -o tsv"),
+            ],
+        );
+
+        let findings = addspn_with_inline_script(&g);
+        assert_eq!(findings.len(), 1);
+        assert_eq!(findings[0].severity, Severity::High);
+        assert!(!findings[0]
+            .message
+            .contains("explicit token laundering detected"));
+    }
+
+    #[test]
+    fn addspn_with_inline_script_escalates_message_on_token_laundering() {
+        let mut g = AuthorityGraph::new(source("azure-pipelines.yml"));
+        step_with_meta(
+            &mut g,
+            "ado : azure : login (federated)",
+            &[
+                (META_ADD_SPN_TO_ENV, "true"),
+                (
+                    META_SCRIPT_BODY,
+                    "Write-Output \"##vso[task.setvariable variable=ARM_OIDC_TOKEN]$env:idToken\"",
+                ),
+            ],
+        );
+
+        let findings = addspn_with_inline_script(&g);
+        assert_eq!(findings.len(), 1);
+        assert!(
+            findings[0]
+                .message
+                .contains("explicit token laundering detected"),
+            "message should escalate, got: {}",
+            findings[0].message
+        );
+    }
+
+    #[test]
+    fn addspn_without_inline_script_does_not_fire() {
+        // No META_SCRIPT_BODY → scriptPath form, not inline
+        let mut g = AuthorityGraph::new(source("azure-pipelines.yml"));
+        step_with_meta(
+            &mut g,
+            "AzureCLI scriptPath",
+            &[(META_ADD_SPN_TO_ENV, "true")],
+        );
+
+        let findings = addspn_with_inline_script(&g);
+        assert!(findings.is_empty());
+    }
+
+    #[test]
+    fn inline_script_without_addspn_does_not_fire() {
+        let mut g = AuthorityGraph::new(source("azure-pipelines.yml"));
+        step_with_meta(
+            &mut g,
+            "az account show",
+            &[(META_SCRIPT_BODY, "az account show")],
+        );
+
+        let findings = addspn_with_inline_script(&g);
+        assert!(findings.is_empty());
+    }
+
+    #[test]
+    fn script_launders_spn_token_recognises_known_markers() {
+        assert!(script_launders_spn_token(
+            "Write-Output \"##vso[task.setvariable variable=ARM_OIDC_TOKEN]$env:idToken\""
+        ));
+        assert!(script_launders_spn_token(
+            "echo \"##vso[task.setvariable variable=X]$env:servicePrincipalKey\""
+        ));
+        // setvariable without token material → not laundering, just env mutation
+        assert!(!script_launders_spn_token(
+            "echo \"##vso[task.setvariable variable=X]hello\""
+        ));
+        // No setvariable at all
+        assert!(!script_launders_spn_token("$env:idToken"));
+    }
+
+    // ── parameter_interpolation_into_shell ──────────────────
+
+    fn graph_with_param(spec: ParamSpec, name: &str) -> AuthorityGraph {
+        let mut g = AuthorityGraph::new(source("azure-pipelines.yml"));
+        g.parameters.insert(name.to_string(), spec);
+        g
+    }
+
+    #[test]
+    fn parameter_interpolation_fires_on_free_form_string_in_inline_script() {
+        let mut g = graph_with_param(
+            ParamSpec {
+                param_type: "string".into(),
+                has_values_allowlist: false,
+            },
+            "appName",
+        );
+        step_with_meta(
+            &mut g,
+            "terraform workspace",
+            &[(
+                META_SCRIPT_BODY,
+                "terraform workspace select -or-create ${{ parameters.appName }}",
+            )],
+        );
+
+        let findings = parameter_interpolation_into_shell(&g);
+        assert_eq!(findings.len(), 1);
+        assert_eq!(findings[0].severity, Severity::Medium);
+        assert!(findings[0].message.contains("appName"));
+    }
+
+    #[test]
+    fn parameter_interpolation_with_values_allowlist_does_not_fire() {
+        let mut g = graph_with_param(
+            ParamSpec {
+                param_type: "string".into(),
+                has_values_allowlist: true,
+            },
+            "location",
+        );
+        step_with_meta(
+            &mut g,
+            "Terraform Plan",
+            &[(
+                META_SCRIPT_BODY,
+                "terraform plan -var=\"location=${{ parameters.location }}\"",
+            )],
+        );
+
+        let findings = parameter_interpolation_into_shell(&g);
+        assert!(
+            findings.is_empty(),
+            "values: allowlist must suppress the finding"
+        );
+    }
+
+    #[test]
+    fn parameter_interpolation_default_type_is_treated_as_string() {
+        let mut g = graph_with_param(
+            ParamSpec {
+                // ADO defaults missing `type:` to string — same risk
+                param_type: "".into(),
+                has_values_allowlist: false,
+            },
+            "appName",
+        );
+        step_with_meta(
+            &mut g,
+            "Terraform : Plan",
+            &[(
+                META_SCRIPT_BODY,
+                "terraform plan -var \"appName=${{ parameters.appName }}\"",
+            )],
+        );
+
+        let findings = parameter_interpolation_into_shell(&g);
+        assert_eq!(findings.len(), 1, "missing type: must default to string");
+    }
+
+    #[test]
+    fn parameter_interpolation_skips_non_string_params() {
+        let mut g = graph_with_param(
+            ParamSpec {
+                param_type: "boolean".into(),
+                has_values_allowlist: false,
+            },
+            "enabled",
+        );
+        step_with_meta(
+            &mut g,
+            "step",
+            &[(META_SCRIPT_BODY, "echo ${{ parameters.enabled }}")],
+        );
+
+        let findings = parameter_interpolation_into_shell(&g);
+        assert!(findings.is_empty(), "boolean params can't carry shell");
+    }
+
+    #[test]
+    fn parameter_interpolation_no_spaces_form_also_matches() {
+        let mut g = graph_with_param(
+            ParamSpec {
+                param_type: "string".into(),
+                has_values_allowlist: false,
+            },
+            "x",
+        );
+        step_with_meta(
+            &mut g,
+            "step",
+            &[(META_SCRIPT_BODY, "echo ${{parameters.x}}")],
+        );
+
+        let findings = parameter_interpolation_into_shell(&g);
+        assert_eq!(findings.len(), 1);
+    }
+
+    #[test]
+    fn parameter_interpolation_skips_step_without_script_body() {
+        let mut g = graph_with_param(
+            ParamSpec {
+                param_type: "string".into(),
+                has_values_allowlist: false,
+            },
+            "appName",
+        );
+        // Step has no META_SCRIPT_BODY (e.g. a typed task without an inline script)
+        g.add_node(NodeKind::Step, "task-step", TrustZone::Untrusted);
+
+        let findings = parameter_interpolation_into_shell(&g);
+        assert!(findings.is_empty());
     }
 }

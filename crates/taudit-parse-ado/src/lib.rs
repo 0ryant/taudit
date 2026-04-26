@@ -5,6 +5,39 @@ use taudit_core::error::TauditError;
 use taudit_core::graph::*;
 use taudit_core::ports::PipelineParser;
 
+/// Regex-free check: does `s` contain `terraform apply` followed by
+/// `-auto-approve` or `--auto-approve` (anywhere on the same line, or on a
+/// nearby line when the previous line ends in a shell continuation `\` /
+/// PowerShell continuation `` ` ``)?
+///
+/// Case-sensitive on purpose — Terraform's CLI is case-sensitive and these
+/// tokens never appear capitalised in real-world pipelines.
+fn script_does_terraform_auto_apply(s: &str) -> bool {
+    let lines: Vec<&str> = s.lines().collect();
+    for (i, raw_line) in lines.iter().enumerate() {
+        // Strip trailing comment.
+        let line = raw_line.split('#').next().unwrap_or("");
+        if !(line.contains("terraform apply") || line.contains("terraform\tapply")) {
+            continue;
+        }
+        if line.contains("auto-approve") {
+            return true;
+        }
+        // Continuation: peek a few lines forward for the flag.
+        let mut continuing = line.trim_end().ends_with('\\') || line.trim_end().ends_with('`');
+        let mut j = i + 1;
+        while continuing && j < lines.len() && j < i + 4 {
+            let next = lines[j].split('#').next().unwrap_or("");
+            if next.contains("auto-approve") {
+                return true;
+            }
+            continuing = next.trim_end().ends_with('\\') || next.trim_end().ends_with('`');
+            j += 1;
+        }
+    }
+    false
+}
+
 /// Azure DevOps YAML pipeline parser.
 pub struct AdoParser;
 
@@ -33,6 +66,28 @@ impl PipelineParser for AdoParser {
         let has_pr_trigger = pipeline.pr.is_some();
         if has_pr_trigger {
             graph.metadata.insert(META_TRIGGER.into(), "pr".into());
+        }
+
+        // Capture top-level `parameters:` declarations (used by
+        // parameter_interpolation_into_shell). ADO defaults missing `type:`
+        // to string, so a missing/empty type is treated as a string.
+        if let Some(ref params) = pipeline.parameters {
+            for p in params {
+                let name = match p.name.as_ref() {
+                    Some(n) if !n.is_empty() => n.clone(),
+                    _ => continue,
+                };
+                let param_type = p.param_type.clone().unwrap_or_default();
+                let has_values_allowlist =
+                    p.values.as_ref().map(|v| !v.is_empty()).unwrap_or(false);
+                graph.parameters.insert(
+                    name,
+                    ParamSpec {
+                        param_type,
+                        has_values_allowlist,
+                    },
+                );
+            }
         }
 
         let mut secret_ids: HashMap<String, NodeId> = HashMap::new();
@@ -316,7 +371,25 @@ fn process_steps(
         }
 
         // Determine step kind and trust zone
-        let (step_name, trust_zone, inline_script) = classify_step(step, job_name, idx);
+        let (step_name, trust_zone, mut inline_script) = classify_step(step, job_name, idx);
+
+        // For task steps (where classify_step returns None), recover an inline
+        // script body from `inputs.inlineScript` / `inputs.script` — used by
+        // AzureCLI@2, AzurePowerShell@5, Bash@3, etc. Without this fallback,
+        // rules that pattern-match script content miss every typed task.
+        if inline_script.is_none() {
+            if let Some(ref inputs) = step.inputs {
+                let candidate_keys = ["inlineScript", "script", "InlineScript", "Inline"];
+                for key in candidate_keys {
+                    if let Some(v) = inputs.get(key).and_then(yaml_value_as_str) {
+                        if !v.is_empty() {
+                            inline_script = Some(v.to_string());
+                            break;
+                        }
+                    }
+                }
+            }
+        }
 
         let step_id = graph.add_node(NodeKind::Step, &step_name, trust_zone);
 
@@ -324,6 +397,16 @@ fn process_steps(
         // attribute steps back to their containing job.
         if let Some(node) = graph.nodes.get_mut(step_id) {
             node.metadata.insert(META_JOB_NAME.into(), job_name.into());
+        }
+
+        // Stamp the inline script body when present so rules that need to
+        // pattern-match against shell content can do so without re-parsing
+        // YAML. Bodies can be large; rules should treat META_SCRIPT_BODY as
+        // an opaque string and not assume any framing.
+        if let Some(ref body) = inline_script {
+            if let Some(node) = graph.nodes.get_mut(step_id) {
+                node.metadata.insert(META_SCRIPT_BODY.into(), body.clone());
+            }
         }
 
         // Every step has access to System.AccessToken
@@ -359,6 +442,8 @@ fn process_steps(
                 "connectedservicename",
                 "connectedservicenamearm",
                 "kubernetesserviceconnection",
+                "environmentservicename",
+                "backendservicearm",
             ];
             for (raw_key, val) in inputs {
                 let lower = raw_key.to_lowercase();
@@ -367,6 +452,14 @@ fn process_steps(
                 }
                 let conn_name = yaml_value_as_str(val).unwrap_or(raw_key.as_str());
                 if !conn_name.starts_with("$(") {
+                    // Stamp the connection name onto the step itself so rules
+                    // that need the name (e.g. terraform_auto_approve_in_prod)
+                    // don't have to traverse edges.
+                    if let Some(node) = graph.nodes.get_mut(step_id) {
+                        node.metadata
+                            .insert(META_SERVICE_CONNECTION_NAME.into(), conn_name.to_string());
+                    }
+
                     let mut meta = HashMap::new();
                     meta.insert(META_SERVICE_CONNECTION.into(), "true".into());
                     meta.insert(META_IDENTITY_SCOPE.into(), "broad".into());
@@ -385,10 +478,70 @@ fn process_steps(
                 }
             }
 
+            // addSpnToEnvironment: true exposes federated SPN material
+            // (idToken, servicePrincipalKey, servicePrincipalId, tenantId)
+            // to the step's inline script via env vars. Stamp the step so
+            // addspn_with_inline_script can pattern-match without traversal.
+            if let Some(val) = inputs.get("addSpnToEnvironment") {
+                let truthy = match val {
+                    serde_yaml::Value::Bool(b) => *b,
+                    serde_yaml::Value::String(s) => s.eq_ignore_ascii_case("true"),
+                    _ => false,
+                };
+                if truthy {
+                    if let Some(node) = graph.nodes.get_mut(step_id) {
+                        node.metadata
+                            .insert(META_ADD_SPN_TO_ENV.into(), "true".into());
+                    }
+                }
+            }
+
+            // TerraformCLI@N / TerraformTaskV1..V4 with command: apply +
+            // commandOptions containing auto-approve = same as inline
+            // `terraform apply --auto-approve`. Detect once here so the rule
+            // can read a single META_TERRAFORM_AUTO_APPROVE marker.
+            let task_lower = step
+                .task
+                .as_deref()
+                .map(|t| t.to_lowercase())
+                .unwrap_or_default();
+            let is_terraform_task = task_lower.starts_with("terraformcli@")
+                || task_lower.starts_with("terraformtask@")
+                || task_lower.starts_with("terraformtaskv");
+            if is_terraform_task {
+                let cmd_lower = inputs
+                    .get("command")
+                    .and_then(yaml_value_as_str)
+                    .map(|s| s.to_lowercase())
+                    .unwrap_or_default();
+                let opts = inputs
+                    .get("commandOptions")
+                    .and_then(yaml_value_as_str)
+                    .unwrap_or("");
+                if cmd_lower == "apply" && opts.contains("auto-approve") {
+                    if let Some(node) = graph.nodes.get_mut(step_id) {
+                        node.metadata
+                            .insert(META_TERRAFORM_AUTO_APPROVE.into(), "true".into());
+                    }
+                }
+            }
+
             // Detect $(varName) references in task input values
             for val in inputs.values() {
                 if let Some(s) = yaml_value_as_str(val) {
                     extract_dollar_paren_secrets(s, step_id, plain_vars, graph, cache);
+                }
+            }
+        }
+
+        // Inline-script detection of `terraform apply --auto-approve`.
+        // Done after inputs processing so we can OR the two signals into a
+        // single META_TERRAFORM_AUTO_APPROVE marker on the step.
+        if let Some(ref body) = inline_script {
+            if script_does_terraform_auto_apply(body) {
+                if let Some(node) = graph.nodes.get_mut(step_id) {
+                    node.metadata
+                        .insert(META_TERRAFORM_AUTO_APPROVE.into(), "true".into());
                 }
             }
         }
@@ -610,6 +763,23 @@ pub struct AdoPipeline {
     pub steps: Option<Vec<AdoStep>>,
     #[serde(default)]
     pub pool: Option<serde_yaml::Value>,
+    /// Top-level `parameters:` declarations. Each entry has at minimum a
+    /// `name`; `type` defaults to `string` when omitted. `values:` is an
+    /// optional allowlist that constrains caller input.
+    #[serde(default)]
+    pub parameters: Option<Vec<AdoParameter>>,
+}
+
+/// Pipeline / template `parameters:` entry. We deliberately ignore `default:`
+/// — only the name, type, and `values:` allowlist matter for our rules.
+#[derive(Debug, Deserialize)]
+pub struct AdoParameter {
+    #[serde(default)]
+    pub name: Option<String>,
+    #[serde(rename = "type", default)]
+    pub param_type: Option<String>,
+    #[serde(default)]
+    pub values: Option<Vec<serde_yaml::Value>>,
 }
 
 #[derive(Debug, Deserialize)]
