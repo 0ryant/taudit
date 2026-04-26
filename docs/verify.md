@@ -14,6 +14,7 @@ acceptable, and exits accordingly.
 taudit verify [PATH...] --policy <FILE_OR_DIR>
               [--format text|json|sarif]
               [--platform auto|github-actions|azure-devops|gitlab]
+              [--strict]
               [--include-builtin]
               [--severity-threshold critical|high|medium|low|info]
               [--max-hops <N>]
@@ -34,6 +35,16 @@ Exit codes are part of the contract. Wire them straight into CI:
 Exit `2` is reserved for "we couldn't make a decision" — never conflate it
 with "the policy passed". A required CI check that treats `2` as success will
 silently let unscanned pipelines through.
+
+## Discovered-file parse/read errors and `--strict`
+
+When `PATH` includes a directory, `verify` discovers `*.yml` / `*.yaml` files
+recursively.
+
+- Default (`--strict` not set): read/parse errors on discovered files are
+  warned and skipped (explicit file arguments still fail with exit `2`).
+- Strict mode (`--strict`): any discovered-file read/parse error is fatal and
+  `verify` exits `2`.
 
 ## How `verify` differs from `scan`
 

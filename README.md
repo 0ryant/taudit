@@ -319,6 +319,26 @@ the schema, predicate reference, and semver guarantee are documented in
 [`docs/authority-invariants.md`](./docs/authority-invariants.md).
 `--rules-dir` is accepted as an alias for backward compatibility.
 
+### Remediate (safe hardening + rollback)
+
+```bash
+# Read-only suggestions
+
+taudit remediate suggest .github/workflows/
+
+# Read-only patch preview
+taudit remediate diff .github/workflows/
+
+# Apply conservative remediations with backup + validation
+taudit remediate apply .github/workflows/ --policy invariants/starter/
+
+# List backups and roll back by id
+taudit remediate list-backups
+taudit remediate rollback --backup-id <id>
+```
+
+Backups and manifests are written under `.taudit/backups/` by default. See [docs/remediation.md](docs/remediation.md) for safety guarantees, failure modes, and rollback playbook.
+
 ### Suppress known-accepted findings
 
 Create `.tauditignore` in your repo root:

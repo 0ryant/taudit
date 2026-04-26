@@ -47,6 +47,30 @@ jobs:
       - name: cargo audit
         run: cargo audit
 
+      - name: Install governance tooling (Trivy, Checkov, Gitleaks)
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y wget gnupg lsb-release python3-pip
+
+          # Trivy
+          wget -qO - https://aquasecurity.github.io/trivy-repo/deb/public.key | sudo gpg --dearmor -o /usr/share/keyrings/trivy.gpg
+          echo "deb [signed-by=/usr/share/keyrings/trivy.gpg] https://aquasecurity.github.io/trivy-repo/deb $(lsb_release -sc) main" | sudo tee /etc/apt/sources.list.d/trivy.list
+          sudo apt-get update
+          sudo apt-get install -y trivy
+
+          # Checkov
+          python3 -m pip install --user checkov
+          echo "$HOME/.local/bin" >> "$GITHUB_PATH"
+
+          # Gitleaks
+          GITLEAKS_VERSION=8.24.2
+          wget -q "https://github.com/gitleaks/gitleaks/releases/download/v${GITLEAKS_VERSION}/gitleaks_${GITLEAKS_VERSION}_linux_x64.tar.gz"
+          tar -xzf "gitleaks_${GITLEAKS_VERSION}_linux_x64.tar.gz"
+          sudo install -m 0755 gitleaks /usr/local/bin/gitleaks
+
+      - name: Governance quality gate (Trivy, Checkov, Gitleaks, taudit)
+        run: bash scripts/quality-gate.sh ci-governance
+
       - name: Validate report and CloudEvents contracts
         run: |
           cargo test -p taudit-report-json

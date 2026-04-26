@@ -11,6 +11,14 @@ All notable changes to this project will be documented in this file.
 - **GHA authority/injection rules:** `risky_trigger_with_authority`, `sensitive_value_in_job_output`, `manual_dispatch_input_to_url_or_command`, `secrets_inherit_overscoped_passthrough`, `unsafe_pr_artifact_in_workflow_run_consumer`, `script_injection_via_untrusted_context`, `interactive_debug_action_in_authority_workflow`, `pr_specific_cache_key_in_default_branch_consumer`, `gh_cli_with_default_token_escalating`.
 - **GitLab authority/supply-chain rules:** `ci_job_token_to_external_api`, `id_token_audience_overscoped`, `untrusted_ci_var_in_shell_interpolation`, `unpinned_include_remote_or_branch_ref`, `dind_service_grants_host_authority`, `security_job_silently_skipped`, `child_pipeline_trigger_inherits_authority`, `cache_key_crosses_trust_boundary`, `pat_embedded_in_git_remote_url`, `ci_token_triggers_downstream_with_variable_passthrough`, `dotenv_artifact_flows_to_privileged_deployment`.
 
+### Added — remediation workflow (`taudit remediate`)
+
+- **New command group:** `taudit remediate {suggest,diff,apply,rollback,list-backups}`.
+- **Conservative v1 transform policy:** low-risk/high-confidence rewrites by default.
+- **First-class rollback workspace:** backups, snapshots, forward/reverse patches, and manifests under `.taudit/backups/<backup-id>/`.
+- **Auto-restore on failed validation:** `apply` runs parse checks + `taudit verify --policy ...` and restores originals on failure.
+- **Hash-protected rollback:** `rollback` verifies current-file hash against recorded post-apply hash unless `--force` is set.
+
 ### Changed
 
 - **Built-in invariant corpus** increased from **38** to **58**.

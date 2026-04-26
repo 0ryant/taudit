@@ -19,3 +19,6 @@ BUILD_SHEET.md
 # Local AI session state — never committed.
 MEMORY/
 .claude/
+
+# Remediation rollback artifacts are local operational state.
+.taudit/backups/

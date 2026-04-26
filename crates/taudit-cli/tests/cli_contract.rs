@@ -26,6 +26,43 @@ fn taudit() -> Command {
     Command::new(env!("CARGO_BIN_EXE_taudit"))
 }
 
+fn unique_tmp_dir(label: &str) -> PathBuf {
+    let nanos = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .expect("clock")
+        .as_nanos();
+    let dir = std::env::temp_dir().join(format!(
+        "taudit-cli-contract-{}-{nanos}-{label}",
+        std::process::id()
+    ));
+    std::fs::create_dir_all(&dir).expect("create tmp dir");
+    dir
+}
+
+fn write_verify_fixture_set(base: &std::path::Path) -> (PathBuf, PathBuf) {
+    let pipeline_dir = base.join("pipelines");
+    std::fs::create_dir_all(&pipeline_dir).expect("create pipelines dir");
+
+    let clean = pipeline_dir.join("clean.yml");
+    std::fs::write(
+        &clean,
+        "name: ci\non: push\npermissions:\n  contents: read\njobs:\n  test:\n    runs-on: ubuntu-latest\n    steps:\n      - uses: actions/checkout@a5ac7e51b41094c92402da3b24376905380afc29\n      - run: cargo test\n",
+    )
+    .expect("write clean pipeline");
+
+    let malformed = pipeline_dir.join("malformed.yml");
+    std::fs::write(&malformed, "name: [\n").expect("write malformed pipeline");
+
+    let policy = base.join("policy.yml");
+    std::fs::write(
+        &policy,
+        "id: any_to_untrusted\nname: Authority reaches untrusted sink\ndescription: catch-all for untrusted propagation\nseverity: high\ncategory: authority_propagation\nmatch:\n  sink:\n    trust_zone: untrusted\n",
+    )
+    .expect("write policy");
+
+    (pipeline_dir, policy)
+}
+
 #[test]
 fn scan_with_findings_and_no_threshold_exits_zero() {
     // v0.7 contract: scan is informational. Even on a fixture that
@@ -113,6 +150,59 @@ fn scan_with_missing_file_exits_two() {
         Some(2),
         "missing file must exit 2; stderr: {}",
         String::from_utf8_lossy(&output.stderr)
+    );
+}
+
+#[test]
+fn verify_discovered_parse_error_warns_and_skips_by_default() {
+    let dir = unique_tmp_dir("verify-default-discovered-parse");
+    let (pipeline_dir, policy) = write_verify_fixture_set(&dir);
+
+    let output = taudit()
+        .arg("verify")
+        .arg("--policy")
+        .arg(&policy)
+        .arg(&pipeline_dir)
+        .output()
+        .expect("spawn taudit");
+
+    assert_eq!(
+        output.status.code(),
+        Some(0),
+        "default verify should warn-and-skip discovered parse errors; stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains("warning: skipping") && stderr.contains("malformed.yml"),
+        "expected warning about skipped discovered malformed file; got stderr:\n{stderr}"
+    );
+}
+
+#[test]
+fn verify_discovered_parse_error_is_fatal_with_strict_flag() {
+    let dir = unique_tmp_dir("verify-strict-discovered-parse");
+    let (pipeline_dir, policy) = write_verify_fixture_set(&dir);
+
+    let output = taudit()
+        .arg("verify")
+        .arg("--strict")
+        .arg("--policy")
+        .arg(&policy)
+        .arg(&pipeline_dir)
+        .output()
+        .expect("spawn taudit");
+
+    assert_eq!(
+        output.status.code(),
+        Some(2),
+        "strict verify should exit 2 on discovered parse errors; stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains("error:") && stderr.contains("malformed.yml"),
+        "expected fatal parse/read error mentioning malformed file; got stderr:\n{stderr}"
     );
 }
 

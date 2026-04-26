@@ -3,7 +3,7 @@
   "$id": "https://github.com/0ryant/taudit/schemas/baseline.v1.json",
   "title": "taudit Pipeline Baseline",
   "description": "Per-pipeline baseline file written by `taudit baseline init` and updated by `taudit baseline accept`. Stored at `.taudit/baselines/<pipeline-content-hash>.json`. Diffed by `taudit baseline diff` and `taudit verify`. Stable contract — additive 1.x.y changes are non-breaking; 2.0.0 means breaking changes.",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "type": "object",
   "required": [
     "schema_version",
@@ -29,6 +29,11 @@
       "type": "string",
       "pattern": "^sha256:[0-9a-f]{64}$",
       "description": "SHA-256 of the pipeline file's bytes at `init` time, prefixed with `sha256:`. Renaming the pipeline file preserves the baseline because the hash key is stable."
+    },
+    "pipeline_identity_material_hash": {
+      "type": "string",
+      "pattern": "^sha256:[0-9a-f]{64}$",
+      "description": "Optional additive hash of parser-emitted dependency-like material (include/template/repository declarations and delegation signals). Missing on legacy baselines; when present and mismatched at verify time, suppression is skipped and baseline should be recaptured."
     },
     "captured_at": {
       "type": "string",

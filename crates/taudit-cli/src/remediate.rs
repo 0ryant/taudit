@@ -3,7 +3,7 @@ use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::fs;
 use std::io::Write;
-use std::path::{Path, PathBuf};
+use std::path::{Component, Path, PathBuf};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum OutputFormat {
@@ -380,6 +380,11 @@ pub fn cmd_apply(opts: ApplyOpts) -> Result<()> {
 }
 
 pub fn cmd_rollback(opts: RollbackOpts) -> Result<()> {
+    if !is_valid_backup_id(&opts.backup_id) {
+        eprintln!("error: invalid backup_id format (expected YYYYMMDDTHHMMSSZ-<pid>-<suffix>)");
+        std::process::exit(2);
+    }
+
     let backup_root = resolve_backup_root(opts.backup_root);
     let manifest_path = backup_root
         .join("backups")
@@ -410,6 +415,8 @@ pub fn cmd_rollback(opts: RollbackOpts) -> Result<()> {
             .with_context(|| format!("failed to read current file {}", target.display()))?;
 
         let current_hash = sha256_hex(&current);
+        let original_hash = sha256_hex(&original);
+
         if current_hash != record.post_apply_hash && !opts.force {
             eprintln!(
                 "error: hash mismatch for {} (expected post-apply {}, found {}) -- use --force to override",
@@ -418,7 +425,7 @@ pub fn cmd_rollback(opts: RollbackOpts) -> Result<()> {
             std::process::exit(2);
         }
 
-        if sha256_hex(&current) == sha256_hex(&original) {
+        if current_hash == original_hash {
             continue;
         }
 
@@ -693,9 +700,18 @@ fn resolve_backup_root(override_root: Option<PathBuf>) -> PathBuf {
 }
 
 fn allocate_backup_id(backups_dir: &Path) -> Result<String> {
-    for _ in 0..32 {
+    // Verify backup directory is writable before attempting allocation
+    if backups_dir.exists() {
+        let metadata = std::fs::metadata(backups_dir)
+            .with_context(|| format!("failed to check {}", backups_dir.display()))?;
+        if metadata.permissions().readonly() {
+            return Err(anyhow::anyhow!("backup directory is read-only"));
+        }
+    }
+
+    for attempt in 0..100 {
         let id = format!(
-            "{}-{}-{}",
+            "{}-{:x}-{}",
             chrono::Utc::now().format("%Y%m%dT%H%M%SZ"),
             std::process::id(),
             rand_suffix()
@@ -703,8 +719,17 @@ fn allocate_backup_id(backups_dir: &Path) -> Result<String> {
         if !backups_dir.join(&id).exists() {
             return Ok(id);
         }
+        // After 50 failed attempts, something is very wrong
+        if attempt >= 50 {
+            return Err(anyhow::anyhow!(
+                "failed to allocate unique backup id after {} attempts (possible DoS or disk full)",
+                attempt + 1
+            ));
+        }
     }
-    Err(anyhow::anyhow!("failed to allocate unique backup id"))
+    Err(anyhow::anyhow!(
+        "failed to allocate unique backup id after 100 attempts"
+    ))
 }
 
 fn rand_suffix() -> String {
@@ -780,18 +805,18 @@ fn safe_patch_name(path: &Path) -> String {
 }
 
 fn storage_rel_path(path: &Path) -> PathBuf {
-    if path.is_absolute() {
-        let mut out = PathBuf::from("abs");
-        for c in path.components() {
-            let part = c.as_os_str().to_string_lossy();
-            if !part.is_empty() && part != "/" {
-                out.push(part.as_ref());
+    let mut out = PathBuf::from("abs");
+    for c in path.components() {
+        match c {
+            Component::RootDir | Component::Prefix(_) => continue,
+            Component::ParentDir => continue, // strip .. to prevent path traversal
+            Component::CurDir => continue,    // strip .
+            Component::Normal(part) => {
+                out.push(part);
             }
         }
-        out
-    } else {
-        path.to_path_buf()
     }
+    out
 }
 
 fn relative_from(base: &Path, path: &Path) -> String {
@@ -803,6 +828,26 @@ fn relative_from(base: &Path, path: &Path) -> String {
 
 fn now_rfc3339() -> String {
     chrono::Utc::now().to_rfc3339()
+}
+
+/// Validate backup_id format to prevent path traversal attacks.
+/// Expected format: YYYYMMDDTHHMMSSZ-<pid>-<suffix>
+fn is_valid_backup_id(id: &str) -> bool {
+    // Backup IDs should only contain alphanumeric chars, dash, and underscore
+    // Reject any path traversal sequences
+    if id.contains("..") || id.contains('/') || id.contains('\\') {
+        return false;
+    }
+    if id.starts_with('-') || id.ends_with('-') {
+        return false;
+    }
+    if id.is_empty() || id.len() > 128 {
+        // reasonable upper bound
+        return false;
+    }
+    // Allow only safe characters
+    id.chars()
+        .all(|c| c.is_alphanumeric() || c == '-' || c == '_')
 }
 
 #[cfg(test)]

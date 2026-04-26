@@ -993,6 +993,38 @@ pub const RULE_DEFS: &[RuleDef] = &[
         security_severity: "7.5",
         tags: &["security", "propagation", "gitlab"],
     },
+    RuleDef {
+        id: "setvariable_issecret_false",
+        name: "SetvariableIssecretFalse",
+        short_description:
+            "ADO inline script sets a sensitive pipeline variable without issecret=true.",
+        full_description:
+            "An ADO inline script emits `##vso[task.setvariable variable=<NAME>]` for a \
+             sensitive-named variable without setting `issecret=true`. Without the flag, the \
+             variable value is printed in plaintext to the pipeline log and is not masked in \
+             downstream step output.",
+        default_level: "warning",
+        security_severity: "5.0",
+        tags: &["security", "credentials", "azure-devops"],
+    },
+    RuleDef {
+        id: "homoglyph_in_action_ref",
+        name: "HomoglyphInActionRef",
+        short_description:
+            "Action reference contains non-ASCII characters (possible Unicode homoglyph / confusable).",
+        full_description:
+            "A GitHub Actions `uses:` field contains one or more non-ASCII characters. \
+             Legitimate action references are purely ASCII (`owner/repo@ref`). Non-ASCII \
+             characters in this position indicate a possible Unicode confusable / homoglyph \
+             attack: an attacker registers an action whose name visually impersonates a \
+             trusted one by substituting look-alike characters (e.g. Cyrillic `\u{0430}` for \
+             Latin `a`, U+2215 DIVISION SLASH for `/`). When a developer copies the \
+             confusable reference it appears identical to the real action. Replace the \
+             reference with the genuine ASCII action name.",
+        default_level: "error",
+        security_severity: "9.0",
+        tags: &["security", "supply-chain", "github-actions"],
+    },
 ];
 
 // ── SARIF 2.1.0 schema structs ──────────────────────────
@@ -1650,6 +1682,8 @@ mod tests {
             FindingCategory::PatEmbeddedInGitRemoteUrl,
             FindingCategory::CiTokenTriggersDownstreamWithVariablePassthrough,
             FindingCategory::DotenvArtifactFlowsToPrivilegedDeployment,
+            FindingCategory::SetvariableIssecretFalse,
+            FindingCategory::HomoglyphInActionRef,
         ];
 
         for cat in categories {

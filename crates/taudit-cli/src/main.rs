@@ -19,6 +19,8 @@ use taudit_report_sarif::SarifReportSink;
 use taudit_report_terminal::TerminalReport;
 use taudit_sink_cloudevents::CloudEventsJsonlSink;
 
+mod remediate;
+
 #[derive(Parser)]
 #[command(
     name = "taudit",
@@ -426,6 +428,11 @@ enum Cli {
         #[arg(long, default_value_t = false)]
         gate_on_all: bool,
 
+        /// Strict verify mode. When scanning a directory, read/parse errors
+        /// in discovered files are fatal (exit 2) instead of warn-and-skip.
+        #[arg(long, default_value_t = false)]
+        strict: bool,
+
         /// Repository root under which `.taudit/baselines/` lives. Defaults
         /// to the current working directory.
         #[arg(long)]
@@ -444,6 +451,94 @@ enum Cli {
     Baseline {
         #[command(subcommand)]
         action: BaselineAction,
+    },
+
+    /// Suggest, diff, apply, and roll back conservative pipeline remediations.
+    ///
+    /// v1 is intentionally conservative: only low-risk, high-confidence
+    /// transforms run by default. `apply` writes backups to
+    /// `.taudit/backups/<backup-id>/` and auto-restores on validation failure.
+    Remediate {
+        #[command(subcommand)]
+        action: RemediateAction,
+    },
+}
+
+#[derive(clap::Subcommand)]
+enum RemediateAction {
+    /// Show candidate remediations without modifying files.
+    Suggest {
+        /// Pipeline file(s) or directories to analyze.
+        #[arg(required = true)]
+        paths: Vec<PathBuf>,
+
+        /// Output format.
+        #[arg(long, default_value = "text")]
+        format: RemediateFormat,
+    },
+    /// Show patch previews for candidate remediations without modifying files.
+    Diff {
+        /// Pipeline file(s) or directories to analyze.
+        #[arg(required = true)]
+        paths: Vec<PathBuf>,
+
+        /// Output format.
+        #[arg(long, default_value = "text")]
+        format: RemediateFormat,
+    },
+    /// Apply low-risk remediations with backup + validation + auto-restore.
+    Apply {
+        /// Pipeline file(s) or directories to modify.
+        #[arg(required = true)]
+        paths: Vec<PathBuf>,
+
+        /// Output format.
+        #[arg(long, default_value = "text")]
+        format: RemediateFormat,
+
+        /// Policy path passed to `taudit verify` after rewrite.
+        #[arg(long, required = true)]
+        policy: PathBuf,
+
+        /// Allow medium/high-risk transforms (off by default).
+        #[arg(long, default_value_t = false)]
+        allow_risky: bool,
+
+        /// Minimum confidence required for any transform to run.
+        #[arg(long, default_value_t = 0.90)]
+        min_confidence: f32,
+
+        /// Override dirty-worktree and hash-mismatch guardrails.
+        #[arg(long, default_value_t = false)]
+        force: bool,
+
+        /// Override backup root (default: `.taudit`).
+        #[arg(long)]
+        backup_root: Option<PathBuf>,
+    },
+    /// Restore files from a prior remediation backup.
+    Rollback {
+        /// Backup id from `taudit remediate apply` output.
+        #[arg(long)]
+        backup_id: String,
+
+        /// Override backup root (default: `.taudit`).
+        #[arg(long)]
+        backup_root: Option<PathBuf>,
+
+        /// Override hash mismatch protection during restore.
+        #[arg(long, default_value_t = false)]
+        force: bool,
+    },
+    /// List known remediation backups.
+    ListBackups {
+        /// Override backup root (default: `.taudit`).
+        #[arg(long)]
+        backup_root: Option<PathBuf>,
+
+        /// Output format.
+        #[arg(long, default_value = "text")]
+        format: RemediateFormat,
     },
 }
 
@@ -692,6 +787,21 @@ enum MapFormat {
 enum GraphFormat {
     Json,
     Dot,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, clap::ValueEnum)]
+enum RemediateFormat {
+    Text,
+    Json,
+}
+
+impl RemediateFormat {
+    fn to_module(self) -> remediate::OutputFormat {
+        match self {
+            RemediateFormat::Text => remediate::OutputFormat::Text,
+            RemediateFormat::Json => remediate::OutputFormat::Json,
+        }
+    }
 }
 
 #[derive(Clone, clap::ValueEnum, Default, PartialEq, Eq, Debug)]
@@ -1114,6 +1224,7 @@ fn run() -> Result<()> {
             suppressions,
             suppression_mode,
             gate_on_all,
+            strict,
             baseline_root,
         } => {
             if no_color || std::env::var_os("NO_COLOR").is_some() {
@@ -1133,6 +1244,7 @@ fn run() -> Result<()> {
                 suppressions,
                 suppression_mode,
                 gate_on_all,
+                strict,
                 baseline_root,
             })
         }
@@ -1174,6 +1286,51 @@ fn run() -> Result<()> {
             }
         },
         Cli::Baseline { action } => cmd_baseline(action),
+        Cli::Remediate { action } => match action {
+            RemediateAction::Suggest { paths, format } => {
+                remediate::cmd_suggest(remediate::SuggestOpts {
+                    paths,
+                    format: format.to_module(),
+                })
+            }
+            RemediateAction::Diff { paths, format } => remediate::cmd_diff(remediate::DiffOpts {
+                paths,
+                format: format.to_module(),
+            }),
+            RemediateAction::Apply {
+                paths,
+                format,
+                policy,
+                allow_risky,
+                min_confidence,
+                force,
+                backup_root,
+            } => remediate::cmd_apply(remediate::ApplyOpts {
+                paths,
+                format: format.to_module(),
+                policy,
+                allow_risky,
+                min_confidence,
+                force,
+                backup_root,
+            }),
+            RemediateAction::Rollback {
+                backup_id,
+                backup_root,
+                force,
+            } => remediate::cmd_rollback(remediate::RollbackOpts {
+                backup_id,
+                backup_root,
+                force,
+            }),
+            RemediateAction::ListBackups {
+                backup_root,
+                format,
+            } => remediate::cmd_list_backups(remediate::ListBackupsOpts {
+                backup_root,
+                format: format.to_module(),
+            }),
+        },
     }
 }
 
@@ -1858,6 +2015,8 @@ struct VerifyOpts {
     /// `.taudit/baselines/<hash>.json` waivers. Critical findings without a
     /// valid waiver always count toward exit 1 regardless of this flag.
     gate_on_all: bool,
+    /// Fail fast on discovered-file read/parse errors in directory scans.
+    strict: bool,
     /// Optional override of `.taudit/` location. Defaults to CWD.
     baseline_root: Option<PathBuf>,
 }
@@ -1957,7 +2116,8 @@ fn run_verify_io<W: std::io::Write>(opts: &VerifyOpts, writer: &mut W) -> i32 {
 
     // Step 3: parse each pipeline file and evaluate the loaded invariants.
     // For explicitly-named files a parse error is fatal (exit 2). For files
-    // discovered via directory walk we warn-and-skip (matches `scan`).
+    // discovered via directory walk we warn-and-skip (matches `scan`) unless
+    // strict mode is enabled.
     for tagged_path in &resolved {
         let path = tagged_path.path();
         let content = match std::fs::read_to_string(path) {
@@ -1968,6 +2128,10 @@ fn run_verify_io<W: std::io::Write>(opts: &VerifyOpts, writer: &mut W) -> i32 {
                     return 2;
                 }
                 ResolvedPath::Discovered(_) => {
+                    if opts.strict {
+                        eprintln!("error: failed to read {}: {err}", path.display());
+                        return 2;
+                    }
                     eprintln!("warning: skipping {}: {err}", path.display());
                     continue;
                 }
@@ -1997,6 +2161,10 @@ fn run_verify_io<W: std::io::Write>(opts: &VerifyOpts, writer: &mut W) -> i32 {
                     return 2;
                 }
                 ResolvedPath::Discovered(_) => {
+                    if opts.strict {
+                        eprintln!("error: {}: {err:#}", path.display());
+                        return 2;
+                    }
                     eprintln!("warning: skipping {}: {err:#}", path.display());
                     continue;
                 }
@@ -2670,6 +2838,18 @@ fn apply_pipeline_baseline(
             })
         }
     };
+    if !baseline.identity_material_matches(graph) {
+        eprintln!(
+            "warning: baseline {} identity material mismatch; skipping suppression (re-run `taudit baseline init`)",
+            target.display()
+        );
+        return Ok(PipelineBaselineOutcome {
+            kept: findings,
+            preexisting_suppressed: 0,
+            fixed: 0,
+            baseline_present: false,
+        });
+    }
     let now = chrono::Utc::now();
     let diff = taudit_core::baselines::diff(&findings, &baseline, graph);
     if gate_on_all {
@@ -4187,6 +4367,15 @@ fn cmd_baseline_diff(
         let target = taudit_core::baselines::baseline_path_for(&root, &hash);
         match taudit_core::baselines::Baseline::load(&target)? {
             Some(baseline) => {
+                if !baseline.identity_material_matches(&graph) {
+                    println!(
+                        "{}: baseline identity material mismatch at {} (re-run `taudit baseline init {}`)",
+                        path.display(),
+                        target.display(),
+                        path.display()
+                    );
+                    continue;
+                }
                 let diff = taudit_core::baselines::diff(&findings, &baseline, &graph);
                 let unwaived = diff.preexisting.len() - diff.waived_count;
                 let blockers = diff.critical_without_valid_waiver(&baseline, &graph, now);
@@ -4648,6 +4837,7 @@ mod tests {
             suppressions: None,
             suppression_mode: SuppressionModeArg::Downgrade,
             gate_on_all: false,
+            strict: false,
             baseline_root: None,
         };
 
@@ -4681,6 +4871,7 @@ mod tests {
             suppressions: None,
             suppression_mode: SuppressionModeArg::Downgrade,
             gate_on_all: false,
+            strict: false,
             baseline_root: None,
         };
 
@@ -4712,6 +4903,7 @@ mod tests {
             suppressions: None,
             suppression_mode: SuppressionModeArg::Downgrade,
             gate_on_all: false,
+            strict: false,
             baseline_root: None,
         };
 
@@ -4737,6 +4929,7 @@ mod tests {
             suppressions: None,
             suppression_mode: SuppressionModeArg::Downgrade,
             gate_on_all: false,
+            strict: false,
             baseline_root: None,
         };
 
@@ -4771,6 +4964,7 @@ mod tests {
             suppressions: None,
             suppression_mode: SuppressionModeArg::Downgrade,
             gate_on_all: false,
+            strict: false,
             baseline_root: None,
         };
 
@@ -4822,6 +5016,7 @@ mod tests {
             suppressions: None,
             suppression_mode: SuppressionModeArg::Downgrade,
             gate_on_all: false,
+            strict: false,
             baseline_root: Some(dir.clone()),
         };
 
@@ -4886,6 +5081,7 @@ mod tests {
             suppressions: None,
             suppression_mode: SuppressionModeArg::Downgrade,
             gate_on_all: false,
+            strict: false,
             baseline_root: Some(dir),
         };
 
@@ -4899,6 +5095,65 @@ mod tests {
             0,
             "preexisting high finding must be suppressed by baseline (output: {})",
             String::from_utf8_lossy(&buf)
+        );
+    }
+
+    #[test]
+    fn verify_with_identity_material_mismatch_skips_suppression() {
+        let dir = baseline_test_dir("identity-material-mismatch");
+        let pipeline = dir.join("leaky.yml");
+        std::fs::write(&pipeline, leaky_pipeline_yaml()).unwrap();
+        let policy = dir.join("policy.yml");
+        std::fs::write(&policy, untrusted_sink_invariant_yaml()).unwrap();
+
+        let policy_dir = dir.join("invariants");
+        std::fs::create_dir_all(&policy_dir).unwrap();
+        std::fs::write(policy_dir.join("any.yml"), untrusted_sink_invariant_yaml()).unwrap();
+
+        cmd_baseline_init(
+            vec![pipeline.clone()],
+            Some(dir.clone()),
+            Some("test@local".to_string()),
+            Platform::GithubActions,
+            DEFAULT_MAX_HOPS,
+            Some(policy_dir),
+        )
+        .expect("init");
+
+        // Corrupt only the additive identity material field to simulate
+        // include/template/dependency drift while preserving legacy content
+        // hash lookup and backward-compatible file loading.
+        let content = std::fs::read_to_string(&pipeline).unwrap();
+        let hash = taudit_core::baselines::compute_pipeline_hash(&content);
+        let target = taudit_core::baselines::baseline_path_for(&dir, &hash);
+        let mut baseline = taudit_core::baselines::Baseline::load(&target)
+            .unwrap()
+            .expect("baseline present");
+        baseline.pipeline_identity_material_hash =
+            Some("sha256:0000000000000000000000000000000000000000000000000000000000000000".into());
+        baseline.save(&target).unwrap();
+
+        let opts = VerifyOpts {
+            paths: vec![pipeline],
+            policy,
+            format: VerifyFormat::Text,
+            platform: Platform::GithubActions,
+            max_hops: DEFAULT_MAX_HOPS,
+            include_builtin: false,
+            severity_threshold: None,
+            output: None,
+            suppressions: None,
+            suppression_mode: SuppressionModeArg::Downgrade,
+            gate_on_all: false,
+            strict: false,
+            baseline_root: Some(dir),
+        };
+
+        let mut buf = Vec::new();
+        let code = run_verify_io(&opts, &mut buf);
+        assert_eq!(
+            code, 1,
+            "identity-material mismatch must skip suppression and keep violation blocking"
         );
     }
 
@@ -4934,6 +5189,7 @@ mod tests {
             suppressions: None,
             suppression_mode: SuppressionModeArg::Downgrade,
             gate_on_all: true, // bypass baseline suppression
+            strict: false,
             baseline_root: Some(dir),
         };
 
@@ -4978,6 +5234,82 @@ mod tests {
             2,
             "expected one baseline per pipeline, got {}",
             entries.len()
+        );
+    }
+
+    #[test]
+    fn verify_discovered_parse_error_warns_and_skips_by_default() {
+        let dir = baseline_test_dir("verify-discovered-default");
+        let pipeline_dir = dir.join("pipelines");
+        std::fs::create_dir_all(&pipeline_dir).unwrap();
+
+        let good = pipeline_dir.join("good.yml");
+        std::fs::write(&good, clean_pipeline_yaml()).unwrap();
+        let bad = pipeline_dir.join("bad.yml");
+        std::fs::write(&bad, "name: [\n").unwrap();
+
+        let policy = dir.join("policy.yml");
+        std::fs::write(&policy, untrusted_sink_invariant_yaml()).unwrap();
+
+        let opts = VerifyOpts {
+            paths: vec![pipeline_dir],
+            policy,
+            format: VerifyFormat::Text,
+            platform: Platform::Auto,
+            max_hops: DEFAULT_MAX_HOPS,
+            include_builtin: false,
+            severity_threshold: None,
+            output: None,
+            suppressions: None,
+            suppression_mode: SuppressionModeArg::Downgrade,
+            gate_on_all: false,
+            strict: false,
+            baseline_root: None,
+        };
+
+        let mut buf = Vec::new();
+        let code = run_verify_io(&opts, &mut buf);
+        assert_eq!(
+            code, 0,
+            "default verify should warn-and-skip discovered parse errors"
+        );
+    }
+
+    #[test]
+    fn verify_discovered_parse_error_is_fatal_in_strict_mode() {
+        let dir = baseline_test_dir("verify-discovered-strict");
+        let pipeline_dir = dir.join("pipelines");
+        std::fs::create_dir_all(&pipeline_dir).unwrap();
+
+        let good = pipeline_dir.join("good.yml");
+        std::fs::write(&good, clean_pipeline_yaml()).unwrap();
+        let bad = pipeline_dir.join("bad.yml");
+        std::fs::write(&bad, "name: [\n").unwrap();
+
+        let policy = dir.join("policy.yml");
+        std::fs::write(&policy, untrusted_sink_invariant_yaml()).unwrap();
+
+        let opts = VerifyOpts {
+            paths: vec![pipeline_dir],
+            policy,
+            format: VerifyFormat::Text,
+            platform: Platform::Auto,
+            max_hops: DEFAULT_MAX_HOPS,
+            include_builtin: false,
+            severity_threshold: None,
+            output: None,
+            suppressions: None,
+            suppression_mode: SuppressionModeArg::Downgrade,
+            gate_on_all: false,
+            strict: true,
+            baseline_root: None,
+        };
+
+        let mut buf = Vec::new();
+        let code = run_verify_io(&opts, &mut buf);
+        assert_eq!(
+            code, 2,
+            "strict verify should exit 2 on discovered parse errors"
         );
     }
 }

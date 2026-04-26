@@ -236,6 +236,13 @@ pub const META_DOTENV_FILE: &str = "dotenv_file";
 /// GitLab `needs:` or `dependencies:`. Comma-separated job names.
 /// Used to build dotenv-flow dependency chains across stages.
 pub const META_NEEDS: &str = "needs";
+/// Marks an Image node (self-hosted agent pool) as having workspace isolation
+/// configured (`workspace: { clean: all }` or `workspace: { clean: true }` in
+/// ADO). When present, the agent workspace is wiped between runs, mitigating
+/// workspace poisoning attacks where a PR build leaves malicious files for the
+/// next privileged pipeline run. Absence of this key on a self-hosted Image
+/// node is the signal for `shared_self_hosted_pool_no_isolation`.
+pub const META_WORKSPACE_CLEAN: &str = "workspace_clean";
 
 // ── Shared helpers ─────────────────────────────────────
 

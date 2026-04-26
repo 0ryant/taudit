@@ -37,8 +37,18 @@ fix:
 
 install-hooks:
     cp scripts/pre-commit .git/hooks/pre-commit
-    chmod +x .git/hooks/pre-commit
-    @echo "pre-commit hook installed"
+    cp scripts/pre-push .git/hooks/pre-push
+    chmod +x .git/hooks/pre-commit .git/hooks/pre-push
+    @echo "git hooks installed: pre-commit, pre-push"
+
+quality-gate:
+    bash scripts/quality-gate.sh quality-gate
+
+pre-commit-gate:
+    bash scripts/quality-gate.sh pre-commit
+
+pre-push-gate:
+    bash scripts/quality-gate.sh pre-push
 
 # Run taudit against its own sister projects (self-test)
 self-test:

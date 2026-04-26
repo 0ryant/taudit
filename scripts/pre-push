@@ -1,0 +1,6 @@
+#!/usr/bin/env bash
+# Pre-push hook: run the full governance/security quality gate before push.
+# Install: just install-hooks
+set -euo pipefail
+
+bash scripts/quality-gate.sh pre-push

@@ -53,9 +53,10 @@ schema lives at [`schemas/baseline.v1.json`](../schemas/baseline.v1.json).
 
 ```json
 {
-  "schema_version": "1.0.0",
+  "schema_version": "1.1.0",
   "pipeline_path": ".github/workflows/release.yml",
   "pipeline_content_hash": "sha256:abc123...",
+  "pipeline_identity_material_hash": "sha256:def456...",
   "captured_at": "2026-04-26T12:00:00Z",
   "captured_by": "ryan@example.com",
   "captured_with": {
@@ -81,6 +82,18 @@ schema lives at [`schemas/baseline.v1.json`](../schemas/baseline.v1.json).
   ]
 }
 ```
+
+`pipeline_identity_material_hash` is additive in `1.1.0+`: newly captured
+baselines persist a hash of dependency-like parser material (for example,
+GitLab `include:` descriptors, ADO `resources.repositories[]`, and template
+delegation edges). During `scan`/`verify`/`baseline diff`, taudit compares the
+stored value with the current parse result:
+
+- Match: baseline suppression/diff behaves normally.
+- Mismatch: suppression is skipped and taudit asks for a fresh
+  `taudit baseline init`.
+- Missing field (legacy `1.0.x` baseline): treated as compatible for backward
+  compatibility.
 
 Entries are sorted ASC by `fingerprint` for stable git diffs. The
 `fingerprint` value is **byte-equal** to the SARIF

@@ -199,7 +199,7 @@ impl PipelineParser for GhaParser {
             // Reusable workflow: job.uses= means this job delegates to another workflow.
             // We cannot resolve it inline — mark the graph partial and skip steps.
             if let Some(ref uses) = job.uses {
-                let trust_zone = if is_sha_pinned(uses) {
+                let trust_zone = if is_pin_semantically_valid(uses) {
                     TrustZone::ThirdParty
                 } else {
                     TrustZone::Untrusted
@@ -978,19 +978,21 @@ fn runner_label(runs_on: Option<&serde_yaml::Value>) -> Option<&str> {
 
 /// Classify a `uses:` reference into trust zone and create image node.
 fn classify_action(uses: &str, graph: &mut AuthorityGraph) -> (TrustZone, NodeId) {
-    let pinned = is_sha_pinned(uses);
+    let semantically_pinned = is_pin_semantically_valid(uses);
     let is_local = uses.starts_with("./");
 
     let zone = if is_local {
         TrustZone::FirstParty
-    } else if pinned {
+    } else if semantically_pinned {
         TrustZone::ThirdParty
     } else {
         TrustZone::Untrusted
     };
 
     let mut meta = HashMap::new();
-    if pinned {
+    // Record digest metadata if structurally pinned (even if semantically
+    // invalid — the SHA is still useful for diagnostics/display).
+    if is_sha_pinned(uses) {
         if let Some(sha) = uses.split('@').next_back() {
             meta.insert(META_DIGEST.into(), sha.into());
         }
@@ -2839,6 +2841,45 @@ jobs:
             !zero_step_gap,
             "no jobs: in source means no 0-step gap reason; got: {:?}",
             graph.completeness_gaps
+        );
+    }
+
+    // -- B3 regression: all-zero SHA must not be treated as pinned --
+
+    #[test]
+    fn all_zero_sha_action_is_untrusted() {
+        let yaml = r#"
+jobs:
+  ci:
+    steps:
+      - uses: actions/setup-python@0000000000000000000000000000000000000000
+"#;
+        let graph = parse(yaml);
+        let images: Vec<_> = graph.nodes_of_kind(NodeKind::Image).collect();
+        assert_eq!(images.len(), 1);
+        assert_eq!(
+            images[0].trust_zone,
+            TrustZone::Untrusted,
+            "all-zero SHA must be classified as Untrusted, not ThirdParty"
+        );
+    }
+
+    #[test]
+    fn real_sha_pinned_action_is_third_party() {
+        // Non-zero 40-char hex SHA -- the normal legitimate case.
+        let yaml = r#"
+jobs:
+  ci:
+    steps:
+      - uses: actions/checkout@b4ffde65f46336ab88eb53be808477a3936bae11
+"#;
+        let graph = parse(yaml);
+        let images: Vec<_> = graph.nodes_of_kind(NodeKind::Image).collect();
+        assert_eq!(images.len(), 1);
+        assert_eq!(
+            images[0].trust_zone,
+            TrustZone::ThirdParty,
+            "legitimate SHA-pinned action must be classified as ThirdParty"
         );
     }
 }

@@ -90,7 +90,7 @@ fn propagation_leaky_detects_boundary_crossings() {
 }
 
 #[test]
-fn partial_graph_caps_findings_below_critical() {
+fn partial_graph_preserves_critical_findings() {
     let yaml = r#"
 on: pull_request_target
 permissions: write-all
@@ -107,7 +107,7 @@ jobs:
 
     let findings = rules::run_all_rules(&graph, DEFAULT_MAX_HOPS);
     assert!(!findings.is_empty());
-    assert!(!findings.iter().any(|f| f.severity == Severity::Critical));
+    assert!(findings.iter().any(|f| f.severity == Severity::Critical));
     assert!(findings.iter().any(|f| f.severity == Severity::High));
     assert!(findings
         .iter()

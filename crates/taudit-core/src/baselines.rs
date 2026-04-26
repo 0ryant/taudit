@@ -26,10 +26,14 @@
 //! See `docs/baselines.md` for the full workflow and security guarantees.
 
 use crate::finding::{compute_fingerprint, Finding, Severity};
-use crate::graph::AuthorityGraph;
+use crate::graph::{
+    AuthorityGraph, EdgeKind, NodeKind, META_GITLAB_EXTENDS, META_GITLAB_INCLUDES, META_NEEDS,
+    META_REPOSITORIES,
+};
 use chrono::{DateTime, Duration, Utc};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
+use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
 /// Maximum lifetime allowed for a critical-severity waiver. Council's
@@ -45,7 +49,7 @@ pub const MIN_REASON_LENGTH: usize = 10;
 
 /// Schema version emitted by `init` and accepted by `load`. Additive 1.x.y
 /// changes are non-breaking; 2.0.0 means breaking changes.
-pub const BASELINE_SCHEMA_VERSION: &str = "1.0.0";
+pub const BASELINE_SCHEMA_VERSION: &str = "1.1.0";
 
 /// Errors returned by baseline I/O and validation.
 #[derive(Debug, thiserror::Error)]
@@ -167,6 +171,14 @@ pub struct Baseline {
     pub pipeline_path: String,
     /// `sha256:<hex>` of the pipeline file's bytes at `init` time.
     pub pipeline_content_hash: String,
+    /// Optional additive hardening signal captured at `init` time.
+    ///
+    /// Hashes parser-emitted dependency-like material (include/template/
+    /// repository declarations and delegation edges) so suppression can be
+    /// disabled if that material drifts even when the baseline file still
+    /// exists. Absent on legacy baseline files written before v1.1.0.
+    #[serde(skip_serializing_if = "Option::is_none", default)]
+    pub pipeline_identity_material_hash: Option<String>,
     pub captured_at: DateTime<Utc>,
     pub captured_by: String,
     pub captured_with: CapturedWith,
@@ -255,6 +267,7 @@ impl Baseline {
             schema_version: BASELINE_SCHEMA_VERSION.to_string(),
             pipeline_path: pipeline_path.to_string(),
             pipeline_content_hash: compute_pipeline_hash(content),
+            pipeline_identity_material_hash: Some(compute_pipeline_identity_material_hash(graph)),
             captured_at: now,
             captured_by: captured_by.to_string(),
             captured_with: CapturedWith {
@@ -323,6 +336,16 @@ impl Baseline {
             .iter()
             .find(|e| e.fingerprint == fingerprint)
             .expect("just inserted"))
+    }
+
+    /// Returns true when the captured identity material matches the current
+    /// parsed graph. Legacy baselines that predate this field are considered
+    /// compatible to preserve backward compatibility.
+    pub fn identity_material_matches(&self, graph: &AuthorityGraph) -> bool {
+        match self.pipeline_identity_material_hash.as_deref() {
+            Some(expected) => expected == compute_pipeline_identity_material_hash(graph),
+            None => true,
+        }
     }
 }
 
@@ -431,8 +454,69 @@ pub fn diff(
 /// strip the algorithm tag uniformly.
 pub fn compute_pipeline_hash(content: &str) -> String {
     let digest = Sha256::digest(content.as_bytes());
+    format_digest(digest)
+}
+
+/// SHA-256 over dependency-like parser material (include/template/repository
+/// declarations and delegation edges), formatted as `sha256:<64-hex>`.
+///
+/// This is intentionally additive to `pipeline_content_hash`: content hash
+/// still keys baseline files for backward compatibility, while this material
+/// hash is used to detect include/template drift and disable suppression when
+/// the parser-visible dependency shape changes.
+pub fn compute_pipeline_identity_material_hash(graph: &AuthorityGraph) -> String {
+    let mut metadata: BTreeMap<String, String> = BTreeMap::new();
+    for key in [META_REPOSITORIES, META_GITLAB_INCLUDES] {
+        if let Some(value) = graph.metadata.get(key) {
+            metadata.insert(key.to_string(), value.clone());
+        }
+    }
+
+    let mut delegations: Vec<String> = graph
+        .edges
+        .iter()
+        .filter(|e| e.kind == EdgeKind::DelegatesTo)
+        .filter_map(|e| {
+            let from = graph.node(e.from)?;
+            let to = graph.node(e.to)?;
+            Some(format!(
+                "{}:{}->{}:{}:{:?}",
+                from.id, from.name, to.id, to.name, to.trust_zone
+            ))
+        })
+        .collect();
+    delegations.sort();
+
+    let mut step_dependency_metadata: Vec<String> = graph
+        .nodes
+        .iter()
+        .filter(|n| n.kind == NodeKind::Step)
+        .flat_map(|n| {
+            [META_NEEDS, META_GITLAB_EXTENDS]
+                .iter()
+                .filter_map(move |k| {
+                    n.metadata
+                        .get(*k)
+                        .map(|v| format!("{}:{}={}", n.name, k, v))
+                })
+        })
+        .collect();
+    step_dependency_metadata.sort();
+
+    let canonical = serde_json::json!({
+        "metadata": metadata,
+        "delegates_to": delegations,
+        "step_dependency_metadata": step_dependency_metadata,
+    });
+
+    let bytes = serde_json::to_vec(&canonical).expect("identity material must serialize");
+    let digest = Sha256::digest(bytes);
+    format_digest(digest)
+}
+
+fn format_digest(digest: impl AsRef<[u8]>) -> String {
     let mut hex = String::with_capacity(64);
-    for byte in digest.iter() {
+    for byte in digest.as_ref() {
         use std::fmt::Write;
         let _ = write!(&mut hex, "{byte:02x}");
     }
@@ -568,6 +652,56 @@ mod tests {
     }
 
     #[test]
+    fn identity_material_hash_changes_when_dependency_metadata_changes() {
+        let (mut g1, _) = make_graph("ci.yml");
+        g1.metadata.insert(
+            META_REPOSITORIES.to_string(),
+            r#"[{"alias":"templates","used":true}]"#.to_string(),
+        );
+
+        let (mut g2, _) = make_graph("ci.yml");
+        g2.metadata.insert(
+            META_REPOSITORIES.to_string(),
+            r#"[{"alias":"templates","used":false}]"#.to_string(),
+        );
+
+        let h1 = compute_pipeline_identity_material_hash(&g1);
+        let h2 = compute_pipeline_identity_material_hash(&g2);
+        assert_ne!(
+            h1, h2,
+            "repository/include metadata drift must change identity material"
+        );
+    }
+
+    #[test]
+    fn identity_material_hash_changes_when_template_delegation_changes() {
+        let mut g1 = AuthorityGraph::new(source("ci.yml"));
+        let s1 = g1.add_node(NodeKind::Step, "build", TrustZone::FirstParty);
+        let t1 = g1.add_node(
+            NodeKind::Image,
+            "templates/release.yml",
+            TrustZone::FirstParty,
+        );
+        g1.add_edge(s1, t1, EdgeKind::DelegatesTo);
+
+        let mut g2 = AuthorityGraph::new(source("ci.yml"));
+        let s2 = g2.add_node(NodeKind::Step, "build", TrustZone::FirstParty);
+        let t2 = g2.add_node(
+            NodeKind::Image,
+            "templates/release-v2.yml",
+            TrustZone::FirstParty,
+        );
+        g2.add_edge(s2, t2, EdgeKind::DelegatesTo);
+
+        let h1 = compute_pipeline_identity_material_hash(&g1);
+        let h2 = compute_pipeline_identity_material_hash(&g2);
+        assert_ne!(
+            h1, h2,
+            "template delegation target drift must change identity material"
+        );
+    }
+
+    #[test]
     fn init_captures_current_findings() {
         let (graph, s) = make_graph("ci.yml");
         let f1 = make_finding(
@@ -595,6 +729,10 @@ mod tests {
         assert_eq!(baseline.baseline_findings.len(), 2);
         assert_eq!(baseline.captured_by, "ryan@example.com");
         assert_eq!(baseline.captured_with.taudit_version, "0.10.0");
+        assert!(
+            baseline.pipeline_identity_material_hash.is_some(),
+            "new captures should persist identity material hash"
+        );
         // Sorted by fingerprint
         let fps: Vec<&str> = baseline
             .baseline_findings
@@ -643,6 +781,16 @@ mod tests {
         let dir = tempdir();
         let path = dir.join("does-not-exist.json");
         assert!(Baseline::load(&path).expect("ok").is_none());
+    }
+
+    #[test]
+    fn legacy_baseline_without_identity_material_remains_compatible() {
+        let baseline = empty_baseline();
+        let (graph, _) = make_graph("ci.yml");
+        assert!(
+            baseline.identity_material_matches(&graph),
+            "legacy baseline must remain compatible"
+        );
     }
 
     #[test]
@@ -899,6 +1047,7 @@ mod tests {
             schema_version: BASELINE_SCHEMA_VERSION.to_string(),
             pipeline_path: "ci.yml".to_string(),
             pipeline_content_hash: compute_pipeline_hash("x"),
+            pipeline_identity_material_hash: None,
             captured_at: now(),
             captured_by: "ryan".to_string(),
             captured_with: CapturedWith {

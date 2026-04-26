@@ -9,20 +9,25 @@
 The canonical local gate is:
 
 ```bash
-just check
+just quality-gate
 ```
 
-That runs:
+That runs Rust quality checks plus governance/security tooling:
 
 - `cargo fmt --all -- --check`
 - `cargo clippy --workspace --all-targets -- -D warnings`
 - `cargo test --workspace`
 - `cargo deny check licenses bans sources`
+- `cargo audit`
+- `gitleaks` (secrets scanning)
+- `trivy` (filesystem vuln/misconfig/secret scan)
+- `checkov` (GitHub Actions + secrets policy scan)
+- `taudit` workflow scan + invariant verification
 
-Optional extra check:
+Quick Rust-only gate:
 
 ```bash
-just audit
+just check
 ```
 
 Contract-focused check:
@@ -37,6 +42,14 @@ just contracts
 just versions
 just fix
 just self-test
+just pre-commit-gate
+just pre-push-gate
+```
+
+Install local hooks:
+
+```bash
+just install-hooks
 ```
 
 Optional runtime-integration smoke:

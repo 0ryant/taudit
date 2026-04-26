@@ -56,9 +56,19 @@ impl std::error::Error for DenseGraphError {}
 /// Returns true when the graph exceeds the size+density thresholds the
 /// propagation engine considers a DoS risk. Used by both the engine and
 /// the CLI surface.
+///
+/// Note: On 32-bit systems, graphs approaching usize::MAX nodes/edges are
+/// conservatively treated as dense to avoid overflow edge cases.
 pub fn is_dense_graph(graph: &AuthorityGraph) -> bool {
     let v = graph.nodes.len();
     let e = graph.edges.len();
+
+    // Sanity check: if v or e are close to usize::MAX on 32-bit systems,
+    // conservatively treat as dense to avoid any overflow edge cases
+    if v > (usize::MAX / 10) || e > (usize::MAX / 10) {
+        return true;
+    }
+
     v > DENSE_GRAPH_NODE_THRESHOLD && e > v.saturating_mul(DENSE_GRAPH_EDGE_RATIO)
 }
 

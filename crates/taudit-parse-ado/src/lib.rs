@@ -142,7 +142,7 @@ impl PipelineParser for AdoParser {
         );
 
         // Pipeline-level pool: adds Image node, tagged self-hosted when applicable.
-        process_pool(&pipeline.pool, &mut graph);
+        process_pool(&pipeline.pool, &pipeline.workspace, &mut graph);
 
         // Pipeline-level variable groups and named secrets.
         // plain_vars tracks non-secret named variables so $(VAR) refs in scripts
@@ -185,7 +185,9 @@ impl PipelineParser for AdoParser {
                         &mut plain_vars,
                     );
 
-                    process_pool(&job.pool, &mut graph);
+                    let effective_workspace =
+                        job.workspace.as_ref().or(pipeline.workspace.as_ref());
+                    process_pool(&job.pool, &effective_workspace.cloned(), &mut graph);
 
                     let all_secrets: Vec<NodeId> = pipeline_secret_ids
                         .iter()
@@ -233,7 +235,8 @@ impl PipelineParser for AdoParser {
                     &mut plain_vars,
                 );
 
-                process_pool(&job.pool, &mut graph);
+                let effective_workspace = job.workspace.as_ref().or(pipeline.workspace.as_ref());
+                process_pool(&job.pool, &effective_workspace.cloned(), &mut graph);
 
                 let all_secrets: Vec<NodeId> = pipeline_secret_ids
                     .iter()
@@ -306,7 +309,15 @@ impl PipelineParser for AdoParser {
 ///
 /// Creates an Image node representing the agent environment. Self-hosted pools
 /// are tagged with META_SELF_HOSTED so downstream rules can flag them.
-fn process_pool(pool: &Option<serde_yaml::Value>, graph: &mut AuthorityGraph) {
+///
+/// When `workspace` is provided and contains `clean:` with a truthy value
+/// (`true`, `all`, `outputs`, `resources`), the Image node is also tagged
+/// with META_WORKSPACE_CLEAN.
+fn process_pool(
+    pool: &Option<serde_yaml::Value>,
+    workspace: &Option<serde_yaml::Value>,
+    graph: &mut AuthorityGraph,
+) {
     let Some(pool_val) = pool else {
         return;
     };
@@ -329,7 +340,36 @@ fn process_pool(pool: &Option<serde_yaml::Value>, graph: &mut AuthorityGraph) {
     if is_self_hosted {
         meta.insert(META_SELF_HOSTED.into(), "true".into());
     }
+    if has_workspace_clean(workspace) {
+        meta.insert(META_WORKSPACE_CLEAN.into(), "true".into());
+    }
     graph.add_node_with_metadata(NodeKind::Image, image_name, TrustZone::FirstParty, meta);
+}
+
+/// Returns `true` when the ADO `workspace:` value specifies a `clean:` setting
+/// that wipes the workspace between runs. Recognised truthy forms:
+///   - `workspace: { clean: all }`
+///   - `workspace: { clean: outputs }`
+///   - `workspace: { clean: resources }`
+///   - `workspace: { clean: true }`
+fn has_workspace_clean(workspace: &Option<serde_yaml::Value>) -> bool {
+    let Some(ws) = workspace else {
+        return false;
+    };
+    let Some(map) = ws.as_mapping() else {
+        return false;
+    };
+    let Some(clean) = map.get("clean") else {
+        return false;
+    };
+    match clean {
+        serde_yaml::Value::Bool(b) => *b,
+        serde_yaml::Value::String(s) => {
+            let lower = s.to_ascii_lowercase();
+            matches!(lower.as_str(), "all" | "outputs" | "resources" | "true")
+        }
+        _ => false,
+    }
 }
 
 /// Scan the parsed pipeline for `resources.repositories[]` declarations and
@@ -1002,6 +1042,12 @@ pub struct AdoPipeline {
     pub steps: Option<Vec<AdoStep>>,
     #[serde(default)]
     pub pool: Option<serde_yaml::Value>,
+    /// Pipeline-level `workspace:` block. The only security-relevant field is
+    /// `clean:` (`outputs`, `resources`, `all`, or `true`), which causes the
+    /// agent to wipe the workspace between runs. Used to tag self-hosted Image
+    /// nodes with `META_WORKSPACE_CLEAN`.
+    #[serde(default)]
+    pub workspace: Option<serde_yaml::Value>,
     /// `resources:` block — repository declarations, container declarations,
     /// pipeline declarations. We only consume `repositories[]` today.
     /// Pre-2019 ADO accepts a sequence form (`resources: [- repo: self]`)
@@ -1289,6 +1335,10 @@ pub struct AdoJob {
     pub strategy: Option<AdoStrategy>,
     #[serde(default)]
     pub pool: Option<serde_yaml::Value>,
+    /// Job-level `workspace:` block. The only security-relevant field is
+    /// `clean:` which causes the agent to wipe the workspace between runs.
+    #[serde(default)]
+    pub workspace: Option<serde_yaml::Value>,
     /// Job-level template reference
     #[serde(default)]
     pub template: Option<String>,
