@@ -121,10 +121,12 @@ enum Cli {
         #[arg(long, short = 'o')]
         output: Option<PathBuf>,
 
-        /// Directory containing custom rule YAML files (`*.yml`, `*.yaml`).
-        /// Each file defines a single rule that fires on propagation paths
-        /// matching its source/sink/path predicates.
-        #[arg(long)]
+        /// Directory containing authority-invariant YAML files (`*.yml`, `*.yaml`).
+        /// Each file declares one invariant the authority graph must satisfy:
+        /// a finding is emitted on every propagation path that violates the
+        /// `source`/`sink`/`path` predicates. `--rules-dir` is accepted as an
+        /// alias for backward compatibility.
+        #[arg(long = "invariants-dir", alias = "rules-dir")]
         rules_dir: Option<PathBuf>,
     },
 
@@ -265,6 +267,36 @@ enum Cli {
         /// CI/CD platform. Default: auto (detects from YAML content)
         #[arg(long, default_value = "auto")]
         platform: Platform,
+    },
+
+    /// Inspect or list authority invariants (built-in and custom).
+    ///
+    /// Authority invariants are declarative properties that the pipeline
+    /// authority graph must satisfy. taudit ships 17 built-in invariants and
+    /// loads any custom invariants from `--invariants-dir`.
+    Invariants {
+        #[command(subcommand)]
+        action: InvariantsAction,
+    },
+}
+
+#[derive(clap::Subcommand)]
+enum InvariantsAction {
+    /// List every loaded invariant (built-in plus any custom).
+    ///
+    /// Prints a plain-text table of `id`, `severity`, and `source` (either
+    /// `built-in` or the YAML file path). Useful for verifying which
+    /// invariants are active in a given configuration.
+    List {
+        /// Directory containing custom invariant YAML files. Same semantics
+        /// as `taudit scan --invariants-dir`. `--rules-dir` is accepted as
+        /// an alias for backward compatibility.
+        #[arg(long = "invariants-dir", alias = "rules-dir")]
+        invariants_dir: Option<PathBuf>,
+
+        /// Disable ANSI color codes. Also honored via the NO_COLOR env var.
+        #[arg(long, default_value_t = false)]
+        no_color: bool,
     },
 }
 
@@ -542,6 +574,19 @@ fn main() -> Result<()> {
             }
             cmd_explain(rule)
         }
+        Cli::Invariants { action } => match action {
+            InvariantsAction::List {
+                invariants_dir,
+                no_color,
+            } => {
+                if no_color || std::env::var_os("NO_COLOR").is_some() {
+                    colored::control::set_override(false);
+                } else {
+                    colored::control::set_override(true);
+                }
+                cmd_invariants_list(invariants_dir)
+            }
+        },
     }
 }
 
@@ -1818,6 +1863,153 @@ fn cmd_explain(rule: Option<String>) -> Result<()> {
             .ok();
             Ok(())
         }
+    }
+}
+
+/// List every loaded authority invariant — built-in plus any custom YAML files
+/// from `--invariants-dir`. Prints a plain-text three-column table:
+/// `id | severity | source`. Source is `built-in` for the bundled invariants
+/// and the YAML file path for custom invariants. Used to verify which
+/// invariants will actually run for a given `taudit scan` invocation.
+fn cmd_invariants_list(invariants_dir: Option<PathBuf>) -> Result<()> {
+    use colored::Colorize;
+    use std::io::Write;
+
+    // Built-in invariants come from the SARIF rule registry — same source the
+    // `taudit explain` command uses. Severity is derived from the static
+    // `security_severity` (CVSS-style) the same way `cmd_explain` does it.
+    let built_in = taudit_report_sarif::all_rules();
+
+    // Custom invariants: walk the directory ourselves so we can pair each
+    // parsed rule with its source file path. We deliberately do not call
+    // `load_rules_dir` here because that helper drops file paths.
+    let mut custom: Vec<(PathBuf, taudit_core::custom_rules::CustomRule)> = Vec::new();
+    if let Some(dir) = invariants_dir.as_ref() {
+        let read_dir = std::fs::read_dir(dir)
+            .with_context(|| format!("Failed to read invariants directory {}", dir.display()))?;
+        let mut paths: Vec<PathBuf> = read_dir
+            .flatten()
+            .map(|e| e.path())
+            .filter(|p| p.is_file())
+            .filter(|p| {
+                matches!(
+                    p.extension().and_then(|e| e.to_str()),
+                    Some("yml") | Some("yaml")
+                )
+            })
+            .collect();
+        paths.sort();
+        for path in paths {
+            let content = std::fs::read_to_string(&path)
+                .with_context(|| format!("Failed to read {}", path.display()))?;
+            let rule: taudit_core::custom_rules::CustomRule = serde_yaml::from_str(&content)
+                .with_context(|| format!("Failed to parse {}", path.display()))?;
+            custom.push((path, rule));
+        }
+    }
+
+    let stdout = std::io::stdout();
+    let mut out = stdout.lock();
+
+    let total = built_in.len() + custom.len();
+    writeln!(
+        out,
+        "{} — {} invariants ({} built-in, {} custom)\n",
+        "taudit invariants".bold(),
+        total,
+        built_in.len(),
+        custom.len(),
+    )
+    .ok();
+
+    // Compute column widths from all rows so the table is aligned.
+    let id_width = built_in
+        .iter()
+        .map(|r| r.id.len())
+        .chain(custom.iter().map(|(_, r)| r.id.len()))
+        .max()
+        .unwrap_or(2)
+        .max("id".len());
+    let sev_width = "severity".len().max("critical".len());
+
+    writeln!(
+        out,
+        "  {:<id_width$}  {:<sev_width$}  {}",
+        "id".bold(),
+        "severity".bold(),
+        "source".bold(),
+        id_width = id_width,
+        sev_width = sev_width,
+    )
+    .ok();
+    writeln!(
+        out,
+        "  {:-<id_width$}  {:-<sev_width$}  {:-<20}",
+        "",
+        "",
+        "",
+        id_width = id_width,
+        sev_width = sev_width,
+    )
+    .ok();
+
+    for r in built_in {
+        let sev = severity_label_for_rule(r.security_severity);
+        let sev_colored = match sev {
+            "critical" => sev.red().bold(),
+            "high" => sev.red(),
+            "medium" => sev.yellow(),
+            "low" => sev.cyan(),
+            _ => sev.dimmed(),
+        };
+        writeln!(
+            out,
+            "  {:<id_width$}  {:<sev_width$}  {}",
+            r.id.bold(),
+            sev_colored,
+            "built-in".dimmed(),
+            id_width = id_width,
+            // colored strings inflate the byte count; pad on the visible label width
+            sev_width = sev_width + (sev_colored.to_string().len() - sev.len()),
+        )
+        .ok();
+    }
+
+    for (path, rule) in &custom {
+        let sev = severity_label_for_custom(&rule.severity);
+        let sev_colored = match sev {
+            "critical" => sev.red().bold(),
+            "high" => sev.red(),
+            "medium" => sev.yellow(),
+            "low" => sev.cyan(),
+            _ => sev.dimmed(),
+        };
+        writeln!(
+            out,
+            "  {:<id_width$}  {:<sev_width$}  {}",
+            rule.id.bold(),
+            sev_colored,
+            path.display(),
+            id_width = id_width,
+            sev_width = sev_width + (sev_colored.to_string().len() - sev.len()),
+        )
+        .ok();
+    }
+
+    Ok(())
+}
+
+/// Map a `Severity` enum value to the same lowercase label used by
+/// `severity_label_for_rule` so the invariants list table is consistent
+/// regardless of whether a row originated from a built-in (CVSS-derived)
+/// or a custom YAML invariant (enum-typed).
+fn severity_label_for_custom(sev: &Severity) -> &'static str {
+    match sev {
+        Severity::Critical => "critical",
+        Severity::High => "high",
+        Severity::Medium => "medium",
+        Severity::Low => "low",
+        Severity::Info => "info",
     }
 }
 

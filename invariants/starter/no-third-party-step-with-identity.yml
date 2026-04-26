@@ -1,0 +1,42 @@
+# Authority Invariant: a runtime Identity must never reach a third-party
+# Step.
+#
+# WHY
+# ---
+# A third-party Step is one whose code is owned by someone outside your org —
+# typically a SHA-pinned action from the public marketplace. SHA pinning
+# means the code is *immutable* (good — you reviewed exactly that commit)
+# but it is still *not yours* (the maintainer could turn malicious, or be
+# compromised in a future release you adopt).
+#
+# Production identities — GITHUB_TOKEN, ADO service connections, cloud
+# federated identities — should not be handed to third-party code unless
+# you have explicitly reviewed how that code uses them.
+#
+# This is a stricter posture than the built-in `untrusted_with_authority`
+# rule, which permits SHA-pinned third-party code by default. Use this
+# invariant when your security policy is "no third-party code touches
+# production authority, period."
+#
+# HOW IT FIRES
+# ------------
+# Fires on every propagation path whose source is an Identity AND whose sink
+# is a Step in the `third_party` trust zone. No `path.crosses_to` filter:
+# the invariant is the relationship between Identity and ThirdParty Step,
+# regardless of how the propagation got there.
+
+id: no_third_party_step_with_identity
+name: Identity reaches a third-party step
+description: >
+  This identity flows into third-party code. If your policy forbids
+  third-party code from touching production authority, either drop the
+  identity from this job or replace the third-party action with a
+  vendored/internal equivalent.
+severity: high
+category: authority_propagation
+match:
+  source:
+    node_type: identity
+  sink:
+    node_type: step
+    trust_zone: third_party

@@ -59,4 +59,19 @@ Several rules graduate severity based on context rather than emitting a fixed le
 
 ---
 
-See also: [Custom Rule Format](../custom-rules.md)
+## Authority invariants
+
+The 17 rules above are taudit's **built-in authority invariants** —
+declarative properties the authority graph must satisfy. You can extend
+this set with **custom authority invariants**: YAML files loaded with
+`taudit scan --invariants-dir <path>` that evaluate against the same
+propagation paths as the built-ins.
+
+Use `taudit invariants list [--invariants-dir <path>]` to print every
+invariant that will run on the next scan (built-in plus custom).
+
+- **Concept, schema, and predicate reference** → [Authority Invariants](../authority-invariants.md)
+- **Starter library** (5 copy-and-edit examples) → [`invariants/starter/`](../../invariants/starter/)
+
+> The previous name for this feature was *custom rules*; `--rules-dir` is
+> preserved as a permanent alias for `--invariants-dir`.
