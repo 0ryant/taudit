@@ -962,7 +962,12 @@ pub struct AdoPipeline {
     pub pr: Option<serde_yaml::Value>,
     #[serde(default)]
     pub variables: Option<AdoVariables>,
-    #[serde(default)]
+    /// `stages:` is normally a sequence of stage objects, but real-world
+    /// pipelines also use `stages: ${{ parameters.stages }}` (a template
+    /// expression that resolves at runtime to a list). The custom
+    /// deserializer accepts both shapes; non-sequence shapes resolve to
+    /// `None` and the graph is marked Partial downstream.
+    #[serde(default, deserialize_with = "deserialize_optional_stages")]
     pub stages: Option<Vec<AdoStage>>,
     #[serde(default)]
     pub jobs: Option<Vec<AdoJob>>,
@@ -972,7 +977,10 @@ pub struct AdoPipeline {
     pub pool: Option<serde_yaml::Value>,
     /// `resources:` block — repository declarations, container declarations,
     /// pipeline declarations. We only consume `repositories[]` today.
-    #[serde(default)]
+    /// Pre-2019 ADO accepts a sequence form (`resources: [- repo: self]`)
+    /// which has no `repositories:` key — the custom deserializer accepts
+    /// both shapes and treats the sequence form as an empty resources block.
+    #[serde(default, deserialize_with = "deserialize_optional_resources")]
     pub resources: Option<AdoResources>,
     /// Top-level `extends:` directive — `extends: { template: x@alias, ... }`.
     /// Captured raw so we can scan for `template: x@alias` references that
@@ -982,8 +990,205 @@ pub struct AdoPipeline {
     /// Top-level `parameters:` declarations. Each entry has at minimum a
     /// `name`; `type` defaults to `string` when omitted. `values:` is an
     /// optional allowlist that constrains caller input.
-    #[serde(default)]
+    /// ADO accepts two shapes: the typed sequence form
+    /// (`- name: foo \n type: string \n default: bar`) and the legacy
+    /// untyped map form (`parameters: { foo: bar, baz: '' }`) used in
+    /// older template fragments. The custom deserializer normalizes both.
+    #[serde(default, deserialize_with = "deserialize_optional_parameters")]
     pub parameters: Option<Vec<AdoParameter>>,
+}
+
+/// Accept either a sequence of `AdoParameter` (modern typed form) or a
+/// mapping of parameter name → default value (legacy untyped form used in
+/// many template fragments). For the map form, each key becomes an
+/// `AdoParameter` with the key as `name` and no type/values. Returns `None`
+/// for any other shape (e.g. a bare template expression).
+///
+/// Implemented as a serde Visitor (rather than going through
+/// `serde_yaml::Value`) so that downstream struct deserialization uses
+/// serde's native lazy iteration — this avoids serde_yaml's strict
+/// duplicate-key detection on `${{ else }}`-style template-conditional
+/// keys that appear in stage/job `parameters:` blocks of unrelated entries.
+fn deserialize_optional_parameters<'de, D>(
+    deserializer: D,
+) -> Result<Option<Vec<AdoParameter>>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    use serde::de::{MapAccess, SeqAccess, Visitor};
+    use std::fmt;
+
+    struct ParamsVisitor;
+
+    impl<'de> Visitor<'de> for ParamsVisitor {
+        type Value = Option<Vec<AdoParameter>>;
+
+        fn expecting(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+            f.write_str("a sequence of parameter declarations, a mapping of name→default, null, or a template expression")
+        }
+
+        fn visit_unit<E: serde::de::Error>(self) -> Result<Self::Value, E> {
+            Ok(None)
+        }
+
+        fn visit_none<E: serde::de::Error>(self) -> Result<Self::Value, E> {
+            Ok(None)
+        }
+
+        fn visit_some<D: serde::Deserializer<'de>>(self, d: D) -> Result<Self::Value, D::Error> {
+            d.deserialize_any(self)
+        }
+
+        // Bare scalar (template expression like `${{ parameters.X }}`) —
+        // can't statically enumerate; treat as absent.
+        fn visit_str<E: serde::de::Error>(self, _v: &str) -> Result<Self::Value, E> {
+            Ok(None)
+        }
+        fn visit_string<E: serde::de::Error>(self, _v: String) -> Result<Self::Value, E> {
+            Ok(None)
+        }
+        fn visit_bool<E: serde::de::Error>(self, _v: bool) -> Result<Self::Value, E> {
+            Ok(None)
+        }
+        fn visit_i64<E: serde::de::Error>(self, _v: i64) -> Result<Self::Value, E> {
+            Ok(None)
+        }
+        fn visit_u64<E: serde::de::Error>(self, _v: u64) -> Result<Self::Value, E> {
+            Ok(None)
+        }
+        fn visit_f64<E: serde::de::Error>(self, _v: f64) -> Result<Self::Value, E> {
+            Ok(None)
+        }
+
+        fn visit_seq<A: SeqAccess<'de>>(self, mut seq: A) -> Result<Self::Value, A::Error> {
+            let mut out = Vec::new();
+            while let Some(item) = seq.next_element::<serde_yaml::Value>()? {
+                if let Ok(p) = serde_yaml::from_value::<AdoParameter>(item) {
+                    out.push(p);
+                }
+            }
+            Ok(Some(out))
+        }
+
+        fn visit_map<A: MapAccess<'de>>(self, mut map: A) -> Result<Self::Value, A::Error> {
+            // Legacy untyped map form: name → default-value. We collect
+            // names; defaults are intentionally discarded (matches typed-
+            // form semantics where `default:` is also ignored).
+            let mut out = Vec::new();
+            while let Some(key) = map.next_key::<serde_yaml::Value>()? {
+                let _ignore = map.next_value::<serde::de::IgnoredAny>()?;
+                let name = match key {
+                    serde_yaml::Value::String(s) if !s.is_empty() => s,
+                    _ => continue,
+                };
+                out.push(AdoParameter {
+                    name: Some(name),
+                    param_type: None,
+                    values: None,
+                });
+            }
+            Ok(Some(out))
+        }
+    }
+
+    deserializer.deserialize_any(ParamsVisitor)
+}
+
+/// Accept either an `AdoResources` mapping (modern form with `repositories:`,
+/// `containers:`, `pipelines:`) or the legacy sequence form (`resources: [-
+/// repo: self]`, pre-2019 ADO syntax). The legacy form has no
+/// `repositories:` key, so we return an empty `AdoResources` for it — the
+/// repository-tracking rules then see no aliases to track, which is correct
+/// (legacy `repo: self` declares no external repositories).
+fn deserialize_optional_resources<'de, D>(deserializer: D) -> Result<Option<AdoResources>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    use serde::de::{MapAccess, SeqAccess, Visitor};
+    use std::fmt;
+
+    struct ResourcesVisitor;
+
+    impl<'de> Visitor<'de> for ResourcesVisitor {
+        type Value = Option<AdoResources>;
+
+        fn expecting(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+            f.write_str("an AdoResources mapping or a legacy `- repo:` sequence")
+        }
+
+        fn visit_unit<E: serde::de::Error>(self) -> Result<Self::Value, E> {
+            Ok(None)
+        }
+        fn visit_none<E: serde::de::Error>(self) -> Result<Self::Value, E> {
+            Ok(None)
+        }
+        fn visit_some<D: serde::Deserializer<'de>>(self, d: D) -> Result<Self::Value, D::Error> {
+            d.deserialize_any(self)
+        }
+
+        // Legacy sequence form — drain it without producing any
+        // repository entries. Modern rules track aliases via the
+        // `AdoResources.repositories[]` shape, which the legacy form
+        // does not produce.
+        fn visit_seq<A: SeqAccess<'de>>(self, mut seq: A) -> Result<Self::Value, A::Error> {
+            while seq.next_element::<serde::de::IgnoredAny>()?.is_some() {}
+            Ok(Some(AdoResources::default()))
+        }
+
+        fn visit_map<A: MapAccess<'de>>(self, map: A) -> Result<Self::Value, A::Error> {
+            let r = AdoResources::deserialize(serde::de::value::MapAccessDeserializer::new(map))?;
+            Ok(Some(r))
+        }
+    }
+
+    deserializer.deserialize_any(ResourcesVisitor)
+}
+
+/// Accept either a sequence of `AdoStage` (the normal form) or a bare
+/// template expression (`stages: ${{ parameters.stages }}`) which resolves
+/// at runtime. For the template-expression case, return `None` so the
+/// pipeline still parses; the graph will simply contain no stages from this
+/// scope (downstream code already handles empty stage lists).
+fn deserialize_optional_stages<'de, D>(deserializer: D) -> Result<Option<Vec<AdoStage>>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    use serde::de::{SeqAccess, Visitor};
+    use std::fmt;
+
+    struct StagesVisitor;
+
+    impl<'de> Visitor<'de> for StagesVisitor {
+        type Value = Option<Vec<AdoStage>>;
+
+        fn expecting(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+            f.write_str("a sequence of stages or a template expression")
+        }
+
+        fn visit_unit<E: serde::de::Error>(self) -> Result<Self::Value, E> {
+            Ok(None)
+        }
+        fn visit_none<E: serde::de::Error>(self) -> Result<Self::Value, E> {
+            Ok(None)
+        }
+        fn visit_some<D: serde::Deserializer<'de>>(self, d: D) -> Result<Self::Value, D::Error> {
+            d.deserialize_any(self)
+        }
+        fn visit_str<E: serde::de::Error>(self, _v: &str) -> Result<Self::Value, E> {
+            Ok(None)
+        }
+        fn visit_string<E: serde::de::Error>(self, _v: String) -> Result<Self::Value, E> {
+            Ok(None)
+        }
+
+        fn visit_seq<A: SeqAccess<'de>>(self, seq: A) -> Result<Self::Value, A::Error> {
+            let stages =
+                Vec::<AdoStage>::deserialize(serde::de::value::SeqAccessDeserializer::new(seq))?;
+            Ok(Some(stages))
+        }
+    }
+
+    deserializer.deserialize_any(StagesVisitor)
 }
 
 /// `resources:` block. Only `repositories[]` is modelled today.
@@ -2105,5 +2310,113 @@ jobs:
         );
         assert_eq!(parse_template_alias("local/path.yml"), None);
         assert_eq!(parse_template_alias("path@"), None);
+    }
+
+    #[test]
+    fn parameters_as_map_form_parses_as_named_parameters() {
+        // Real-world repro from Azure/aks-engine, PowerShell/PowerShell, dotnet/maui:
+        // legacy template fragments declare `parameters:` as a mapping of
+        // name → default-value rather than the modern typed sequence form.
+        // Both shapes must parse; the map form yields parameters with names
+        // but no type/values allowlist (so they default to "string" downstream).
+        let yaml = r#"
+parameters:
+  name: ''
+  k8sRelease: ''
+  apimodel: 'examples/e2e-tests/kubernetes/release/default/definition.json'
+  createVNET: false
+
+jobs:
+  - job: build
+    steps:
+      - script: echo $(name)
+"#;
+        let graph = parse(yaml);
+        // Parse must succeed and capture the four parameter names.
+        assert!(graph.parameters.contains_key("name"));
+        assert!(graph.parameters.contains_key("k8sRelease"));
+        assert!(graph.parameters.contains_key("apimodel"));
+        assert!(graph.parameters.contains_key("createVNET"));
+        assert_eq!(graph.parameters.len(), 4);
+    }
+
+    #[test]
+    fn parameters_as_typed_sequence_form_still_parses() {
+        // Make sure the modern form still works after the polymorphic
+        // deserializer change.
+        let yaml = r#"
+parameters:
+  - name: env
+    type: string
+    default: prod
+    values:
+      - prod
+      - staging
+  - name: skipTests
+    type: boolean
+    default: false
+
+jobs:
+  - job: build
+    steps:
+      - script: echo hi
+"#;
+        let graph = parse(yaml);
+        let env_param = graph.parameters.get("env").expect("env captured");
+        assert_eq!(env_param.param_type, "string");
+        assert!(env_param.has_values_allowlist);
+        let skip_param = graph
+            .parameters
+            .get("skipTests")
+            .expect("skipTests captured");
+        assert_eq!(skip_param.param_type, "boolean");
+        assert!(!skip_param.has_values_allowlist);
+    }
+
+    #[test]
+    fn resources_as_legacy_sequence_form_parses_to_empty_resources() {
+        // Real-world repro from Azure/azure-cli, Chinachu/Mirakurun: pre-2019
+        // ADO syntax allows `resources:` as a list of `- repo: self` entries,
+        // not the modern `resources: { repositories: [...] }` mapping. Modern
+        // ADO still tolerates the legacy form. We must accept both shapes
+        // without crashing the parse.
+        let yaml = r#"
+resources:
+- repo: self
+
+trigger:
+  - main
+
+jobs:
+  - job: build
+    steps:
+      - script: echo hi
+"#;
+        let graph = parse(yaml);
+        // No external repositories declared (legacy form has none) — so the
+        // META_REPOSITORIES metadata key is absent.
+        assert!(!graph.metadata.contains_key(META_REPOSITORIES));
+        // But the job still parses.
+        let steps: Vec<_> = graph.nodes_of_kind(NodeKind::Step).collect();
+        assert_eq!(steps.len(), 1);
+    }
+
+    #[test]
+    fn stages_as_template_expression_parses_with_no_stages() {
+        // Real-world repro from dotnet/diagnostics templatePublic.yml:
+        // `stages: ${{ parameters.stages }}` resolves at runtime. The static
+        // parser cannot enumerate stages from a template expression — we
+        // accept the file without crashing and the resulting graph simply
+        // contains no stages from the template-expression scope.
+        let yaml = r#"
+parameters:
+  - name: stages
+    type: stageList
+
+stages: ${{ parameters.stages }}
+"#;
+        let graph = parse(yaml);
+        // Graph must exist (no crash).
+        assert!(graph.parameters.contains_key("stages"));
     }
 }
