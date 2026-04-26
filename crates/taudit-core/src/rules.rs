@@ -29,28 +29,82 @@ fn apply_confidence_cap(graph: &AuthorityGraph, findings: &mut [Finding]) {
 
 /// MVP Rule 1: Authority (secret/identity) propagated across a trust boundary.
 ///
-/// Severity graduation (tuned from real-world signal on 10 production workflows):
+/// **Clustering (v0.9.x):** all paths from the same root authority node
+/// (Secret/Identity) collapse into ONE finding per source. The single
+/// finding carries every reached sink in `nodes_involved` — `[source,
+/// sink_a, sink_b, ...]` — and lists them in the message. This matches
+/// the SARIF fingerprint behaviour (which already collapses per
+/// `root_authority_node_name`) and removes the alert-fatigue cliff seen
+/// on the GHA corpus where one `GITHUB_TOKEN` could produce 8+ near-
+/// identical findings as it propagated through a matrix workflow.
+///
+/// Severity graduation (per-path, then max-over-paths):
 /// - Untrusted sink: Critical (real risk — unpinned code with authority)
 /// - SHA-pinned ThirdParty sink: High (immutable code, but still cross-boundary)
 /// - SHA-pinned sink + constrained identity: Medium (lowest-risk form — read-only
 ///   token to immutable third-party code, e.g. `contents:read` → `actions/checkout@sha`)
+///
+/// When every path in a cluster crosses an environment approval gate,
+/// the cluster's severity is downgraded one step (mirroring the
+/// per-path downgrade the previous emitter applied).
 pub fn authority_propagation(graph: &AuthorityGraph, max_hops: usize) -> Vec<Finding> {
     let paths = propagation::propagation_analysis(graph, max_hops);
 
-    paths
-        .into_iter()
-        .filter(|p| p.crossed_boundary)
-        .map(|path| {
-            let source_name = graph
-                .node(path.source)
-                .map(|n| n.name.as_str())
-                .unwrap_or("?");
-            let sink_name = graph
-                .node(path.sink)
-                .map(|n| n.name.as_str())
-                .unwrap_or("?");
+    // Group by root authority source node. We preserve insertion order so
+    // findings come out in the same order they would have under per-hop
+    // emission (callers and golden-file tests rely on the source-first
+    // ordering of authority_propagation findings).
+    let mut order: Vec<NodeId> = Vec::new();
+    let mut groups: std::collections::HashMap<NodeId, Vec<propagation::PropagationPath>> =
+        std::collections::HashMap::new();
 
-            // Graduate severity based on sink trust + source scope
+    for path in paths.into_iter().filter(|p| p.crossed_boundary) {
+        groups
+            .entry(path.source)
+            .or_insert_with(|| {
+                order.push(path.source);
+                Vec::new()
+            })
+            .push(path);
+    }
+
+    let mut findings = Vec::with_capacity(order.len());
+
+    for source_id in order {
+        let paths = match groups.remove(&source_id) {
+            Some(p) if !p.is_empty() => p,
+            _ => continue,
+        };
+
+        let source_name = graph
+            .node(source_id)
+            .map(|n| n.name.as_str())
+            .unwrap_or("?")
+            .to_string();
+        let source_is_constrained = graph
+            .node(source_id)
+            .and_then(|n| n.metadata.get(META_IDENTITY_SCOPE))
+            .map(|s| s == "constrained")
+            .unwrap_or(false);
+        let source_is_oidc = graph
+            .node(source_id)
+            .and_then(|n| n.metadata.get(META_OIDC))
+            .map(|v| v == "true")
+            .unwrap_or(false);
+
+        // Walk every path in the cluster and compute (severity, gated?,
+        // sink id, representative path) — the cluster takes the max
+        // severity (i.e. the worst sink wins). Severity is downgraded
+        // only when every path in the cluster crosses an env-approval
+        // gate; if even one path bypasses the gate, the cluster is not
+        // downgraded.
+        let mut worst_sev = Severity::Info;
+        let mut all_gated = true;
+        let mut best_path: Option<propagation::PropagationPath> = None;
+        let mut sink_ids: Vec<NodeId> = Vec::new();
+        let mut seen_sinks = std::collections::HashSet::new();
+
+        for path in &paths {
             let sink_is_pinned = graph
                 .node(path.sink)
                 .map(|n| {
@@ -58,60 +112,84 @@ pub fn authority_propagation(graph: &AuthorityGraph, max_hops: usize) -> Vec<Fin
                 })
                 .unwrap_or(false);
 
-            let source_is_constrained = graph
-                .node(path.source)
-                .and_then(|n| n.metadata.get(META_IDENTITY_SCOPE))
-                .map(|s| s == "constrained")
-                .unwrap_or(false);
-
-            let source_is_oidc = graph
-                .node(path.source)
-                .and_then(|n| n.metadata.get(META_OIDC))
-                .map(|v| v == "true")
-                .unwrap_or(false);
-
-            // OIDC cloud identities (AWS/GCP/Azure federated creds) carry direct
-            // cloud blast radius — even SHA-pinned third-party code reaching them
-            // can exfiltrate credentials. The token itself is the threat, not the
-            // sink's trust zone, so OIDC sources are Critical regardless of pinning.
             let base_severity = if sink_is_pinned && source_is_constrained && !source_is_oidc {
                 Severity::Medium
             } else if sink_is_pinned && !source_is_oidc {
                 Severity::High
             } else {
-                // Untrusted sink OR OIDC source — Critical regardless of pinning
                 Severity::Critical
             };
 
-            // ADO environment approvals are a manual gate — authority cannot
-            // propagate past one without human intervention. If any node on the
-            // propagation path carries META_ENV_APPROVAL, downgrade severity by
-            // one step and annotate the message so the operator can see why.
-            let crosses_approval_gate = path_crosses_env_approval(graph, &path);
-            let (severity, message_suffix) = if crosses_approval_gate {
-                (
-                    downgrade_one_step(base_severity),
-                    " (mitigated: environment approval gate)",
-                )
+            let gated = path_crosses_env_approval(graph, path);
+            let effective_severity = if gated {
+                downgrade_one_step(base_severity)
             } else {
-                (base_severity, "")
+                base_severity
             };
 
-            Finding {
-                severity,
-                category: FindingCategory::AuthorityPropagation,
-                nodes_involved: vec![path.source, path.sink],
-                message: format!(
-                    "{source_name} propagated to {sink_name} across trust boundary{message_suffix}"
-                ),
-                recommendation: Recommendation::TsafeRemediation {
-                    command: "tsafe exec --ns <scoped-namespace> -- <command>".to_string(),
-                    explanation: format!("Scope {source_name} to only the steps that need it"),
-                },
-                path: Some(path),
+            if !gated {
+                all_gated = false;
             }
-        })
-        .collect()
+
+            if effective_severity < worst_sev {
+                worst_sev = effective_severity;
+                best_path = Some(path.clone());
+            }
+
+            if seen_sinks.insert(path.sink) {
+                sink_ids.push(path.sink);
+            }
+        }
+
+        // Build sink name list for the message. Truncate aggressively past
+        // ~5 names to avoid an unbounded message string on extreme inputs;
+        // the full set is still in `nodes_involved`.
+        let mut sink_names: Vec<String> = sink_ids
+            .iter()
+            .filter_map(|id| graph.node(*id).map(|n| n.name.clone()))
+            .collect();
+        let truncated = if sink_names.len() > 5 {
+            let extra = sink_names.len() - 5;
+            sink_names.truncate(5);
+            format!(", …+{extra} more")
+        } else {
+            String::new()
+        };
+        let sink_list = sink_names.join(", ");
+
+        let suffix = if all_gated && !paths.is_empty() {
+            " (mitigated: environment approval gate)"
+        } else {
+            ""
+        };
+
+        let mut nodes_involved = Vec::with_capacity(sink_ids.len() + 1);
+        nodes_involved.push(source_id);
+        nodes_involved.extend(sink_ids.iter().copied());
+
+        let unique_sinks = sink_ids.len();
+        let message = if unique_sinks == 1 {
+            format!("{source_name} propagated to {sink_list} across trust boundary{suffix}")
+        } else {
+            format!(
+                "{source_name} reaches {unique_sinks} sinks via authority propagation: [{sink_list}{truncated}]{suffix}"
+            )
+        };
+
+        findings.push(Finding {
+            severity: worst_sev,
+            category: FindingCategory::AuthorityPropagation,
+            nodes_involved,
+            message,
+            recommendation: Recommendation::TsafeRemediation {
+                command: "tsafe exec --ns <scoped-namespace> -- <command>".to_string(),
+                explanation: format!("Scope {source_name} to only the steps that need it"),
+            },
+            path: best_path,
+        });
+    }
+
+    findings
 }
 
 /// Returns true if any node touched by `path` (source, sink, or any edge
@@ -5175,5 +5253,81 @@ mod tests {
         let g = graph_pr_with_login_action("pull_request", "actions/checkout@v4");
         let findings = pr_build_pushes_image_with_floating_credentials(&g);
         assert!(findings.is_empty());
+    }
+
+    // ── authority_propagation clustering ─────────────────────────
+
+    #[test]
+    fn authority_propagation_clusters_one_secret_to_three_sinks() {
+        // One secret, three different untrusted sinks reached via separate
+        // propagation paths. After clustering, the rule must emit ONE
+        // finding listing all three sinks in `nodes_involved`.
+        let mut g = AuthorityGraph::new(source("ci.yml"));
+        let secret = g.add_node(NodeKind::Secret, "GITHUB_TOKEN", TrustZone::FirstParty);
+        let trampoline = g.add_node(NodeKind::Step, "build", TrustZone::FirstParty);
+        let sink_a = g.add_node(NodeKind::Step, "deploy[0]", TrustZone::Untrusted);
+        let sink_b = g.add_node(NodeKind::Step, "deploy[1]", TrustZone::Untrusted);
+        let sink_c = g.add_node(NodeKind::Step, "deploy[2]", TrustZone::Untrusted);
+        g.add_edge(trampoline, secret, EdgeKind::HasAccessTo);
+        g.add_edge(trampoline, sink_a, EdgeKind::DelegatesTo);
+        g.add_edge(trampoline, sink_b, EdgeKind::DelegatesTo);
+        g.add_edge(trampoline, sink_c, EdgeKind::DelegatesTo);
+
+        let findings = authority_propagation(&g, 4);
+        assert_eq!(
+            findings.len(),
+            1,
+            "three propagation paths from one secret must collapse to one finding, got: {findings:#?}"
+        );
+        let f = &findings[0];
+        assert_eq!(f.category, FindingCategory::AuthorityPropagation);
+        assert_eq!(f.severity, Severity::Critical);
+        // [source, sink_a, sink_b, sink_c] — order preserved by insertion.
+        assert_eq!(f.nodes_involved.len(), 4);
+        assert_eq!(f.nodes_involved[0], secret);
+        assert!(f.nodes_involved.contains(&sink_a));
+        assert!(f.nodes_involved.contains(&sink_b));
+        assert!(f.nodes_involved.contains(&sink_c));
+        assert!(
+            f.message.contains("3 sinks")
+                || f.message.contains("deploy[0]") && f.message.contains("deploy[2]"),
+            "cluster message must mention the multiple sinks: {}",
+            f.message
+        );
+    }
+
+    #[test]
+    fn authority_propagation_does_not_cluster_separate_secrets() {
+        // Three independent secrets, each reaching one sink. The clustering
+        // is keyed on the source node, so each secret's path becomes its own
+        // finding — three findings total, not one.
+        let mut g = AuthorityGraph::new(source("ci.yml"));
+        let s1 = g.add_node(NodeKind::Secret, "TOKEN_A", TrustZone::FirstParty);
+        let s2 = g.add_node(NodeKind::Secret, "TOKEN_B", TrustZone::FirstParty);
+        let s3 = g.add_node(NodeKind::Secret, "TOKEN_C", TrustZone::FirstParty);
+        let step1 = g.add_node(NodeKind::Step, "step_a", TrustZone::FirstParty);
+        let step2 = g.add_node(NodeKind::Step, "step_b", TrustZone::FirstParty);
+        let step3 = g.add_node(NodeKind::Step, "step_c", TrustZone::FirstParty);
+        let sink1 = g.add_node(NodeKind::Step, "sink_a", TrustZone::Untrusted);
+        let sink2 = g.add_node(NodeKind::Step, "sink_b", TrustZone::Untrusted);
+        let sink3 = g.add_node(NodeKind::Step, "sink_c", TrustZone::Untrusted);
+        g.add_edge(step1, s1, EdgeKind::HasAccessTo);
+        g.add_edge(step1, sink1, EdgeKind::DelegatesTo);
+        g.add_edge(step2, s2, EdgeKind::HasAccessTo);
+        g.add_edge(step2, sink2, EdgeKind::DelegatesTo);
+        g.add_edge(step3, s3, EdgeKind::HasAccessTo);
+        g.add_edge(step3, sink3, EdgeKind::DelegatesTo);
+
+        let findings = authority_propagation(&g, 4);
+        assert_eq!(
+            findings.len(),
+            3,
+            "one finding per distinct source secret, got: {findings:#?}"
+        );
+        let sources: std::collections::HashSet<_> =
+            findings.iter().map(|f| f.nodes_involved[0]).collect();
+        assert!(sources.contains(&s1));
+        assert!(sources.contains(&s2));
+        assert!(sources.contains(&s3));
     }
 }
