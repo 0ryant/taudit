@@ -55,6 +55,10 @@ allow = [
     "Apache-2.0 WITH LLVM-exception",
     "BSD-2-Clause",
     "BSD-3-Clause",
+    # CDLA-Permissive-2.0 — Community Data License Agreement Permissive 2.0.
+    # Used by webpki-roots (Mozilla CA cert bundle), pulled in transitively by
+    # ureq. Permissive; allows redistribution with minimal obligations.
+    "CDLA-Permissive-2.0",
     "ISC",
     "MIT",
     "MPL-2.0",
