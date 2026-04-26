@@ -57,6 +57,12 @@ pub const META_JOB_NAME: &str = "job_name";
 /// `checkout: alias` somewhere in the same pipeline file). Set by the ADO
 /// parser; consumed by `template_extends_unpinned_branch`.
 pub const META_REPOSITORIES: &str = "repositories";
+/// Records the raw inline script body of a Step (the text from
+/// `script:` / `bash:` / `powershell:` / `pwsh:` / `run:`). Stamped by parsers
+/// when the step has an inline script. Used by command-line-leakage rules
+/// (`vm_remote_exec_via_pipeline_secret`, `short_lived_sas_in_command_line`)
+/// to inspect what the step actually shells out.
+pub const META_SCRIPT_BODY: &str = "script_body";
 
 // ── Shared helpers ─────────────────────────────────────
 

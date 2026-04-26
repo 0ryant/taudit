@@ -477,6 +477,15 @@ fn process_steps(
             node.metadata.insert(META_JOB_NAME.into(), job_name.into());
         }
 
+        // Stamp inline script body so command-line-leakage rules can inspect
+        // what the step actually executes (vm_remote_exec_via_pipeline_secret,
+        // short_lived_sas_in_command_line).
+        if let Some(ref body) = inline_script {
+            if let Some(node) = graph.nodes.get_mut(step_id) {
+                node.metadata.insert(META_SCRIPT_BODY.into(), body.clone());
+            }
+        }
+
         // Every step has access to System.AccessToken
         graph.add_edge(step_id, token_id, EdgeKind::HasAccessTo);
 

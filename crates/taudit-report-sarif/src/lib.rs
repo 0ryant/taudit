@@ -251,6 +251,42 @@ pub const RULE_DEFS: &[RuleDef] = &[
         tags: &["security", "supply-chain"],
     },
     RuleDef {
+        id: "vm_remote_exec_via_pipeline_secret",
+        name: "VmRemoteExecViaPipelineSecret",
+        short_description:
+            "Pipeline step uses Azure VM remote-exec primitive with secret or SAS in the command line",
+        full_description:
+            "A pipeline step invokes Set-AzVMExtension/CustomScriptExtension, \
+             Invoke-AzVMRunCommand, az vm run-command, or az vm extension set, \
+             where the executed command line is constructed from a pipeline secret or \
+             a freshly-minted SAS token. This is a pipeline-to-VM lateral movement \
+             primitive — every pipeline run can RCE every VM in scope, and the \
+             credential embedded in the command line is logged in plaintext on the VM \
+             (CustomScriptExtension status JSON, Windows event log, /var/log) and in \
+             the ARM extension status that anyone with reader on the resource can pull.",
+        default_level: "error",
+        security_severity: "7.5",
+        tags: &["security", "credentials", "lateral-movement"],
+    },
+    RuleDef {
+        id: "short_lived_sas_in_command_line",
+        name: "ShortLivedSasInCommandLine",
+        short_description:
+            "SAS token minted in-pipeline is passed as a command-line argument",
+        full_description:
+            "A SAS token minted in-pipeline (New-AzStorage*SASToken or \
+             az storage * generate-sas) is interpolated into commandToExecute, \
+             scriptArguments, --arguments, -ArgumentList, or otherwise placed on \
+             the process command line instead of being passed via env var or stdin. \
+             Even short-lived SAS tokens in argv hit Linux /proc/*/cmdline, Windows \
+             ETW process-create events, and ARM extension status — logged for the \
+             SAS lifetime, accessible to any local process with the right privileges \
+             and any reader on the resource.",
+        default_level: "warning",
+        security_severity: "5.0",
+        tags: &["security", "credentials"],
+    },
+    RuleDef {
         id: "checkout_self_pr_exposure",
         name: "CheckoutSelfPrExposure",
         short_description: "PR-triggered pipeline checks out attacker-controlled repository code",
@@ -793,6 +829,8 @@ mod tests {
             FindingCategory::SelfHostedPoolPrHijack,
             FindingCategory::ServiceConnectionScopeMismatch,
             FindingCategory::TemplateExtendsUnpinnedBranch,
+            FindingCategory::VmRemoteExecViaPipelineSecret,
+            FindingCategory::ShortLivedSasInCommandLine,
         ];
 
         for cat in categories {

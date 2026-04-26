@@ -3,8 +3,9 @@ use crate::graph::{
     is_docker_digest_pinned, is_sha_pinned, AuthorityCompleteness, AuthorityGraph, EdgeKind,
     IdentityScope, NodeId, NodeKind, TrustZone, META_ATTESTS, META_CHECKOUT_SELF,
     META_CLI_FLAG_EXPOSED, META_CONTAINER, META_DIGEST, META_ENV_APPROVAL, META_IDENTITY_SCOPE,
-    META_IMPLICIT, META_OIDC, META_PERMISSIONS, META_REPOSITORIES, META_SELF_HOSTED,
-    META_SERVICE_CONNECTION, META_TRIGGER, META_VARIABLE_GROUP, META_WRITES_ENV_GATE,
+    META_IMPLICIT, META_OIDC, META_PERMISSIONS, META_REPOSITORIES, META_SCRIPT_BODY,
+    META_SELF_HOSTED, META_SERVICE_CONNECTION, META_TRIGGER, META_VARIABLE_GROUP,
+    META_WRITES_ENV_GATE,
 };
 use crate::propagation;
 
@@ -1275,6 +1276,249 @@ pub fn template_extends_unpinned_branch(graph: &AuthorityGraph) -> Vec<Finding> 
     findings
 }
 
+// ── Command-line credential leakage helpers ─────────────
+//
+// These two rules (`vm_remote_exec_via_pipeline_secret`,
+// `short_lived_sas_in_command_line`) inspect inline script bodies stamped on
+// Step nodes by the parser as `META_SCRIPT_BODY`. They are intentionally
+// heuristic — the goal is reliable detection of the corpus pattern, not 100%
+// false-positive cleanliness. They're allowed to co-fire on the same step:
+// each describes a different angle of the same risk class.
+
+/// Names of the Azure VM remote-execution primitives we care about.
+/// Match is case-insensitive on the script body.
+const VM_REMOTE_EXEC_TOKENS: &[&str] = &[
+    "set-azvmextension",
+    "invoke-azvmruncommand",
+    "az vm run-command",
+    "az vm extension set",
+];
+
+/// Substrings that indicate a SAS token has just been minted in this script.
+/// Match is case-insensitive on the script body.
+const SAS_MINT_TOKENS: &[&str] = &[
+    "new-azstoragecontainersastoken",
+    "new-azstorageblobsastoken",
+    "new-azstorageaccountsastoken",
+    "az storage container generate-sas",
+    "az storage blob generate-sas",
+    "az storage account generate-sas",
+];
+
+/// Argument-passing keywords that put a value on the process command line and
+/// thus into ARM extension status / OS process logs.
+const COMMAND_LINE_SINK_TOKENS: &[&str] = &[
+    "commandtoexecute",
+    "scriptarguments",
+    "--arguments",
+    "-argumentlist",
+    "--scripts",
+    "-scriptstring",
+];
+
+/// Returns the names of pipeline secret/SAS variables (`$(NAME)`) that the
+/// step references via `HasAccessTo` a Secret. Used to spot interpolation of
+/// pipeline secrets into command-line strings.
+fn step_secret_var_names(graph: &AuthorityGraph, step_id: NodeId) -> Vec<&str> {
+    graph
+        .edges_from(step_id)
+        .filter(|e| e.kind == EdgeKind::HasAccessTo)
+        .filter_map(|e| graph.node(e.to))
+        .filter(|n| n.kind == NodeKind::Secret)
+        .map(|n| n.name.as_str())
+        .collect()
+}
+
+/// Heuristic: returns true if a value-bearing variable named `var_name` appears
+/// to be interpolated into `script_body` (PowerShell `$var` / `"$var"` /
+/// `` `"$var`" `` form, or ADO `$(var)` form). Case-insensitive.
+fn body_interpolates_var(script_body: &str, var_name: &str) -> bool {
+    if var_name.is_empty() {
+        return false;
+    }
+    let body = script_body.to_lowercase();
+    let name = var_name.to_lowercase();
+    // ADO macro form
+    let dollar_paren = format!("$({name})");
+    if body.contains(&dollar_paren) {
+        return true;
+    }
+    // PowerShell variable form: must be followed by a non-identifier char to
+    // avoid matching `$varSomething` as `$var`.
+    let needle = format!("${name}");
+    let mut search_from = 0usize;
+    while let Some(pos) = body[search_from..].find(&needle) {
+        let abs = search_from + pos;
+        let end = abs + needle.len();
+        let next = body.as_bytes().get(end).copied();
+        let is_word = matches!(next, Some(c) if c.is_ascii_alphanumeric() || c == b'_');
+        if !is_word {
+            return true;
+        }
+        search_from = end;
+    }
+    false
+}
+
+/// Returns true if `body` contains any of the SAS-mint token substrings.
+fn body_mints_sas(body_lower: &str) -> bool {
+    SAS_MINT_TOKENS.iter().any(|t| body_lower.contains(t))
+}
+
+/// Returns true if `body` contains any of the VM remote-exec tool substrings.
+fn body_uses_vm_remote_exec(body_lower: &str) -> bool {
+    VM_REMOTE_EXEC_TOKENS.iter().any(|t| body_lower.contains(t))
+}
+
+/// Returns true if `body` contains any command-line sink keyword.
+fn body_has_cmdline_sink(body_lower: &str) -> bool {
+    COMMAND_LINE_SINK_TOKENS
+        .iter()
+        .any(|t| body_lower.contains(t))
+}
+
+/// Extract names of PowerShell variables that are bound to a SAS-mint result.
+/// Pattern: `$<name> = New-AzStorage...SASToken ...` (case-insensitive).
+/// Returns the variable names without the leading `$`.
+fn powershell_sas_assignments(body: &str) -> Vec<String> {
+    let mut out = Vec::new();
+    let lower = body.to_lowercase();
+    let bytes = lower.as_bytes();
+    let mut i = 0usize;
+    while i < bytes.len() {
+        if bytes[i] != b'$' {
+            i += 1;
+            continue;
+        }
+        // Read identifier
+        let name_start = i + 1;
+        let mut j = name_start;
+        while j < bytes.len() {
+            let c = bytes[j];
+            if c.is_ascii_alphanumeric() || c == b'_' {
+                j += 1;
+            } else {
+                break;
+            }
+        }
+        if j == name_start {
+            i += 1;
+            continue;
+        }
+        // Skip whitespace, then expect `=`
+        let mut k = j;
+        while k < bytes.len() && (bytes[k] == b' ' || bytes[k] == b'\t') {
+            k += 1;
+        }
+        if k >= bytes.len() || bytes[k] != b'=' {
+            i = j;
+            continue;
+        }
+        // Skip `=` and whitespace
+        k += 1;
+        while k < bytes.len() && (bytes[k] == b' ' || bytes[k] == b'\t') {
+            k += 1;
+        }
+        // Look at the rest of this logical line (until `\n`).
+        let line_end = lower[k..].find('\n').map(|p| k + p).unwrap_or(bytes.len());
+        let rhs = &lower[k..line_end];
+        if SAS_MINT_TOKENS.iter().any(|t| rhs.contains(t)) {
+            // Recover original-case variable name from `body` at the same byte
+            // offsets — `lower` and `body` share UTF-8 byte layout for ASCII,
+            // and identifiers in PowerShell are ASCII in the corpus.
+            let name = body
+                .get(name_start..j)
+                .unwrap_or(&lower[name_start..j])
+                .to_string();
+            if !out.iter().any(|n: &String| n.eq_ignore_ascii_case(&name)) {
+                out.push(name);
+            }
+        }
+        i = j;
+    }
+    out
+}
+
+/// Rule: pipeline step uses an Azure VM remote-execution primitive
+/// (Set-AzVMExtension/CustomScriptExtension, Invoke-AzVMRunCommand,
+/// `az vm run-command invoke`, `az vm extension set`) where the executed
+/// command line is constructed from a pipeline secret or a freshly-minted
+/// SAS token.
+///
+/// Pipeline-to-VM lateral movement primitive: every pipeline run can RCE every
+/// VM in scope, and the SAS/secret embedded in the command line is logged in
+/// plaintext on the VM and in the ARM extension status JSON.
+///
+/// Detection: read each Step's `META_SCRIPT_BODY`. If the body contains a
+/// remote-exec tool name AND (it interpolates a known pipeline secret variable
+/// OR it mints a SAS token in the same body), fire one finding per step.
+pub fn vm_remote_exec_via_pipeline_secret(graph: &AuthorityGraph) -> Vec<Finding> {
+    let mut findings = Vec::new();
+
+    for step in graph.nodes_of_kind(NodeKind::Step) {
+        let body = match step.metadata.get(META_SCRIPT_BODY) {
+            Some(b) if !b.is_empty() => b,
+            _ => continue,
+        };
+        let body_lower = body.to_lowercase();
+        if !body_uses_vm_remote_exec(&body_lower) {
+            continue;
+        }
+
+        let secret_names = step_secret_var_names(graph, step.id);
+        let secret_interpolated = secret_names
+            .iter()
+            .any(|name| body_interpolates_var(body, name));
+        let mints_sas = body_mints_sas(&body_lower);
+
+        if !secret_interpolated && !mints_sas {
+            continue;
+        }
+
+        // Pick a single tool name for the message.
+        let tool = VM_REMOTE_EXEC_TOKENS
+            .iter()
+            .find(|t| body_lower.contains(*t))
+            .copied()
+            .unwrap_or("Set-AzVMExtension");
+
+        let trigger = if secret_interpolated {
+            "interpolating a pipeline secret into the executed command line"
+        } else {
+            "embedding a freshly-minted SAS token into the executed command line"
+        };
+
+        let mut nodes_involved = vec![step.id];
+        // Include the secret nodes the step has access to so consumers can
+        // attribute the finding to the leaked credential.
+        for edge in graph.edges_from(step.id) {
+            if edge.kind == EdgeKind::HasAccessTo {
+                if let Some(n) = graph.node(edge.to) {
+                    if n.kind == NodeKind::Secret {
+                        nodes_involved.push(n.id);
+                    }
+                }
+            }
+        }
+
+        findings.push(Finding {
+            severity: Severity::High,
+            category: FindingCategory::VmRemoteExecViaPipelineSecret,
+            path: None,
+            nodes_involved,
+            message: format!(
+                "Step '{}' uses {} {} — pipeline-to-VM RCE primitive; credential is logged on the VM and in ARM extension status",
+                step.name, tool, trigger
+            ),
+            recommendation: Recommendation::Manual {
+                action: "Stage the script on the VM and pass the SAS via env var or protectedSettings (encrypted, not logged); avoid embedding secrets in commandToExecute".into(),
+            },
+        });
+    }
+
+    findings
+}
+
 /// How a `resources.repositories[].ref` value resolves for the purposes of
 /// the `template_extends_unpinned_branch` rule.
 enum RepositoryRefClass {
@@ -1321,6 +1565,71 @@ fn is_hex_sha(s: &str) -> bool {
     s.len() >= 40 && s.chars().all(|c| c.is_ascii_hexdigit())
 }
 
+/// Rule: a SAS token minted in-pipeline is passed as a CLI argument or
+/// interpolated into `commandToExecute` / `scriptArguments` / `--arguments` /
+/// `-ArgumentList` rather than via env var or stdin.
+///
+/// Even short-lived SAS tokens in argv hit Linux `/proc/*/cmdline`, Windows
+/// ETW process-create events, and ARM extension status — logged for the
+/// SAS lifetime.
+///
+/// Detection: read each Step's `META_SCRIPT_BODY`. Body must (a) mint a SAS
+/// token AND (b) reference a command-line sink keyword. Heuristic acceptable:
+/// the goal is to catch the corpus pattern, not perfect specificity.
+pub fn short_lived_sas_in_command_line(graph: &AuthorityGraph) -> Vec<Finding> {
+    let mut findings = Vec::new();
+
+    for step in graph.nodes_of_kind(NodeKind::Step) {
+        let body = match step.metadata.get(META_SCRIPT_BODY) {
+            Some(b) if !b.is_empty() => b,
+            _ => continue,
+        };
+        let body_lower = body.to_lowercase();
+
+        if !body_mints_sas(&body_lower) {
+            continue;
+        }
+        if !body_has_cmdline_sink(&body_lower) {
+            continue;
+        }
+
+        // Tighten precision: at least one minted-SAS variable must actually
+        // appear interpolated somewhere in the script body. This filters out
+        // scripts that mint a SAS purely for upload-to-blob and never put it
+        // on argv.
+        let sas_vars = powershell_sas_assignments(body);
+        let mut interpolated_var: Option<String> = None;
+        for v in &sas_vars {
+            if body_interpolates_var(body, v) {
+                interpolated_var = Some(v.clone());
+                break;
+            }
+        }
+        // If we couldn't bind a SAS var (e.g. inline `az`-CLI subshell), fall
+        // back to "mint+sink in same script" — still better than no signal.
+        let evidence = interpolated_var
+            .as_deref()
+            .map(|v| format!("$ {v} interpolated into argv"))
+            .unwrap_or_else(|| "SAS-mint and command-line sink in same script".to_string());
+
+        findings.push(Finding {
+            severity: Severity::Medium,
+            category: FindingCategory::ShortLivedSasInCommandLine,
+            path: None,
+            nodes_involved: vec![step.id],
+            message: format!(
+                "Step '{}' mints a SAS token and passes it on the command line ({}) — argv lands in /proc, ETW, and ARM extension status for the token's lifetime",
+                step.name, evidence
+            ),
+            recommendation: Recommendation::Manual {
+                action: "Pass the SAS via env var, stdin, or VM-extension protectedSettings; never put SAS tokens in commandToExecute / --arguments / -ArgumentList".into(),
+            },
+        });
+    }
+
+    findings
+}
+
 /// Run all rules against a graph.
 pub fn run_all_rules(graph: &AuthorityGraph, max_hops: usize) -> Vec<Finding> {
     let mut findings = Vec::new();
@@ -1344,6 +1653,8 @@ pub fn run_all_rules(graph: &AuthorityGraph, max_hops: usize) -> Vec<Finding> {
     findings.extend(self_hosted_pool_pr_hijack(graph));
     findings.extend(service_connection_scope_mismatch(graph));
     findings.extend(template_extends_unpinned_branch(graph));
+    findings.extend(vm_remote_exec_via_pipeline_secret(graph));
+    findings.extend(short_lived_sas_in_command_line(graph));
 
     apply_confidence_cap(graph, &mut findings);
 
@@ -2433,6 +2744,23 @@ mod tests {
         g
     }
 
+    // ── vm_remote_exec_via_pipeline_secret ──────────────
+
+    /// Helper: build a graph with one Step that has the given inline script
+    /// body and (optionally) a HasAccessTo edge to a Secret named `sas_var`.
+    fn graph_with_script_step(body: &str, secret_name: Option<&str>) -> AuthorityGraph {
+        let mut g = AuthorityGraph::new(source("ado.yml"));
+        let mut meta = std::collections::HashMap::new();
+        meta.insert(META_SCRIPT_BODY.into(), body.into());
+        let step_id =
+            g.add_node_with_metadata(NodeKind::Step, "deploy-vm", TrustZone::FirstParty, meta);
+        if let Some(name) = secret_name {
+            let sec = g.add_node(NodeKind::Secret, name, TrustZone::FirstParty);
+            g.add_edge(step_id, sec, EdgeKind::HasAccessTo);
+        }
+        g
+    }
+
     #[test]
     fn template_extends_unpinned_branch_fires_on_missing_ref() {
         let g = graph_with_repo(
@@ -2565,5 +2893,177 @@ mod tests {
         );
         let findings = template_extends_unpinned_branch(&g);
         assert!(findings.is_empty());
+    }
+
+    #[test]
+    fn vm_remote_exec_fires_on_set_azvmextension_with_minted_sas() {
+        let body = r#"
+            $sastokenpackages = New-AzStorageContainerSASToken -Container $packagecontainer -Context $ctx -Permission r -ExpiryTime (Get-Date).AddHours(3)
+            Set-AzVMExtension -ResourceGroupName $vmRG -VMName $vm.name -Name 'customScript' `
+                -Publisher 'Microsoft.Compute' -ExtensionType 'CustomScriptExtension' `
+                -Settings @{ "commandToExecute" = "powershell -File install.ps1 -saskey `"$sastokenpackages`"" }
+        "#;
+        let g = graph_with_script_step(body, None);
+        let findings = vm_remote_exec_via_pipeline_secret(&g);
+        assert_eq!(findings.len(), 1, "should fire once");
+        assert_eq!(
+            findings[0].category,
+            FindingCategory::VmRemoteExecViaPipelineSecret
+        );
+        assert_eq!(findings[0].severity, Severity::High);
+    }
+
+    #[test]
+    fn vm_remote_exec_fires_on_invoke_azvmruncommand_with_pipeline_secret() {
+        let body = r#"
+            Invoke-AzVMRunCommand -ResourceGroupName rg -VMName vm `
+                -CommandId RunPowerShellScript -ScriptString "Add-LocalGroupMember -Member admin -Password $(DOMAIN_JOIN_PASSWORD)"
+        "#;
+        let g = graph_with_script_step(body, Some("DOMAIN_JOIN_PASSWORD"));
+        let findings = vm_remote_exec_via_pipeline_secret(&g);
+        assert_eq!(findings.len(), 1);
+        assert!(findings[0]
+            .message
+            .contains("interpolating a pipeline secret"));
+    }
+
+    #[test]
+    fn vm_remote_exec_does_not_fire_without_remote_exec_call() {
+        // Has a SAS mint, but no VM remote-exec primitive — should not fire.
+        let body = r#"
+            $sas = New-AzStorageContainerSASToken -Container c -Context $ctx -Permission r -ExpiryTime (Get-Date).AddHours(1)
+            Write-Host "sas length is $($sas.Length)"
+        "#;
+        let g = graph_with_script_step(body, None);
+        let findings = vm_remote_exec_via_pipeline_secret(&g);
+        assert!(findings.is_empty());
+    }
+
+    #[test]
+    fn vm_remote_exec_does_not_fire_when_remote_exec_has_no_secret_or_sas() {
+        // Set-AzVMExtension with a static command line, no SAS, no secret —
+        // should not fire (no exposed credential).
+        let body = r#"
+            Set-AzVMExtension -ResourceGroupName rg -VMName vm -Name diag `
+                -Publisher Microsoft.Azure.Diagnostics -ExtensionType IaaSDiagnostics `
+                -Settings @{ "xmlCfg" = "<wadcfg/>" }
+        "#;
+        let g = graph_with_script_step(body, None);
+        let findings = vm_remote_exec_via_pipeline_secret(&g);
+        assert!(
+            findings.is_empty(),
+            "no SAS-mint and no secret interpolation → no finding"
+        );
+    }
+
+    #[test]
+    fn vm_remote_exec_fires_on_az_cli_run_command() {
+        let body = r#"
+            az vm run-command invoke --resource-group rg --name vm `
+                --command-id RunShellScript --scripts "echo $(DB_PASSWORD) > /tmp/x"
+        "#;
+        let g = graph_with_script_step(body, Some("DB_PASSWORD"));
+        let findings = vm_remote_exec_via_pipeline_secret(&g);
+        assert_eq!(findings.len(), 1);
+        assert!(findings[0].message.contains("az vm run-command"));
+    }
+
+    // ── short_lived_sas_in_command_line ─────────────────
+
+    #[test]
+    fn sas_in_cmdline_fires_on_minted_sas_interpolated_into_command_to_execute() {
+        let body = r#"
+            $sastokenpackages = New-AzStorageContainerSASToken -Container c -Context $ctx -Permission r -ExpiryTime (Get-Date).AddHours(3)
+            $settings = @{ "commandToExecute" = "powershell install.ps1 -sas `"$sastokenpackages`"" }
+        "#;
+        let g = graph_with_script_step(body, None);
+        let findings = short_lived_sas_in_command_line(&g);
+        assert_eq!(findings.len(), 1);
+        assert_eq!(
+            findings[0].category,
+            FindingCategory::ShortLivedSasInCommandLine
+        );
+        assert_eq!(findings[0].severity, Severity::Medium);
+        assert!(findings[0].message.contains("sastokenpackages"));
+    }
+
+    #[test]
+    fn sas_in_cmdline_does_not_fire_when_sas_is_only_uploaded_to_blob() {
+        // SAS minted but never put on argv — only used to build a URL.
+        let body = r#"
+            $sas = New-AzStorageContainerSASToken -Container c -Context $ctx -Permission r -ExpiryTime (Get-Date).AddHours(1)
+            $url = "https://acct.blob.core.windows.net/c/?" + $sas
+            Invoke-WebRequest -Uri $url -OutFile foo.zip
+        "#;
+        let g = graph_with_script_step(body, None);
+        let findings = short_lived_sas_in_command_line(&g);
+        assert!(findings.is_empty(), "no command-line sink → no finding");
+    }
+
+    #[test]
+    fn sas_in_cmdline_does_not_fire_without_sas_mint() {
+        let body = r#"
+            $settings = @{ "commandToExecute" = "powershell -File foo.ps1" }
+        "#;
+        let g = graph_with_script_step(body, None);
+        let findings = short_lived_sas_in_command_line(&g);
+        assert!(findings.is_empty());
+    }
+
+    #[test]
+    fn sas_in_cmdline_fires_on_az_cli_generate_sas_with_arguments() {
+        let body = r#"
+            sas=$(az storage container generate-sas --name c --account-name acct --permissions r --expiry 2099-01-01 -o tsv)
+            az vm extension set --vm-name vm --resource-group rg --name CustomScript --publisher Microsoft.Compute \
+                --settings "{ \"commandToExecute\": \"curl https://acct.blob.core.windows.net/c/foo?$sas\" }"
+        "#;
+        let g = graph_with_script_step(body, None);
+        let findings = short_lived_sas_in_command_line(&g);
+        // mint + sink in same script → fires (fallback evidence path).
+        assert_eq!(findings.len(), 1);
+    }
+
+    #[test]
+    fn co_fire_on_solarwinds_pattern() {
+        // Mirrors the corpus solarwinds shape: SAS minted, embedded in
+        // CustomScriptExtension commandToExecute. Both rules must fire.
+        let body = r#"
+            $sastokenpackages = New-AzStorageContainerSASToken -Container $pc -Context $ctx -Permission r -ExpiryTime (Get-Date).AddHours(3)
+            Set-AzVMExtension -ResourceGroupName $rg -VMName $vm `
+                -Publisher 'Microsoft.Compute' -ExtensionType 'CustomScriptExtension' `
+                -Settings @{ "commandToExecute" = "powershell -File install.ps1 -sas `"$sastokenpackages`"" }
+        "#;
+        let g = graph_with_script_step(body, None);
+        let r6 = vm_remote_exec_via_pipeline_secret(&g);
+        let r7 = short_lived_sas_in_command_line(&g);
+        assert_eq!(r6.len(), 1, "rule 6 must fire on solarwinds shape");
+        assert_eq!(r7.len(), 1, "rule 7 must fire on solarwinds shape");
+    }
+
+    #[test]
+    fn body_interpolates_var_does_not_match_prefix() {
+        // `$sas` should not match `$sastokenpackages`.
+        assert!(!body_interpolates_var(
+            "Write-Host $sastokenpackages",
+            "sas"
+        ));
+        assert!(body_interpolates_var(
+            "Write-Host $sastokenpackages",
+            "sastokenpackages"
+        ));
+        assert!(body_interpolates_var("echo $(SECRET)", "SECRET"));
+    }
+
+    #[test]
+    fn powershell_sas_assignments_extracts_var_names() {
+        let body = r#"
+            $a = New-AzStorageContainerSASToken -Container c -Context $ctx -Permission r
+            $b = Get-Date
+            $sasBlob = New-AzStorageBlobSASToken -Container c -Blob foo -Context $ctx -Permission r
+        "#;
+        let names = powershell_sas_assignments(body);
+        assert!(names.iter().any(|n| n.eq_ignore_ascii_case("a")));
+        assert!(names.iter().any(|n| n.eq_ignore_ascii_case("sasBlob")));
+        assert!(!names.iter().any(|n| n.eq_ignore_ascii_case("b")));
     }
 }
