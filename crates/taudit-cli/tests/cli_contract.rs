@@ -427,3 +427,278 @@ fn invariants_dir_does_not_emit_deprecation_warning() {
         "canonical --invariants-dir must not warn; got stderr:\n{stderr}"
     );
 }
+
+// ── .taudit-suppressions.yml end-to-end ──────────────────────────────────
+
+/// Helper: scan the fixture once with `--format json --suppressions <none>`,
+/// pluck out the first finding fingerprint, and return it. Used by the
+/// suppression tests below to learn a real fingerprint to waive against.
+fn first_fingerprint_for(fixture: &std::path::Path) -> (String, String) {
+    let output = taudit()
+        .arg("scan")
+        .arg("--format")
+        .arg("json")
+        .arg(fixture)
+        .output()
+        .expect("spawn taudit");
+    assert!(
+        output.status.success(),
+        "scan must succeed; stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let report: serde_json::Value = serde_json::from_slice(&output.stdout).expect("parse JSON");
+    let findings = report["findings"].as_array().expect("findings array");
+    assert!(!findings.is_empty(), "fixture must have findings");
+    let fp = findings[0]["fingerprint"]
+        .as_str()
+        .expect("first finding fingerprint")
+        .to_string();
+    let category = findings[0]["category"]
+        .as_str()
+        .expect("first finding category")
+        .to_string();
+    (fp, category)
+}
+
+#[test]
+fn suppression_downgrade_drops_severity_and_records_audit_fields() {
+    let fixture = workspace_root().join("tests/fixtures/propagation-leaky.yml");
+    let (fp, rule) = first_fingerprint_for(&fixture);
+
+    let dir = std::env::temp_dir().join(format!(
+        "taudit-supp-test-{}-{}",
+        std::process::id(),
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos()
+    ));
+    std::fs::create_dir_all(&dir).unwrap();
+    let supp_path = dir.join(".taudit-suppressions.yml");
+    std::fs::write(
+        &supp_path,
+        format!(
+            "suppressions:\n  - fingerprint: \"{fp}\"\n    rule_id: \"{rule}\"\n    reason: \"end-to-end test waiver\"\n    accepted_by: \"test@example.com\"\n    accepted_at: \"2026-04-26\"\n    expires_at: \"2099-01-01\"\n"
+        ),
+    )
+    .unwrap();
+
+    let output = taudit()
+        .arg("scan")
+        .arg("--format")
+        .arg("json")
+        .arg("--suppressions")
+        .arg(&supp_path)
+        .arg(&fixture)
+        .output()
+        .expect("spawn taudit");
+    assert!(
+        output.status.success(),
+        "scan with suppressions must exit 0; stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    let report: serde_json::Value = serde_json::from_slice(&output.stdout).expect("parse JSON");
+    let findings = report["findings"].as_array().expect("findings array");
+    let waived = findings
+        .iter()
+        .find(|f| f["fingerprint"] == fp)
+        .expect("waived finding still present (audit trail preserved)");
+    assert!(
+        waived["original_severity"].is_string(),
+        "downgrade must record original_severity; got: {waived}"
+    );
+    assert_eq!(
+        waived["suppression_reason"].as_str(),
+        Some("end-to-end test waiver"),
+    );
+}
+
+#[test]
+fn suppression_critical_without_expiry_exits_two() {
+    // The hard rule from blueteam-corpus-defense Section 5: critical
+    // waivers MUST carry expires_at. Loader rejects, scan exits 2.
+    let fixture = workspace_root().join("tests/fixtures/propagation-leaky.yml");
+    let (fp, rule) = first_fingerprint_for(&fixture);
+
+    let dir = std::env::temp_dir().join(format!(
+        "taudit-crit-supp-{}-{}",
+        std::process::id(),
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos()
+    ));
+    std::fs::create_dir_all(&dir).unwrap();
+    let supp_path = dir.join(".taudit-suppressions.yml");
+    // Write a waiver against the first fingerprint with NO expires_at.
+    // The rule under test is whichever rule fired first; the leaky
+    // fixture is known to produce critical findings (authority_propagation),
+    // so this should trigger the validator.
+    std::fs::write(
+        &supp_path,
+        format!(
+            "suppressions:\n  - fingerprint: \"{fp}\"\n    rule_id: \"{rule}\"\n    reason: \"missing expiry on critical — should fail\"\n    accepted_by: \"test@example.com\"\n    accepted_at: \"2026-04-26\"\n"
+        ),
+    )
+    .unwrap();
+
+    let output = taudit()
+        .arg("scan")
+        .arg("--suppressions")
+        .arg(&supp_path)
+        .arg(&fixture)
+        .output()
+        .expect("spawn taudit");
+
+    assert_eq!(
+        output.status.code(),
+        Some(2),
+        "critical waiver missing expires_at must exit 2; stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains("critical") && (stderr.contains("expires_at") || stderr.contains("expire")),
+        "stderr should explain the critical-without-expiry rule; got:\n{stderr}"
+    );
+}
+
+#[test]
+fn suppression_expired_warns_and_does_not_downgrade() {
+    let fixture = workspace_root().join("tests/fixtures/propagation-leaky.yml");
+    let (fp, rule) = first_fingerprint_for(&fixture);
+
+    let dir = std::env::temp_dir().join(format!(
+        "taudit-exp-supp-{}-{}",
+        std::process::id(),
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos()
+    ));
+    std::fs::create_dir_all(&dir).unwrap();
+    let supp_path = dir.join(".taudit-suppressions.yml");
+    std::fs::write(
+        &supp_path,
+        format!(
+            "suppressions:\n  - fingerprint: \"{fp}\"\n    rule_id: \"{rule}\"\n    reason: \"expired waiver\"\n    accepted_by: \"test@example.com\"\n    accepted_at: \"2024-01-01\"\n    expires_at: \"2024-06-01\"\n"
+        ),
+    )
+    .unwrap();
+
+    let output = taudit()
+        .arg("scan")
+        .arg("--suppressions")
+        .arg(&supp_path)
+        .arg(&fixture)
+        .output()
+        .expect("spawn taudit");
+
+    // Even with an expired waiver, scan still exits 0 (waiver simply
+    // doesn't apply). The warning is on stderr.
+    assert_eq!(
+        output.status.code(),
+        Some(0),
+        "expired waiver should leave exit code at 0; stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains("expired"),
+        "stderr should warn about the expired waiver; got:\n{stderr}"
+    );
+}
+
+#[test]
+fn suppression_suppress_mode_sets_flag_and_keeps_severity() {
+    let fixture = workspace_root().join("tests/fixtures/propagation-leaky.yml");
+    let (fp, rule) = first_fingerprint_for(&fixture);
+
+    let dir = std::env::temp_dir().join(format!(
+        "taudit-supp-mode-{}-{}",
+        std::process::id(),
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos()
+    ));
+    std::fs::create_dir_all(&dir).unwrap();
+    let supp_path = dir.join(".taudit-suppressions.yml");
+    std::fs::write(
+        &supp_path,
+        format!(
+            "suppressions:\n  - fingerprint: \"{fp}\"\n    rule_id: \"{rule}\"\n    reason: \"suppress mode test\"\n    accepted_by: \"test@example.com\"\n    accepted_at: \"2026-04-26\"\n    expires_at: \"2099-01-01\"\n"
+        ),
+    )
+    .unwrap();
+
+    let output = taudit()
+        .arg("scan")
+        .arg("--format")
+        .arg("json")
+        .arg("--suppressions")
+        .arg(&supp_path)
+        .arg("--suppression-mode")
+        .arg("suppress")
+        .arg(&fixture)
+        .output()
+        .expect("spawn taudit");
+
+    assert_eq!(output.status.code(), Some(0));
+    let report: serde_json::Value = serde_json::from_slice(&output.stdout).expect("parse JSON");
+    let findings = report["findings"].as_array().expect("findings array");
+    let waived = findings
+        .iter()
+        .find(|f| f["fingerprint"] == fp)
+        .expect("waived finding still present");
+    assert_eq!(
+        waived["suppressed"].as_bool(),
+        Some(true),
+        "suppress mode must set the flag; got: {waived}"
+    );
+    // Severity not changed in suppress mode.
+    assert!(
+        waived["original_severity"].is_string(),
+        "original_severity recorded in suppress mode too"
+    );
+}
+
+#[test]
+fn suppressions_list_emits_loaded_entries() {
+    let dir = std::env::temp_dir().join(format!(
+        "taudit-supp-list-{}-{}",
+        std::process::id(),
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos()
+    ));
+    std::fs::create_dir_all(&dir).unwrap();
+    let supp_path = dir.join(".taudit-suppressions.yml");
+    std::fs::write(
+        &supp_path,
+        "suppressions:\n  - fingerprint: \"deadbeefdeadbeef\"\n    rule_id: \"unpinned_action\"\n    reason: \"internal action\"\n    accepted_by: \"alice@example.com\"\n    accepted_at: \"2026-04-26\"\n",
+    )
+    .unwrap();
+
+    let output = taudit()
+        .arg("suppressions")
+        .arg("list")
+        .arg("--no-color")
+        .arg("--suppressions")
+        .arg(&supp_path)
+        .output()
+        .expect("spawn taudit");
+
+    assert_eq!(
+        output.status.code(),
+        Some(0),
+        "stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(stdout.contains("deadbeefdeadbeef"));
+    assert!(stdout.contains("unpinned_action"));
+    assert!(stdout.contains("alice@example.com"));
+}

@@ -166,6 +166,34 @@
           "type": "string",
           "pattern": "^[0-9a-f]{16}$",
           "description": "Stable cross-run identifier for the finding (16 hex chars, SHA-256-derived). Byte-identical to the value emitted in SARIF `partialFingerprints[primaryLocationLineHash]` and CloudEvents `tauditfindingfingerprint`. Use for SIEM dedup and suppression. Optional in v1 for backward-compat; always emitted by current taudit. See docs/finding-fingerprint.md."
+        },
+        "finding_group_id": {
+          "type": "string",
+          "format": "uuid",
+          "description": "Stable UUID v5 derived from the finding fingerprint. Two findings with the same fingerprint share a group id, so SIEMs can collapse N hops against the same authority root into a single advisory. Optional. See docs/finding-output-enhancements.md."
+        },
+        "time_to_fix": {
+          "type": "string",
+          "enum": ["trivial", "small", "medium", "large"],
+          "description": "Coarse remediation effort. trivial = ~5 min flag flip; small = ~1 hr step refactor; medium = ~1 day job restructure; large = ~1 week+ ops policy change. Optional; populated per-rule. Triage dashboards sort by `severity * time_to_fix` to surface highest-ROI fixes."
+        },
+        "compensating_controls": {
+          "type": "array",
+          "items": { "type": "string" },
+          "description": "Human-readable list of detected compensating controls that downgraded this finding's severity. Empty when no downgrade applied. Populated by compensating-control detectors (e.g. fork check present, environment gate present, OIDC token used)."
+        },
+        "suppressed": {
+          "type": "boolean",
+          "description": "True when a `.taudit-suppressions.yml` waiver matched and the configured mode is `suppress` (vs. `downgrade`). The finding is still emitted so audit trail is preserved; consumers may filter on this field."
+        },
+        "original_severity": {
+          "type": "string",
+          "enum": ["critical", "high", "medium", "low", "info"],
+          "description": "Pre-downgrade severity. Populated whenever a suppression entry OR a compensating control downgraded `severity`. Absent means the current severity is the rule-emitted value."
+        },
+        "suppression_reason": {
+          "type": "string",
+          "description": "Operator-supplied justification from the matching `.taudit-suppressions.yml` entry. Absent when no suppression applies."
         }
       }
     },

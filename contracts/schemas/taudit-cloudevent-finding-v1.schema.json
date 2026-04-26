@@ -62,6 +62,11 @@
       "enum": ["ado", "gha", "gitlab"],
       "description": "CI/CD platform of the underlying pipeline. SIEM correlation rules use this to route events to per-platform remediation runbooks without re-parsing the `subject` (file path). Source: `graph.metadata[\"platform\"]`, populated from the resolved `Platform` variant during scan. Optional in v1 for backward-compat; always emitted by current taudit when the parser stamped the metadata key."
     },
+    "tauditfindinggroup": {
+      "type": "string",
+      "format": "uuid",
+      "description": "Stable UUID v5 derived from the fingerprint. Two findings with the same fingerprint share a group id; SIEMs collapse N hops against one authority root into a single advisory by `SELECT DISTINCT ON (tauditfindinggroup)`. Optional in v1 for backward-compat. See docs/finding-output-enhancements.md."
+    },
     "correlationid": {
       "type": "string",
       "minLength": 1,

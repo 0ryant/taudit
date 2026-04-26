@@ -2,7 +2,8 @@ use serde::Serialize;
 use taudit_core::custom_rules::CustomRule;
 use taudit_core::error::TauditError;
 use taudit_core::finding::{
-    compute_fingerprint, Finding, FindingCategory, FindingSource, Severity,
+    compute_finding_group_id, compute_fingerprint, Finding, FindingCategory, FindingSource,
+    FixEffort, Severity,
 };
 use taudit_core::graph::AuthorityGraph;
 use taudit_core::ports::ReportSink;
@@ -704,6 +705,56 @@ struct SarifResultProperties {
     /// for shipped rules, `custom:<source-file-path>` for custom invariants.
     #[serde(rename = "taudit-source")]
     taudit_source: String,
+    /// Stable UUID v5 grouping per `(rule, file, root authority)` cluster.
+    /// SARIF viewers (GitHub Code Scanning, VS Code) expose `properties.*`
+    /// as raw key/value pairs, so this field is consumable directly.
+    /// See `docs/finding-output-enhancements.md`.
+    #[serde(rename = "findingGroupId", skip_serializing_if = "Option::is_none")]
+    finding_group_id: Option<String>,
+    /// Coarse remediation effort: trivial / small / medium / large.
+    /// Triage dashboards sort by `severity * timeToFix` to surface the
+    /// highest-ROI fixes. See `docs/finding-output-enhancements.md`.
+    #[serde(rename = "timeToFix", skip_serializing_if = "Option::is_none")]
+    time_to_fix: Option<&'static str>,
+    /// Detected compensating controls that downgraded this finding's
+    /// severity. Empty list serializes nothing. See blueteam corpus
+    /// defense report Section 4.
+    #[serde(rename = "compensatingControls", skip_serializing_if = "Vec::is_empty")]
+    compensating_controls: Vec<String>,
+    /// SARIF 2.1.0 `result.suppressions` shape lives at top-level on
+    /// `SarifResult`, but we mirror the boolean here so consumers reading
+    /// `properties` see the same flag without parsing the suppressions array.
+    #[serde(rename = "suppressed", skip_serializing_if = "is_false_ref")]
+    suppressed: bool,
+    /// Pre-downgrade severity when the suppression applicator OR a
+    /// compensating control modified `level`. Useful for dashboards that
+    /// want to render "downgraded from Critical" badges.
+    #[serde(rename = "originalSeverity", skip_serializing_if = "Option::is_none")]
+    original_severity: Option<&'static str>,
+}
+
+#[allow(clippy::trivially_copy_pass_by_ref)]
+fn is_false_ref(b: &bool) -> bool {
+    !*b
+}
+
+fn fix_effort_to_str(e: FixEffort) -> &'static str {
+    match e {
+        FixEffort::Trivial => "trivial",
+        FixEffort::Small => "small",
+        FixEffort::Medium => "medium",
+        FixEffort::Large => "large",
+    }
+}
+
+fn severity_to_str(s: Severity) -> &'static str {
+    match s {
+        Severity::Critical => "critical",
+        Severity::High => "high",
+        Severity::Medium => "medium",
+        Severity::Low => "low",
+        Severity::Info => "info",
+    }
 }
 
 #[derive(Serialize)]
@@ -912,6 +963,15 @@ fn finding_to_result(
             format!("custom:{}", source_file.display())
         }
     };
+    let finding_group_id = finding
+        .extras
+        .finding_group_id
+        .clone()
+        .or_else(|| Some(compute_finding_group_id(&fingerprint)));
+    let time_to_fix = finding.extras.time_to_fix.map(fix_effort_to_str);
+    let compensating_controls = finding.extras.compensating_controls.clone();
+    let suppressed = finding.extras.suppressed;
+    let original_severity = finding.extras.original_severity.map(severity_to_str);
 
     SarifResult {
         rule_id,
@@ -930,6 +990,11 @@ fn finding_to_result(
         properties: SarifResultProperties {
             security_severity,
             taudit_source,
+            finding_group_id,
+            time_to_fix,
+            compensating_controls,
+            suppressed,
+            original_severity,
         },
         partial_fingerprints: SarifPartialFingerprints {
             // Both keys carry the SAME 16-hex value today. They diverge only
@@ -989,7 +1054,7 @@ fn severity_to_security_severity(severity: &Severity) -> &'static str {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use taudit_core::finding::{Recommendation, Severity};
+    use taudit_core::finding::{FindingExtras, Recommendation, Severity};
     use taudit_core::graph::{AuthorityGraph, PipelineSource};
     use taudit_core::ports::ReportSink;
 
@@ -1017,6 +1082,7 @@ mod tests {
                 action: "review".to_string(),
             },
             source: taudit_core::finding::FindingSource::BuiltIn,
+            extras: FindingExtras::default(),
         }
     }
 

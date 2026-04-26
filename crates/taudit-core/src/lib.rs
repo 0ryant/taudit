@@ -7,3 +7,4 @@ pub mod map;
 pub mod ports;
 pub mod propagation;
 pub mod rules;
+pub mod suppressions;

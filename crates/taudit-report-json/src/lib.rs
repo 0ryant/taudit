@@ -1,5 +1,5 @@
 use taudit_core::error::TauditError;
-use taudit_core::finding::{compute_fingerprint, rule_id_for, Finding};
+use taudit_core::finding::{compute_finding_group_id, compute_fingerprint, rule_id_for, Finding};
 use taudit_core::graph::{AuthorityCompleteness, AuthorityGraph};
 use taudit_core::ports::ReportSink;
 
@@ -25,7 +25,7 @@ pub struct JsonReport<'a> {
     /// Non-breaking addition (1.x consumers ignore unknown fields).
     pub schema_uri: &'static str,
     pub graph: &'a AuthorityGraph,
-    pub findings: Vec<FindingWithFingerprint<'a>>,
+    pub findings: Vec<FindingWithFingerprint>,
     pub summary: Summary,
 }
 
@@ -42,11 +42,15 @@ pub struct JsonReport<'a> {
 /// the same id surfaced in SARIF `result.ruleId` and CloudEvents
 /// `taudit.rule_id`, so JSON consumers can filter/group by rule without
 /// re-deriving it from the category serialization.
+///
+/// The wrapper owns its `Finding` so the JSON sink can populate
+/// `extras.finding_group_id` from the fingerprint without mutating the
+/// caller's finding list. See `docs/finding-output-enhancements.md`.
 #[derive(Serialize)]
-pub struct FindingWithFingerprint<'a> {
+pub struct FindingWithFingerprint {
     pub rule_id: String,
     #[serde(flatten)]
-    pub finding: &'a Finding,
+    pub finding: Finding,
     pub fingerprint: String,
 }
 
@@ -107,12 +111,24 @@ impl<W: std::io::Write> ReportSink<W> for JsonReportSink {
     ) -> Result<(), TauditError> {
         use taudit_core::finding::Severity;
 
-        let findings_with_fp: Vec<FindingWithFingerprint<'_>> = findings
+        // For each finding compute the fingerprint and derive the
+        // group id from it. We populate `extras.finding_group_id` on a
+        // cloned `Finding` so callers' lists stay untouched. If a rule
+        // already populated the group id, we respect that value.
+        let findings_with_fp: Vec<FindingWithFingerprint> = findings
             .iter()
-            .map(|f| FindingWithFingerprint {
-                rule_id: rule_id_for(f),
-                finding: f,
-                fingerprint: compute_fingerprint(f, graph),
+            .map(|f| {
+                let fingerprint = compute_fingerprint(f, graph);
+                let rule_id = rule_id_for(f);
+                let mut owned = f.clone();
+                if owned.extras.finding_group_id.is_none() {
+                    owned.extras.finding_group_id = Some(compute_finding_group_id(&fingerprint));
+                }
+                FindingWithFingerprint {
+                    rule_id,
+                    finding: owned,
+                    fingerprint,
+                }
             })
             .collect();
 
@@ -161,7 +177,7 @@ impl<W: std::io::Write> ReportSink<W> for JsonReportSink {
 mod tests {
     use crate::JsonReportSink;
     use std::{fs, path::PathBuf};
-    use taudit_core::finding::{Finding, Recommendation, Severity};
+    use taudit_core::finding::{Finding, FindingExtras, Recommendation, Severity};
     use taudit_core::graph::PipelineSource;
     use taudit_core::ports::ReportSink;
 
@@ -213,6 +229,7 @@ mod tests {
                 action: "pin the action".into(),
             },
             source: taudit_core::finding::FindingSource::BuiltIn,
+            extras: FindingExtras::default(),
         }];
 
         let mut buf = Vec::new();
@@ -361,6 +378,7 @@ mod tests {
                     action: "scope it".into(),
                 },
                 source: taudit_core::finding::FindingSource::BuiltIn,
+                extras: taudit_core::finding::FindingExtras::default(),
             }];
             (graph, findings)
         }
@@ -408,6 +426,7 @@ mod tests {
                     action: "scope it".into(),
                 },
                 source: taudit_core::finding::FindingSource::BuiltIn,
+                extras: taudit_core::finding::FindingExtras::default(),
             },
             Finding {
                 severity: Severity::Medium,
@@ -419,6 +438,7 @@ mod tests {
                     action: "pin it".into(),
                 },
                 source: taudit_core::finding::FindingSource::BuiltIn,
+                extras: taudit_core::finding::FindingExtras::default(),
             },
         ];
 

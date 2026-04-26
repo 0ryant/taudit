@@ -43,9 +43,47 @@
       "minLength": 1
     },
     "source": {
+      "description": "Provenance of the rule that emitted this finding: `built-in` (one of the rules shipped with taudit) or an object `{\"custom\": {\"source_file\": \"<path>\"}}` for custom invariants loaded via `--invariants-dir`. Optional in v1 for backward-compat; always emitted by current taudit.",
+      "oneOf": [
+        { "type": "string", "enum": ["built-in"] },
+        {
+          "type": "object",
+          "required": ["custom"],
+          "additionalProperties": false,
+          "properties": {
+            "custom": {
+              "type": "object",
+              "required": ["source_file"],
+              "additionalProperties": false,
+              "properties": {
+                "source_file": { "type": "string" }
+              }
+            }
+          }
+        }
+      ]
+    },
+    "time_to_fix": {
       "type": "string",
-      "enum": ["built-in", "custom"],
-      "description": "Provenance of the rule that emitted this finding: `built-in` (one of the rules shipped with taudit) or `custom` (an authority invariant loaded via `--invariants-dir`). Reserved for the provenance work being landed in parallel; producers MAY omit it. When present, dashboards can filter built-ins from custom invariants."
+      "enum": ["trivial", "small", "medium", "large"],
+      "description": "Coarse remediation effort. Triage dashboards sort by `severity * time_to_fix` to surface highest-ROI fixes. Optional. See docs/finding-output-enhancements.md."
+    },
+    "compensating_controls": {
+      "type": "array",
+      "items": { "type": "string" },
+      "description": "Human-readable list of detected controls that already neutralise (or partially neutralise) this finding. Populated when a compensating-control detector downgraded `severity`. Optional."
+    },
+    "suppressed": {
+      "type": "boolean",
+      "description": "True when a matching `.taudit-suppressions.yml` entry was applied in `suppress` mode. The finding still appears (audit trail preserved); consumers may filter on this. Optional."
+    },
+    "original_severity": {
+      "$ref": "#/$defs/Severity",
+      "description": "Pre-downgrade severity. Populated when the suppression applicator OR a compensating-control detector mutated `severity`. Optional."
+    },
+    "suppression_reason": {
+      "type": "string",
+      "description": "Operator-supplied justification from the matching `.taudit-suppressions.yml` entry. Optional."
     }
   },
   "$defs": {
@@ -89,6 +127,12 @@
         "pr_trigger_with_floating_action_ref",
         "untrusted_api_response_to_env_sink",
         "pr_build_pushes_image_with_floating_credentials",
+        "secret_via_env_gate_to_untrusted_consumer",
+        "no_workflow_level_permissions_block",
+        "prod_deploy_job_no_environment_gate",
+        "long_lived_secret_without_oidc_recommendation",
+        "pull_request_workflow_inconsistent_fork_check",
+        "gitlab_deploy_job_missing_protected_branch_only",
         "egress_blindspot",
         "missing_audit_trail"
       ]

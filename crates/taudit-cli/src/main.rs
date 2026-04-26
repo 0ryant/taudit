@@ -4,7 +4,7 @@ use std::collections::HashSet;
 use std::path::{Path, PathBuf};
 use std::time::{SystemTime, UNIX_EPOCH};
 
-use taudit_core::finding::Severity;
+use taudit_core::finding::{FindingExtras, Severity};
 use taudit_core::graph::PipelineSource;
 use taudit_core::ignore::{glob_match, IgnoreConfig};
 use taudit_core::map;
@@ -170,6 +170,17 @@ enum Cli {
         /// the input and are willing to accept the wall-clock cost.
         #[arg(long, default_value_t = false)]
         force_scan_dense: bool,
+        /// Path to `.taudit-suppressions.yml`. When omitted, taudit looks for
+        /// `.taudit-suppressions.yml` in CWD then `.taudit/suppressions.yml`.
+        /// See `docs/suppressions.md`.
+        #[arg(long)]
+        suppressions: Option<PathBuf>,
+
+        /// How to apply matched suppressions. `downgrade` (default) drops
+        /// severity by one tier; `suppress` sets `extras.suppressed = true`
+        /// and leaves severity unchanged. The full finding always appears.
+        #[arg(long, default_value = "downgrade")]
+        suppression_mode: SuppressionModeArg,
     },
 
     /// Show authority map — which steps access which secrets/identities
@@ -311,6 +322,21 @@ enum Cli {
         platform: Platform,
     },
 
+    /// Inspect, add, or review per-finding waivers from `.taudit-suppressions.yml`.
+    ///
+    /// Suppressions waive specific findings by their stable fingerprint. They
+    /// preserve the audit trail (operator, reason, expiry) and survive across
+    /// re-runs. See `docs/suppressions.md`.
+    Suppressions {
+        #[command(subcommand)]
+        action: SuppressionsAction,
+
+        /// Path to `.taudit-suppressions.yml` (default: `.taudit-suppressions.yml`
+        /// in the current directory, then `.taudit/suppressions.yml`).
+        #[arg(long, global = true)]
+        suppressions: Option<PathBuf>,
+    },
+
     /// Inspect or list authority invariants (built-in and custom).
     ///
     /// Authority invariants are declarative properties that the pipeline
@@ -372,6 +398,76 @@ enum Cli {
         /// Write the report to this file instead of stdout.
         #[arg(long, short = 'o')]
         output: Option<PathBuf>,
+
+        /// Path to `.taudit-suppressions.yml`. See `docs/suppressions.md`.
+        #[arg(long)]
+        suppressions: Option<PathBuf>,
+
+        /// How to apply matched suppressions. See `taudit scan --help`.
+        #[arg(long, default_value = "downgrade")]
+        suppression_mode: SuppressionModeArg,
+    },
+}
+
+/// CLI surface for `SuppressionMode`. Mirrors the core enum but lives
+/// in the CLI crate so we can derive `clap::ValueEnum` without having
+/// taudit-core depend on clap.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Default, clap::ValueEnum)]
+enum SuppressionModeArg {
+    /// Default — drop severity one tier (Critical -> High -> ... -> Info).
+    #[default]
+    Downgrade,
+    /// Set `extras.suppressed = true`; leave severity unchanged.
+    Suppress,
+}
+
+impl SuppressionModeArg {
+    fn to_core(self) -> taudit_core::suppressions::SuppressionMode {
+        match self {
+            SuppressionModeArg::Downgrade => taudit_core::suppressions::SuppressionMode::Downgrade,
+            SuppressionModeArg::Suppress => taudit_core::suppressions::SuppressionMode::Suppress,
+        }
+    }
+}
+
+#[derive(clap::Subcommand)]
+enum SuppressionsAction {
+    /// Print all loaded suppressions with status (active / expiring-soon /
+    /// expired / stale-for-review).
+    List {
+        /// Disable ANSI color codes. Also honored via the NO_COLOR env var.
+        #[arg(long, default_value_t = false)]
+        no_color: bool,
+    },
+    /// Append a new suppression entry. Either pass all fields via flags
+    /// (non-interactive, scriptable) or run with no flags to be prompted.
+    Add {
+        /// 16-char hex fingerprint to waive.
+        #[arg(long)]
+        fingerprint: Option<String>,
+        /// Snake-case rule id (or custom rule id) being waived.
+        #[arg(long)]
+        rule_id: Option<String>,
+        /// Operator-supplied justification.
+        #[arg(long)]
+        reason: Option<String>,
+        /// Identity of the person accepting the risk.
+        #[arg(long)]
+        accepted_by: Option<String>,
+        /// Date the waiver was created (YYYY-MM-DD). Defaults to today.
+        #[arg(long)]
+        accepted_at: Option<String>,
+        /// Optional expiry date (YYYY-MM-DD). Required for critical waivers.
+        #[arg(long)]
+        expires_at: Option<String>,
+    },
+    /// List all loaded suppressions sorted by `accepted_at`. Flags any
+    /// older than 90 days for human re-review and any with `expires_at`
+    /// in the past as expired.
+    Review {
+        /// Disable ANSI color codes. Also honored via the NO_COLOR env var.
+        #[arg(long, default_value_t = false)]
+        no_color: bool,
     },
 }
 
@@ -688,6 +784,8 @@ struct ScanOpts {
     invariants_dir: Option<PathBuf>,
     invariants_allow_external_symlinks: bool,
     force_scan_dense: bool,
+    suppressions: Option<PathBuf>,
+    suppression_mode: SuppressionModeArg,
 }
 
 #[derive(Clone)]
@@ -739,6 +837,8 @@ fn run() -> Result<()> {
             invariants_dir,
             invariants_allow_external_symlinks,
             force_scan_dense,
+            suppressions,
+            suppression_mode,
         } => {
             // Color is on by default — CI log viewers (GHA, ADO) render ANSI from piped stdout.
             // Disable only when --no-color is passed or the NO_COLOR env var is set (no-color.org).
@@ -769,6 +869,8 @@ fn run() -> Result<()> {
                 invariants_dir,
                 invariants_allow_external_symlinks,
                 force_scan_dense,
+                suppressions,
+                suppression_mode,
             })
         }
         Cli::Completions { shell } => {
@@ -847,6 +949,8 @@ fn run() -> Result<()> {
             severity_threshold,
             no_color,
             output,
+            suppressions,
+            suppression_mode,
         } => {
             if no_color || std::env::var_os("NO_COLOR").is_some() {
                 colored::control::set_override(false);
@@ -862,8 +966,47 @@ fn run() -> Result<()> {
                 include_builtin,
                 severity_threshold,
                 output,
+                suppressions,
+                suppression_mode,
             })
         }
+        Cli::Suppressions {
+            action,
+            suppressions,
+        } => match action {
+            SuppressionsAction::List { no_color } => {
+                if no_color || std::env::var_os("NO_COLOR").is_some() {
+                    colored::control::set_override(false);
+                } else {
+                    colored::control::set_override(true);
+                }
+                cmd_suppressions_list(suppressions)
+            }
+            SuppressionsAction::Add {
+                fingerprint,
+                rule_id,
+                reason,
+                accepted_by,
+                accepted_at,
+                expires_at,
+            } => cmd_suppressions_add(SuppressionsAddOpts {
+                suppressions_path: suppressions,
+                fingerprint,
+                rule_id,
+                reason,
+                accepted_by,
+                accepted_at,
+                expires_at,
+            }),
+            SuppressionsAction::Review { no_color } => {
+                if no_color || std::env::var_os("NO_COLOR").is_some() {
+                    colored::control::set_override(false);
+                } else {
+                    colored::control::set_override(true);
+                }
+                cmd_suppressions_review(suppressions)
+            }
+        },
     }
 }
 
@@ -1005,6 +1148,8 @@ fn cmd_scan(opts: ScanOpts) -> Result<()> {
         invariants_dir,
         invariants_allow_external_symlinks,
         force_scan_dense,
+        suppressions: suppressions_path,
+        suppression_mode,
     } = opts;
 
     // Deprecation warning: --rules-dir was renamed to --invariants-dir as
@@ -1083,6 +1228,12 @@ fn cmd_scan(opts: ScanOpts) -> Result<()> {
             format.as_str()
         );
     }
+    // Load .taudit-suppressions.yml. Empty config when no file present.
+    // The applicator runs after .tauditignore + baseline so a waiver only
+    // takes effect on findings that are still in scope.
+    let suppression_config = load_suppression_config(suppressions_path.clone())?;
+    let suppression_mode_core = suppression_mode.to_core();
+    let suppression_today = today_local();
 
     let threshold = severity_threshold.map(|s| s.to_severity());
     let runtime_paths = resolve_runtime_artifact_paths(telemetry_dir, receipt_dir, log_dir);
@@ -1236,6 +1387,40 @@ fn cmd_scan(opts: ScanOpts) -> Result<()> {
 
         // Apply baseline suppression
         let (findings, suppressed_baseline) = apply_baseline(after_ignore, &baseline_fingerprints);
+
+        // Apply .taudit-suppressions.yml waivers. Critical waivers without
+        // expires_at are rejected up-front (validate against the current
+        // file's critical fingerprints). Then apply per the configured mode.
+        let findings = {
+            let fingerprints: Vec<String> = findings
+                .iter()
+                .map(|f| taudit_core::finding::compute_fingerprint(f, &graph))
+                .collect();
+            let critical_fps: Vec<&str> = findings
+                .iter()
+                .zip(fingerprints.iter())
+                .filter(|(f, _)| f.severity == taudit_core::finding::Severity::Critical)
+                .map(|(_, fp)| fp.as_str())
+                .collect();
+            if let Err(errors) =
+                suppression_config.validate_critical_waivers(critical_fps.iter().copied())
+            {
+                for err in errors {
+                    eprintln!("error: {err}");
+                }
+                std::process::exit(2);
+            }
+            let (waived, warnings) = suppression_config.apply(
+                findings,
+                suppression_mode_core,
+                &fingerprints,
+                suppression_today,
+            );
+            for w in warnings {
+                eprintln!("{w}");
+            }
+            waived
+        };
 
         // v0.7: scan no longer gates on findings. We still observe whether
         // the user-supplied threshold would have triggered the legacy v0.6
@@ -1455,6 +1640,8 @@ struct VerifyOpts {
     include_builtin: bool,
     severity_threshold: Option<SeverityLevel>,
     output: Option<PathBuf>,
+    suppressions: Option<PathBuf>,
+    suppression_mode: SuppressionModeArg,
 }
 
 /// One policy violation surfaced by `verify`. Carries enough detail for the
@@ -1532,6 +1719,18 @@ fn run_verify_io<W: std::io::Write>(opts: &VerifyOpts, writer: &mut W) -> i32 {
     let parser = parser_box.as_ref();
     let threshold = opts.severity_threshold.as_ref().map(|s| s.to_severity());
 
+    // Load .taudit-suppressions.yml — verify honors the same waiver file
+    // as scan so policy-gated CI runs see consistent severity levels.
+    let suppression_config = match load_suppression_config(opts.suppressions.clone()) {
+        Ok(c) => c,
+        Err(err) => {
+            eprintln!("error: {err:#}");
+            return 2;
+        }
+    };
+    let suppression_mode_core = opts.suppression_mode.to_core();
+    let suppression_today = today_local();
+
     let mut violations: Vec<Violation> = Vec::new();
     let mut sarif_buffer: Vec<(
         taudit_core::graph::AuthorityGraph,
@@ -1598,6 +1797,38 @@ fn run_verify_io<W: std::io::Write>(opts: &VerifyOpts, writer: &mut W) -> i32 {
         if opts.include_builtin {
             findings.extend(rules::run_all_rules(&graph, opts.max_hops));
         }
+
+        // Apply .taudit-suppressions.yml before the threshold filter so a
+        // downgraded waiver can fall below the severity floor and stop
+        // gating CI. Critical-without-expiry is a hard error.
+        let fingerprints: Vec<String> = findings
+            .iter()
+            .map(|f| taudit_core::finding::compute_fingerprint(f, &graph))
+            .collect();
+        let critical_fps: Vec<&str> = findings
+            .iter()
+            .zip(fingerprints.iter())
+            .filter(|(f, _)| f.severity == taudit_core::finding::Severity::Critical)
+            .map(|(_, fp)| fp.as_str())
+            .collect();
+        if let Err(errors) =
+            suppression_config.validate_critical_waivers(critical_fps.iter().copied())
+        {
+            for err in errors {
+                eprintln!("error: {err}");
+            }
+            return 2;
+        }
+        let (waived, warnings) = suppression_config.apply(
+            findings,
+            suppression_mode_core,
+            &fingerprints,
+            suppression_today,
+        );
+        for w in warnings {
+            eprintln!("{w}");
+        }
+        let mut findings = waived;
 
         // Apply the severity threshold (Severity orders Critical < Info).
         if let Some(ref t) = threshold {
@@ -1891,6 +2122,43 @@ fn append_line(path: &PathBuf, line: &str) -> Result<()> {
         .with_context(|| format!("failed to open {}", path.display()))?;
     writeln!(file, "{line}").with_context(|| format!("failed to append to {}", path.display()))?;
     Ok(())
+}
+
+/// Load `.taudit-suppressions.yml`. Resolution order:
+///   1. Explicit `--suppressions <path>` flag (must exist).
+///   2. `.taudit-suppressions.yml` in CWD.
+///   3. `.taudit/suppressions.yml` in CWD.
+///   4. Empty config.
+fn load_suppression_config(
+    explicit_path: Option<PathBuf>,
+) -> Result<taudit_core::suppressions::SuppressionConfig> {
+    let path = if let Some(p) = explicit_path {
+        // Operator named a path explicitly — fail if missing rather than
+        // silently fall through to a different file.
+        if !p.exists() {
+            return Err(anyhow::anyhow!(
+                "suppression file not found: {}",
+                p.display()
+            ));
+        }
+        Some(p)
+    } else {
+        let cwd = std::env::current_dir().with_context(|| "failed to resolve CWD")?;
+        taudit_core::suppressions::SuppressionConfig::discover(&cwd)
+    };
+
+    match path {
+        Some(p) => taudit_core::suppressions::SuppressionConfig::load_from_path(&p)
+            .map_err(|e| anyhow::anyhow!(e.to_string())),
+        None => Ok(taudit_core::suppressions::SuppressionConfig::default()),
+    }
+}
+
+/// Today's date in the local timezone. Used by the suppression
+/// applicator to determine expiry. The date-only granularity matches
+/// the YAML schema (`expires_at: YYYY-MM-DD`).
+fn today_local() -> chrono::NaiveDate {
+    chrono::Local::now().date_naive()
 }
 
 /// Load ignore config from file. Tries `--ignore-file` path first,
@@ -2262,6 +2530,7 @@ fn collapse_template_instance_findings(
             // already sharing rule + category + nodes, so all members of
             // the group share a source.
             source: first.source.clone(),
+            extras: FindingExtras::default(),
         });
     }
 
@@ -2768,6 +3037,245 @@ fn cmd_invariants_list(invariants_dir: Option<PathBuf>) -> Result<()> {
     Ok(())
 }
 
+// ── `taudit suppressions` subcommand handlers ────────────────────────
+
+struct SuppressionsAddOpts {
+    suppressions_path: Option<PathBuf>,
+    fingerprint: Option<String>,
+    rule_id: Option<String>,
+    reason: Option<String>,
+    accepted_by: Option<String>,
+    accepted_at: Option<String>,
+    expires_at: Option<String>,
+}
+
+/// `taudit suppressions list` — print every loaded entry with its
+/// runtime status (active / expiring-soon / expired / stale-for-review).
+fn cmd_suppressions_list(suppressions_path: Option<PathBuf>) -> Result<()> {
+    use colored::Colorize;
+    use std::io::Write;
+
+    let cfg = load_suppression_config(suppressions_path)?;
+    let stdout = std::io::stdout();
+    let mut out = stdout.lock();
+
+    if cfg.suppressions.is_empty() {
+        writeln!(
+            out,
+            "no suppressions loaded (.taudit-suppressions.yml absent or empty)"
+        )?;
+        return Ok(());
+    }
+
+    writeln!(
+        out,
+        "{} — {} suppression{}\n",
+        "taudit suppressions".bold(),
+        cfg.suppressions.len(),
+        if cfg.suppressions.len() == 1 { "" } else { "s" },
+    )?;
+
+    let today = today_local();
+    let fp_width = cfg
+        .suppressions
+        .iter()
+        .map(|s| s.fingerprint.len())
+        .max()
+        .unwrap_or(16);
+    let rule_width = cfg
+        .suppressions
+        .iter()
+        .map(|s| s.rule_id.len())
+        .max()
+        .unwrap_or(8);
+
+    for entry in &cfg.suppressions {
+        let status = taudit_core::suppressions::SuppressionConfig::status_of(entry, today);
+        let label = status.label();
+        let labeled = match status {
+            taudit_core::suppressions::SuppressionStatus::Active => label.green(),
+            taudit_core::suppressions::SuppressionStatus::ExpiringSoon => label.yellow(),
+            taudit_core::suppressions::SuppressionStatus::Expired => label.red(),
+            taudit_core::suppressions::SuppressionStatus::StaleForReview => label.cyan(),
+        };
+        let expiry = entry.expires_at.as_deref().unwrap_or("(no expiry)");
+        writeln!(
+            out,
+            "  {:<fp_width$}  {:<rule_width$}  {:<16}  expires={:<12}  by={}",
+            entry.fingerprint,
+            entry.rule_id,
+            labeled,
+            expiry,
+            entry.accepted_by,
+            fp_width = fp_width,
+            rule_width = rule_width,
+        )?;
+        writeln!(out, "    reason: {}", entry.reason)?;
+    }
+    Ok(())
+}
+
+/// `taudit suppressions add` — append a new entry to the suppressions
+/// file. All fields can be supplied via flags (scriptable) or prompted
+/// interactively when omitted.
+fn cmd_suppressions_add(opts: SuppressionsAddOpts) -> Result<()> {
+    use std::io::Write;
+
+    // Resolve target file: explicit `--suppressions` or default to
+    // `.taudit-suppressions.yml` in CWD.
+    let target = opts.suppressions_path.clone().unwrap_or_else(|| {
+        std::env::current_dir()
+            .ok()
+            .map(|p| p.join(".taudit-suppressions.yml"))
+            .unwrap_or_else(|| PathBuf::from(".taudit-suppressions.yml"))
+    });
+
+    let fingerprint = prompt_or_value(opts.fingerprint, "fingerprint (16 hex chars)")?;
+    let rule_id = prompt_or_value(opts.rule_id, "rule_id (snake_case)")?;
+    let reason = prompt_or_value(opts.reason, "reason (one-line justification)")?;
+    let accepted_by = prompt_or_value(opts.accepted_by, "accepted_by (email or handle)")?;
+    let accepted_at = match opts.accepted_at {
+        Some(s) => s,
+        None => today_local().format("%Y-%m-%d").to_string(),
+    };
+    let expires_at = opts.expires_at.filter(|s| !s.is_empty());
+
+    let entry = taudit_core::suppressions::Suppression {
+        fingerprint,
+        rule_id,
+        reason,
+        accepted_by,
+        accepted_at,
+        expires_at,
+    };
+
+    let body = taudit_core::suppressions::render_entry_yaml(&entry);
+
+    if target.exists() {
+        // Append to the existing `suppressions:` list. We do a simple text
+        // append so operator-authored comments survive.
+        let existing = std::fs::read_to_string(&target)
+            .with_context(|| format!("failed to read {}", target.display()))?;
+        let mut next = existing;
+        if !next.ends_with('\n') {
+            next.push('\n');
+        }
+        next.push_str(&body);
+        std::fs::write(&target, next)
+            .with_context(|| format!("failed to write {}", target.display()))?;
+    } else {
+        // Create a fresh file with a header comment.
+        let header = "# .taudit-suppressions.yml — see docs/suppressions.md\nsuppressions:\n";
+        let mut full = String::from(header);
+        full.push_str(&body);
+        std::fs::write(&target, full)
+            .with_context(|| format!("failed to write {}", target.display()))?;
+    }
+
+    let stdout = std::io::stdout();
+    let mut out = stdout.lock();
+    writeln!(out, "appended suppression to {}", target.display())?;
+    Ok(())
+}
+
+/// Prompt for `name` on stdin if the operator omitted the flag.
+/// Empty input is rejected to avoid silently writing a useless waiver.
+fn prompt_or_value(supplied: Option<String>, name: &str) -> Result<String> {
+    if let Some(v) = supplied.filter(|s| !s.is_empty()) {
+        return Ok(v);
+    }
+    use std::io::{BufRead, Write};
+    let mut stdout = std::io::stdout().lock();
+    write!(stdout, "{name}: ")?;
+    stdout.flush().ok();
+    let mut buf = String::new();
+    std::io::stdin()
+        .lock()
+        .read_line(&mut buf)
+        .with_context(|| format!("failed to read {name} from stdin"))?;
+    let trimmed = buf.trim().to_string();
+    if trimmed.is_empty() {
+        return Err(anyhow::anyhow!("{name} is required (no value supplied)"));
+    }
+    Ok(trimmed)
+}
+
+/// `taudit suppressions review` — list suppressions sorted by
+/// `accepted_at`, flagging any older than 90 days for re-review or
+/// any with `expires_at` in the past as expired.
+fn cmd_suppressions_review(suppressions_path: Option<PathBuf>) -> Result<()> {
+    use colored::Colorize;
+    use std::io::Write;
+
+    let cfg = load_suppression_config(suppressions_path)?;
+    let stdout = std::io::stdout();
+    let mut out = stdout.lock();
+
+    if cfg.suppressions.is_empty() {
+        writeln!(out, "no suppressions to review")?;
+        return Ok(());
+    }
+
+    let today = today_local();
+    // Sort by accepted_at ascending (oldest first) so reviewers see the
+    // staleness gradient at a glance.
+    let mut entries: Vec<&taudit_core::suppressions::Suppression> =
+        cfg.suppressions.iter().collect();
+    entries.sort_by(|a, b| a.accepted_at.cmp(&b.accepted_at));
+
+    let mut needs_review = 0;
+    writeln!(
+        out,
+        "{} — review {} suppression{}\n",
+        "taudit suppressions review".bold(),
+        entries.len(),
+        if entries.len() == 1 { "" } else { "s" },
+    )?;
+
+    for entry in entries {
+        let status = taudit_core::suppressions::SuppressionConfig::status_of(entry, today);
+        let label = status.label();
+        let attention = matches!(
+            status,
+            taudit_core::suppressions::SuppressionStatus::Expired
+                | taudit_core::suppressions::SuppressionStatus::StaleForReview
+                | taudit_core::suppressions::SuppressionStatus::ExpiringSoon
+        );
+        if attention {
+            needs_review += 1;
+        }
+        let labeled = match status {
+            taudit_core::suppressions::SuppressionStatus::Active => label.green(),
+            taudit_core::suppressions::SuppressionStatus::ExpiringSoon => label.yellow(),
+            taudit_core::suppressions::SuppressionStatus::Expired => label.red(),
+            taudit_core::suppressions::SuppressionStatus::StaleForReview => label.cyan(),
+        };
+        writeln!(
+            out,
+            "  {}  rule={}  status={}  accepted_at={}  by={}",
+            entry.fingerprint, entry.rule_id, labeled, entry.accepted_at, entry.accepted_by
+        )?;
+        if let Some(ref expiry) = entry.expires_at {
+            writeln!(out, "    expires_at: {expiry}")?;
+        }
+        writeln!(out, "    reason: {}", entry.reason)?;
+    }
+
+    writeln!(out)?;
+    if needs_review == 0 {
+        writeln!(out, "{}", "all suppressions look healthy".green())?;
+    } else {
+        writeln!(
+            out,
+            "{} entr{} need{} review",
+            needs_review,
+            if needs_review == 1 { "y" } else { "ies" },
+            if needs_review == 1 { "s" } else { "" },
+        )?;
+    }
+    Ok(())
+}
+
 /// Map a `Severity` enum value to the same lowercase label used by
 /// `severity_label_for_rule` so the invariants list table is consistent
 /// regardless of whether a row originated from a built-in (CVSS-derived)
@@ -3020,7 +3528,9 @@ fn walkdir(dir: &PathBuf) -> Result<Vec<PathBuf>> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use taudit_core::finding::{Finding, FindingCategory, FindingSource, Recommendation, Severity};
+    use taudit_core::finding::{
+        Finding, FindingCategory, FindingExtras, FindingSource, Recommendation, Severity,
+    };
 
     fn finding(severity: Severity, category: FindingCategory, msg: &str) -> Finding {
         Finding {
@@ -3033,6 +3543,7 @@ mod tests {
                 action: "review".to_string(),
             },
             source: FindingSource::BuiltIn,
+            extras: FindingExtras::default(),
         }
     }
 
@@ -3342,6 +3853,8 @@ mod tests {
             include_builtin: false,
             severity_threshold: None,
             output: None,
+            suppressions: None,
+            suppression_mode: SuppressionModeArg::Downgrade,
         };
 
         let mut buf = Vec::new();
@@ -3371,6 +3884,8 @@ mod tests {
             include_builtin: false,
             severity_threshold: None,
             output: None,
+            suppressions: None,
+            suppression_mode: SuppressionModeArg::Downgrade,
         };
 
         let mut buf = Vec::new();
@@ -3398,6 +3913,8 @@ mod tests {
             include_builtin: false,
             severity_threshold: None,
             output: None,
+            suppressions: None,
+            suppression_mode: SuppressionModeArg::Downgrade,
         };
 
         let mut buf = Vec::new();
@@ -3419,6 +3936,8 @@ mod tests {
             include_builtin: false,
             severity_threshold: None,
             output: None,
+            suppressions: None,
+            suppression_mode: SuppressionModeArg::Downgrade,
         };
 
         let mut buf = Vec::new();
@@ -3449,6 +3968,8 @@ mod tests {
             include_builtin: false,
             severity_threshold: Some(SeverityLevel::Critical),
             output: None,
+            suppressions: None,
+            suppression_mode: SuppressionModeArg::Downgrade,
         };
 
         let mut buf = Vec::new();

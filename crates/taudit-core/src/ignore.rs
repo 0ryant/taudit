@@ -143,7 +143,7 @@ pub fn glob_match(pattern: &str, text: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::finding::{FindingSource, Recommendation, Severity};
+    use crate::finding::{FindingExtras, FindingSource, Recommendation, Severity};
 
     fn finding(category: FindingCategory) -> Finding {
         Finding {
@@ -156,6 +156,7 @@ mod tests {
                 action: "fix".into(),
             },
             source: FindingSource::BuiltIn,
+            extras: FindingExtras::default(),
         }
     }
 
