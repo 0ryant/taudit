@@ -2360,9 +2360,14 @@ fn cmd_invariants_list(invariants_dir: Option<PathBuf>) -> Result<()> {
         for path in paths {
             let content = std::fs::read_to_string(&path)
                 .with_context(|| format!("Failed to read {}", path.display()))?;
-            let rule: taudit_core::custom_rules::CustomRule = serde_yaml::from_str(&content)
+            // Use the multi-doc parser so bundle files (multiple `---`-separated
+            // invariants in one file) list every invariant, matching the engine's
+            // load path. Single-doc files behave identically.
+            let rules = taudit_core::custom_rules::parse_rules_multi_doc(&content)
                 .with_context(|| format!("Failed to parse {}", path.display()))?;
-            custom.push((path, rule));
+            for rule in rules {
+                custom.push((path.clone(), rule));
+            }
         }
     }
 

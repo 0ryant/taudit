@@ -1,0 +1,77 @@
+# Bundled Strict Policy: three of the most aggressive starter invariants in
+# a single multi-doc YAML file. Use this when you want one drop-in policy
+# file representing "no compromises" — every rule fires loudly.
+#
+# WHY MULTI-DOC
+# -------------
+# `taudit` loads YAML files with one OR many invariant documents per file
+# (separated by `---`). For a small org with a fixed strict baseline, one
+# bundle file is easier to review, version, and keep in sync than five
+# separate files.
+#
+# WHAT'S IN THIS BUNDLE
+# ---------------------
+# 1. `strict_no_pr_with_broad_identity` — copy of
+#    `no-pr-trigger-with-broad-identity.yml` (Critical)
+# 2. `strict_no_non_first_party_images` — copy of
+#    `no-non-first-party-images.yml` (Medium → upgraded to High here)
+# 3. `strict_only_oidc_identities` — copy of `only-oidc-identities.yml` (High)
+#
+# DSL FEATURES DEMONSTRATED
+# -------------------------
+# * Multi-doc YAML loading — three full `CustomRule` documents in one
+#   file, separated by `---`. New in v0.9.0.
+# * Re-uses every other v0.9.0 feature: `graph_metadata:`, `standalone:`,
+#   `not:`, `in:`, multi-value `trust_zone:`, bare-string predicates.
+#
+# CORPUS EXAMPLE
+# --------------
+# MEMORY/WORK/20260425-230443_taudit-gitlab-parser/corpus-results/gha-corpus/
+#   django__django__check_pr_quality.yml
+# (Fires on rule 1 — broad identity in PR-triggered pipeline; fires on
+# rule 2 — actions/checkout@v6 + actions/setup-python@v6 are external;
+# fires on rule 3 — GITHUB_TOKEN has no `id-token: write` so not OIDC.)
+
+id: strict_no_pr_with_broad_identity
+name: "[strict] Broad-scope identity in a PR-triggered pipeline"
+description: >
+  PR-triggered pipelines must not carry broadly-scoped identities. Either
+  narrow the workflow/job permissions or move the privileged work to a
+  non-PR trigger.
+severity: critical
+category: authority_propagation
+match:
+  graph_metadata:
+    trigger:
+      in: [pull_request_target, pr, merge_request]
+  source:
+    node_type: identity
+    metadata:
+      identity_scope: broad
+---
+id: strict_no_non_first_party_images
+name: "[strict] Image (action or container) is not first-party"
+description: >
+  Vendor every action and image into your own namespace. Pinned third-party
+  code still belongs to someone else.
+severity: high
+category: floating_image
+match:
+  standalone:
+    node_type: image
+    trust_zone: [third_party, untrusted]
+---
+id: strict_only_oidc_identities
+name: "[strict] Identity is not OIDC-capable"
+description: >
+  Migrate this identity to OIDC / workload identity federation. Static
+  long-lived secrets are forbidden under the strict policy.
+severity: high
+category: authority_propagation
+match:
+  standalone:
+    node_type: identity
+    trust_zone: first_party
+    not:
+      metadata:
+        oidc: "true"

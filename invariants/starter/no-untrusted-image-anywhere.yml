@@ -1,0 +1,50 @@
+# Authority Invariant: no Untrusted Image (or `uses:` action) may exist in
+# the pipeline at all — regardless of whether a Secret reaches it.
+#
+# WHY
+# ---
+# `floating_image` (built-in) flags unpinned images at Medium severity, and
+# the Secret-reaching variants escalate to Critical. This invariant is the
+# strict cousin: in a high-assurance org, NO floating image is acceptable —
+# even one not currently consuming credentials, because tomorrow's edit may
+# add a credential without re-running this scan.
+#
+# It walks every node in the graph (no propagation chain required) and emits
+# one finding per Image node that lacks a digest pin.
+#
+# DSL FEATURES DEMONSTRATED
+# -------------------------
+# * `standalone:` — single-node match, ignores source/sink/path. Required
+#   here because there is no propagation event to anchor the rule to; the
+#   image is the entire issue.
+# * `not:` (NodeMatcher level) — negates an inner sub-matcher. Used here as
+#   a defence-in-depth check: even if a future parser change kept the
+#   trust_zone classification but forgot to clear the digest, this rule
+#   would still skip those nodes correctly.
+# * Typed metadata predicate `contains: "sha256"` — substring match on the
+#   `digest` field, which the parsers stamp as `sha256:<hex>` when present.
+#
+# CORPUS EXAMPLE
+# --------------
+# MEMORY/WORK/20260425-230443_taudit-gitlab-parser/corpus-results/gha-corpus/
+#   django__django__check_pr_quality.yml
+# (Uses `actions/checkout@v6` and `actions/setup-python@v6` — tag refs, not
+# SHA-pinned → both classified Untrusted, no `digest` metadata.)
+
+id: no_untrusted_image_anywhere
+name: Untrusted (unpinned) image present in pipeline
+description: >
+  Pin every action and container image to a digest. `actions/checkout@v4`
+  becomes `actions/checkout@<40-char-sha>`. Docker `image: ghcr.io/x:tag`
+  becomes `image: ghcr.io/x@sha256:<64-hex>`. Tag references can be silently
+  rewritten by the upstream owner.
+severity: high
+category: floating_image
+match:
+  standalone:
+    node_type: image
+    trust_zone: untrusted
+    not:
+      metadata:
+        digest:
+          contains: "sha256"

@@ -1,0 +1,47 @@
+# Authority Invariant: a broad-scope Identity must not exist in any pipeline
+# whose graph-level trigger is a PR-shaped event.
+#
+# WHY
+# ---
+# PR-triggered pipelines run code from forks (or PR head refs) with the trust
+# expectations of the base repo. If the workflow's GITHUB_TOKEN — or an ADO
+# service connection — is broadly scoped (write-all, contents: write, etc.)
+# AND the trigger is `pull_request_target` / ADO `pr` / GitLab `merge_request`,
+# a malicious PR contributor can use that authority for repository takeover.
+#
+# This is the GitHub `pull_request_target` foot-gun, generalised. The same
+# shape exists on ADO (`pr:` trigger + a service connection scoped to the
+# whole subscription) and GitLab (`merge_request_event` + a project token with
+# `api` scope).
+#
+# DSL FEATURES DEMONSTRATED
+# -------------------------
+# * `graph_metadata:` — gates the entire rule on a graph-level field
+#   (`META_TRIGGER`), so it is silent on push-only pipelines.
+# * `in:` operator with multi-value list — covers all three platforms'
+#   trigger names in one rule, no copy-paste.
+# * Graph-level + node-level conjunction — both gates must hold for a finding.
+#
+# CORPUS EXAMPLE
+# --------------
+# MEMORY/WORK/20260425-230443_taudit-gitlab-parser/corpus-results/gha-corpus/
+#   django__django__check_pr_quality.yml
+# (`on: pull_request_target` + `permissions: pull-requests: write` →
+# identity_scope: broad → fires on every step the GITHUB_TOKEN reaches.)
+
+id: no_pr_trigger_with_broad_identity
+name: Broad-scope identity in a PR-triggered pipeline
+description: >
+  PR-triggered pipelines must not carry broadly-scoped identities. Either
+  narrow the workflow/job permissions (e.g. contents: read) or move the
+  privileged work to a non-PR trigger (push, schedule, workflow_dispatch).
+severity: critical
+category: authority_propagation
+match:
+  graph_metadata:
+    trigger:
+      in: [pull_request_target, pr, merge_request]
+  source:
+    node_type: identity
+    metadata:
+      identity_scope: broad
