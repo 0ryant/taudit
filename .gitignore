@@ -16,6 +16,10 @@ BUILD_SHEET.md
 .idea/
 .vscode/
 
+# Stray test/build outputs
+rust_out
+CODE_REVIEW_FINDINGS_*.md
+
 # Local AI session state — never committed.
 MEMORY/
 .claude/
