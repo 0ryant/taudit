@@ -60,7 +60,7 @@ jobs:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
   sbom:
-    name: dependency sbom
+    name: dependency sbom (SPDX + CycloneDX)
     needs: create-release
     runs-on: ubuntu-latest
     steps:
@@ -72,11 +72,38 @@ jobs:
       - name: Install cargo-sbom
         run: cargo install cargo-sbom --locked --version '^0.9'
 
+      - name: Install cargo-cyclonedx
+        run: cargo install cargo-cyclonedx --locked
+
+      # SPDX 2.3 — produced first to preserve the existing artifact name
+      # downstream consumers may already pin against.
       - name: Generate SPDX SBOM
         run: cargo sbom --output-format spdx_json_2_3 > taudit-${{ github.ref_name }}.spdx.json
 
-      - name: Upload SBOM
-        run: gh release upload "${{ github.ref_name }}" "taudit-${{ github.ref_name }}.spdx.json" --clobber
+      # CycloneDX 1.5 — second SBOM format for tools that expect
+      # CycloneDX (Dependency-Track, Trivy, Grype, etc). Written next
+      # to the binary crate manifest then renamed to a stable filename.
+      - name: Generate CycloneDX SBOM
+        run: |
+          cargo cyclonedx --format json --spec-version 1.5 --target-in-filename --all
+          # cargo-cyclonedx writes one file per crate next to its
+          # Cargo.toml; pick up the workspace-root binary crate's SBOM.
+          BIN_SBOM=$(find crates/taudit-cli -maxdepth 2 -name 'taudit_*.cdx.json' | head -1)
+          if [ -z "$BIN_SBOM" ]; then
+            BIN_SBOM=$(find crates/taudit-cli -maxdepth 2 -name '*.cdx.json' | head -1)
+          fi
+          if [ -z "$BIN_SBOM" ]; then
+            echo "::error::cargo-cyclonedx produced no SBOM under crates/taudit-cli"
+            exit 1
+          fi
+          cp "$BIN_SBOM" "taudit-${{ github.ref_name }}.cyclonedx.json"
+
+      - name: Upload SBOMs
+        run: |
+          gh release upload "${{ github.ref_name }}" \
+            "taudit-${{ github.ref_name }}.spdx.json" \
+            "taudit-${{ github.ref_name }}.cyclonedx.json" \
+            --clobber
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
