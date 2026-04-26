@@ -1,0 +1,45 @@
+# Authority Invariant: a broad-scope Identity must never reach an Untrusted
+# step.
+#
+# WHY
+# ---
+# A broad-scope Identity (a GITHUB_TOKEN with `permissions: write-all` or any
+# write permission, an ADO service connection without a scope mismatch
+# guard, etc.) effectively grants the bearer the ability to mutate the
+# repository and downstream systems. Untrusted code paths — tag-pinned
+# third-party actions, fork-PR contexts — must never inherit that authority.
+#
+# This is the single most common shape of CI/CD authority compromise: a
+# broadly-scoped token quietly flows into an action you do not control.
+#
+# HOW IT FIRES
+# ------------
+# Fires on every propagation path whose source is an Identity node tagged
+# `identity_scope: broad` (taudit's GHA and ADO parsers set this
+# automatically based on permissions strings) AND whose sink is in the
+# `untrusted` trust zone AND whose path crosses into untrusted.
+#
+# RELATIONSHIP TO BUILT-INS
+# -------------------------
+# This invariant overlaps with `authority_propagation` and
+# `over_privileged_identity`. It fires only when both conditions co-occur,
+# which is the precise shape your incident postmortems will warn about.
+
+id: no_broad_identity_to_untrusted
+name: Broad-scope identity reaching untrusted step
+description: >
+  A broad-scope identity must not reach an untrusted execution context.
+  Either narrow the identity's permissions for this job, or pin the
+  downstream action to a SHA so it is no longer untrusted.
+severity: critical
+category: authority_propagation
+match:
+  source:
+    node_type: identity
+    metadata:
+      identity_scope: broad
+  sink:
+    trust_zone: untrusted
+  path:
+    crosses_to:
+      - untrusted

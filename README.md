@@ -205,6 +205,25 @@ taudit version
 taudit --version
 ```
 
+### Authority invariants (custom checks)
+
+taudit's 17 built-in checks are **authority invariants** — declarative
+properties the authority graph must satisfy. You can add your own as YAML
+files and load them with `--invariants-dir`:
+
+```bash
+# Run the starter library of 5 example invariants alongside the built-ins
+taudit scan --invariants-dir invariants/starter .github/workflows/
+
+# Print every invariant that will run on the next scan
+taudit invariants list --invariants-dir invariants/starter
+```
+
+The starter library lives in [`invariants/starter/`](./invariants/starter/);
+the schema, predicate reference, and semver guarantee are documented in
+[`docs/authority-invariants.md`](./docs/authority-invariants.md).
+`--rules-dir` is accepted as an alias for backward compatibility.
+
 ### Suppress known-accepted findings
 
 Create `.tauditignore` in your repo root:
