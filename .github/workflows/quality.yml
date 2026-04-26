@@ -54,13 +54,10 @@ jobs:
       - name: clippy
         run: cargo clippy --workspace --all-targets -- -D warnings
 
-      - name: test
-        run: cargo test --workspace
-
       - name: Install cargo-insta
         run: cargo install cargo-insta --locked
 
-      - name: snapshot review (reject unreferenced snaps)
+      - name: test + snapshot review (reject unreferenced snaps)
         run: cargo insta test --workspace --unreferenced reject
 
       - name: Install cargo-deny

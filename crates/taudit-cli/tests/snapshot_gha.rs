@@ -1,51 +1,15 @@
-use std::path::PathBuf;
+mod common;
 
 use insta::assert_yaml_snapshot;
-use taudit_core::finding::Finding;
 use taudit_core::graph::PipelineSource;
 use taudit_core::ports::{PipelineParser, ReportSink};
 use taudit_core::propagation::DEFAULT_MAX_HOPS;
 use taudit_core::rules;
 use taudit_parse_gha::GhaParser;
 
-fn fixture(name: &str) -> PathBuf {
-    PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-        .join("../../tests/fixtures")
-        .join(name)
-}
-
-fn parse_gha(yaml: &str) -> taudit_core::graph::AuthorityGraph {
-    let source = PipelineSource {
-        file: "test.yml".into(),
-        repo: None,
-        git_ref: None,
-        commit_sha: None,
-    };
-    GhaParser.parse(yaml, &source).unwrap()
-}
-
-/// Sort findings by a tuple that doesn't require `compute_fingerprint`
-/// (which needs a graph reference). `(category, message, nodes_involved)`
-/// is stable enough for snapshot determinism.
-fn sorted_findings(mut findings: Vec<Finding>) -> Vec<Finding> {
-    findings.sort_by(|a, b| {
-        let ka = (
-            format!("{:?}", a.category),
-            a.message.clone(),
-            a.nodes_involved.clone(),
-        );
-        let kb = (
-            format!("{:?}", b.category),
-            b.message.clone(),
-            b.nodes_involved.clone(),
-        );
-        ka.cmp(&kb)
-    });
-    findings
-}
+use common::{fixture, sorted_findings};
 
 fn strip_ansi(s: &str) -> String {
-    // Remove ANSI escape codes (\x1b[...m)
     let mut result = String::new();
     let mut chars = s.chars().peekable();
     while let Some(c) = chars.next() {
@@ -64,6 +28,16 @@ fn strip_ansi(s: &str) -> String {
         }
     }
     result
+}
+
+fn parse_gha(yaml: &str) -> taudit_core::graph::AuthorityGraph {
+    let source = PipelineSource {
+        file: "test.yml".into(),
+        repo: None,
+        git_ref: None,
+        commit_sha: None,
+    };
+    GhaParser.parse(yaml, &source).unwrap()
 }
 
 // ── GHA over-privileged.yml ──────────────────────────────────────────────────
@@ -221,9 +195,7 @@ fn snap_gha_propagation_sarif_results() {
 
 // ── GHA inline scenarios ─────────────────────────────────────────────────────
 
-#[test]
-fn snap_gha_pull_request_target_findings() {
-    let yaml = r#"
+const PRT_YAML: &str = r#"
 on: pull_request_target
 permissions: write-all
 jobs:
@@ -235,26 +207,17 @@ jobs:
           ref: ${{ github.event.pull_request.head.sha }}
       - run: echo "${{ github.event.pull_request.title }}"
 "#;
-    let graph = parse_gha(yaml);
+
+#[test]
+fn snap_gha_pull_request_target_findings() {
+    let graph = parse_gha(PRT_YAML);
     let findings = sorted_findings(rules::run_all_rules(&graph, DEFAULT_MAX_HOPS));
     assert_yaml_snapshot!("gha_prt_all_findings", findings);
 }
 
 #[test]
 fn snap_gha_pull_request_target_per_finding() {
-    let yaml = r#"
-on: pull_request_target
-permissions: write-all
-jobs:
-  check:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-        with:
-          ref: ${{ github.event.pull_request.head.sha }}
-      - run: echo "${{ github.event.pull_request.title }}"
-"#;
-    let graph = parse_gha(yaml);
+    let graph = parse_gha(PRT_YAML);
     let findings = sorted_findings(rules::run_all_rules(&graph, DEFAULT_MAX_HOPS));
     for (i, finding) in findings.iter().enumerate() {
         assert_yaml_snapshot!(format!("gha_prt_finding_{i}"), finding);

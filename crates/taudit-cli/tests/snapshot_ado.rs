@@ -1,18 +1,13 @@
-use std::path::PathBuf;
+mod common;
 
 use insta::assert_yaml_snapshot;
-use taudit_core::finding::Finding;
 use taudit_core::graph::PipelineSource;
 use taudit_core::ports::{PipelineParser, ReportSink};
 use taudit_core::propagation::DEFAULT_MAX_HOPS;
 use taudit_core::rules;
 use taudit_parse_ado::AdoParser;
 
-fn fixture(name: &str) -> PathBuf {
-    PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-        .join("../../tests/fixtures")
-        .join(name)
-}
+use common::{fixture, sorted_findings};
 
 fn parse_ado(yaml: &str) -> taudit_core::graph::AuthorityGraph {
     let source = PipelineSource {
@@ -22,23 +17,6 @@ fn parse_ado(yaml: &str) -> taudit_core::graph::AuthorityGraph {
         commit_sha: None,
     };
     AdoParser.parse(yaml, &source).unwrap()
-}
-
-fn sorted_findings(mut findings: Vec<Finding>) -> Vec<Finding> {
-    findings.sort_by(|a, b| {
-        let ka = (
-            format!("{:?}", a.category),
-            a.message.clone(),
-            a.nodes_involved.clone(),
-        );
-        let kb = (
-            format!("{:?}", b.category),
-            b.message.clone(),
-            b.nodes_involved.clone(),
-        );
-        ka.cmp(&kb)
-    });
-    findings
 }
 
 // ── ADO setvariable fixture ──────────────────────────────────────────────────
