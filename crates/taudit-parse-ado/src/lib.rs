@@ -2716,6 +2716,40 @@ steps:
     }
 
     // ── Bug regression: permissions: contents: none parsed as empty string ──
+    // E2E test: parser → rule — the only test that catches the full chain.
+
+    #[test]
+    fn over_privileged_identity_does_not_fire_when_permissions_contents_none() {
+        // Full chain: ADO parser + over_privileged_identity rule.
+        // Previously the parser ignored `permissions:`, leaving the token at
+        // broad scope and firing the rule on every restricted pipeline.
+        use taudit_core::rules::over_privileged_identity;
+        let yaml = r#"
+trigger: none
+permissions:
+  contents: none
+steps:
+  - script: echo hello
+"#;
+        let graph = parse(yaml);
+        let findings = over_privileged_identity(&graph);
+        let token_findings: Vec<_> = findings
+            .iter()
+            .filter(|f| {
+                f.nodes_involved.iter().any(|&id| {
+                    graph
+                        .node(id)
+                        .map(|n| n.name == "System.AccessToken")
+                        .unwrap_or(false)
+                })
+            })
+            .collect();
+        assert!(
+            token_findings.is_empty(),
+            "over_privileged_identity must not fire on System.AccessToken when \
+             permissions: contents: none is set; got: {token_findings:#?}"
+        );
+    }
 
     #[test]
     fn pipeline_level_permissions_none_constrains_token() {

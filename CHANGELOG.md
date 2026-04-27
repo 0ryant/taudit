@@ -2,6 +2,18 @@
 
 All notable changes to this project will be documented in this file.
 
+## v1.0.3 — 2026-04-27
+
+> Clarify `over_privileged_identity` for ADO service connections.
+
+### Fixed
+
+- **`over_privileged_identity` now distinguishes service connections from pipeline tokens** — previously both showed `permissions: ''` in the message, making service connection findings look identical to the Bug 2 token finding. Service connections now emit a distinct message explaining that scope is ADO-portal-configured (not YAML-controlled), with a recommendation pointing to Project Settings → Service Connections → Security or workload identity federation (OIDC).
+
+### Added
+
+- E2E regression test: `over_privileged_identity_does_not_fire_when_permissions_contents_none` — chains the ADO parser into the rule to catch any future regression in the full parse→rule pipeline.
+
 ## v1.0.2 — 2026-04-26
 
 > Bug-fix release: ADO trigger detection hardening, permissions parsing, and finding dedup ordering.

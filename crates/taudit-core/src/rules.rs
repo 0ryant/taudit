@@ -277,6 +277,47 @@ pub fn over_privileged_identity(graph: &AuthorityGraph) -> Vec<Finding> {
                 IdentityScope::Constrained => "constrained",
             };
 
+            // Service connections are ADO-portal-configured identities; their
+            // scope is not governed by the pipeline-level `permissions:` YAML
+            // block. Emit a distinct message and recommendation so users aren't
+            // confused into thinking adding `permissions: contents: none` will
+            // fix this finding.
+            let is_service_connection = identity
+                .metadata
+                .get(META_SERVICE_CONNECTION)
+                .map(|v| v == "true")
+                .unwrap_or(false);
+
+            let (message, recommendation) = if is_service_connection {
+                (
+                    format!(
+                        "Service connection '{}' has {} scope — \
+                         scope is controlled in the ADO portal, not by the pipeline \
+                         permissions: YAML block",
+                        identity.name, scope_label
+                    ),
+                    Recommendation::Manual {
+                        action: format!(
+                            "Narrow '{}' in ADO Project Settings → Service Connections → \
+                             Security, or replace static credentials with workload identity \
+                             federation (OIDC) so no long-lived secret is stored.",
+                            identity.name
+                        ),
+                    },
+                )
+            } else {
+                (
+                    format!(
+                        "{} has {} scope (permissions: '{}') — likely broader than needed",
+                        identity.name, scope_label, granted_scope
+                    ),
+                    Recommendation::ReducePermissions {
+                        current: granted_scope.clone(),
+                        minimum: "{ contents: read }".into(),
+                    },
+                )
+            };
+
             findings.push(Finding {
                 severity,
                 category: FindingCategory::OverPrivilegedIdentity,
@@ -284,14 +325,8 @@ pub fn over_privileged_identity(graph: &AuthorityGraph) -> Vec<Finding> {
                 nodes_involved: std::iter::once(identity.id)
                     .chain(accessor_steps.iter().map(|n| n.id))
                     .collect(),
-                message: format!(
-                    "{} has {} scope (permissions: '{}') — likely broader than needed",
-                    identity.name, scope_label, granted_scope
-                ),
-                recommendation: Recommendation::ReducePermissions {
-                    current: granted_scope.clone(),
-                    minimum: "{ contents: read }".into(),
-                },
+                message,
+                recommendation,
                 source: FindingSource::BuiltIn,
                 // Working out the minimum-needed scope across N jobs is a
                 // ~1 hour audit, not a flag flip — Small.
