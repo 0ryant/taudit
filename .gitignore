@@ -41,3 +41,10 @@ crates/*/tests/snapshots/*.snap.new
 
 # cargo-fuzz build output (separate workspace per parser)
 crates/*/fuzz/target/
+
+# Local research mirrors: downloaded or copied workflow corpora (often 1000+
+# files). Not part of the product tree; keep out of version control. Leading
+# `/` limits this to the repository root — do not replace with `corpus/`
+# alone (that would also ignore per-parser fuzz seeds under
+# `crates/*/fuzz/corpus/`).
+/corpus/

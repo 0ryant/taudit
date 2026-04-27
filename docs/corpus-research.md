@@ -2,6 +2,8 @@
 
 This note is for **operators and doc authors** who run taudit over many pipeline files (mirrored corpora, org-wide sweeps) or who want to **point readers at real-world YAML** as examples.
 
+**Repository layout:** A local directory **`/corpus/`** at the repo root (for example `corpus/gha/*.yml` mirrors) is **not** tracked in git — it is listed in **`.gitignore`** and **`.cursorignore`**. Fuzz **seed** corpora under `crates/*/fuzz/corpus/` remain tracked as part of the normal test and fuzz setup.
+
 ## What a corpus scan is not
 
 - **0 findings** does **not** mean “formally secure” or “audited clean.” It means the **current** built-in rule set, parser, and graph for that file did not emit a finding.

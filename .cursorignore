@@ -1,0 +1,3 @@
+# Local workflow corpora and large research trees — exclude from AI/indexing
+# context. Same scope as .gitignore `/corpus/` (repo root only).
+/corpus/
