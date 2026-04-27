@@ -28,6 +28,17 @@ SARIF results use a **file URI** in the primary location; **line/column regions*
 
 In large GHA sweeps, only a **small** slice of files produce **no** default-rule findings; many are unremarkable minimal workflows, and some mirrors are **stubs** (see above). Use such examples only with **method** (taudit version, flags, path layout) and **license/attribution** context — not as a guarantee of organizational security posture.
 
+## Automated CLI suite (CI + local)
+
+The integration test `crates/taudit-cli/tests/corpus_cli_suite.rs` runs **`taudit scan`** and **`taudit graph`** on every committed YAML under `tests/fixtures/`, each parser `fuzz/corpus/`, and `.github/workflows/`. Run it with:
+
+```bash
+just corpus-suite
+# or: cargo test -p taudit --test corpus_cli_suite
+```
+
+Root `corpus/` is **not** included by default (mirrors may be invalid YAML or use schema the parser rejects). To include it for a local stress pass: `TAUDIT_TEST_LOCAL_CORPUS=1 cargo test -p taudit --test corpus_cli_suite` (some files may fail — that is expected until filtered or fixed upstream).
+
 ## Related
 
 - [baselines.md](baselines.md) — onboarding without fixing history first

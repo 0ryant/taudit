@@ -32,8 +32,10 @@ Requires Rust ≥ 1.76. Verify the install:
 
 ```bash
 taudit --version
-# taudit 1.0.4
+# taudit 1.0.8
 ```
+
+`taudit --help` appends a long reference (graph formats `json`/`dot`/`mermaid`, `--job`, stdout/pipes, doc paths). Use `taudit graph --help`, `taudit scan --help`, etc. for subcommand flags. A Troff manual is in the repo: [`man/taudit.1`](../man/taudit.1).
 
 ---
 
@@ -59,7 +61,7 @@ taudit scan azure-pipelines.yml
 ### Sample output
 
 ```
-taudit 1.0.4 — 1 file
+taudit 1.0.8 — 1 file
 ────────────────────────────────────────────────────────────
 Authority Graph: .github/workflows/quality.yml
   Steps: 18 | Secrets: 0 | Actions: 4 | Identities: 1
@@ -181,12 +183,27 @@ identity. Any `UT` row with `✓` is a `untrusted_with_authority` finding.
 
 ```bash
 taudit map --format dot .github/workflows/release.yml > graph.dot
+# Same DOT from the canonical graph export:
+# taudit graph --format dot .github/workflows/release.yml > graph.dot
 
-# Render with graphviz if installed
+# Render with Graphviz (install `dot` first — it is not bundled with taudit)
+# macOS: brew install graphviz   Debian/Ubuntu: apt install graphviz
 dot -Tsvg graph.dot -o graph.svg
 
 # Or use the online renderer: paste the DOT output at https://dreampuf.github.io/GraphvizOnline/
 ```
+
+### Export as Mermaid (no Graphviz)
+
+```bash
+# Full workflow (all jobs)
+taudit graph --format mermaid .github/workflows/release.yml
+
+# Per-job subgraph — smaller diagram, same semantics for `dot` / `mermaid` / `map`
+taudit graph --format mermaid --job build .github/workflows/release.yml
+```
+
+The output is a Mermaid `flowchart LR` — paste it into a Markdown fenced code block with the `mermaid` language tag (GitHub, GitLab, or any Mermaid-capable preview). You do **not** need the `dot` binary. The **canonical** machine interchange remains `taudit graph --format json` (see [ADR 0001](docs/adr/0001-graph-native-exports-and-leverage.md)). An ASCII picture of how JSON / DOT / Mermaid relate to one `AuthorityGraph` is in [docs/authority-graph.md](docs/authority-graph.md#at-a-glance-one-graph-three-exports). When the parser marks the graph as incomplete, a leading `%%` comment notes that the diagram may omit authority edges; use JSON for `completeness` and `completeness_gaps`.
 
 The DOT output encodes trust zones as node colors:
 - **green** — `FirstParty`
@@ -200,14 +217,35 @@ Node shapes:
 - **cylinder** — Image / Action
 - **hexagon** — Artifact
 
-### Focus on a single job
+### Focus on a single job (`--job`)
+
+Large workflows produce crowded graphs. Pass **`--job <job_id>`** to restrict
+`taudit map`, **`taudit graph --format dot`**, and **`taudit graph --format mermaid`**
+to the subgraph reachable from that job’s steps (BFS across edge kinds). If the
+name is wrong, taudit lists the job IDs it parsed from the file.
+
+**Jobs in this repository (copy/paste examples):**
+
+| Workflow | Job IDs |
+|----------|---------|
+| `.github/workflows/release.yml` | `quality`, `create-release`, `sbom`, `build`, `publish` |
+| `.github/workflows/quality.yml` | `test-matrix`, `quality` |
+| `.github/workflows/security.yml` | `cargo-deny`, `taudit-self-scan` |
+| `.github/workflows/taudit-pr-diff.yml` | `authority-diff` |
 
 ```bash
-taudit map --job deploy .github/workflows/release.yml
-```
+# Table: one job only
+taudit map --job build .github/workflows/release.yml
 
-Shows only the `deploy` job's subgraph — useful when a workflow has many jobs
-and you want to reason about one deployment path in isolation.
+# Mermaid for a README (no Graphviz) — authority for the build job only
+taudit graph --format mermaid --job build .github/workflows/release.yml
+
+# DOT → SVG for the same subgraph (requires `dot` on PATH)
+taudit graph --format dot --job build .github/workflows/release.yml | dot -Tsvg -o build-subgraph.svg
+
+# CI / security workflow slice
+taudit graph --format mermaid --job taudit-self-scan .github/workflows/security.yml
+```
 
 ---
 
@@ -237,7 +275,7 @@ jobs:
     steps:
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
       - name: Install taudit
-        run: cargo install taudit --version 1.0.4 --locked
+        run: cargo install taudit --version 1.0.8 --locked
       - name: Verify pipeline policy
         run: taudit verify --policy .taudit/policy/ .github/workflows/
 ```
@@ -253,7 +291,7 @@ and exit `2` (config error) both block the merge.
   inputs:
     targetType: inline
     script: |
-      cargo install taudit --version 1.0.4 --locked
+      cargo install taudit --version 1.0.8 --locked
       taudit verify --policy .taudit/policy/ azure-pipelines.yml
 ```
 
@@ -263,7 +301,7 @@ and exit `2` (config error) both block the merge.
 verify-pipeline-policy:
   stage: test
   script:
-    - cargo install taudit --version 1.0.4 --locked
+    - cargo install taudit --version 1.0.8 --locked
     - taudit verify --policy .taudit/policy/ .gitlab-ci.yml
   rules:
     - if: $CI_PIPELINE_SOURCE == "merge_request_event"

@@ -11,23 +11,59 @@ taudit's internals.
 - **Schema**: [`schemas/authority-graph.v1.json`](../schemas/authority-graph.v1.json)
 - **Schema URI**: `https://github.com/0ryant/taudit/schemas/authority-graph.v1.json`
 - **Schema version**: `1.0.0` (semver — see [Versioning](#versioning))
-- **CLI**: `taudit graph <path> [--format json|dot] [--platform ...] [--rules-dir ...] [--job ...]`
+- **CLI**: `taudit graph <path> [--format json|dot|mermaid] [--platform ...] [--rules-dir ...] [--job ...]`
 
 ## Quick start
 
 ```bash
 # Default JSON, schema-conformant, pretty-printed
-taudit graph .github/workflows/ci.yml
+taudit graph .github/workflows/release.yml
 
 # Graphviz DOT for visualization
-taudit graph .github/workflows/ci.yml --format dot | dot -Tsvg -o ci.svg
+taudit graph .github/workflows/release.yml --format dot | dot -Tsvg -o release.svg
 
-# Restrict DOT output to a single job's reachable subgraph
-taudit graph .github/workflows/ci.yml --format dot --job build
+# Mermaid flowchart (no Graphviz — paste into Markdown)
+taudit graph .github/workflows/release.yml --format mermaid
+
+# Restrict diagram output to a single job's reachable subgraph (dot or mermaid)
+# Job IDs are workflow-specific — this repo documents them in USERGUIDE.md
+taudit graph .github/workflows/release.yml --format dot --job build
+taudit graph .github/workflows/release.yml --format mermaid --job build
+taudit graph .github/workflows/security.yml --format mermaid --job taudit-self-scan
 
 # Auto-detect platform (default) or pin it
 taudit graph .pipelines/azure-pipelines.yml --platform azure-devops
 ```
+
+### At a glance (one graph, three exports)
+
+`json`, `dot`, and `mermaid` are different **views** of the same in-memory
+`AuthorityGraph` — not three pipelines.
+
+```text
+  workflow YAML
+        │
+        ▼
+   ┌─────────┐
+   │  parse  │
+   └────┬────┘
+        │
+        ▼
+  ┌──────────────┐
+  │ AuthorityGraph│  ← single canonical model
+  └───────┬──────┘
+          │
+   ┌──────┼──────────────┐
+   ▼      ▼              ▼
+ JSON   DOT         Mermaid
+        │              │
+   schema-backed   Graphviz   GitHub / GitLab
+   interchange      `dot`     fenced block
+   for tools
+```
+
+`--job` limits **dot** and **mermaid** to a job’s reachable subgraph; **json**
+stays a full graph when you need lossless `completeness` / `completeness_gaps`.
 
 The `taudit map` command is **unchanged** — it still produces the
 human-readable step×authority table. `taudit graph` is the

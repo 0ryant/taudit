@@ -131,10 +131,10 @@ cargo install --path crates/taudit-cli
 Lead with the graph. Everything else is downstream.
 
 ```bash
-# 1. Generate the authority graph as a Graphviz DOT artifact and render it.
-#    (A dedicated `taudit graph` command lands in v1.0; today the graph export
-#    lives behind `taudit map --format dot`.)
-taudit map --format dot .github/workflows/release.yml | dot -Tsvg > release.svg
+# 1. Generate the authority graph as DOT and render with Graphviz (optional install).
+taudit graph --format dot .github/workflows/release.yml | dot -Tsvg > release.svg
+#    Per-job subgraph when the full workflow graph is too dense:
+#    taudit graph --format dot --job build .github/workflows/release.yml | dot -Tsvg > build.svg
 
 # 2. Inspect the same graph as a human-readable access table.
 taudit map .github/workflows/release.yml
@@ -159,6 +159,12 @@ taudit scan .github/workflows/ --rules-dir .taudit/rules/
 - Large-directory / corpus methodology and **citing upstream workflow examples** (licensing, fingerprints, JSON vs SARIF): [`docs/corpus-research.md`](docs/corpus-research.md).
 
 ## Usage
+
+### Help and man page
+
+- **`taudit --help`** — all subcommands, plus a long section on authority graph exports (`json` / `dot` / `mermaid`), `--job`, stdout/pipes (EPIPE), and pointers to `docs/`.
+- **`taudit <command> --help`** — per-command flags (e.g. `taudit graph --help`, `taudit explain --help`).
+- **Troff manual** for packagers and local preview: [`man/taudit.1`](man/taudit.1) (e.g. `man man/taudit.1` from the repo if your OS supports a path, or install the file into your man path).
 
 ### Scan
 
@@ -235,13 +241,18 @@ test                     FirstParty       X
 
 ```bash
 # Emit the canonical authority graph as versioned JSON (default format)
-taudit graph .github/workflows/ci.yml
+taudit graph .github/workflows/release.yml
 
 # Graphviz DOT for visualization
-taudit graph .github/workflows/ci.yml --format dot | dot -Tsvg -o graph.svg
+taudit graph .github/workflows/release.yml --format dot | dot -Tsvg -o graph.svg
 
-# Restrict DOT to a single job's reachable subgraph
-taudit graph .github/workflows/ci.yml --format dot --job build
+# Mermaid flowchart (paste into a Markdown code fence with language `mermaid` — no Graphviz)
+taudit graph .github/workflows/release.yml --format mermaid
+
+# Restrict diagram output to a single job's reachable subgraph (see USERGUIDE for all job IDs)
+taudit graph .github/workflows/release.yml --format dot --job build
+taudit graph .github/workflows/release.yml --format mermaid --job build
+taudit graph .github/workflows/security.yml --format mermaid --job taudit-self-scan
 ```
 
 The JSON document conforms to [`schemas/authority-graph.v1.json`](schemas/authority-graph.v1.json)
@@ -396,6 +407,7 @@ taudit emits four kinds of output, all backed by stable, versioned contracts:
 | **Findings (CloudEvents)** | `taudit scan ... --format cloudevents` | [`contracts/schemas/taudit-cloudevent-finding-v1.schema.json`](contracts/schemas/taudit-cloudevent-finding-v1.schema.json) | one CloudEvent JSONL per finding for event-driven sinks |
 | **Authority graph (JSON)** | `taudit graph ... --format json`   | [`schemas/authority-graph.v1.json`](schemas/authority-graph.v1.json) (`schema_version: "1.0.0"`) | the canonical authority graph as a first-class artifact for downstream tools (tsign, axiom, runtime cells) — see [docs/authority-graph.md](docs/authority-graph.md) |
 | **Authority graph (DOT)**  | `taudit graph ... --format dot`    | Graphviz DOT                                                                   | render to SVG/PNG for docs, slides, and incident reports |
+| **Authority graph (Mermaid)** | `taudit graph ... --format mermaid` | Mermaid `flowchart`                                                         | paste into Markdown / wikis without installing Graphviz |
 | **Authority map (text)**   | `taudit map ...`                   | human-readable table                                                           | quick "which step touches which secret" view |
 | **Diff (terminal/JSON)**   | `taudit diff before after`         | n/a (terminal) / inline JSON shape                                             | compare two pipeline revisions |
 

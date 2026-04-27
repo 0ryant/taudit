@@ -19,7 +19,27 @@ use taudit_report_sarif::SarifReportSink;
 use taudit_report_terminal::TerminalReport;
 use taudit_sink_cloudevents::CloudEventsJsonlSink;
 
+mod error_hints;
 mod remediate;
+pub mod stdio_epipe;
+
+use stdio_epipe::{try_write_stdout, SilenceBrokenPipe};
+
+use error_hints::{
+    BASELINE_JSON, CRITICAL_WAIVER_EXPIRY, DEDUPE_FILE, DENSE_GRAPH, DIFF_FILES, EXPLAIN_RULE,
+    IGNORE_FILE, INVARIANTS_DIR, JOB_NAME_NOT_FOUND, NO_PIPELINE_FILES, OUTPUT_FILE,
+    PATH_NOT_FOUND, PIPELINE_BASELINE_LOAD, PROMPT_EMPTY, SUPPRESSIONS_FILE, VERIFY_EMPTY_POLICY,
+    VERIFY_POLICY_PATH, VERIFY_READ_PIPELINE,
+};
+
+/// Like `println!` but never panics on a closed stdout pipe (EPIPE).
+macro_rules! try_println {
+    ($($arg:tt)*) => {{
+        let mut s = format!($($arg)*);
+        s.push('\n');
+        try_write_stdout(s.as_bytes())
+    }};
+}
 
 #[derive(Parser)]
 #[command(
@@ -27,7 +47,9 @@ mod remediate;
     about = "Pipeline authority scanner — models how authority propagates through CI/CD pipelines",
     long_about = "CI/CD is an untyped authority system. taudit makes it explicit, inspectable, and enforceable.\n\n\
                   The CLI contract, graph schema, and invariant DSL are stable as of v1.0.0.\n\n\
-                  Start with `taudit verify --help` for policy enforcement, or see docs/positioning.md.",
+                  Start with `taudit verify --help` for policy enforcement, `taudit graph --help` for exports, \
+                  `taudit explain` for built-in rules, or see docs/positioning.md.",
+    after_long_help = include_str!("../static/after-long-help.txt"),
     version
 )]
 enum Cli {
@@ -209,8 +231,8 @@ enum Cli {
         #[arg(long, default_value_t = false)]
         no_color: bool,
 
-        /// Output format: `text` (default terminal table) or `dot` (Graphviz DOT).
-        /// Pipe DOT output to `dot -Tsvg -o map.svg` to render an authority graph.
+        /// Output format: `text` (default) step×authority table, or `dot` (same graph
+        /// as `taudit graph --format dot`, as a digraph for Graphviz / dot -Tsvg).
         #[arg(long, default_value = "text")]
         format: MapFormat,
 
@@ -221,12 +243,19 @@ enum Cli {
         job: Option<String>,
     },
 
-    /// Emit the canonical authority graph as a versioned, machine-readable export.
+    /// Emit the canonical authority graph (JSON, DOT, or Mermaid).
     ///
-    /// Unlike `taudit map` (human-readable table), `taudit graph` produces the
-    /// full graph as JSON conforming to `schemas/authority-graph.v1.json`,
-    /// or as Graphviz DOT for visualization. Designed for downstream
-    /// consumers (tsign, axiom, runtime cells) that build on the graph.
+    /// Unlike `taudit map` (human-readable table), this command emits the full
+    /// `AuthorityGraph`: by default as JSON (`schemas/authority-graph.v1.json`)
+    /// for downstream tools, or as Graphviz DOT / Mermaid for documentation.
+    ///
+    /// Formats:
+    ///   json (default) — schema-validated; canonical machine interchange.
+    ///   dot — Graphviz; pipe to `dot -Tsvg` (install Graphviz separately).
+    ///   mermaid — `flowchart LR` text for GitHub/GitLab Markdown (no Graphviz).
+    ///
+    /// Use `--job` with dot/mermaid to restrict to one job's reachable subgraph.
+    /// JSON is always the complete graph. See docs/authority-graph.md.
     Graph {
         /// Path to pipeline YAML file(s) or directory.
         #[arg(required = true)]
@@ -236,13 +265,14 @@ enum Cli {
         #[arg(long, default_value = "auto")]
         platform: Platform,
 
-        /// Output format: `json` (default, schema-validated) or `dot` (Graphviz DOT).
+        /// Output format: `json` (default, schema-validated), `dot` (Graphviz DOT),
+        /// or `mermaid` (GitHub-flavored Markdown `flowchart`).
         #[arg(long, default_value = "json")]
         format: GraphFormat,
 
         /// Restrict the output to the subgraph reachable from a single job.
         /// For `--format json` the graph is emitted unfiltered; the flag only
-        /// affects `--format dot` (matching `taudit map --job` semantics).
+        /// affects `--format dot` and `--format mermaid` (matching `taudit map --job` semantics).
         #[arg(long)]
         job: Option<String>,
 
@@ -305,10 +335,14 @@ enum Cli {
         platform: Platform,
     },
 
-    /// List taudit's built-in rules, or show the full description for one rule.
+    /// List built-in rule IDs, or print one rule's full description and remediation.
     ///
-    /// `taudit explain`            — list all rules with severity and short description.
-    /// `taudit explain <rule-id>`  — show the full description for one rule.
+    /// Examples:
+    ///   taudit explain              — tabular list (id, severity, short text).
+    ///   taudit explain unpinned_action — long text, tags, link to docs/rules/<id>.md.
+    ///
+    /// Does not cover custom YAML invariants from `--invariants-dir`; use
+    /// `taudit invariants list` for those.
     Explain {
         /// Rule id to explain (e.g. `unpinned_action`). Omit to list all rules.
         rule: Option<String>,
@@ -806,6 +840,7 @@ enum MapFormat {
 enum GraphFormat {
     Json,
     Dot,
+    Mermaid,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, clap::ValueEnum)]
@@ -1416,14 +1451,17 @@ fn cmd_diff(
 ) -> Result<()> {
     let parser_box = make_parser(&platform);
     let parser = parser_box.as_ref();
-    let mut stdout = std::io::stdout().lock();
+    let stdout = std::io::stdout();
+    let mut out = SilenceBrokenPipe {
+        inner: stdout.lock(),
+    };
 
     // For `--platform auto`, detect each file independently. Otherwise reuse the
     // pre-built parser to avoid extra allocations.
     let parse_one = |path: &PathBuf| -> Result<taudit_core::graph::AuthorityGraph> {
         if platform == Platform::Auto {
             let content = std::fs::read_to_string(path)
-                .with_context(|| format!("Failed to read {}", path.display()))?;
+                .with_context(|| format!("Failed to read {}\n{DIFF_FILES}", path.display()))?;
             let resolved_platform = resolve_platform(&platform, &content, Some(path.as_path()));
             let per_file_parser = make_parser(&resolved_platform);
             parse_content(
@@ -1449,12 +1487,12 @@ fn cmd_diff(
     match format {
         DiffOutputFormat::Terminal => {
             use std::io::Write;
-            writeln!(stdout, "taudit diff")?;
-            writeln!(stdout, "  before: {}", before.display())?;
-            writeln!(stdout, "  after:  {}", after.display())?;
-            writeln!(stdout)?;
+            writeln!(out, "taudit diff")?;
+            writeln!(out, "  before: {}", before.display())?;
+            writeln!(out, "  after:  {}", after.display())?;
+            writeln!(out)?;
             writeln!(
-                stdout,
+                out,
                 "graph: nodes {} -> {} ({:+}), edges {} -> {} ({:+})",
                 before_graph.nodes.len(),
                 after_graph.nodes.len(),
@@ -1464,30 +1502,30 @@ fn cmd_diff(
                 after_graph.edges.len() as isize - before_graph.edges.len() as isize,
             )?;
             writeln!(
-                stdout,
+                out,
                 "findings: {} -> {} ({:+})",
                 before_findings.len(),
                 after_findings.len(),
                 after_findings.len() as isize - before_findings.len() as isize,
             )?;
 
-            writeln!(stdout)?;
-            writeln!(stdout, "added findings: {}", added.len())?;
+            writeln!(out)?;
+            writeln!(out, "added findings: {}", added.len())?;
             for finding in &added {
                 let category = finding_category(&finding.category);
                 writeln!(
-                    stdout,
+                    out,
                     "  + [{:?}] {}: {}",
                     finding.severity, category, finding.message
                 )?;
             }
 
-            writeln!(stdout)?;
-            writeln!(stdout, "removed findings: {}", removed.len())?;
+            writeln!(out)?;
+            writeln!(out, "removed findings: {}", removed.len())?;
             for finding in &removed {
                 let category = finding_category(&finding.category);
                 writeln!(
-                    stdout,
+                    out,
                     "  - [{:?}] {}: {}",
                     finding.severity, category, finding.message
                 )?;
@@ -1515,7 +1553,7 @@ fn cmd_diff(
                 "added": added,
                 "removed": removed,
             });
-            serde_json::to_writer_pretty(&mut stdout, &json)
+            serde_json::to_writer_pretty(&mut out, &json)
                 .with_context(|| "Failed to write JSON diff")?;
         }
     }
@@ -1578,6 +1616,7 @@ fn cmd_scan(opts: ScanOpts) -> Result<()> {
                 for err in &errors {
                     eprintln!("error: {err}");
                 }
+                eprintln!("{INVARIANTS_DIR}");
                 std::process::exit(2);
             }
         },
@@ -1591,10 +1630,16 @@ fn cmd_scan(opts: ScanOpts) -> Result<()> {
     let stdout_handle = std::io::stdout();
     let mut writer: Box<dyn std::io::Write> = match output.as_ref() {
         Some(path) => Box::new(std::io::BufWriter::new(
-            std::fs::File::create(path)
-                .with_context(|| format!("Failed to open output file {}", path.display()))?,
+            std::fs::File::create(path).with_context(|| {
+                format!(
+                    "Failed to open output file {}\n{OUTPUT_FILE}",
+                    path.display()
+                )
+            })?,
         )),
-        None => Box::new(stdout_handle.lock()),
+        None => Box::new(SilenceBrokenPipe {
+            inner: stdout_handle.lock(),
+        }),
     };
     // As of v0.7, `scan` is informational: it always exits 0 unless a
     // structural error (file missing, parse failure, bad flag) occurs.
@@ -1649,6 +1694,10 @@ fn cmd_scan(opts: ScanOpts) -> Result<()> {
             !exclude.iter().any(|pattern| glob_match(pattern, &path_str))
         })
         .collect();
+
+    if resolved.is_empty() {
+        anyhow::bail!("no matching pipeline files (.yml / .yaml)\n{NO_PIPELINE_FILES}");
+    }
 
     // Terminal mode: print run banner before the loop
     if !quiet && matches!(format, OutputFormat::Terminal) {
@@ -1772,8 +1821,12 @@ fn cmd_scan(opts: ScanOpts) -> Result<()> {
                 nodes: graph.nodes.len(),
                 edges: graph.edges.len(),
             };
-            eprintln!("ERROR: {} ({})", err, graph.source.file);
-            return Err(anyhow::anyhow!("{}", err));
+            return Err(anyhow::anyhow!(
+                "{}\n(source: {})\n{}",
+                err,
+                graph.source.file,
+                DENSE_GRAPH
+            ));
         }
 
         let mut all_findings = rules::run_all_rules(&graph, max_hops);
@@ -1815,6 +1868,7 @@ fn cmd_scan(opts: ScanOpts) -> Result<()> {
                 for err in errors {
                     eprintln!("error: {err}");
                 }
+                eprintln!("{CRITICAL_WAIVER_EXPIRY}");
                 std::process::exit(2);
             }
             let (waived, warnings) = suppression_config.apply(
@@ -2116,10 +2170,16 @@ fn cmd_verify(opts: VerifyOpts) -> Result<()> {
     let stdout_handle = std::io::stdout();
     let mut writer: Box<dyn std::io::Write> = match opts.output.as_ref() {
         Some(path) => Box::new(std::io::BufWriter::new(
-            std::fs::File::create(path)
-                .with_context(|| format!("Failed to open output file {}", path.display()))?,
+            std::fs::File::create(path).with_context(|| {
+                format!(
+                    "Failed to open output file {}\n{OUTPUT_FILE}",
+                    path.display()
+                )
+            })?,
         )),
-        None => Box::new(stdout_handle.lock()),
+        None => Box::new(SilenceBrokenPipe {
+            inner: stdout_handle.lock(),
+        }),
     };
 
     let exit_code = run_verify_io(&opts, &mut writer);
@@ -2149,10 +2209,8 @@ fn run_verify_io<W: std::io::Write>(opts: &VerifyOpts, writer: &mut W) -> i32 {
     // An empty policy file/dir is almost certainly a misconfiguration in CI —
     // surface it loudly rather than silently exiting 0 on every input.
     if custom_rules.is_empty() && !opts.include_builtin {
-        eprintln!(
-            "error: no invariants loaded from {} (use --include-builtin to run only built-in rules)",
-            opts.policy.display()
-        );
+        eprintln!("error: no invariants loaded from {}", opts.policy.display());
+        eprintln!("{VERIFY_EMPTY_POLICY}");
         return 2;
     }
 
@@ -2164,6 +2222,11 @@ fn run_verify_io<W: std::io::Write>(opts: &VerifyOpts, writer: &mut W) -> i32 {
             return 2;
         }
     };
+    if resolved.is_empty() {
+        eprintln!("error: no matching pipeline files (.yml / .yaml)");
+        eprintln!("{NO_PIPELINE_FILES}");
+        return 2;
+    }
 
     let parser_box = make_parser(&opts.platform);
     let parser = parser_box.as_ref();
@@ -2198,11 +2261,13 @@ fn run_verify_io<W: std::io::Write>(opts: &VerifyOpts, writer: &mut W) -> i32 {
             Err(err) => match tagged_path {
                 ResolvedPath::Explicit(_) => {
                     eprintln!("error: failed to read {}: {err}", path.display());
+                    eprintln!("{VERIFY_READ_PIPELINE}");
                     return 2;
                 }
                 ResolvedPath::Discovered(_) => {
                     if opts.strict {
                         eprintln!("error: failed to read {}: {err}", path.display());
+                        eprintln!("{VERIFY_READ_PIPELINE}");
                         return 2;
                     }
                     eprintln!("warning: skipping {}: {err}", path.display());
@@ -2278,6 +2343,7 @@ fn run_verify_io<W: std::io::Write>(opts: &VerifyOpts, writer: &mut W) -> i32 {
             for err in errors {
                 eprintln!("error: {err}");
             }
+            eprintln!("{CRITICAL_WAIVER_EXPIRY}");
             return 2;
         }
         let (waived, warnings) = suppression_config.apply(
@@ -2390,7 +2456,11 @@ fn load_policy(
     policy: &std::path::Path,
 ) -> Result<Vec<taudit_core::custom_rules::CustomRule>, Vec<String>> {
     if !policy.exists() {
-        return Err(vec![format!("policy path not found: {}", policy.display())]);
+        return Err(vec![format!(
+            "policy path not found: {}\n{}",
+            policy.display(),
+            VERIFY_POLICY_PATH
+        )]);
     }
 
     if policy.is_dir() {
@@ -2647,7 +2717,7 @@ fn load_suppression_config(
         // silently fall through to a different file.
         if !p.exists() {
             return Err(anyhow::anyhow!(
-                "suppression file not found: {}",
+                "suppression file not found: {}\n{SUPPRESSIONS_FILE}",
                 p.display()
             ));
         }
@@ -2676,6 +2746,9 @@ fn today_local() -> chrono::NaiveDate {
 fn load_ignore_config(explicit_path: Option<PathBuf>) -> Result<IgnoreConfig> {
     let path = if let Some(p) = explicit_path {
         // Explicit path must exist — fail immediately, don't fall through to default
+        if !p.exists() {
+            anyhow::bail!("ignore file not found: {}\n{IGNORE_FILE}", p.display());
+        }
         Some(p)
     } else {
         let default = PathBuf::from(".tauditignore");
@@ -2720,11 +2793,19 @@ fn load_baseline(path: Option<PathBuf>) -> Result<BaselineSet> {
         return Ok(HashSet::new());
     };
 
-    let content = std::fs::read_to_string(&p)
-        .with_context(|| format!("Failed to read baseline file: {}", p.display()))?;
+    let content = std::fs::read_to_string(&p).with_context(|| {
+        format!(
+            "Failed to read baseline file: {}\n{BASELINE_JSON}",
+            p.display()
+        )
+    })?;
 
-    let json: serde_json::Value = serde_json::from_str(&content)
-        .with_context(|| format!("Failed to parse baseline JSON: {}", p.display()))?;
+    let json: serde_json::Value = serde_json::from_str(&content).with_context(|| {
+        format!(
+            "Failed to parse baseline JSON: {}\n{BASELINE_JSON}",
+            p.display()
+        )
+    })?;
 
     let mut set = HashSet::new();
 
@@ -2782,7 +2863,7 @@ fn load_dedupe_fingerprints(path: &PathBuf) -> Result<HashSet<String>> {
         }
         Err(err) => {
             return Err(anyhow::Error::new(err).context(format!(
-                "Failed to read --dedupe-against file: {}",
+                "Failed to read --dedupe-against file: {}\n{DEDUPE_FILE}",
                 path.display()
             )));
         }
@@ -2898,9 +2979,12 @@ fn apply_pipeline_baseline(
     };
     let hash = taudit_core::baselines::compute_pipeline_hash(content);
     let target = taudit_core::baselines::baseline_path_for(&root, &hash);
-    let baseline = match taudit_core::baselines::Baseline::load(&target)
-        .map_err(|e| anyhow::anyhow!("Failed to load baseline {}: {e}", target.display()))?
-    {
+    let baseline = match taudit_core::baselines::Baseline::load(&target).map_err(|e| {
+        anyhow::anyhow!(
+            "Failed to load baseline {}: {e}\n{PIPELINE_BASELINE_LOAD}",
+            target.display()
+        )
+    })? {
         Some(b) => b,
         None => {
             return Ok(PipelineBaselineOutcome {
@@ -3206,7 +3290,11 @@ fn cmd_map(
     // Track whether --job matched any file so we can give a useful error at the end.
     let mut job_matched_any = false;
 
-    for tagged_path in resolve_paths_tagged(&paths)? {
+    let tagged_paths = resolve_paths_tagged(&paths)?;
+    if tagged_paths.is_empty() {
+        anyhow::bail!("no matching pipeline files (.yml / .yaml)\n{NO_PIPELINE_FILES}");
+    }
+    for tagged_path in tagged_paths {
         let path = tagged_path.path().clone();
         let graph = if platform == Platform::Auto {
             // Read once, sniff platform, parse with the right parser.
@@ -3265,12 +3353,16 @@ fn cmd_map(
         match format {
             MapFormat::Text => {
                 let authority_map = map::authority_map(&graph);
-                println!("Authority Map: {}\n", path.display());
-                print!("{}", map::render_map(&authority_map, term_width()));
-                println!();
+                let mut buf = String::new();
+                buf.push_str(&format!("Authority Map: {}\n\n", path.display()));
+                buf.push_str(&map::render_map(&authority_map, term_width()));
+                buf.push('\n');
+                try_write_stdout(buf.as_bytes())?;
             }
             MapFormat::Dot => {
-                println!("{}", map::render_dot(&graph, job.as_deref()));
+                let mut s = map::render_dot(&graph, job.as_deref());
+                s.push('\n');
+                try_write_stdout(s.as_bytes())?;
             }
         }
     }
@@ -3278,6 +3370,7 @@ fn cmd_map(
     if let Some(ref name) = job {
         if !job_matched_any {
             eprintln!("error: no job named '{name}' found in any scanned file");
+            eprintln!("{JOB_NAME_NOT_FOUND}");
             std::process::exit(2);
         }
     }
@@ -3289,8 +3382,9 @@ fn cmd_map(
 /// machine-readable export. Mirrors `cmd_map`'s file-resolution and
 /// per-file platform sniffing, but produces the graph itself rather than
 /// the human-readable map. Default format is JSON conforming to
-/// `schemas/authority-graph.v1.json`; `--format dot` reuses the same
-/// Graphviz renderer as `taudit map --format dot`.
+/// `schemas/authority-graph.v1.json`; `--format dot` and `--format mermaid`
+/// reuse the same renderers as `taudit map --format dot` (job filter applies
+/// to diagram output only, not JSON).
 fn cmd_graph(
     paths: Vec<PathBuf>,
     platform: Platform,
@@ -3306,6 +3400,7 @@ fn cmd_graph(
             for err in &errors {
                 eprintln!("error: {err}");
             }
+            eprintln!("{INVARIANTS_DIR}");
             std::process::exit(2);
         }
     }
@@ -3315,7 +3410,11 @@ fn cmd_graph(
 
     let mut job_matched_any = false;
 
-    for tagged_path in resolve_paths_tagged(&paths)? {
+    let tagged_paths = resolve_paths_tagged(&paths)?;
+    if tagged_paths.is_empty() {
+        anyhow::bail!("no matching pipeline files (.yml / .yaml)\n{NO_PIPELINE_FILES}");
+    }
+    for tagged_path in tagged_paths {
         let path = tagged_path.path().clone();
         let graph = if platform == Platform::Auto {
             let content = match std::fs::read_to_string(&path) {
@@ -3371,18 +3470,27 @@ fn cmd_graph(
 
         match format {
             GraphFormat::Json => {
-                // Note: --job currently only filters DOT output; the JSON
-                // export emits the full graph for every matched file. This
+                // Note: --job only filters diagram output (DOT / Mermaid); the
+                // JSON export emits the full graph for every matched file. This
                 // matches user expectation that the schema-validated JSON
                 // is a faithful, lossless dump.
                 let export = taudit_report_json::GraphExport::new(&graph);
-                let json = export
+                let mut json = export
                     .to_json_pretty()
-                    .map_err(|e| anyhow::anyhow!("{e}"))?;
-                println!("{json}");
+                    .map_err(|e| anyhow::anyhow!("{e}"))?
+                    .into_bytes();
+                json.push(b'\n');
+                try_write_stdout(&json)?;
             }
             GraphFormat::Dot => {
-                println!("{}", map::render_dot(&graph, job.as_deref()));
+                let mut dot = map::render_dot(&graph, job.as_deref()).into_bytes();
+                dot.push(b'\n');
+                try_write_stdout(&dot)?;
+            }
+            GraphFormat::Mermaid => {
+                let mut mer = map::render_mermaid(&graph, job.as_deref()).into_bytes();
+                mer.push(b'\n');
+                try_write_stdout(&mer)?;
             }
         }
     }
@@ -3390,6 +3498,7 @@ fn cmd_graph(
     if let Some(ref name) = job {
         if !job_matched_any {
             eprintln!("error: no job named '{name}' found in any scanned file");
+            eprintln!("{JOB_NAME_NOT_FOUND}");
             std::process::exit(2);
         }
     }
@@ -3411,8 +3520,7 @@ fn version_report() -> String {
 }
 
 fn cmd_version() -> Result<()> {
-    println!("{}", version_report());
-    Ok(())
+    try_write_stdout(format!("{}\n", version_report()).as_bytes())
 }
 
 /// Query crates.io for the latest published version of taudit.
@@ -3439,21 +3547,30 @@ fn check_latest_version() -> Option<String> {
 }
 
 fn cmd_update() -> Result<()> {
+    use std::io::Write;
+
     let current = env!("CARGO_PKG_VERSION");
-    print!("Checking crates.io for updates… ");
+    let stdout = std::io::stdout();
+    let mut out = SilenceBrokenPipe {
+        inner: stdout.lock(),
+    };
+    write!(out, "Checking crates.io for updates… ")?;
     match check_latest_version() {
         Some(latest) => {
-            println!("update available!");
-            println!("  Current : {current}");
-            println!("  Latest  : {latest}");
-            println!();
-            println!("  Run: cargo install taudit --version {latest} --locked");
+            writeln!(out, "update available!")?;
+            writeln!(out, "  Current : {current}")?;
+            writeln!(out, "  Latest  : {latest}")?;
+            writeln!(out)?;
+            writeln!(
+                out,
+                "  Run: cargo install taudit --version {latest} --locked"
+            )?;
         }
         None => {
             if std::env::var_os("TAUDIT_NO_UPDATE_CHECK").is_some() {
-                println!("skipped (TAUDIT_NO_UPDATE_CHECK is set)");
+                writeln!(out, "skipped (TAUDIT_NO_UPDATE_CHECK is set)")?;
             } else {
-                println!("you are up to date ({current})");
+                writeln!(out, "you are up to date ({current})")?;
             }
         }
     }
@@ -3484,11 +3601,13 @@ fn cmd_explain(rule: Option<String>) -> Result<()> {
 
     let rules = taudit_report_sarif::all_rules();
     let stdout = std::io::stdout();
-    let mut out = stdout.lock();
+    let mut out = SilenceBrokenPipe {
+        inner: stdout.lock(),
+    };
 
     match rule {
         None => {
-            writeln!(out, "{} — {} rules\n", "taudit".bold(), rules.len()).ok();
+            writeln!(out, "{} — {} rules\n", "taudit".bold(), rules.len())?;
             // Two-column layout: left column is widest rule id + padding, then severity, then desc.
             let id_width = rules.iter().map(|r| r.id.len()).max().unwrap_or(0);
             for r in rules {
@@ -3507,21 +3626,20 @@ fn cmd_explain(rule: Option<String>) -> Result<()> {
                     sev_colored,
                     r.short_description,
                     id_width = id_width,
-                )
-                .ok();
+                )?;
             }
-            writeln!(out).ok();
+            writeln!(out)?;
             writeln!(
                 out,
                 "Use '{}' for full description and remediation guidance.",
                 "taudit explain <rule>".bold()
-            )
-            .ok();
+            )?;
             Ok(())
         }
         Some(id) => {
             let Some(r) = rules.iter().find(|r| r.id == id) else {
                 eprintln!("error: unknown rule '{id}'");
+                eprintln!("{EXPLAIN_RULE}");
                 eprintln!();
                 eprintln!("valid rule ids:");
                 for r in rules {
@@ -3539,20 +3657,19 @@ fn cmd_explain(rule: Option<String>) -> Result<()> {
                 _ => sev.dimmed(),
             };
 
-            writeln!(out, "{} ({})  {}\n", r.id.bold(), r.name, sev_colored,).ok();
-            writeln!(out, "  {}\n", r.short_description).ok();
+            writeln!(out, "{} ({})  {}\n", r.id.bold(), r.name, sev_colored,)?;
+            writeln!(out, "  {}\n", r.short_description)?;
             // Wrap the full description at ~76 cols with a 2-space indent.
             for line in wrap_paragraph(r.full_description, 76) {
-                writeln!(out, "  {line}").ok();
+                writeln!(out, "  {line}")?;
             }
-            writeln!(out).ok();
-            writeln!(out, "  Tags: {}", r.tags.join(", ")).ok();
+            writeln!(out)?;
+            writeln!(out, "  Tags: {}", r.tags.join(", "))?;
             writeln!(
                 out,
                 "\n  See: https://github.com/0ryant/taudit/blob/main/docs/rules/{}.md",
                 r.id
-            )
-            .ok();
+            )?;
             Ok(())
         }
     }
@@ -3577,8 +3694,12 @@ fn cmd_invariants_list(invariants_dir: Option<PathBuf>) -> Result<()> {
     // `load_rules_dir` here because that helper drops file paths.
     let mut custom: Vec<(PathBuf, taudit_core::custom_rules::CustomRule)> = Vec::new();
     if let Some(dir) = invariants_dir.as_ref() {
-        let read_dir = std::fs::read_dir(dir)
-            .with_context(|| format!("Failed to read invariants directory {}", dir.display()))?;
+        let read_dir = std::fs::read_dir(dir).with_context(|| {
+            format!(
+                "Failed to read invariants directory {}\n{INVARIANTS_DIR}",
+                dir.display()
+            )
+        })?;
         let mut paths: Vec<PathBuf> = read_dir
             .flatten()
             .map(|e| e.path())
@@ -3606,7 +3727,9 @@ fn cmd_invariants_list(invariants_dir: Option<PathBuf>) -> Result<()> {
     }
 
     let stdout = std::io::stdout();
-    let mut out = stdout.lock();
+    let mut out = SilenceBrokenPipe {
+        inner: stdout.lock(),
+    };
 
     let total = built_in.len() + custom.len();
     writeln!(
@@ -3616,8 +3739,7 @@ fn cmd_invariants_list(invariants_dir: Option<PathBuf>) -> Result<()> {
         total,
         built_in.len(),
         custom.len(),
-    )
-    .ok();
+    )?;
 
     // Compute column widths from all rows so the table is aligned.
     let id_width = built_in
@@ -3637,8 +3759,7 @@ fn cmd_invariants_list(invariants_dir: Option<PathBuf>) -> Result<()> {
         "source".bold(),
         id_width = id_width,
         sev_width = sev_width,
-    )
-    .ok();
+    )?;
     writeln!(
         out,
         "  {:-<id_width$}  {:-<sev_width$}  {:-<20}",
@@ -3647,8 +3768,7 @@ fn cmd_invariants_list(invariants_dir: Option<PathBuf>) -> Result<()> {
         "",
         id_width = id_width,
         sev_width = sev_width,
-    )
-    .ok();
+    )?;
 
     for r in built_in {
         let sev = severity_label_for_rule(r.security_severity);
@@ -3668,8 +3788,7 @@ fn cmd_invariants_list(invariants_dir: Option<PathBuf>) -> Result<()> {
             id_width = id_width,
             // colored strings inflate the byte count; pad on the visible label width
             sev_width = sev_width + (sev_colored.to_string().len() - sev.len()),
-        )
-        .ok();
+        )?;
     }
 
     for (path, rule) in &custom {
@@ -3689,8 +3808,7 @@ fn cmd_invariants_list(invariants_dir: Option<PathBuf>) -> Result<()> {
             path.display(),
             id_width = id_width,
             sev_width = sev_width + (sev_colored.to_string().len() - sev.len()),
-        )
-        .ok();
+        )?;
     }
 
     Ok(())
@@ -3716,7 +3834,9 @@ fn cmd_suppressions_list(suppressions_path: Option<PathBuf>) -> Result<()> {
 
     let cfg = load_suppression_config(suppressions_path)?;
     let stdout = std::io::stdout();
-    let mut out = stdout.lock();
+    let mut out = SilenceBrokenPipe {
+        inner: stdout.lock(),
+    };
 
     if cfg.suppressions.is_empty() {
         writeln!(
@@ -3832,7 +3952,9 @@ fn cmd_suppressions_add(opts: SuppressionsAddOpts) -> Result<()> {
     }
 
     let stdout = std::io::stdout();
-    let mut out = stdout.lock();
+    let mut out = SilenceBrokenPipe {
+        inner: stdout.lock(),
+    };
     writeln!(out, "appended suppression to {}", target.display())?;
     Ok(())
 }
@@ -3844,9 +3966,12 @@ fn prompt_or_value(supplied: Option<String>, name: &str) -> Result<String> {
         return Ok(v);
     }
     use std::io::{BufRead, Write};
-    let mut stdout = std::io::stdout().lock();
-    write!(stdout, "{name}: ")?;
-    stdout.flush().ok();
+    let stdout = std::io::stdout();
+    let mut out = SilenceBrokenPipe {
+        inner: stdout.lock(),
+    };
+    write!(out, "{name}: ")?;
+    out.flush().ok();
     let mut buf = String::new();
     std::io::stdin()
         .lock()
@@ -3854,7 +3979,9 @@ fn prompt_or_value(supplied: Option<String>, name: &str) -> Result<String> {
         .with_context(|| format!("failed to read {name} from stdin"))?;
     let trimmed = buf.trim().to_string();
     if trimmed.is_empty() {
-        return Err(anyhow::anyhow!("{name} is required (no value supplied)"));
+        return Err(anyhow::anyhow!(
+            "{name} is required (no value supplied)\n{PROMPT_EMPTY}"
+        ));
     }
     Ok(trimmed)
 }
@@ -3868,7 +3995,9 @@ fn cmd_suppressions_review(suppressions_path: Option<PathBuf>) -> Result<()> {
 
     let cfg = load_suppression_config(suppressions_path)?;
     let stdout = std::io::stdout();
-    let mut out = stdout.lock();
+    let mut out = SilenceBrokenPipe {
+        inner: stdout.lock(),
+    };
 
     if cfg.suppressions.is_empty() {
         writeln!(out, "no suppressions to review")?;
@@ -3995,11 +4124,12 @@ fn cmd_emit_spec(
     let rendered = serde_json::to_string_pretty(&spec).context("Failed to render spec JSON")?;
 
     if let Some(path) = output {
-        std::fs::write(&path, rendered)
-            .with_context(|| format!("Failed to write spec to {}", path.display()))?;
+        std::fs::write(&path, rendered).with_context(|| {
+            format!("Failed to write spec to {}\n{OUTPUT_FILE}", path.display())
+        })?;
         eprintln!("Wrote CellOS spec to {}", path.display());
     } else {
-        println!("{rendered}");
+        try_println!("{rendered}")?;
     }
 
     Ok(())
@@ -4085,9 +4215,12 @@ fn parse_content(
         git_ref: None,
         commit_sha: None,
     };
-    parser
-        .parse(&content, &source)
-        .with_context(|| format!("Failed to parse {source_file}"))
+    parser.parse(&content, &source).with_context(|| {
+        format!(
+            "Failed to parse {source_file}\n\
+             hint: confirm the file is valid CI YAML for the selected --platform (use `auto` to detect); see `taudit scan --help`"
+        )
+    })
 }
 
 fn parse_file(
@@ -4095,7 +4228,7 @@ fn parse_file(
     path: &PathBuf,
 ) -> Result<taudit_core::graph::AuthorityGraph> {
     let content = std::fs::read_to_string(path)
-        .with_context(|| format!("Failed to read {}", path.display()))?;
+        .with_context(|| format!("Failed to read {}\n{PATH_NOT_FOUND}", path.display()))?;
     parse_content(parser, content, path.display().to_string())
 }
 
@@ -4131,7 +4264,7 @@ fn resolve_paths_tagged(paths: &[PathBuf]) -> Result<Vec<ResolvedPath>> {
         } else if path.is_file() {
             result.push(ResolvedPath::Explicit(path.clone()));
         } else {
-            anyhow::bail!("Path not found: {}", path.display());
+            anyhow::bail!("Path not found: {}\n{}", path.display(), PATH_NOT_FOUND);
         }
     }
     Ok(result)
@@ -4160,7 +4293,7 @@ fn resolve_paths(paths: &[PathBuf]) -> Result<Vec<PathBuf>> {
         } else if path.is_file() {
             result.push(path.clone());
         } else {
-            anyhow::bail!("Path not found: {}", path.display());
+            anyhow::bail!("Path not found: {}\n{}", path.display(), PATH_NOT_FOUND);
         }
     }
 
@@ -4374,7 +4507,7 @@ fn cmd_baseline_init(
         baseline
             .save(&target)
             .with_context(|| format!("Failed to write baseline {}", target.display()))?;
-        println!(
+        try_println!(
             "wrote {} ({} finding{})",
             target.display(),
             baseline.baseline_findings.len(),
@@ -4383,11 +4516,11 @@ fn cmd_baseline_init(
             } else {
                 "s"
             }
-        );
+        )?;
         written += 1;
     }
 
-    println!(
+    try_println!(
         "{written} baseline{} written{}",
         if written == 1 { "" } else { "s" },
         if skipped > 0 {
@@ -4395,7 +4528,7 @@ fn cmd_baseline_init(
         } else {
             String::new()
         }
-    );
+    )?;
     Ok(())
 }
 
@@ -4444,7 +4577,7 @@ fn cmd_baseline_accept(
         .map_err(|e| anyhow::anyhow!("{e}"))?;
 
     baseline.save(&target)?;
-    println!("accepted {fingerprint} into {}", target.display());
+    try_println!("accepted {fingerprint} into {}", target.display())?;
     Ok(())
 }
 
@@ -4485,18 +4618,18 @@ fn cmd_baseline_diff(
         match taudit_core::baselines::Baseline::load(&target)? {
             Some(baseline) => {
                 if !baseline.identity_material_matches(&graph) {
-                    println!(
+                    try_println!(
                         "{}: baseline identity material mismatch at {} (re-run `taudit baseline init {}`)",
                         path.display(),
                         target.display(),
                         path.display()
-                    );
+                    )?;
                     continue;
                 }
                 let diff = taudit_core::baselines::diff(&findings, &baseline, &graph);
                 let unwaived = diff.preexisting.len() - diff.waived_count;
                 let blockers = diff.critical_without_valid_waiver(&baseline, &graph, now);
-                println!(
+                try_println!(
                     "{}: {} NEW, {} FIXED, {} PRE-EXISTING ({} waived, {} unwaived){}",
                     path.display(),
                     diff.new.len(),
@@ -4509,19 +4642,19 @@ fn cmd_baseline_diff(
                     } else {
                         format!(" — {} CRITICAL without valid waiver", blockers.len())
                     },
-                );
+                )?;
             }
             None => {
-                println!(
+                try_println!(
                     "{}: no baseline at {} (run `taudit baseline init {}`)",
                     path.display(),
                     target.display(),
                     path.display()
-                );
+                )?;
             }
         }
     }
-    println!("Use 'taudit baseline review' to see waivers.");
+    try_println!("Use 'taudit baseline review' to see waivers.")?;
     Ok(())
 }
 
@@ -4529,7 +4662,7 @@ fn cmd_baseline_review(root: Option<PathBuf>) -> Result<()> {
     let root = baseline_root(root)?;
     let dir = taudit_core::baselines::baselines_dir(&root);
     if !dir.exists() {
-        println!("no baselines at {} (nothing to review)", dir.display());
+        try_println!("no baselines at {} (nothing to review)", dir.display())?;
         return Ok(());
     }
     let mut waivers: Vec<(String, taudit_core::baselines::BaselineFinding)> = Vec::new();
@@ -4553,7 +4686,7 @@ fn cmd_baseline_review(root: Option<PathBuf>) -> Result<()> {
     }
 
     if waivers.is_empty() {
-        println!("no waivers across {} baselines", count_baselines(&dir)?);
+        try_println!("no waivers across {} baselines", count_baselines(&dir)?)?;
         return Ok(());
     }
 
@@ -4568,7 +4701,7 @@ fn cmd_baseline_review(root: Option<PathBuf>) -> Result<()> {
 
     let now = chrono::Utc::now();
     let mut errors = 0usize;
-    println!("waiver review ({} entries)", waivers.len());
+    try_println!("waiver review ({} entries)", waivers.len())?;
     for (pipeline, w) in &waivers {
         let expiry = match w.expires_at {
             Some(t) => {
@@ -4588,7 +4721,7 @@ fn cmd_baseline_review(root: Option<PathBuf>) -> Result<()> {
         } else {
             ""
         };
-        println!(
+        try_println!(
             "  {} :: {} :: {} :: {} :: {}{}",
             pipeline,
             w.fingerprint,
@@ -4596,7 +4729,7 @@ fn cmd_baseline_review(root: Option<PathBuf>) -> Result<()> {
             expiry,
             w.reason_waived.as_deref().unwrap_or(""),
             flag
-        );
+        )?;
     }
     if errors > 0 {
         anyhow::bail!("{errors} critical waiver(s) without expires_at — fix before merge");

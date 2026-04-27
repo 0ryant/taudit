@@ -1,0 +1,23 @@
+Authority graph exports (taudit graph)
+    Default --format json emits the versioned graph (schemas/authority-graph.v1.json) for tools
+    (tsign, axiom, custom automation). Same in-memory AuthorityGraph is also rendered as:
+    --format dot     Graphviz DOT; pipe to: dot -Tsvg -o graph.svg (requires Graphviz installed)
+    --format mermaid Mermaid flowchart LR; paste into a Markdown fenced block with language mermaid
+                     (no Graphviz; see docs/authority-graph.md).
+    --job <name>     For dot and mermaid only: restrict to the subgraph reachable from that job.
+                     JSON is always the full graph (job filter does not apply).
+
+Authority map (taudit map)
+    Human table: --format text (default). Same graph as --format dot digraph for visualization.
+
+Scan, verify, and stdout
+    scan is informational: it exits 0 when the run succeeds, even if there are findings (use
+    taudit verify to gate CI). verify exits 0 only when there are no policy violations.
+    When stdout is a pipe and the reader closes early (e.g. ... | head), taudit exits 0 - broken
+    pipe is not a failure. This applies to terminal output to stdout, not to -o/--output files.
+
+Documentation
+    docs/authority-graph.md   Graph model, schema, ASCII "one graph, three exports" overview
+    USERGUIDE.md              Tutorials (map, graph, Mermaid, install pins)
+    docs/positioning.md       Product framing
+    docs/adr/0001-graph-native-exports-and-leverage.md   Mermaid + export strategy (ADR)

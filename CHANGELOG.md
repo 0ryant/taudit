@@ -2,6 +2,46 @@
 
 All notable changes to this project will be documented in this file.
 
+## v1.0.8 — 2026-04-27
+
+### Added
+
+- **CLI error hints** — User-facing `hint:` lines for common failures (missing `--policy`, output files, suppressions, dense-graph override, remediate paths, etc.) via [`error_hints.rs`](crates/taudit-cli/src/error_hints.rs).
+- **Corpus CLI integration test** — [`corpus_cli_suite.rs`](crates/taudit-cli/tests/corpus_cli_suite.rs) runs `taudit scan` and `taudit graph` on every committed YAML under `tests/fixtures/`, parser `fuzz/corpus/`, and `.github/workflows/`. Run with `just corpus-suite`. Optional root `corpus/` stress pass: `TAUDIT_TEST_LOCAL_CORPUS=1`.
+- **`tests/common`**: [`workspace_root()`](crates/taudit-cli/tests/common/mod.rs) for integration tests.
+
+### Fixed
+
+- **Dense graph guard** — One coherent error (source file + hint) instead of duplicate `eprintln!` + `main` error lines.
+- **`scripts/quality-gate.sh`** and **`just self-test`** — Use `cargo run -p taudit` (package name is `taudit`, not `taudit-cli`).
+
+### Documentation
+
+- **[docs/corpus-research.md](docs/corpus-research.md)** — Documents the automated corpus CLI suite and `TAUDIT_TEST_LOCAL_CORPUS`.
+
+## v1.0.7 — 2026-04-27
+
+### Fixed
+
+- **Broken pipe (EPIPE) on stdout** — All high-volume commands now treat a closed pipeline (e.g. `| head -c 1`) as a clean exit **0**, consistent with `taudit graph` since v1.0.5. Covers **`scan`** (all formats to stdout), **`map`** (text + dot), **`verify`**, **`diff`**, **`explain`**, **`invariants`**, **`suppressions`**, **`baseline`**, **`version` / `update`**, **`emit-spec`**, and **`remediate`**. Implementation: [`SilenceBrokenPipe`](crates/taudit-cli/src/stdio_epipe.rs) for streaming writers, [`try_write_stdout`](crates/taudit-cli/src/stdio_epipe.rs) / `try_println!` for buffered lines; integration tests in [`crates/taudit-cli/tests/broken_pipe.rs`](crates/taudit-cli/tests/broken_pipe.rs).
+
+## v1.0.6 — 2026-04-27
+
+### Added
+
+- **`taudit graph --format mermaid`** — emits a **Mermaid** `flowchart LR` diagram (same node/edge model and `--job` filtering as `--format dot`). Use in READMEs and wikis without installing Graphviz; JSON remains the canonical interchange. See [ADR 0001](docs/adr/0001-graph-native-exports-and-leverage.md) and [product research](docs/research/2026-04-27-graph-as-product-research.md).
+
+### Documentation
+
+- **[docs/adr/](docs/adr/)** — ADR 0001 (graph-native exports and leverage) and index.
+
+## v1.0.5 — 2026-04-27
+
+### Fixed
+
+- **`taudit graph`**: writing DOT/JSON to a **broken pipe** (e.g. `| dot` when Graphviz is not installed) no longer panics; exits **0** like other Unix text tools.
+- **USERGUIDE** — Graphviz: note that `dot` is external; `brew` / `apt` install examples; `taudit graph --format dot` in the same section as `map --format dot`.
+
 ## v1.0.4 — 2026-04-27
 
 > Documentation release: corpus methodology, licensing guidance, and install example version pins.

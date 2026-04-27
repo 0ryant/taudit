@@ -1,3 +1,8 @@
+use crate::error_hints::{
+    BACKUP_READ_ONLY, MIN_CONFIDENCE, REMEDIATE_PATH, REMEDIATE_UNCOMMITTED, ROLLBACK_BACKUP_ID,
+    ROLLBACK_NOT_FOUND,
+};
+use crate::stdio_epipe::try_write_stdout;
 use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
@@ -140,16 +145,23 @@ pub fn cmd_suggest(opts: SuggestOpts) -> Result<()> {
     match opts.format {
         OutputFormat::Text => {
             if suggestions.is_empty() {
-                println!("taudit remediate suggest: no candidate low-risk remediations found");
+                try_write_stdout(
+                    b"taudit remediate suggest: no candidate low-risk remediations found\n",
+                )?;
             } else {
-                println!("taudit remediate suggest: {} file(s)", suggestions.len());
+                try_write_stdout(
+                    format!("taudit remediate suggest: {} file(s)\n", suggestions.len()).as_bytes(),
+                )?;
                 for file in &suggestions {
-                    println!("{}", file.path);
+                    try_write_stdout(format!("{}\n", file.path).as_bytes())?;
                     for s in &file.suggestions {
-                        println!(
-                            "  - {} [{:?}] conf={:.2}: {}",
-                            s.transform_id, s.risk, s.confidence, s.title
-                        );
+                        try_write_stdout(
+                            format!(
+                                "  - {} [{:?}] conf={:.2}: {}\n",
+                                s.transform_id, s.risk, s.confidence, s.title
+                            )
+                            .as_bytes(),
+                        )?;
                     }
                 }
             }
@@ -159,7 +171,7 @@ pub fn cmd_suggest(opts: SuggestOpts) -> Result<()> {
                 "schema_version": "taudit.remediate.suggest.v1",
                 "files": suggestions,
             });
-            println!("{}", serde_json::to_string_pretty(&out)?);
+            try_write_stdout(format!("{}\n", serde_json::to_string_pretty(&out)?).as_bytes())?;
         }
     }
 
@@ -173,18 +185,21 @@ pub fn cmd_diff(opts: DiffOpts) -> Result<()> {
     match opts.format {
         OutputFormat::Text => {
             if plan.is_empty() {
-                println!("taudit remediate diff: no patches to generate");
+                try_write_stdout(b"taudit remediate diff: no patches to generate\n")?;
             } else {
                 for item in &plan {
-                    println!("diff -- {}", item.path.display());
-                    println!(
-                        "{}",
-                        render_unified_patch(
-                            &item.path.display().to_string(),
-                            &item.before,
-                            &item.after
+                    try_write_stdout(format!("diff -- {}\n", item.path.display()).as_bytes())?;
+                    try_write_stdout(
+                        format!(
+                            "{}\n",
+                            render_unified_patch(
+                                &item.path.display().to_string(),
+                                &item.before,
+                                &item.after
+                            )
                         )
-                    );
+                        .as_bytes(),
+                    )?;
                 }
             }
         }
@@ -203,7 +218,7 @@ pub fn cmd_diff(opts: DiffOpts) -> Result<()> {
                 "schema_version": "taudit.remediate.diff.v1",
                 "files": files_json,
             });
-            println!("{}", serde_json::to_string_pretty(&out)?);
+            try_write_stdout(format!("{}\n", serde_json::to_string_pretty(&out)?).as_bytes())?;
         }
     }
 
@@ -213,6 +228,7 @@ pub fn cmd_diff(opts: DiffOpts) -> Result<()> {
 pub fn cmd_apply(opts: ApplyOpts) -> Result<()> {
     if !(0.0..=1.0).contains(&opts.min_confidence) {
         eprintln!("error: --min-confidence must be between 0.0 and 1.0");
+        eprintln!("{MIN_CONFIDENCE}");
         std::process::exit(2);
     }
 
@@ -360,11 +376,14 @@ pub fn cmd_apply(opts: ApplyOpts) -> Result<()> {
 
     match opts.format {
         OutputFormat::Text => {
-            println!(
-                "taudit remediate apply: applied {} file(s), backup_id={}",
-                plan.len(),
-                backup_id
-            );
+            try_write_stdout(
+                format!(
+                    "taudit remediate apply: applied {} file(s), backup_id={}\n",
+                    plan.len(),
+                    backup_id
+                )
+                .as_bytes(),
+            )?;
         }
         OutputFormat::Json => {
             let out = serde_json::json!({
@@ -372,7 +391,7 @@ pub fn cmd_apply(opts: ApplyOpts) -> Result<()> {
                 "backup_id": backup_id,
                 "files_changed": plan.iter().map(|p| p.path.display().to_string()).collect::<Vec<_>>(),
             });
-            println!("{}", serde_json::to_string_pretty(&out)?);
+            try_write_stdout(format!("{}\n", serde_json::to_string_pretty(&out)?).as_bytes())?;
         }
     }
 
@@ -382,6 +401,7 @@ pub fn cmd_apply(opts: ApplyOpts) -> Result<()> {
 pub fn cmd_rollback(opts: RollbackOpts) -> Result<()> {
     if !is_valid_backup_id(&opts.backup_id) {
         eprintln!("error: invalid backup_id format (expected YYYYMMDDTHHMMSSZ-<pid>-<suffix>)");
+        eprintln!("{ROLLBACK_BACKUP_ID}");
         std::process::exit(2);
     }
 
@@ -397,6 +417,7 @@ pub fn cmd_rollback(opts: RollbackOpts) -> Result<()> {
             opts.backup_id,
             backup_root.join("backups").display()
         );
+        eprintln!("{ROLLBACK_NOT_FOUND}");
         std::process::exit(2);
     }
 
@@ -432,10 +453,13 @@ pub fn cmd_rollback(opts: RollbackOpts) -> Result<()> {
         write_text(&target, &original)?;
     }
 
-    println!(
-        "taudit remediate rollback: restored backup_id={} ({})",
-        manifest.backup_id, manifest.created_at
-    );
+    try_write_stdout(
+        format!(
+            "taudit remediate rollback: restored backup_id={} ({})\n",
+            manifest.backup_id, manifest.created_at
+        )
+        .as_bytes(),
+    )?;
     std::process::exit(0)
 }
 
@@ -447,20 +471,23 @@ pub fn cmd_list_backups(opts: ListBackupsOpts) -> Result<()> {
     match opts.format {
         OutputFormat::Text => {
             if index.entries.is_empty() {
-                println!("taudit remediate list-backups: no backups found");
+                try_write_stdout(b"taudit remediate list-backups: no backups found\n")?;
             } else {
                 for entry in &index.entries {
-                    println!(
-                        "{} {} {}",
-                        entry.backup_id,
-                        entry.created_at,
-                        entry.pipeline_paths.join(", ")
-                    );
+                    try_write_stdout(
+                        format!(
+                            "{} {} {}\n",
+                            entry.backup_id,
+                            entry.created_at,
+                            entry.pipeline_paths.join(", ")
+                        )
+                        .as_bytes(),
+                    )?;
                 }
             }
         }
         OutputFormat::Json => {
-            println!("{}", serde_json::to_string_pretty(&index)?);
+            try_write_stdout(format!("{}\n", serde_json::to_string_pretty(&index)?).as_bytes())?;
         }
     }
 
@@ -475,7 +502,10 @@ fn collect_pipeline_files(paths: &[PathBuf]) -> Result<Vec<PathBuf>> {
         } else if p.is_file() {
             out.push(p.clone());
         } else {
-            return Err(anyhow::anyhow!("path not found: {}", p.display()));
+            return Err(anyhow::anyhow!(
+                "path not found: {}\n{REMEDIATE_PATH}",
+                p.display()
+            ));
         }
     }
     out.sort();
@@ -652,7 +682,7 @@ fn ensure_no_uncommitted_edits(plan: &[PlannedEdit]) -> Result<()> {
 
         if !String::from_utf8_lossy(&output.stdout).trim().is_empty() {
             return Err(anyhow::anyhow!(
-                "refusing to apply remediation: {} has uncommitted edits (use --force to override)",
+                "refusing to apply remediation: {} has uncommitted edits (use --force to override)\n{REMEDIATE_UNCOMMITTED}",
                 item.path.display()
             ));
         }
@@ -705,7 +735,9 @@ fn allocate_backup_id(backups_dir: &Path) -> Result<String> {
         let metadata = std::fs::metadata(backups_dir)
             .with_context(|| format!("failed to check {}", backups_dir.display()))?;
         if metadata.permissions().readonly() {
-            return Err(anyhow::anyhow!("backup directory is read-only"));
+            return Err(anyhow::anyhow!(
+                "backup directory is read-only\n{BACKUP_READ_ONLY}"
+            ));
         }
     }
 

@@ -56,6 +56,8 @@ go run    ./examples/consumers/go                          /tmp/g.json
 deno run  --allow-read examples/consumers/typescript/find-cycles.ts /tmp/g.json
 ```
 
+**Mermaid (diagram view only):** these examples consume **JSON**. For a GitHub-flavoured Markdown `flowchart` with no Graphviz install, use `taudit graph … --format mermaid` and paste into a fenced `mermaid` block — same graph model, not a separate consumer contract.
+
 ## Principles for your own consumer
 
 If you build a tool on top of the taudit authority graph, follow these:

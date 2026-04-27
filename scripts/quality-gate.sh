@@ -36,7 +36,7 @@ run_taudit_gate() {
   if command -v taudit >/dev/null 2>&1; then
     TAUDIT=(taudit)
   else
-    TAUDIT=(cargo run -q -p taudit-cli --)
+    TAUDIT=(cargo run -q -p taudit --)
   fi
 
   echo "quality-gate: taudit scan"

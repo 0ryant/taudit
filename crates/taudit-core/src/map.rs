@@ -1,5 +1,6 @@
 use crate::graph::{
-    AuthorityGraph, EdgeKind, NodeId, NodeKind, TrustZone, META_IDENTITY_SCOPE, META_JOB_NAME,
+    AuthorityCompleteness, AuthorityGraph, EdgeKind, NodeId, NodeKind, TrustZone,
+    META_IDENTITY_SCOPE, META_JOB_NAME,
 };
 use std::collections::{HashSet, VecDeque};
 
@@ -418,6 +419,97 @@ pub fn render_dot(graph: &AuthorityGraph, filter_job: Option<&str>) -> String {
     out
 }
 
+/// Escape a string for safe use inside a Mermaid flowchart **node** or **edge**
+/// label (GitHub-Flavored Markdown renderer). We avoid raw `[` `]` `|` and
+/// HTML special characters in the emitted source so diagrams stay parseable.
+fn mermaid_label_escape(s: &str) -> String {
+    let mut out = String::with_capacity(s.len() + 8);
+    for c in s.chars() {
+        match c {
+            '&' => out.push_str("&amp;"),
+            '<' => out.push_str("&lt;"),
+            '>' => out.push_str("&gt;"),
+            '"' => out.push_str("&quot;"),
+            '\n' | '\r' => out.push(' '),
+            // Break Mermaid / Markdown delimiters
+            '|' => out.push_str("&#124;"),
+            '[' => out.push_str("&#91;"),
+            ']' => out.push_str("&#93;"),
+            '{' | '}' => out.push('·'),
+            _ => out.push(c),
+        }
+    }
+    out
+}
+
+/// Mermaid `flowchart` node line for a single graph node, matching DOT shape
+/// intent (step ≈ rounded, box, diamond, …).
+fn mermaid_node_line(node: &crate::graph::Node) -> String {
+    let id = node.id;
+    let esc = mermaid_label_escape(&node.name);
+    match node.kind {
+        NodeKind::Step => format!(r#"    n{id}("{esc}")"#),
+        NodeKind::Secret => format!(r#"    n{id}["{esc}"]"#),
+        NodeKind::Identity => format!(r#"    n{id}{{"{esc}"}}"#),
+        NodeKind::Artifact => format!(r#"    n{id}[["{esc}"]]"#),
+        NodeKind::Image => format!(r#"    n{id}[("{esc}")]"#),
+    }
+}
+
+/// Render the authority graph as a Mermaid `flowchart LR` (parity with
+/// `render_dot`'s `rankdir=LR`).
+///
+/// `filter_job` uses the same reachability semantics as [`render_dot`]. When
+/// the graph is not [`AuthorityCompleteness::Complete`], a leading `%%`
+/// comment notes partiality; JSON export remains the source of detail.
+pub fn render_mermaid(graph: &AuthorityGraph, filter_job: Option<&str>) -> String {
+    let included: Option<HashSet<NodeId>> = match filter_job {
+        Some(name) => {
+            let seeds: Vec<NodeId> = graph
+                .nodes
+                .iter()
+                .filter(|n| {
+                    n.kind == NodeKind::Step
+                        && n.metadata.get(META_JOB_NAME).map(String::as_str) == Some(name)
+                })
+                .map(|n| n.id)
+                .collect();
+            Some(reachable_set(graph, &seeds))
+        }
+        None => None,
+    };
+
+    let mut out = String::new();
+    if graph.completeness != AuthorityCompleteness::Complete {
+        out.push_str(
+            "%% taudit: authority graph is not Complete; use JSON for completeness and gaps\n",
+        );
+    }
+    out.push_str("flowchart LR\n");
+
+    for node in &graph.nodes {
+        if let Some(ref keep) = included {
+            if !keep.contains(&node.id) {
+                continue;
+            }
+        }
+        out.push_str(&mermaid_node_line(node));
+        out.push('\n');
+    }
+
+    for edge in &graph.edges {
+        if let Some(ref keep) = included {
+            if !keep.contains(&edge.from) || !keep.contains(&edge.to) {
+                continue;
+            }
+        }
+        let el = mermaid_label_escape(edge_label(edge.kind));
+        out.push_str(&format!("    n{} -->|{}| n{}\n", edge.from, el, edge.to));
+    }
+
+    out
+}
+
 /// Distinct job names attached to Step nodes via `META_JOB_NAME`.
 /// Sorted alphabetically — used to render helpful error messages when a
 /// user passes `--job <name>` that doesn't match any step.
@@ -513,6 +605,101 @@ mod tests {
                 "\"n{step}\" -> \"n{secret}\" [label=\"has_access_to\"]"
             )),
             "missing edge line in: {dot}"
+        );
+    }
+
+    #[test]
+    fn mermaid_output_contains_expected_node_and_edge() {
+        let mut g = AuthorityGraph::new(source("ci.yml"));
+        let secret = g.add_node(NodeKind::Secret, "API_KEY", TrustZone::FirstParty);
+        let step = g.add_node(NodeKind::Step, "build", TrustZone::FirstParty);
+        g.add_edge(step, secret, EdgeKind::HasAccessTo);
+
+        let mer = render_mermaid(&g, None);
+        assert!(mer.starts_with("flowchart LR"), "mermaid output: {mer}");
+        assert!(
+            mer.contains(&format!(r#"n{}("build")"#, step)),
+            "missing step node line in: {mer}"
+        );
+        assert!(
+            mer.contains(&format!(r#"n{}["API_KEY"]"#, secret)),
+            "missing secret node line in: {mer}"
+        );
+        assert!(
+            mer.contains(&format!("n{} -->|has_access_to| n{}", step, secret)),
+            "missing edge line in: {mer}"
+        );
+        assert!(
+            !mer.starts_with("%%"),
+            "complete graph should not lead with partiality comment: {mer}"
+        );
+    }
+
+    #[test]
+    fn mermaid_partial_graph_leads_with_completeness_comment() {
+        let mut g = AuthorityGraph::new(source("ci.yml"));
+        let secret = g.add_node(NodeKind::Secret, "K", TrustZone::FirstParty);
+        let step = g.add_node(NodeKind::Step, "s", TrustZone::FirstParty);
+        g.add_edge(step, secret, EdgeKind::HasAccessTo);
+        g.mark_partial("fixture: unresolved composite");
+
+        let mer = render_mermaid(&g, None);
+        assert!(
+            mer.starts_with("%% taudit: authority graph is not Complete"),
+            "expected partiality banner: {mer}"
+        );
+    }
+
+    #[test]
+    fn mermaid_job_filter_matches_dot_subset() {
+        let mut g = AuthorityGraph::new(source("ci.yml"));
+
+        let build_secret = g.add_node(NodeKind::Secret, "BUILD_SECRET", TrustZone::FirstParty);
+        let mut build_meta = std::collections::HashMap::new();
+        build_meta.insert(META_JOB_NAME.to_string(), "build".to_string());
+        let build_step =
+            g.add_node_with_metadata(NodeKind::Step, "compile", TrustZone::FirstParty, build_meta);
+        g.add_edge(build_step, build_secret, EdgeKind::HasAccessTo);
+
+        let deploy_secret = g.add_node(NodeKind::Secret, "DEPLOY_SECRET", TrustZone::FirstParty);
+        let mut deploy_meta = std::collections::HashMap::new();
+        deploy_meta.insert(META_JOB_NAME.to_string(), "deploy".to_string());
+        let deploy_step =
+            g.add_node_with_metadata(NodeKind::Step, "ship", TrustZone::FirstParty, deploy_meta);
+        g.add_edge(deploy_step, deploy_secret, EdgeKind::HasAccessTo);
+
+        let full = render_mermaid(&g, None);
+        let filtered = render_mermaid(&g, Some("build"));
+
+        assert!(full.contains("BUILD_SECRET") && full.contains("DEPLOY_SECRET"));
+        assert!(filtered.contains("BUILD_SECRET"));
+        assert!(
+            !filtered.contains("DEPLOY_SECRET"),
+            "deploy-job nodes leaked into build filter: {filtered}"
+        );
+        assert!(!filtered.contains(r#"("ship")"#));
+
+        assert!(full.lines().count() > filtered.lines().count());
+    }
+
+    #[test]
+    fn mermaid_escapes_injection_like_node_names() {
+        let mut g = AuthorityGraph::new(source("ci.yml"));
+        let secret = g.add_node(NodeKind::Secret, "X\"]; evil", TrustZone::FirstParty);
+        let step = g.add_node(NodeKind::Step, "a", TrustZone::FirstParty);
+        g.add_edge(step, secret, EdgeKind::HasAccessTo);
+
+        let mer = render_mermaid(&g, None);
+        // The embedded quote must be entity-encoded, not a raw `"` that could
+        // break out of the Mermaid `["..."]` label.
+        assert!(mer.contains("&quot;"), "expected entity escape in: {mer}");
+        let secret_line = mer
+            .lines()
+            .find(|l| l.contains('[') && l.contains("evil"))
+            .expect("secret node line");
+        assert!(
+            !secret_line.contains(r#"["X"]"#) && !secret_line.contains(r#"X"];"#),
+            "unexpected unescaped delimiters: {secret_line}"
         );
     }
 

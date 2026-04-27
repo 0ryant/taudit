@@ -83,7 +83,8 @@ what tsign and axiom will do at scale:
 | Need | Today | At-scale equivalent |
 |---|---|---|
 | Get the graph | `taudit graph --format json` | feeds tsign |
-| Render the graph | `taudit graph --format dot \| dot -Tsvg` | docs / incident review |
+| Render the graph (Graphviz) | `taudit graph --format dot \| dot -Tsvg` | high-fidelity SVG/PNG |
+| Render the graph (Mermaid) | `taudit graph --format mermaid` | paste into Markdown (no `dot` binary) |
 | Local PR gate | `taudit verify --policy .taudit/policy.yml` | becomes axiom's per-evaluation engine |
 | SARIF for code scanning | `taudit scan --format sarif` | independent of the stack |
 | Event sink | `taudit scan --format cloudevents` | independent of the stack |

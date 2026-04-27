@@ -52,8 +52,13 @@ pre-push-gate:
 
 # Run taudit against its own sister projects (self-test)
 self-test:
-    cargo run -p taudit-cli -- scan .refs/cellos/.github/workflows/
-    cargo run -p taudit-cli -- scan .refs/tsafe/.github/workflows/
+    cargo run -p taudit -- scan .refs/cellos/.github/workflows/
+    cargo run -p taudit -- scan .refs/tsafe/.github/workflows/
+
+# CLI smoke: all committed YAML corpora (fixtures, fuzz seeds, .github/workflows).
+# For optional root `corpus/` mirrors, set TAUDIT_TEST_LOCAL_CORPUS=1 (best-effort; may fail on bad files).
+corpus-suite:
+    cargo test -p taudit --test corpus_cli_suite
 
 # Run taudit inside an execution-isolation runtime (platform smoke check).
 runtime-smoke:

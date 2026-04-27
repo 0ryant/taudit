@@ -1,6 +1,17 @@
+#![allow(dead_code)]
+// Shared by multiple `tests/*.rs` binaries; not every binary uses every helper.
+
 use std::path::PathBuf;
 
 use taudit_core::finding::Finding;
+
+/// Repository workspace root (parent of `crates/`, `tests/`).
+pub fn workspace_root() -> PathBuf {
+    PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("../..")
+        .canonicalize()
+        .expect("workspace root from CARGO_MANIFEST_DIR")
+}
 
 pub fn fixture(name: &str) -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR"))
