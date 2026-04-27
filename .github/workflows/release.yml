@@ -105,12 +105,12 @@ jobs:
       # in GitHub's immutable attestation store and verifiable with:
       #   gh attestation verify taudit-<ver>.spdx.json --repo 0ryant/taudit
       - name: Attest SPDX SBOM
-        uses: actions/attest-build-provenance@v1
+        uses: actions/attest-build-provenance@v4
         with:
           subject-path: taudit-${{ github.ref_name }}.spdx.json
 
       - name: Attest CycloneDX SBOM
-        uses: actions/attest-build-provenance@v1
+        uses: actions/attest-build-provenance@v4
         with:
           subject-path: taudit-${{ github.ref_name }}.cyclonedx.json
 
@@ -202,7 +202,7 @@ jobs:
       # verifiable offline:
       #   gh attestation verify taudit-x86_64-linux.tar.gz --repo 0ryant/taudit
       - name: Attest build provenance
-        uses: actions/attest-build-provenance@v1
+        uses: actions/attest-build-provenance@v4
         with:
           subject-path: ${{ matrix.archive }}
 
