@@ -1,7 +1,24 @@
-/target
+# Rust / Cargo (any workspace member or nested package — not only repo root)
+target/
+
+# OS noise
+.DS_Store
+Thumbs.db
+*~
 *.swp
 *.swo
-.DS_Store
+*.orig
+
+# Local environment & secrets (never commit)
+.env
+.env.*
+!.env.example
+# Accidental key drops in repo root (narrow — avoids ignoring tree-wide test vectors)
+/*.pem
+/*.p12
+/*.pfx
+/*.key
+/*.crt
 
 # Local coordination scratch notes should not accumulate in the public repo.
 Plans/*-ecosystem-note-*.md
@@ -12,17 +29,41 @@ Plans/
 BUILD_SHEET.md
 .refs/
 
-# Common local editor noise.
+# Common local editor noise
 .idea/
 .vscode/
+*.sublime-project
+*.sublime-workspace
+Session.vim
+# ctags at repo root
+/tags
+/TAGS
+
+# Cursor: ignore local project state; allow shared `.cursor/rules/` if added
+.cursor/**
+!.cursor/rules/
+!.cursor/rules/**
 
 # Stray test/build outputs
 rust_out
 CODE_REVIEW_FINDINGS_*.md
 
-# Local AI session state — never committed.
+# Local AI session state — never committed
 MEMORY/
 .claude/
+
+# direnv
+.direnv/
+
+# Coverage & profiling
+*.profraw
+*.profdata
+*.gcda
+*.gcno
+coverage/
+lcov.info
+tarpaulin-*.html
+cobertura.xml
 
 # taudit operational state: backups and per-file scan baselines are
 # machine-generated and should not be committed.  The .taudit/ directory
@@ -39,10 +80,13 @@ mutants.out.old/
 # insta snapshot review files (do not commit these)
 crates/*/tests/snapshots/*.snap.new
 
-# cargo-fuzz build output (separate workspace per parser)
+# cargo-fuzz build output (also covered by `target/`, kept explicit for readers)
 crates/*/fuzz/target/
 
 # Repo root only: local `corpus/` (e.g. downloaded workflow mirrors). Not
 # part of this project; keep untracked. Pattern is `/corpus/` so only that
 # top-level directory is ignored — not other paths named `corpus` elsewhere.
 /corpus/
+
+# Vendored deps (if used)
+vendor/
