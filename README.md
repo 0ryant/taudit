@@ -156,6 +156,7 @@ taudit scan .github/workflows/ --rules-dir .taudit/rules/
 
 - Product support: open a GitHub issue in this repository.
 - Security issues: follow the process in `SECURITY.md`.
+- Large-directory / corpus methodology and **citing upstream workflow examples** (licensing, fingerprints, JSON vs SARIF): [`docs/corpus-research.md`](docs/corpus-research.md).
 
 ## Usage
 

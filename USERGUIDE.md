@@ -18,6 +18,7 @@ It understands GitHub Actions, Azure DevOps, and GitLab CI.
 8. [Custom authority invariants](#8-custom-authority-invariants)
 9. [Explaining rules](#9-explaining-rules)
 10. [Output formats](#10-output-formats)
+11. [Corpus research & citing upstream examples](#11-corpus-research--citing-upstream-examples)
 
 ---
 
@@ -31,7 +32,7 @@ Requires Rust ≥ 1.76. Verify the install:
 
 ```bash
 taudit --version
-# taudit 0.9.4
+# taudit 1.0.4
 ```
 
 ---
@@ -58,7 +59,7 @@ taudit scan azure-pipelines.yml
 ### Sample output
 
 ```
-taudit 0.9.4 — 1 file
+taudit 1.0.4 — 1 file
 ────────────────────────────────────────────────────────────
 Authority Graph: .github/workflows/quality.yml
   Steps: 18 | Secrets: 0 | Actions: 4 | Identities: 1
@@ -236,7 +237,7 @@ jobs:
     steps:
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
       - name: Install taudit
-        run: cargo install taudit --version 0.9.4 --locked
+        run: cargo install taudit --version 1.0.4 --locked
       - name: Verify pipeline policy
         run: taudit verify --policy .taudit/policy/ .github/workflows/
 ```
@@ -252,7 +253,7 @@ and exit `2` (config error) both block the merge.
   inputs:
     targetType: inline
     script: |
-      cargo install taudit --version 0.9.4 --locked
+      cargo install taudit --version 1.0.4 --locked
       taudit verify --policy .taudit/policy/ azure-pipelines.yml
 ```
 
@@ -262,7 +263,7 @@ and exit `2` (config error) both block the merge.
 verify-pipeline-policy:
   stage: test
   script:
-    - cargo install taudit --version 0.9.4 --locked
+    - cargo install taudit --version 1.0.4 --locked
     - taudit verify --policy .taudit/policy/ .gitlab-ci.yml
   rules:
     - if: $CI_PIPELINE_SOURCE == "merge_request_event"
@@ -471,6 +472,18 @@ taudit scan --format cloudevents .github/workflows/
 ```
 
 Emits one CloudEvent per finding. Pipe to a SIEM or event stream.
+
+---
+
+## 11. Corpus research & citing upstream examples
+
+Large-directory scans, mirrored corpora, and “zero-finding” workflows need a
+bit of context so results are not over-interpreted. For **aggregated JSON
+vs SARIF**, **fingerprint path semantics**, **licensing/attribution** when
+citing public repos, and the difference between a **minimal clean workflow**
+and a **commented-out or empty file**, read:
+
+- [`docs/corpus-research.md`](docs/corpus-research.md)
 
 ---
 

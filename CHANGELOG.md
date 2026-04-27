@@ -2,6 +2,17 @@
 
 All notable changes to this project will be documented in this file.
 
+## v1.0.4 — 2026-04-27
+
+> Documentation release: corpus methodology, licensing guidance, and install example version pins.
+
+### Added
+
+- **`docs/corpus-research.md`** — Guidance for large-directory scans (JSON vs SARIF aggregation, fingerprint path semantics, partial graphs), **citing upstream workflows** (not public domain; prefer links and short excerpts; attribution), and **degenerate** mirrors (e.g. comment-only files that yield an empty graph).
+- **README** — Link to corpus research doc from Support.
+- **USERGUIDE** — New §11 linking to `docs/corpus-research.md`; example `taudit` / `cargo install` version strings updated to **1.0.4**.
+- **docs/verify.md** — Example `cargo install` pins updated to **1.0.4**.
+
 ## v1.0.3 — 2026-04-27
 
 > Clarify `over_privileged_identity` for ADO service connections.

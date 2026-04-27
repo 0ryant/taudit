@@ -1,7 +1,7 @@
 [package]
 name = "taudit-parse-gitlab"
 description = "GitLab CI YAML pipeline to AuthorityGraph parser"
-version = "1.0.3"
+version = "1.0.4"
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
@@ -11,7 +11,7 @@ keywords.workspace = true
 categories.workspace = true
 
 [dependencies]
-taudit-core = { version = "1.0.3", path = "../taudit-core" }
+taudit-core = { version = "1.0.4", path = "../taudit-core" }
 serde = { workspace = true }
 serde_json = { workspace = true }
 serde_yaml = { workspace = true }
