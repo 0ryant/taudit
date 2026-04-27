@@ -1,3 +1,3 @@
-# Local workflow corpora and large research trees — exclude from AI/indexing
-# context. Same scope as .gitignore `/corpus/` (repo root only).
+# Only the `corpus/` directory at the repository root (local mirrors).
+# Same path as in .gitignore; keeps large trees out of AI/indexing.
 /corpus/
