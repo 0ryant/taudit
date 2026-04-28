@@ -913,15 +913,15 @@ mod tests {
         let mer = render_mermaid(&g, None, DiagramLabelDetail::Compact);
         assert!(mer.starts_with("flowchart LR"), "mermaid output: {mer}");
         assert!(
-            mer.contains(&format!(r#"n{}("build")"#, step)),
+            mer.contains(&format!(r#"n{step}("build")"#)),
             "missing step node line in: {mer}"
         );
         assert!(
-            mer.contains(&format!(r#"n{}["API_KEY"]"#, secret)),
+            mer.contains(&format!(r#"n{secret}["API_KEY"]"#)),
             "missing secret node line in: {mer}"
         );
         assert!(
-            mer.contains(&format!("n{} -->|has_access_to| n{}", step, secret)),
+            mer.contains(&format!("n{step} -->|has_access_to| n{secret}")),
             "missing edge line in: {mer}"
         );
         assert!(
@@ -1139,7 +1139,7 @@ mod tests {
             "cluster titles: {collapsed}"
         );
         assert!(
-            collapsed.contains(&format!("\"jb0\" -> \"n{}\"", shared)),
+            collapsed.contains(&format!("\"jb0\" -> \"n{shared}\"")),
             "merged edge from build job bucket to secret: {collapsed}"
         );
         assert!(
