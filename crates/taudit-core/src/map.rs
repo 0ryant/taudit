@@ -549,7 +549,7 @@ fn collapsed_job_node_label(
             format!("job: {job_title}\n({steps_note})")
         }
         DiagramLabelDetail::Rich => {
-            let zone = format!("{:?}", worst_zone);
+            let zone = format!("{worst_zone:?}");
             format!("job: {job_title}\n({steps_note})\nzone: {zone}")
         }
     }

@@ -376,7 +376,7 @@ pub fn render_entry_yaml(entry: &Suppression) -> String {
     out.push_str(&format!("    accepted_by: \"{}\"\n", entry.accepted_by));
     out.push_str(&format!("    accepted_at: \"{}\"\n", entry.accepted_at));
     if let Some(ref expiry) = entry.expires_at {
-        out.push_str(&format!("    expires_at: \"{}\"\n", expiry));
+        out.push_str(&format!("    expires_at: \"{expiry}\"\n"));
     }
     out
 }

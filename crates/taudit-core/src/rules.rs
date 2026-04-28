@@ -3553,13 +3553,11 @@ pub fn setvariable_issecret_false(graph: &AuthorityGraph) -> Vec<Finding> {
                     path: None,
                     nodes_involved: vec![step.id],
                     message: format!(
-                        "ADO setvariable with sensitive name '{}' uses issecret=false or omits issecret flag, value printed in plaintext logs",
-                        orig_name,
+                        "ADO setvariable with sensitive name '{orig_name}' uses issecret=false or omits issecret flag, value printed in plaintext logs",
                     ),
                     recommendation: Recommendation::Manual {
                         action: format!(
-                            "Add `issecret=true` to the setvariable directive: `##vso[task.setvariable variable={};issecret=true]`",
-                            orig_name,
+                            "Add `issecret=true` to the setvariable directive: `##vso[task.setvariable variable={orig_name};issecret=true]`",
                         ),
                     },
                     source: FindingSource::BuiltIn,
@@ -4257,8 +4255,7 @@ pub fn unsafe_pr_artifact_in_workflow_run_consumer(graph: &AuthorityGraph) -> Ve
             path: None,
             nodes_involved,
             message: format!(
-                "Job '{}' downloads a PR-context artifact and interprets its content (post-to-comment, $GITHUB_ENV write, eval/unzip/cat/jq) — malicious PRs can write arbitrary content into the artifact while the consumer runs with upstream-repo authority",
-                job_label
+                "Job '{job_label}' downloads a PR-context artifact and interprets its content (post-to-comment, $GITHUB_ENV write, eval/unzip/cat/jq) — malicious PRs can write arbitrary content into the artifact while the consumer runs with upstream-repo authority",
             ),
             recommendation: Recommendation::Manual {
                 action: "Treat downloaded artifacts as untrusted: validate against a strict schema before parsing, never feed contents into `eval`/`$GITHUB_ENV`/`$GITHUB_OUTPUT`, and post comment bodies through a length-and-character-allowlist filter. Where possible, separate the privileged-sink step into its own job that does not download the artifact.".into(),
