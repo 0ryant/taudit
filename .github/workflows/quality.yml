@@ -37,6 +37,8 @@ jobs:
 
   quality:
     runs-on: ubuntu-latest
+    # Whole-job ceiling so a hung step cannot occupy runners indefinitely (see mutants step timeout).
+    timeout-minutes: 120
     steps:
       # Pinned SHAs (SEC-10): tag in comment; verify at https://github.com/<org>/<repo>/releases
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
@@ -185,4 +187,5 @@ jobs:
 
       - name: mutation coverage (taudit-core — informational)
         if: github.event_name == 'push'
-        run: cargo mutants -p taudit-core --timeout 60
+        timeout-minutes: 50
+        run: cargo mutants -p taudit-core --timeout 45
