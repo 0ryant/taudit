@@ -299,8 +299,8 @@ pub fn cmd_apply(opts: ApplyOpts) -> Result<()> {
         write_text(&rewritten_snapshot_path, &item.after)?;
 
         let patch_name = safe_patch_name(&item.path);
-        let forward_patch_path = patches_dir.join(format!("{}.patch", patch_name));
-        let reverse_patch_path = patches_dir.join(format!("{}.reverse.patch", patch_name));
+        let forward_patch_path = patches_dir.join(format!("{patch_name}.patch"));
+        let reverse_patch_path = patches_dir.join(format!("{patch_name}.reverse.patch"));
         let forward_patch =
             render_unified_patch(&item.path.display().to_string(), &item.before, &item.after);
         let reverse_patch =
@@ -351,8 +351,7 @@ pub fn cmd_apply(opts: ApplyOpts) -> Result<()> {
         save_manifest_and_index(&backup_root, &backup_id, &manifest)?;
 
         eprintln!(
-            "error: remediation validation failed; changes were rolled back (backup_id={})",
-            backup_id
+            "error: remediation validation failed; changes were rolled back (backup_id={backup_id})"
         );
         std::process::exit(1);
     }
@@ -627,9 +626,9 @@ fn insert_workflow_permissions(content: &str) -> String {
     // serializing the entire YAML document.
     let insertion = "permissions:\n  contents: read\n\n";
     if let Some(rest) = content.strip_prefix("---\n") {
-        return format!("---\n{}{}", insertion, rest);
+        return format!("---\n{insertion}{rest}");
     }
-    format!("{}{}", insertion, content)
+    format!("{insertion}{content}")
 }
 
 fn render_unified_patch(path: &str, before: &str, after: &str) -> String {
@@ -637,13 +636,11 @@ fn render_unified_patch(path: &str, before: &str, after: &str) -> String {
     let after_lines: Vec<&str> = after.lines().collect();
 
     let mut out = String::new();
-    out.push_str(&format!("--- a/{}\n", path));
-    out.push_str(&format!("+++ b/{}\n", path));
-    out.push_str(&format!(
-        "@@ -1,{} +1,{} @@\n",
-        before_lines.len(),
-        after_lines.len()
-    ));
+    out.push_str(&format!("--- a/{path}\n"));
+    out.push_str(&format!("+++ b/{path}\n"));
+    let before_n = before_lines.len();
+    let after_n = after_lines.len();
+    out.push_str(&format!("@@ -1,{before_n} +1,{after_n} @@\n"));
 
     for line in &before_lines {
         out.push('-');
