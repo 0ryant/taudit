@@ -1,5 +1,6 @@
 ---
 source: crates/taudit-cli/tests/snapshot_ado.rs
+assertion_line: 99
 expression: json
 ---
 findings:
@@ -77,11 +78,17 @@ findings:
 graph:
   completeness: complete
   edges:
-    - from: 2
+    - authority_summary:
+        identity_scope: broad
+        trust_zone: first_party
+      from: 2
       id: 0
       kind: has_access_to
       to: 0
-    - from: 3
+    - authority_summary:
+        identity_scope: broad
+        trust_zone: first_party
+      from: 3
       id: 1
       kind: has_access_to
       to: 0

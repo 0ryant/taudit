@@ -174,7 +174,30 @@
           "minimum": 0,
           "description": "Target node id."
         },
-        "kind": { "$ref": "#/definitions/EdgeKind" }
+        "kind": { "$ref": "#/definitions/EdgeKind" },
+        "authority_summary": {
+          "$ref": "#/definitions/AuthorityEdgeSummary",
+          "description": "Optional stamped summary on has_access_to edges to identity nodes (ADR 0002 Phase 2). Omitted when absent."
+        }
+      }
+    },
+    "AuthorityEdgeSummary": {
+      "type": "object",
+      "description": "Allowlisted copy of authority-relevant fields from the target identity for a has_access_to edge. Not a generic metadata bag.",
+      "additionalProperties": false,
+      "properties": {
+        "trust_zone": {
+          "type": "string",
+          "description": "Target identity trust zone (snake_case)."
+        },
+        "identity_scope": {
+          "type": "string",
+          "description": "Copy of identity_scope metadata when present."
+        },
+        "permissions_summary": {
+          "type": "string",
+          "description": "Truncated copy of permissions metadata when present."
+        }
       }
     }
   }

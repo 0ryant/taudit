@@ -1,8 +1,10 @@
 # taudit
 
-[![SLSA 3](https://slsa.dev/images/gh-badge-level3.svg)](https://slsa.dev)
+[![SLSA-aligned supply chain](https://slsa.dev/images/gh-badge-level3.svg)](https://github.com/0ryant/taudit/blob/main/docs/release-trust.md#verifying-build-attestations-github)
 
 > **CI/CD is an untyped authority system. taudit makes it explicit, inspectable, and enforceable.**
+
+Release archives and SBOMs use **GitHub Artifact Attestations** ([`actions/attest-build-provenance`](https://github.com/actions/attest-build-provenance) in [`.github/workflows/release.yml`](.github/workflows/release.yml)) — aligned with [SLSA](https://slsa.dev)-style *build provenance* goals, not a third-party “SLSA certified” audit. Verify downloads with **`gh attestation verify`** ([Install](#install), [Release trust](docs/release-trust.md#verifying-build-attestations-github)).
 
 taudit models how authority — secrets, identities, tokens, image trust — propagates through a CI/CD pipeline as a deterministic, typed graph. The graph is the product. Findings, SARIF reports, the terminal scanner, and PR-gate enforcement are all consumers of that graph.
 
@@ -112,11 +114,14 @@ cargo install taudit
 ```
 
 Or download a pre-built binary from [GitHub Releases](https://github.com/0ryant/taudit/releases).
-Every release binary and SBOM is attested — verify with:
+Every release archive and SBOM is attested in CI (**GitHub Artifact Attestations** / [`actions/attest-build-provenance`](https://github.com/actions/attest-build-provenance)). Verify the **local file** after download (GitHub CLI 2.49+; `gh auth login` if needed):
 
 ```bash
+curl -fsSL -O "https://github.com/0ryant/taudit/releases/download/<tag>/taudit-x86_64-linux.tar.gz"
 gh attestation verify taudit-x86_64-linux.tar.gz --repo 0ryant/taudit
 ```
+
+Replace `<tag>` with the release (for example `v1.0.8`). The same `gh attestation verify <path> --repo 0ryant/taudit` command applies to downloaded SPDX or CycloneDX SBOM files. Details: [docs/release-trust.md#verifying-build-attestations-github](docs/release-trust.md#verifying-build-attestations-github).
 
 Or build from source:
 
@@ -148,21 +153,27 @@ taudit scan .github/workflows/ --format json > taudit.json
 # 5. Load custom invariants from a directory of YAML rule files.
 taudit scan .github/workflows/ --rules-dir .taudit/rules/
 
-# 6. Coming in v1.0 — gate PR merges against an explicit invariant set.
-#    taudit verify .github/workflows/ --policy .taudit/policy.yml
+# 6. Gate PR merges against a policy directory (exit 0 / 1 / 2 — see docs/verify.md).
+#    Starter rules are strict; on many repos this exits 1 until policies are tuned.
+taudit verify .github/workflows/ --policy invariants/starter/ --platform github-actions
+
+# 7. Propagation rollup JSON (same dense-graph guard as scan) — triage / dashboards.
+taudit graph .github/workflows/release.yml --format summary | jq '.totals'
 ```
 
 ## Support
 
 - Product support: open a GitHub issue in this repository.
 - Security issues: follow the process in `SECURITY.md`.
+- **Golden paths** (blessed copy-paste flows on committed fixtures): [`docs/golden-paths.md`](docs/golden-paths.md); smoke them with **`just golden-paths`**.
 - Large-directory / corpus methodology and **citing upstream workflow examples** (licensing, fingerprints, JSON vs SARIF): [`docs/corpus-research.md`](docs/corpus-research.md).
+- Council synthesis on **docs, golden paths, and screenshots** as first-class: [`docs/research/2026-04-27-council-docs-golden-paths-screenshots.md`](docs/research/2026-04-27-council-docs-golden-paths-screenshots.md).
 
 ## Usage
 
 ### Help and man page
 
-- **`taudit --help`** — all subcommands, plus a long section on authority graph exports (`json` / `dot` / `mermaid`), `--job`, stdout/pipes (EPIPE), and pointers to `docs/`.
+- **`taudit --help`** — all subcommands, plus a long section on authority graph exports (`json` / `dot` / `mermaid` / `summary`), `--job`, stdout/pipes (EPIPE), and pointers to `docs/`.
 - **`taudit <command> --help`** — per-command flags (e.g. `taudit graph --help`, `taudit explain --help`).
 - **Troff manual** for packagers and local preview: [`man/taudit.1`](man/taudit.1) (e.g. `man man/taudit.1` from the repo if your OS supports a path, or install the file into your man path).
 
@@ -480,5 +491,4 @@ MIT OR Apache-2.0
 
 ## Release trust
 
-Release archives ship with SHA-256 checksum files and an SPDX dependency SBOM.
-See `docs/release-trust.md` for verification steps.
+Release archives ship with SHA-256 checksum files and SPDX + CycloneDX dependency SBOMs, each covered by **GitHub build attestations** (verify with **`gh attestation verify`** on the downloaded file). See [docs/release-trust.md#verifying-build-attestations-github](docs/release-trust.md#verifying-build-attestations-github) for the full checklist (checksums, SBOMs, attestations, and future minisign-on-assets work).

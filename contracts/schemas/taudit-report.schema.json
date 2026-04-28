@@ -97,7 +97,17 @@
         "kind": {
           "type": "string",
           "enum": ["has_access_to", "produces", "consumes", "uses_image", "delegates_to", "persists_to"]
-        }
+        },
+        "authority_summary": { "$ref": "#/$defs/AuthorityEdgeSummary" }
+      }
+    },
+    "AuthorityEdgeSummary": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "trust_zone": { "type": "string" },
+        "identity_scope": { "type": "string" },
+        "permissions_summary": { "type": "string" }
       }
     },
     "Finding": {

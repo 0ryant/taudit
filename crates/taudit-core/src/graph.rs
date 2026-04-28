@@ -458,6 +458,46 @@ pub enum EdgeKind {
     PersistsTo,
 }
 
+/// Abbreviated authority context for **`HasAccessTo` → identity** edges in
+/// JSON exports (ADR 0002 Phase 2). Copied from the target identity’s trust
+/// zone and selected `metadata` keys so consumers need not reverse-engineer
+/// raw `META_*` strings for common questions. Omitted on edges where absent.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct AuthorityEdgeSummary {
+    /// Target identity trust zone (`first_party` / `third_party` / `untrusted`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub trust_zone: Option<String>,
+    /// Copy of `identity_scope` metadata when present.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub identity_scope: Option<String>,
+    /// Copy of `permissions` metadata when present, truncated for bounded JSON.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub permissions_summary: Option<String>,
+}
+
+/// Maximum characters per summary string field on [`AuthorityEdgeSummary`].
+pub const AUTHORITY_EDGE_SUMMARY_FIELD_MAX: usize = 192;
+
+fn truncate_edge_summary_field(s: &str) -> String {
+    let max = AUTHORITY_EDGE_SUMMARY_FIELD_MAX;
+    let n = s.chars().count();
+    if n <= max {
+        s.to_string()
+    } else {
+        let mut out: String = s.chars().take(max.saturating_sub(1)).collect();
+        out.push('…');
+        out
+    }
+}
+
+fn trust_zone_snake_case(zone: TrustZone) -> String {
+    match zone {
+        TrustZone::FirstParty => "first_party".into(),
+        TrustZone::ThirdParty => "third_party".into(),
+        TrustZone::Untrusted => "untrusted".into(),
+    }
+}
+
 /// A directed edge in the authority graph.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Edge {
@@ -465,6 +505,9 @@ pub struct Edge {
     pub from: NodeId,
     pub to: NodeId,
     pub kind: EdgeKind,
+    /// Present on `has_access_to` edges whose target is an identity node.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub authority_summary: Option<AuthorityEdgeSummary>,
 }
 
 // ── Pipeline source ─────────────────────────────────────
@@ -591,8 +634,45 @@ impl AuthorityGraph {
     /// Add a directed edge, returns its ID.
     pub fn add_edge(&mut self, from: NodeId, to: NodeId, kind: EdgeKind) -> EdgeId {
         let id = self.edges.len();
-        self.edges.push(Edge { id, from, to, kind });
+        self.edges.push(Edge {
+            id,
+            from,
+            to,
+            kind,
+            authority_summary: None,
+        });
         id
+    }
+
+    /// Populate [`Edge::authority_summary`] for each **`HasAccessTo`** edge whose
+    /// target is an **identity** node, from that node’s trust zone and
+    /// allowlisted metadata (`identity_scope`, `permissions`). Idempotent.
+    ///
+    /// Called automatically at the end of every built-in [`crate::ports::PipelineParser`]
+    /// implementation so `taudit graph --format json` and scan JSON include summaries.
+    pub fn stamp_edge_authority_summaries(&mut self) {
+        for edge in &mut self.edges {
+            if edge.kind != EdgeKind::HasAccessTo {
+                continue;
+            }
+            let Some(to_node) = self.nodes.get(edge.to) else {
+                continue;
+            };
+            if to_node.kind != NodeKind::Identity {
+                continue;
+            }
+            edge.authority_summary = Some(AuthorityEdgeSummary {
+                trust_zone: Some(trust_zone_snake_case(to_node.trust_zone)),
+                identity_scope: to_node
+                    .metadata
+                    .get(META_IDENTITY_SCOPE)
+                    .map(|s| truncate_edge_summary_field(s)),
+                permissions_summary: to_node
+                    .metadata
+                    .get(META_PERMISSIONS)
+                    .map(|s| truncate_edge_summary_field(s)),
+            });
+        }
     }
 
     /// Outgoing edges from a node.
@@ -661,6 +741,40 @@ mod tests {
         assert_eq!(g.authority_sources().count(), 1);
         assert_eq!(g.edges_from(step_build).count(), 2);
         assert_eq!(g.edges_from(artifact).count(), 1); // Consumes flows artifact -> step
+    }
+
+    #[test]
+    fn stamp_edge_authority_summaries_on_has_access_to_identity() {
+        let mut g = AuthorityGraph::new(PipelineSource {
+            file: "ci.yml".into(),
+            repo: None,
+            git_ref: None,
+            commit_sha: None,
+        });
+        let secret = g.add_node(NodeKind::Secret, "K", TrustZone::FirstParty);
+        let mut id_meta = HashMap::new();
+        id_meta.insert(META_IDENTITY_SCOPE.into(), "constrained".into());
+        id_meta.insert(META_PERMISSIONS.into(), "read-all".into());
+        let ident = g.add_node_with_metadata(
+            NodeKind::Identity,
+            "GITHUB_TOKEN",
+            TrustZone::FirstParty,
+            id_meta,
+        );
+        let step = g.add_node(NodeKind::Step, "s", TrustZone::FirstParty);
+        let e_secret = g.add_edge(step, secret, EdgeKind::HasAccessTo);
+        let e_ident = g.add_edge(step, ident, EdgeKind::HasAccessTo);
+
+        g.stamp_edge_authority_summaries();
+
+        assert!(g.edges[e_secret].authority_summary.is_none());
+        let sum = g.edges[e_ident]
+            .authority_summary
+            .as_ref()
+            .expect("identity edge summary");
+        assert_eq!(sum.trust_zone.as_deref(), Some("first_party"));
+        assert_eq!(sum.identity_scope.as_deref(), Some("constrained"));
+        assert_eq!(sum.permissions_summary.as_deref(), Some("read-all"));
     }
 
     #[test]

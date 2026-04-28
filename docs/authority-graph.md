@@ -11,7 +11,7 @@ taudit's internals.
 - **Schema**: [`schemas/authority-graph.v1.json`](../schemas/authority-graph.v1.json)
 - **Schema URI**: `https://github.com/0ryant/taudit/schemas/authority-graph.v1.json`
 - **Schema version**: `1.0.0` (semver — see [Versioning](#versioning))
-- **CLI**: `taudit graph <path> [--format json|dot|mermaid] [--platform ...] [--rules-dir ...] [--job ...]`
+- **CLI**: `taudit graph <path> [--format json|dot|mermaid|summary] [--platform ...] [--rules-dir ...] [--job ...] [--rich-labels]` — JSON includes optional **`authority_summary`** on `has_access_to` → identity edges (see below). **`summary`** is a separate bounded JSON document (see [Propagation summary](#propagation-summary-format-summary)).
 
 ## Quick start
 
@@ -33,12 +33,15 @@ taudit graph .github/workflows/security.yml --format mermaid --job taudit-self-s
 
 # Auto-detect platform (default) or pin it
 taudit graph .pipelines/azure-pipelines.yml --platform azure-devops
+
+# Bounded propagation rollup (boundary-crossing paths only; same BFS as rule-engine authority propagation)
+taudit graph .github/workflows/release.yml --format summary
 ```
 
-### At a glance (one graph, three exports)
+### At a glance (one graph, several exports)
 
-`json`, `dot`, and `mermaid` are different **views** of the same in-memory
-`AuthorityGraph` — not three pipelines.
+`json`, `dot`, `mermaid`, and `summary` are different **views** or **rollups** of the same in-memory
+`AuthorityGraph` — not separate pipelines.
 
 ```text
   workflow YAML
@@ -53,21 +56,45 @@ taudit graph .pipelines/azure-pipelines.yml --platform azure-devops
   │ AuthorityGraph│  ← single canonical model
   └───────┬──────┘
           │
-   ┌──────┼──────────────┐
-   ▼      ▼              ▼
- JSON   DOT         Mermaid
-        │              │
-   schema-backed   Graphviz   GitHub / GitLab
-   interchange      `dot`     fenced block
-   for tools
+   ┌──────┼──────────────────────┐
+   ▼      ▼              ▼        ▼
+ JSON   DOT         Mermaid   Summary
+        │              │         │
+   schema-backed   Graphviz   GitHub /   Bounded propagation
+   interchange      `dot`     GitLab     JSON (paths to lower
+   for tools                 fenced      trust zones only)
+                               block
 ```
 
 `--job` limits **dot** and **mermaid** to a job’s reachable subgraph; **json**
-stays a full graph when you need lossless `completeness` / `completeness_gaps`.
+and **summary** stay full-graph when you need lossless `completeness` / `completeness_gaps` or a global propagation rollup.
 
-The `taudit map` command is **unchanged** — it still produces the
-human-readable step×authority table. `taudit graph` is the
-machine-readable counterpart.
+`taudit map` defaults to the human-readable step×authority **table**; with
+`--format dot` or `--format mermaid` it emits the same diagram renderers as
+`taudit graph`. `taudit graph --format json` remains the lossless interchange.
+
+### Propagation summary (`--format summary`)
+
+**`taudit graph --format summary`** emits a standalone JSON document validated against
+[`schemas/authority-propagation-summary.v1.json`](../schemas/authority-propagation-summary.v1.json):
+totals over **boundary-crossing** propagation paths (sink trust zone strictly lower than the authority source),
+plus top-N sinks and sources by path count. It is a **read-only triage projection** — it does not replace
+**`verify`** or the full graph JSON. **`--max-hops`** and the dense-graph guard match **`taudit scan`**
+(use **`--force-scan-dense`** to override on very large graphs). **`--rich-labels`** does not apply.
+See [ADR 0002 Phase 3](adr/0002-authority-signal-roadmap-phased.md#phase-3--deterministic-projections-risk-readouts).
+
+### JSON contract vs diagram views (`--rich-labels`)
+
+**JSON** is the **stable machine contract**: full nodes, edges, and parser
+`metadata`. **DOT** and **Mermaid** are **views** of that model: default labels
+stay short (node name only) so diagrams stay compact in PRs and docs.
+
+Opt in with **`--rich-labels`** on **`taudit graph --format dot|mermaid`** or
+**`taudit map --format dot|mermaid`** to append trust zone and selected
+metadata the graph already carries (for example identity scope and permissions
+summary on identities). JSON output and the graph structure are unchanged; only
+the diagram text grows. Prefer the default for large graphs; use rich labels for
+small slices, teaching, or review.
 
 ## Document shape
 
@@ -132,6 +159,15 @@ design test for an edge variant is "can authority propagate along it?"
 | `uses_image`     | step → image               | The step delegates execution to an action or container.              |
 | `delegates_to`   | step → step                | Cross-job or composite-action handoff (control transfer).            |
 | `persists_to`    | step → secret/identity     | The step writes a credential to disk (e.g. `~/.docker/config.json`); accessible to every subsequent step. |
+
+### Edge `authority_summary` (ADR 0002 Phase 2)
+
+On **`has_access_to`** edges to an **`identity`** node, the graph JSON may
+include an optional **`authority_summary`** object: a **small, fixed set**
+of strings (`trust_zone`, `identity_scope`, `permissions_summary`) copied
+from that identity so consumers do not have to reverse-engineer
+`Node.metadata` for routine privilege questions. The field is omitted on
+other edges and on older exports. It is not a general-purpose metadata map.
 
 ### `AuthorityCompleteness`
 

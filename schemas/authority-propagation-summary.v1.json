@@ -1,0 +1,88 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://github.com/0ryant/taudit/schemas/authority-propagation-summary.v1.json",
+  "title": "taudit authority propagation summary",
+  "description": "Read-only aggregate over boundary-crossing propagation paths (same BFS as rule-engine authority_propagation). Additive 1.x; emitted by `taudit graph --format summary`. Does not replace graph JSON or verify policy.",
+  "version": "1.0.0",
+  "type": "object",
+  "required": [
+    "schema_version",
+    "schema_uri",
+    "source_file",
+    "graph_completeness",
+    "max_hops",
+    "method",
+    "totals",
+    "top_sinks_by_path_count",
+    "top_sources_by_path_count"
+  ],
+  "additionalProperties": false,
+  "properties": {
+    "schema_version": {
+      "type": "string",
+      "const": "1.0.0"
+    },
+    "schema_uri": {
+      "type": "string",
+      "format": "uri",
+      "const": "https://github.com/0ryant/taudit/schemas/authority-propagation-summary.v1.json"
+    },
+    "source_file": { "type": "string" },
+    "graph_completeness": {
+      "type": "string",
+      "enum": ["complete", "partial", "unknown"]
+    },
+    "completeness_gaps": {
+      "type": "array",
+      "items": { "type": "string" }
+    },
+    "max_hops": { "type": "integer", "minimum": 1 },
+    "method": {
+      "type": "string",
+      "description": "Algorithm id; stable for consumers.",
+      "const": "bfs_lower_trust_zone_sinks"
+    },
+    "totals": {
+      "type": "object",
+      "required": [
+        "boundary_path_count",
+        "distinct_authority_sources",
+        "distinct_sinks"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "boundary_path_count": { "type": "integer", "minimum": 0 },
+        "distinct_authority_sources": { "type": "integer", "minimum": 0 },
+        "distinct_sinks": { "type": "integer", "minimum": 0 }
+      }
+    },
+    "top_sinks_by_path_count": {
+      "type": "array",
+      "items": { "$ref": "#/definitions/PropagationNodeAgg" }
+    },
+    "top_sources_by_path_count": {
+      "type": "array",
+      "items": { "$ref": "#/definitions/PropagationNodeAgg" }
+    }
+  },
+  "definitions": {
+    "PropagationNodeAgg": {
+      "type": "object",
+      "required": ["node_id", "kind", "name", "trust_zone", "path_count"],
+      "additionalProperties": false,
+      "properties": {
+        "node_id": { "type": "integer", "minimum": 0 },
+        "kind": {
+          "type": "string",
+          "enum": ["step", "secret", "artifact", "identity", "image"]
+        },
+        "name": { "type": "string" },
+        "trust_zone": {
+          "type": "string",
+          "enum": ["first_party", "third_party", "untrusted"]
+        },
+        "path_count": { "type": "integer", "minimum": 1 }
+      }
+    }
+  }
+}

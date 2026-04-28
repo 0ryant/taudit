@@ -32,6 +32,11 @@ run_rust_full_gate() {
   cargo audit
 }
 
+run_golden_paths() {
+  echo "quality-gate: golden-paths smoke (docs/golden-paths.md)"
+  TAUDIT_BIN=target/debug/taudit bash scripts/golden-paths.sh
+}
+
 run_taudit_gate() {
   if command -v taudit >/dev/null 2>&1; then
     TAUDIT=(taudit)
@@ -124,6 +129,7 @@ case "$STAGE" in
     require_cmd cargo-audit
 
     run_rust_full_gate
+    run_golden_paths
     run_gitleaks_repo
     run_trivy_fs
     run_checkov

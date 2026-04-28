@@ -1,4 +1,4 @@
-//! Exhaustive CLI smoke: `taudit scan` and `taudit graph` on every committed
+//! Exhaustive CLI smoke: `taudit scan`, `taudit graph` (json + summary), on every committed
 //! YAML corpus (fixtures, fuzz seeds, `.github/workflows`). Optional root
 //! `corpus/` is included when present (gitignored mirrors — see
 //! `docs/corpus-research.md`).
@@ -119,6 +119,27 @@ fn assert_graph_export(v: &serde_json::Value, ctx: &str) {
     );
 }
 
+fn assert_propagation_summary(v: &serde_json::Value, ctx: &str) {
+    assert_eq!(
+        v.get("schema_version").and_then(|x| x.as_str()),
+        Some("1.0.0"),
+        "{ctx}: summary schema_version"
+    );
+    assert_eq!(
+        v.get("method").and_then(|x| x.as_str()),
+        Some("bfs_lower_trust_zone_sinks"),
+        "{ctx}: summary method"
+    );
+    let totals = v
+        .get("totals")
+        .and_then(|t| t.as_object())
+        .unwrap_or_else(|| panic!("{ctx}: summary.totals object"));
+    assert!(
+        totals.contains_key("boundary_path_count"),
+        "{ctx}: summary.totals"
+    );
+}
+
 /// Every YAML under fixtures, fuzz seeds, and CI workflows: `scan` and `graph` exit 0
 /// and emit parseable JSON with required keys.
 #[test]
@@ -161,6 +182,19 @@ fn scan_and_graph_json_all_corpus_files() {
         );
         let graph_json = assert_json_object(&out_graph.stdout, &format!("graph {label}"));
         assert_graph_export(&graph_json, &format!("graph {label}"));
+
+        let out_summary = taudit()
+            .args(["graph", &p, "--platform", "auto", "--format", "summary"])
+            .output()
+            .unwrap_or_else(|e| panic!("graph summary spawn {label}: {e}"));
+        assert!(
+            out_summary.status.success(),
+            "graph --format summary failed for {label} (code {:?})\nstderr:\n{}",
+            out_summary.status.code(),
+            String::from_utf8_lossy(&out_summary.stderr)
+        );
+        let sum_json = assert_json_object(&out_summary.stdout, &format!("graph summary {label}"));
+        assert_propagation_summary(&sum_json, &format!("graph summary {label}"));
     }
 }
 

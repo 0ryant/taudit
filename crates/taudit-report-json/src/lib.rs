@@ -300,6 +300,8 @@ mod tests {
         graph.add_edge(step_build, step_deploy, EdgeKind::DelegatesTo);
         graph.add_edge(step_build, secret, EdgeKind::PersistsTo);
 
+        graph.stamp_edge_authority_summaries();
+
         let export = crate::GraphExport::new(&graph);
         let json = export.to_json_pretty().expect("export serializes");
         let value: serde_json::Value =

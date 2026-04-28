@@ -11,6 +11,7 @@ use taudit_core::map;
 use taudit_core::ports::ReportSink;
 use taudit_core::propagation::DEFAULT_MAX_HOPS;
 use taudit_core::rules;
+use taudit_core::summary;
 use taudit_parse_ado::AdoParser;
 use taudit_parse_gha::GhaParser;
 use taudit_parse_gitlab::GitlabParser;
@@ -231,16 +232,20 @@ enum Cli {
         #[arg(long, default_value_t = false)]
         no_color: bool,
 
-        /// Output format: `text` (default) step×authority table, or `dot` (same graph
-        /// as `taudit graph --format dot`, as a digraph for Graphviz / dot -Tsvg).
+        /// Output format: `text` (default) step×authority table, `dot` (same graph
+        /// as `taudit graph --format dot`), or `mermaid` (same as `taudit graph --format mermaid`).
         #[arg(long, default_value = "text")]
         format: MapFormat,
 
         /// Restrict the output to the subgraph reachable from a single job.
-        /// Most useful with `--format dot`; for `--format text` the table is
+        /// Most useful with `--format dot` or `--format mermaid`; for `--format text` the table is
         /// filtered to steps belonging to the named job.
         #[arg(long)]
         job: Option<String>,
+
+        /// Include trust zone and key node metadata in diagram labels (DOT / Mermaid only).
+        #[arg(long, default_value_t = false)]
+        rich_labels: bool,
     },
 
     /// Emit the canonical authority graph (JSON, DOT, or Mermaid).
@@ -253,9 +258,12 @@ enum Cli {
     ///   json (default) — schema-validated; canonical machine interchange.
     ///   dot — Graphviz; pipe to `dot -Tsvg` (install Graphviz separately).
     ///   mermaid — `flowchart LR` text for GitHub/GitLab Markdown (no Graphviz).
+    ///   summary — bounded propagation rollup JSON (trust-boundary paths only); see
+    ///   `schemas/authority-propagation-summary.v1.json`. Uses `--max-hops` and the
+    ///   dense-graph guard like `taudit scan` (`--force-scan-dense` to override).
     ///
     /// Use `--job` with dot/mermaid to restrict to one job's reachable subgraph.
-    /// JSON is always the complete graph. See docs/authority-graph.md.
+    /// JSON and summary use the full parsed graph (`--job` does not apply). See docs/authority-graph.md.
     Graph {
         /// Path to pipeline YAML file(s) or directory.
         #[arg(required = true)]
@@ -266,12 +274,20 @@ enum Cli {
         platform: Platform,
 
         /// Output format: `json` (default, schema-validated), `dot` (Graphviz DOT),
-        /// or `mermaid` (GitHub-flavored Markdown `flowchart`).
+        /// `mermaid` (GitHub-flavored Markdown `flowchart`), or `summary` (propagation rollup JSON).
         #[arg(long, default_value = "json")]
         format: GraphFormat,
 
+        /// Maximum propagation depth for `--format summary` (same meaning as `taudit scan`).
+        #[arg(long, default_value_t = DEFAULT_MAX_HOPS)]
+        max_hops: usize,
+
+        /// Override the dense-graph safety guard for `--format summary` (same as `taudit scan`).
+        #[arg(long, default_value_t = false)]
+        force_scan_dense: bool,
+
         /// Restrict the output to the subgraph reachable from a single job.
-        /// For `--format json` the graph is emitted unfiltered; the flag only
+        /// For `--format json` and `--format summary` the graph is unfiltered; the flag only
         /// affects `--format dot` and `--format mermaid` (matching `taudit map --job` semantics).
         #[arg(long)]
         job: Option<String>,
@@ -281,6 +297,23 @@ enum Cli {
         /// alter the emitted graph but the flag is reserved for future use.
         #[arg(long)]
         rules_dir: Option<PathBuf>,
+
+        /// Include trust zone and key node metadata in diagram labels (DOT / Mermaid only).
+        #[arg(long, default_value_t = false)]
+        rich_labels: bool,
+
+        /// Collapse nodes for large-pipeline views: `job` or `trust-zone` (ADR 0002 Phase 4).
+        ///
+        /// **Not yet implemented.** The flag is accepted and documented for CLI stability;
+        /// taudit prints a one-time notice to stderr and emits the same graph as without it.
+        #[arg(long, value_name = "DIMENSION")]
+        collapse_by: Option<GraphCollapseBy>,
+
+        /// Restrict diagram output to risk-relevant subgraph (ADR 0002 Phase 4).
+        ///
+        /// **Not yet implemented.** Accepted for forward compatibility; stderr notice only.
+        #[arg(long, default_value_t = false)]
+        risk_only: bool,
     },
 
     /// Generate shell completions and print them to stdout.
@@ -834,6 +867,7 @@ enum VerifyFormat {
 enum MapFormat {
     Text,
     Dot,
+    Mermaid,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, clap::ValueEnum)]
@@ -841,6 +875,27 @@ enum GraphFormat {
     Json,
     Dot,
     Mermaid,
+    Summary,
+}
+
+/// Dimension for org-scale collapsed graph views (ADR 0002 Phase 4).
+#[derive(Clone, Copy, Debug, PartialEq, Eq, clap::ValueEnum)]
+enum GraphCollapseBy {
+    /// One synthetic node per job (pipeline step grouping).
+    #[value(name = "job")]
+    Job,
+    /// One synthetic node per trust zone.
+    #[value(name = "trust-zone")]
+    TrustZone,
+}
+
+impl GraphCollapseBy {
+    const fn as_cli_value(self) -> &'static str {
+        match self {
+            GraphCollapseBy::Job => "job",
+            GraphCollapseBy::TrustZone => "trust-zone",
+        }
+    }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, clap::ValueEnum)]
@@ -1247,14 +1302,31 @@ fn run() -> Result<()> {
             no_color,
             format,
             job,
-        } => cmd_map(paths, platform, no_color, format, job),
+            rich_labels,
+        } => cmd_map(paths, platform, no_color, format, job, rich_labels),
         Cli::Graph {
             paths,
             platform,
             format,
+            max_hops,
+            force_scan_dense,
             job,
             rules_dir,
-        } => cmd_graph(paths, platform, format, job, rules_dir),
+            rich_labels,
+            collapse_by,
+            risk_only,
+        } => cmd_graph(
+            paths,
+            platform,
+            format,
+            max_hops,
+            force_scan_dense,
+            job,
+            rules_dir,
+            rich_labels,
+            collapse_by,
+            risk_only,
+        ),
         Cli::Diff {
             before,
             after,
@@ -3279,7 +3351,14 @@ fn cmd_map(
     no_color: bool,
     format: MapFormat,
     job: Option<String>,
+    rich_labels: bool,
 ) -> Result<()> {
+    if rich_labels && matches!(format, MapFormat::Text) {
+        anyhow::bail!(
+            "`--rich-labels` applies only to `--format dot` and `--format mermaid` (not `text`)"
+        );
+    }
+
     if no_color || std::env::var_os("NO_COLOR").is_some() {
         colored::control::set_override(false);
     }
@@ -3350,6 +3429,12 @@ fn cmd_map(
             job_matched_any = true;
         }
 
+        let diagram_label_detail = if rich_labels {
+            map::DiagramLabelDetail::Rich
+        } else {
+            map::DiagramLabelDetail::Compact
+        };
+
         match format {
             MapFormat::Text => {
                 let authority_map = map::authority_map(&graph);
@@ -3360,7 +3445,12 @@ fn cmd_map(
                 try_write_stdout(buf.as_bytes())?;
             }
             MapFormat::Dot => {
-                let mut s = map::render_dot(&graph, job.as_deref());
+                let mut s = map::render_dot(&graph, job.as_deref(), diagram_label_detail);
+                s.push('\n');
+                try_write_stdout(s.as_bytes())?;
+            }
+            MapFormat::Mermaid => {
+                let mut s = map::render_mermaid(&graph, job.as_deref(), diagram_label_detail);
                 s.push('\n');
                 try_write_stdout(s.as_bytes())?;
             }
@@ -3382,16 +3472,52 @@ fn cmd_map(
 /// machine-readable export. Mirrors `cmd_map`'s file-resolution and
 /// per-file platform sniffing, but produces the graph itself rather than
 /// the human-readable map. Default format is JSON conforming to
-/// `schemas/authority-graph.v1.json`; `--format dot` and `--format mermaid`
-/// reuse the same renderers as `taudit map --format dot` (job filter applies
-/// to diagram output only, not JSON).
+/// `schemas/authority-graph.v1.json`; `--format summary` emits propagation rollup JSON;
+/// `--format dot` and `--format mermaid` reuse the same renderers as `taudit map --format dot|mermaid`
+/// (job filter applies to diagram output only, not JSON or summary).
+fn warn_graph_phase4_flags_unimplemented(collapse_by: Option<GraphCollapseBy>, risk_only: bool) {
+    if collapse_by.is_none() && !risk_only {
+        return;
+    }
+    let mut parts = Vec::<String>::new();
+    if let Some(by) = collapse_by {
+        parts.push(format!("--collapse-by={}", by.as_cli_value()));
+    }
+    if risk_only {
+        parts.push("--risk-only".to_owned());
+    }
+    eprintln!(
+        "taudit: notice: {} — ADR 0002 Phase 4 (scale / composite policy) is not implemented yet; output unchanged.",
+        parts.join(", ")
+    );
+}
+
+// Many flags mirror `taudit scan` / clap surface; bundling would churn call sites.
+#[allow(clippy::too_many_arguments)]
 fn cmd_graph(
     paths: Vec<PathBuf>,
     platform: Platform,
     format: GraphFormat,
+    max_hops: usize,
+    force_scan_dense: bool,
     job: Option<String>,
     rules_dir: Option<PathBuf>,
+    rich_labels: bool,
+    collapse_by: Option<GraphCollapseBy>,
+    risk_only: bool,
 ) -> Result<()> {
+    warn_graph_phase4_flags_unimplemented(collapse_by, risk_only);
+
+    if rich_labels && matches!(format, GraphFormat::Json | GraphFormat::Summary) {
+        anyhow::bail!("`--rich-labels` applies only to `--format dot` and `--format mermaid`");
+    }
+
+    if matches!(format, GraphFormat::Summary) && job.is_some() {
+        anyhow::bail!(
+            "`--job` does not apply to `--format summary` (summary is always computed on the full parsed graph)"
+        );
+    }
+
     // Validate `--rules-dir` early so a bad directory fails fast, even
     // though custom rules don't currently affect the emitted graph
     // (kept for symmetry with `taudit scan`).
@@ -3460,7 +3586,7 @@ fn cmd_graph(
         };
 
         // For `--job` filtering: skip files that don't contain the named job.
-        // Same semantics as `taudit map --job`.
+        // Same semantics as `taudit map --job`. (Summary format rejects `--job` up-front.)
         if let Some(ref name) = job {
             if !map::job_names(&graph).iter().any(|n| n == name) {
                 continue;
@@ -3468,7 +3594,28 @@ fn cmd_graph(
             job_matched_any = true;
         }
 
+        let diagram_label_detail = if rich_labels {
+            map::DiagramLabelDetail::Rich
+        } else {
+            map::DiagramLabelDetail::Compact
+        };
+
         match format {
+            GraphFormat::Summary => {
+                let doc = summary::build_authority_propagation_summary(
+                    &graph,
+                    max_hops,
+                    force_scan_dense,
+                )
+                .map_err(|e| {
+                    anyhow::anyhow!("{e}\n(source: {})\n{DENSE_GRAPH}", graph.source.file)
+                })?;
+                let mut json = serde_json::to_string_pretty(&doc)
+                    .map_err(|e| anyhow::anyhow!("summary JSON error: {e}"))?
+                    .into_bytes();
+                json.push(b'\n');
+                try_write_stdout(&json)?;
+            }
             GraphFormat::Json => {
                 // Note: --job only filters diagram output (DOT / Mermaid); the
                 // JSON export emits the full graph for every matched file. This
@@ -3483,12 +3630,14 @@ fn cmd_graph(
                 try_write_stdout(&json)?;
             }
             GraphFormat::Dot => {
-                let mut dot = map::render_dot(&graph, job.as_deref()).into_bytes();
+                let mut dot =
+                    map::render_dot(&graph, job.as_deref(), diagram_label_detail).into_bytes();
                 dot.push(b'\n');
                 try_write_stdout(&dot)?;
             }
             GraphFormat::Mermaid => {
-                let mut mer = map::render_mermaid(&graph, job.as_deref()).into_bytes();
+                let mut mer =
+                    map::render_mermaid(&graph, job.as_deref(), diagram_label_detail).into_bytes();
                 mer.push(b'\n');
                 try_write_stdout(&mer)?;
             }

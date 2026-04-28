@@ -1,6 +1,6 @@
 use crate::graph::{
     AuthorityCompleteness, AuthorityGraph, EdgeKind, NodeId, NodeKind, TrustZone,
-    META_IDENTITY_SCOPE, META_JOB_NAME,
+    META_IDENTITY_SCOPE, META_JOB_NAME, META_PERMISSIONS,
 };
 use std::collections::{HashSet, VecDeque};
 
@@ -275,6 +275,62 @@ pub fn render_map(map: &AuthorityMap, term_width: usize) -> String {
 
 // ── Graphviz DOT rendering ────────────────────────────────
 
+/// How much context to embed in diagram node labels (DOT / Mermaid).
+///
+/// [`DiagramLabelDetail::Compact`] preserves historical default: node name only.
+/// [`DiagramLabelDetail::Rich`] appends trust zone and selected `metadata` fields
+/// already present on nodes (`identity_scope`, `permissions`) — no new graph logic.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Hash)]
+pub enum DiagramLabelDetail {
+    #[default]
+    Compact,
+    Rich,
+}
+
+#[derive(Clone, Copy)]
+enum RichLabelLayout {
+    /// Newline-separated blocks (Graphviz `label` string with escaped `\n`).
+    DotMultiline,
+    /// Single-line segments joined for Mermaid (avoids raw `<br/>` vs HTML escapes).
+    MermaidInline,
+}
+
+const RICH_META_FIELD_MAX: usize = 96;
+const RICH_LABEL_MAX_DOT: usize = 512;
+const RICH_LABEL_MAX_MERMAID: usize = 280;
+
+fn diagram_node_label(
+    node: &crate::graph::Node,
+    detail: DiagramLabelDetail,
+    layout: RichLabelLayout,
+) -> String {
+    match detail {
+        DiagramLabelDetail::Compact => node.name.clone(),
+        DiagramLabelDetail::Rich => {
+            let zone = format!("{:?}", node.trust_zone);
+            let sep = match layout {
+                RichLabelLayout::DotMultiline => "\n",
+                RichLabelLayout::MermaidInline => " | ",
+            };
+            let mut parts: Vec<String> = Vec::new();
+            parts.push(node.name.clone());
+            parts.push(format!("zone: {zone}"));
+            if let Some(s) = node.metadata.get(META_IDENTITY_SCOPE) {
+                parts.push(format!("scope: {}", trunc(s, RICH_META_FIELD_MAX)));
+            }
+            if let Some(p) = node.metadata.get(META_PERMISSIONS) {
+                parts.push(format!("perm: {}", trunc(p, RICH_META_FIELD_MAX)));
+            }
+            let joined = parts.join(sep);
+            let cap = match layout {
+                RichLabelLayout::DotMultiline => RICH_LABEL_MAX_DOT,
+                RichLabelLayout::MermaidInline => RICH_LABEL_MAX_MERMAID,
+            };
+            trunc(&joined, cap)
+        }
+    }
+}
+
 /// DOT shape for a node kind. Stable mapping — referenced by tests and docs.
 fn dot_shape(kind: NodeKind) -> &'static str {
     match kind {
@@ -364,7 +420,14 @@ fn reachable_set(graph: &AuthorityGraph, seeds: &[NodeId]) -> HashSet<NodeId> {
 ///
 /// Output is deterministic — nodes and edges are emitted in their stored
 /// (insertion) order, which makes the result diff-friendly and testable.
-pub fn render_dot(graph: &AuthorityGraph, filter_job: Option<&str>) -> String {
+///
+/// `label_detail` controls optional rich labels; [`DiagramLabelDetail::Compact`]
+/// preserves the historical default (node name only).
+pub fn render_dot(
+    graph: &AuthorityGraph,
+    filter_job: Option<&str>,
+    label_detail: DiagramLabelDetail,
+) -> String {
     let included: Option<HashSet<NodeId>> = match filter_job {
         Some(name) => {
             let seeds: Vec<NodeId> = graph
@@ -392,10 +455,11 @@ pub fn render_dot(graph: &AuthorityGraph, filter_job: Option<&str>) -> String {
                 continue;
             }
         }
+        let raw_label = diagram_node_label(node, label_detail, RichLabelLayout::DotMultiline);
         out.push_str(&format!(
             "    \"n{}\" [label=\"{}\" shape={} color={}];\n",
             node.id,
-            dot_escape(&node.name),
+            dot_escape(&raw_label),
             dot_shape(node.kind),
             dot_color(node.trust_zone),
         ));
@@ -444,9 +508,9 @@ fn mermaid_label_escape(s: &str) -> String {
 
 /// Mermaid `flowchart` node line for a single graph node, matching DOT shape
 /// intent (step ≈ rounded, box, diamond, …).
-fn mermaid_node_line(node: &crate::graph::Node) -> String {
+fn mermaid_node_line(node: &crate::graph::Node, display_esc: &str) -> String {
     let id = node.id;
-    let esc = mermaid_label_escape(&node.name);
+    let esc = display_esc;
     match node.kind {
         NodeKind::Step => format!(r#"    n{id}("{esc}")"#),
         NodeKind::Secret => format!(r#"    n{id}["{esc}"]"#),
@@ -462,7 +526,13 @@ fn mermaid_node_line(node: &crate::graph::Node) -> String {
 /// `filter_job` uses the same reachability semantics as [`render_dot`]. When
 /// the graph is not [`AuthorityCompleteness::Complete`], a leading `%%`
 /// comment notes partiality; JSON export remains the source of detail.
-pub fn render_mermaid(graph: &AuthorityGraph, filter_job: Option<&str>) -> String {
+///
+/// `label_detail` matches [`render_dot`] (compact vs rich node labels).
+pub fn render_mermaid(
+    graph: &AuthorityGraph,
+    filter_job: Option<&str>,
+    label_detail: DiagramLabelDetail,
+) -> String {
     let included: Option<HashSet<NodeId>> = match filter_job {
         Some(name) => {
             let seeds: Vec<NodeId> = graph
@@ -493,7 +563,9 @@ pub fn render_mermaid(graph: &AuthorityGraph, filter_job: Option<&str>) -> Strin
                 continue;
             }
         }
-        out.push_str(&mermaid_node_line(node));
+        let raw = diagram_node_label(node, label_detail, RichLabelLayout::MermaidInline);
+        let esc = mermaid_label_escape(&raw);
+        out.push_str(&mermaid_node_line(node, &esc));
         out.push('\n');
     }
 
@@ -588,7 +660,7 @@ mod tests {
         let step = g.add_node(NodeKind::Step, "build", TrustZone::FirstParty);
         g.add_edge(step, secret, EdgeKind::HasAccessTo);
 
-        let dot = render_dot(&g, None);
+        let dot = render_dot(&g, None, DiagramLabelDetail::Compact);
         assert!(dot.starts_with("digraph taudit"), "dot output: {dot}");
         // Node lines for both endpoints with their kind-driven shapes.
         assert!(
@@ -615,7 +687,7 @@ mod tests {
         let step = g.add_node(NodeKind::Step, "build", TrustZone::FirstParty);
         g.add_edge(step, secret, EdgeKind::HasAccessTo);
 
-        let mer = render_mermaid(&g, None);
+        let mer = render_mermaid(&g, None, DiagramLabelDetail::Compact);
         assert!(mer.starts_with("flowchart LR"), "mermaid output: {mer}");
         assert!(
             mer.contains(&format!(r#"n{}("build")"#, step)),
@@ -643,7 +715,7 @@ mod tests {
         g.add_edge(step, secret, EdgeKind::HasAccessTo);
         g.mark_partial("fixture: unresolved composite");
 
-        let mer = render_mermaid(&g, None);
+        let mer = render_mermaid(&g, None, DiagramLabelDetail::Compact);
         assert!(
             mer.starts_with("%% taudit: authority graph is not Complete"),
             "expected partiality banner: {mer}"
@@ -668,8 +740,8 @@ mod tests {
             g.add_node_with_metadata(NodeKind::Step, "ship", TrustZone::FirstParty, deploy_meta);
         g.add_edge(deploy_step, deploy_secret, EdgeKind::HasAccessTo);
 
-        let full = render_mermaid(&g, None);
-        let filtered = render_mermaid(&g, Some("build"));
+        let full = render_mermaid(&g, None, DiagramLabelDetail::Compact);
+        let filtered = render_mermaid(&g, Some("build"), DiagramLabelDetail::Compact);
 
         assert!(full.contains("BUILD_SECRET") && full.contains("DEPLOY_SECRET"));
         assert!(filtered.contains("BUILD_SECRET"));
@@ -683,13 +755,57 @@ mod tests {
     }
 
     #[test]
+    fn rich_dot_and_mermaid_include_zone_and_optional_metadata() {
+        let mut g = AuthorityGraph::new(source("ci.yml"));
+        let mut id_meta = std::collections::HashMap::new();
+        id_meta.insert(META_IDENTITY_SCOPE.to_string(), "constrained".to_string());
+        id_meta.insert(
+            META_PERMISSIONS.to_string(),
+            "{ contents: read }".to_string(),
+        );
+        let id = g.add_node_with_metadata(
+            NodeKind::Identity,
+            "GITHUB_TOKEN",
+            TrustZone::FirstParty,
+            id_meta,
+        );
+        let step = g.add_node(NodeKind::Step, "build", TrustZone::FirstParty);
+        g.add_edge(step, id, EdgeKind::HasAccessTo);
+
+        let dot = render_dot(&g, None, DiagramLabelDetail::Rich);
+        assert!(
+            dot.contains("zone: FirstParty"),
+            "rich dot should include zone: {dot}"
+        );
+        assert!(
+            dot.contains("scope: constrained"),
+            "rich dot should include identity scope: {dot}"
+        );
+        assert!(
+            dot.contains("perm:"),
+            "rich dot should include permissions summary: {dot}"
+        );
+
+        let mer = render_mermaid(&g, None, DiagramLabelDetail::Rich);
+        assert!(mer.contains("zone: FirstParty"), "rich mermaid: {mer}");
+        assert!(mer.contains("scope: constrained"), "rich mermaid: {mer}");
+        assert!(mer.contains("perm:"), "rich mermaid: {mer}");
+
+        let mer_c = render_mermaid(&g, None, DiagramLabelDetail::Compact);
+        assert!(
+            !mer_c.contains("zone: FirstParty"),
+            "compact must not add zone line: {mer_c}"
+        );
+    }
+
+    #[test]
     fn mermaid_escapes_injection_like_node_names() {
         let mut g = AuthorityGraph::new(source("ci.yml"));
         let secret = g.add_node(NodeKind::Secret, "X\"]; evil", TrustZone::FirstParty);
         let step = g.add_node(NodeKind::Step, "a", TrustZone::FirstParty);
         g.add_edge(step, secret, EdgeKind::HasAccessTo);
 
-        let mer = render_mermaid(&g, None);
+        let mer = render_mermaid(&g, None, DiagramLabelDetail::Compact);
         // The embedded quote must be entity-encoded, not a raw `"` that could
         // break out of the Mermaid `["..."]` label.
         assert!(mer.contains("&quot;"), "expected entity escape in: {mer}");
@@ -724,8 +840,8 @@ mod tests {
             g.add_node_with_metadata(NodeKind::Step, "ship", TrustZone::FirstParty, deploy_meta);
         g.add_edge(deploy_step, deploy_secret, EdgeKind::HasAccessTo);
 
-        let full = render_dot(&g, None);
-        let filtered = render_dot(&g, Some("build"));
+        let full = render_dot(&g, None, DiagramLabelDetail::Compact);
+        let filtered = render_dot(&g, Some("build"), DiagramLabelDetail::Compact);
 
         // Full output names every node; filtered output drops the deploy job.
         assert!(full.contains("BUILD_SECRET") && full.contains("DEPLOY_SECRET"));

@@ -4,11 +4,17 @@ Authority graph exports (taudit graph)
     --format dot     Graphviz DOT; pipe to: dot -Tsvg -o graph.svg (requires Graphviz installed)
     --format mermaid Mermaid flowchart LR; paste into a Markdown fenced block with language mermaid
                      (no Graphviz; see docs/authority-graph.md).
+    --format summary Bounded propagation rollup JSON (trust-boundary paths only); schema:
+                     schemas/authority-propagation-summary.v1.json. Same dense-graph guard as scan.
     --job <name>     For dot and mermaid only: restrict to the subgraph reachable from that job.
-                     JSON is always the full graph (job filter does not apply).
+                     JSON and summary are always the full graph (job filter does not apply).
+    --rich-labels    For dot and mermaid only: add trust zone + key node metadata to labels (JSON unchanged).
+    --collapse-by    Phase 4 (ADR 0002): job | trust-zone — reserved; stderr notice only until implemented.
+    --risk-only      Phase 4 (ADR 0002): risk-only subgraph — reserved; stderr notice only until implemented.
 
 Authority map (taudit map)
-    Human table: --format text (default). Same graph as --format dot digraph for visualization.
+    Human table: --format text (default). Same graph model as --format dot or --format mermaid
+    (same renderers as taudit graph for those formats). Optional --rich-labels with dot/mermaid.
 
 Scan, verify, and stdout
     scan is informational: it exits 0 when the run succeeds, even if there are findings (use
@@ -17,7 +23,7 @@ Scan, verify, and stdout
     pipe is not a failure. This applies to terminal output to stdout, not to -o/--output files.
 
 Documentation
-    docs/authority-graph.md   Graph model, schema, ASCII "one graph, three exports" overview
+    docs/authority-graph.md   Graph model, schema, ASCII "one graph, several exports" overview
     USERGUIDE.md              Tutorials (map, graph, Mermaid, install pins)
     docs/positioning.md       Product framing
     docs/adr/0001-graph-native-exports-and-leverage.md   Mermaid + export strategy (ADR)

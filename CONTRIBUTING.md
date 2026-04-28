@@ -23,6 +23,7 @@ That runs Rust quality checks plus governance/security tooling:
 - `trivy` (filesystem vuln/misconfig/secret scan)
 - `checkov` (GitHub Actions + secrets policy scan)
 - `taudit` workflow scan + invariant verification
+- **Golden paths** — after `cargo test`, runs [`scripts/golden-paths.sh`](scripts/golden-paths.sh) against `target/debug/taudit` (same flows as [docs/golden-paths.md](docs/golden-paths.md))
 
 Quick Rust-only gate:
 
@@ -42,9 +43,12 @@ just contracts
 just versions
 just fix
 just self-test
+just golden-paths
 just pre-commit-gate
 just pre-push-gate
 ```
+
+**Docs drift:** if you change CLI output that the golden-path script asserts on, run **`just golden-paths`** locally and update [docs/golden-paths.md](docs/golden-paths.md) if you add a new blessed flow.
 
 Install local hooks:
 

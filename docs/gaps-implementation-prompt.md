@@ -86,17 +86,33 @@ Close four gaps that put taudit behind zizmor, trivy, gitleaks, and checkov at t
 
 ## Gap 3 — SBOM + Provenance on Release
 
-**Problem:** taudit releases have no SBOM (Software Bill of Materials) and no SLSA provenance attestation. trivy and poutine publish both. This is increasingly a requirement for enterprise adoption and supply-chain security posture.
+**Status (2026-04):** **Done** for the originally scoped SBOM + consumer-verifiable provenance path implemented in `.github/workflows/release.yml`.
 
-**Target:** Every GitHub release of taudit includes a CycloneDX SBOM and an SLSA L3 provenance attestation.
+| Item | Status |
+| --- | --- |
+| SPDX 2.3 + CycloneDX 1.5 SBOMs on each release | **Done** (`cargo-sbom`, `cargo-cyclonedx`, uploaded as release assets) |
+| Build provenance consumers can verify | **Done** — **`actions/attest-build-provenance@v1`** (GitHub Artifact Attestations); verify downloaded files with **`gh attestation verify <path> --repo 0ryant/taudit`** |
+| Documented blessed path | **Done** — [docs/release-trust.md#verifying-build-attestations-github](release-trust.md#verifying-build-attestations-github) and [README.md](../README.md#install) |
 
-**Implementation:**
+**Original problem statement (historical):** taudit releases had no SBOM and no provenance story comparable to other supply-chain tools.
+
+**Optional follow-ups** (only if product/security asks — not part of “Gap 3 done”):
+
+1. **`slsa-framework/slsa-github-generator`** — if a customer mandates **SLSA generic provenance** as a **downloadable** `.intoto.jsonl` next to assets, add the generator workflow **in addition** to (or after evaluating parity with) GitHub’s attestation store. This repo **does not** use the generator today; do not document it as shipped.
+
+2. **`slsa-verifier verify-artifact`** — only relevant **if** you publish SLSA-style provenance files as release assets; the shipped verification path is **`gh attestation verify`** only.
+
+3. **minisign** on release tarballs — see [release-trust.md](release-trust.md) “Future work”; offline verification without `gh`.
+
+**Implementation notes (archived — superseded by current `release.yml`):**
+
+<details>
+<summary>Older design sketch (CycloneDX XML + slsa-github-generator)</summary>
 
 ### SBOM (CycloneDX)
 
-1. Add `cargo-cyclonedx` to the release job. It generates a `bom.xml` (CycloneDX format) from `Cargo.lock`.
+1. Add `cargo-cyclonedx` to the release job.
 
-   In `release.yml`, before the upload step:
    ```yaml
    - name: Generate SBOM (CycloneDX)
      run: |
@@ -104,50 +120,15 @@ Close four gaps that put taudit behind zizmor, trivy, gitleaks, and checkov at t
        cargo cyclonedx --format xml --spec-version 1.4 --output-file taudit-sbom.xml
    ```
 
-2. Upload `taudit-sbom.xml` as a release asset alongside the binary tarballs.
+2. Upload as a release asset.
 
-3. Alternatively, use `anchore/sbom-action` (pinned SHA) if you want an OCI-compatible SBOM stored in the GitHub release without installing cargo-cyclonedx at release time:
-   ```yaml
-   - uses: anchore/sbom-action@v0  # pin to SHA
-     with:
-       artifact-name: taudit-sbom.spdx.json
-   ```
-   Either format (CycloneDX XML or SPDX JSON) is acceptable; pick one and be consistent.
+### SLSA Provenance (alternative stack)
 
-### SLSA Provenance
+Use `slsa-framework/slsa-github-generator` only if you explicitly choose that path; see generator README for `workflow_call` and `base64-subjects` wiring.
 
-1. Use `slsa-framework/slsa-github-generator` to produce L3 provenance for the release binaries. This requires the release workflow to use `workflow_call` triggers (the generator runs in a separate trusted workflow).
+</details>
 
-   Add to `release.yml`:
-   ```yaml
-   permissions:
-     actions: read
-     id-token: write
-     contents: write
-
-   jobs:
-     build:
-       # ... existing build steps
-       outputs:
-         hashes: ${{ steps.hash.outputs.hashes }}
-
-     provenance:
-       needs: [build]
-       permissions:
-         actions: read
-         id-token: write
-         contents: write
-       uses: slsa-framework/slsa-github-generator/.github/workflows/generator_generic_slsa3.yml@v2.0.0
-       with:
-         base64-subjects: "${{ needs.build.outputs.hashes }}"
-         upload-assets: true
-   ```
-
-   The `hashes` output must be a base64-encoded SHA256 digest of each release artifact. Follow the slsa-github-generator README for the exact pattern.
-
-2. Add the SLSA badge to `README.md` once the first provenance-carrying release ships.
-
-**Acceptance:** Release workflow exits 0 and produces `taudit-sbom.xml` (or `.spdx.json`) and a `.intoto.jsonl` provenance file as GitHub release assets. Provenance verifiable with `slsa-verifier verify-artifact`.
+**Acceptance (updated):** Release workflow exits 0; SBOMs appear on the GitHub Release; **`gh attestation verify`** succeeds on a downloaded archive and on each SBOM file attested in CI.
 
 ---
 

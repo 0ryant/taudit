@@ -48,6 +48,10 @@ Session.vim
 rust_out
 CODE_REVIEW_FINDINGS_*.md
 
+# Ad-hoc demo outputs (regenerate; see docs/golden-paths.md)
+/security.svg
+/verify.sarif.json
+
 # Local AI session state — never committed
 MEMORY/
 .claude/

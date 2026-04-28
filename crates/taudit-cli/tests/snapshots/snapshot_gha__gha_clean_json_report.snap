@@ -1,5 +1,6 @@
 ---
 source: crates/taudit-cli/tests/snapshot_gha.rs
+assertion_line: 132
 expression: json
 ---
 findings:
@@ -33,11 +34,19 @@ graph:
       id: 0
       kind: uses_image
       to: 1
-    - from: 2
+    - authority_summary:
+        identity_scope: constrained
+        permissions_summary: "{ contents: read }"
+        trust_zone: first_party
+      from: 2
       id: 1
       kind: has_access_to
       to: 0
-    - from: 3
+    - authority_summary:
+        identity_scope: constrained
+        permissions_summary: "{ contents: read }"
+        trust_zone: first_party
+      from: 3
       id: 2
       kind: has_access_to
       to: 0

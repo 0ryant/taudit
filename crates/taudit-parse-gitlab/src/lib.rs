@@ -341,6 +341,7 @@ impl PipelineParser for GitlabParser {
             );
         }
 
+        graph.stamp_edge_authority_summaries();
         Ok(graph)
     }
 }

@@ -31,8 +31,10 @@
 Each layer is single-purpose, externally verifiable, and replaceable:
 
 - **taudit** — *what does authority look like?* Parses pipeline YAML
-  into a typed graph and applies invariants. Today.
-  Ships in v0.9.0.
+  into a typed graph and applies invariants. **Shipped** on crates.io (1.0.x).
+  **Try it:** copy-paste flows on committed fixtures live in
+  [Golden paths](../golden-paths.md); CI and `just pre-push-gate` smoke them via
+  [`scripts/golden-paths.sh`](../../scripts/golden-paths.sh).
 - **tsign** — *who saw this graph and when?* Attaches signed claims to
   graph digests so a verifier can prove "this pipeline matched the
   approved shape at commit `<S>`". Sibling project, **coming in

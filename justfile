@@ -60,6 +60,11 @@ self-test:
 corpus-suite:
     cargo test -p taudit --test corpus_cli_suite
 
+# Smoke the blessed flows in docs/golden-paths.md (exit codes + minimal stdout checks).
+golden-paths:
+    cargo build -p taudit
+    TAUDIT_BIN=target/debug/taudit bash scripts/golden-paths.sh
+
 # Run taudit inside an execution-isolation runtime (platform smoke check).
 runtime-smoke:
     bash scripts/cellos_smoke.sh

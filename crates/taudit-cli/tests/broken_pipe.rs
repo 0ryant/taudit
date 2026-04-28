@@ -41,6 +41,11 @@ fn map_dot_pipe_exits_zero() {
 }
 
 #[test]
+fn map_mermaid_pipe_exits_zero() {
+    assert!(sh_pipe_taudit_status("map --format mermaid").success());
+}
+
+#[test]
 fn map_text_pipe_exits_zero() {
     assert!(sh_pipe_taudit_status("map --format text").success());
 }
@@ -53,6 +58,16 @@ fn scan_json_pipe_exits_zero() {
 #[test]
 fn graph_mermaid_pipe_exits_zero() {
     assert!(sh_pipe_taudit_status("graph --format mermaid").success());
+}
+
+#[test]
+fn graph_json_pipe_exits_zero() {
+    assert!(sh_pipe_taudit_status("graph --format json").success());
+}
+
+#[test]
+fn graph_summary_pipe_exits_zero() {
+    assert!(sh_pipe_taudit_status("graph --format summary").success());
 }
 
 #[test]

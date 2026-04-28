@@ -1,5 +1,6 @@
 ---
 source: crates/taudit-cli/tests/snapshot_gitlab.rs
+assertion_line: 52
 expression: json
 ---
 findings:
@@ -155,7 +156,10 @@ findings:
 graph:
   completeness: complete
   edges:
-    - from: 5
+    - authority_summary:
+        identity_scope: broad
+        trust_zone: first_party
+      from: 5
       id: 0
       kind: has_access_to
       to: 0

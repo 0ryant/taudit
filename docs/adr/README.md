@@ -5,6 +5,7 @@ Records in this directory capture **significant** product and technical decision
 | ADR | Title |
 |-----|--------|
 | [0001](0001-graph-native-exports-and-leverage.md) | Graph as product: native exports (Mermaid) and leverage strategy |
+| [0002](0002-authority-signal-roadmap-phased.md) | Authority signal roadmap: phased goals, deliverables, non-goals |
 
 ## Conventions
 

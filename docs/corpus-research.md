@@ -30,7 +30,7 @@ In large GHA sweeps, only a **small** slice of files produce **no** default-rule
 
 ## Automated CLI suite (CI + local)
 
-The integration test `crates/taudit-cli/tests/corpus_cli_suite.rs` runs **`taudit scan`** and **`taudit graph`** on every committed YAML under `tests/fixtures/`, each parser `fuzz/corpus/`, and `.github/workflows/`. Run it with:
+The integration test `crates/taudit-cli/tests/corpus_cli_suite.rs` runs **`taudit scan`** and **`taudit graph`** (`--format json` and `--format summary`) on every committed YAML under `tests/fixtures/`, each parser `fuzz/corpus/`, and `.github/workflows/`. Run it with:
 
 ```bash
 just corpus-suite

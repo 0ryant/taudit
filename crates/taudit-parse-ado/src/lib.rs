@@ -75,6 +75,7 @@ impl PipelineParser for AdoParser {
                     graph.mark_partial(
                         "ADO template fragment with top-level parameter conditional — root structure depends on parent pipeline context".to_string(),
                     );
+                    graph.stamp_edge_authority_summaries();
                     return Ok(graph);
                 }
                 return Err(TauditError::Parse(format!("YAML parse error: {e}")));
@@ -322,6 +323,7 @@ impl PipelineParser for AdoParser {
             );
         }
 
+        graph.stamp_edge_authority_summaries();
         Ok(graph)
     }
 }

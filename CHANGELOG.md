@@ -6,24 +6,33 @@ All notable changes to this project will be documented in this file.
 
 ### Added
 
+- **`taudit graph --format summary` (ADR 0002 Phase 3)** — Bounded propagation rollup JSON over boundary-crossing paths (same BFS / dense-graph guard as `scan`); schema [`schemas/authority-propagation-summary.v1.json`](schemas/authority-propagation-summary.v1.json); core builder in [`taudit_core::summary`](crates/taudit-core/src/summary.rs). **`--job`** and **`--rich-labels`** are rejected for this format (full graph only; labels N/A).
+- **Graph JSON — `authority_summary` on edges (ADR 0002 Phase 2)** — On **`has_access_to`** edges to **identity** nodes, exports include an optional **`authority_summary`** (`trust_zone`, `identity_scope`, truncated **`permissions_summary`**) stamped from existing node metadata. Schema: [`schemas/authority-graph.v1.json`](schemas/authority-graph.v1.json); scan report schema updated in lockstep. Parsers call [`AuthorityGraph::stamp_edge_authority_summaries`](crates/taudit-core/src/graph.rs) automatically after parse.
+- **`--rich-labels`** — On **`taudit graph`** and **`taudit map`** with **`--format dot`** or **`--format mermaid`**, embed trust zone and selected node metadata (identity scope, permissions summary) in diagram labels; default labels unchanged; JSON export unchanged. **`taudit map --format mermaid`** uses the same renderer as **`taudit graph --format mermaid`**. See ADR [0002](docs/adr/0002-authority-signal-roadmap-phased.md) Phase 1 and [docs/research/PHASE1-lanes.md](docs/research/PHASE1-lanes.md).
 - **CLI error hints** — User-facing `hint:` lines for common failures (missing `--policy`, output files, suppressions, dense-graph override, remediate paths, etc.) via [`error_hints.rs`](crates/taudit-cli/src/error_hints.rs).
-- **Corpus CLI integration test** — [`corpus_cli_suite.rs`](crates/taudit-cli/tests/corpus_cli_suite.rs) runs `taudit scan` and `taudit graph` on every committed YAML under `tests/fixtures/`, parser `fuzz/corpus/`, and `.github/workflows/`. Run with `just corpus-suite`. Optional root `corpus/` stress pass: `TAUDIT_TEST_LOCAL_CORPUS=1`.
+- **Corpus CLI integration test** — [`corpus_cli_suite.rs`](crates/taudit-cli/tests/corpus_cli_suite.rs) runs `taudit scan` and `taudit graph` (json + summary) on every committed YAML under `tests/fixtures/`, parser `fuzz/corpus/`, and `.github/workflows/`. Run with `just corpus-suite`. Optional root `corpus/` stress pass: `TAUDIT_TEST_LOCAL_CORPUS=1`.
 - **`tests/common`**: [`workspace_root()`](crates/taudit-cli/tests/common/mod.rs) for integration tests.
 
 ### Fixed
 
+- **`.gitignore`** — Ignore repo-root **`security.svg`** and **`verify.sarif.json`** when produced by ad-hoc demos (`docs/golden-paths.md` uses `/tmp` for SVG examples instead).
 - **Dense graph guard** — One coherent error (source file + hint) instead of duplicate `eprintln!` + `main` error lines.
 - **`scripts/quality-gate.sh`** and **`just self-test`** — Use `cargo run -p taudit` (package name is `taudit`, not `taudit-cli`).
 
 ### Documentation
 
+- **[docs/ROADMAP.md](docs/ROADMAP.md)** — v1.0 charter table aligned with shipped **`verify`**, **`graph`** (json/dot/mermaid/**summary**), and versioned schemas; opening “current state” paragraph refreshed.
+- **[docs/golden-paths.md](docs/golden-paths.md)** — Blessed copy-paste CLI flows on committed fixtures; **[docs/media/README.md](docs/media/README.md)** — policy for generated SVGs vs terminal screenshots; **[docs/research/2026-04-27-council-docs-golden-paths-screenshots.md](docs/research/2026-04-27-council-docs-golden-paths-screenshots.md)** — Quick Council synthesis (executable docs, insta/corpus layering, text over pixels). **`just golden-paths`** + **`scripts/golden-paths.sh`** smoke those paths (includes **mermaid** + **`explain`**); **quality** workflow runs the same script after release build; **`scripts/quality-gate.sh`** **pre-push** / **quality-gate** stages run the smoke after **`cargo test`**.
 - **[docs/corpus-research.md](docs/corpus-research.md)** — Documents the automated corpus CLI suite and `TAUDIT_TEST_LOCAL_CORPUS`.
+- **[USERGUIDE.md](USERGUIDE.md)** — **`taudit graph --format summary`** (propagation rollup), **`--job`** vs full-graph for json/summary/scan, and anchor to **docs/authority-graph.md**.
+- **[docs/adr/0002-authority-signal-roadmap-phased.md](docs/adr/0002-authority-signal-roadmap-phased.md)** — Phase **1** **Shipped (in-tree)** line (parity with phases 2–3).
+- **[man/taudit.1](man/taudit.1)** — `map --format mermaid`, **`--format summary`**, **`--rich-labels`**, and diagram-vs-JSON/summary notes aligned with **USERGUIDE** / **docs/authority-graph.md**.
 
 ## v1.0.7 — 2026-04-27
 
 ### Fixed
 
-- **Broken pipe (EPIPE) on stdout** — All high-volume commands now treat a closed pipeline (e.g. `| head -c 1`) as a clean exit **0**, consistent with `taudit graph` since v1.0.5. Covers **`scan`** (all formats to stdout), **`map`** (text + dot), **`verify`**, **`diff`**, **`explain`**, **`invariants`**, **`suppressions`**, **`baseline`**, **`version` / `update`**, **`emit-spec`**, and **`remediate`**. Implementation: [`SilenceBrokenPipe`](crates/taudit-cli/src/stdio_epipe.rs) for streaming writers, [`try_write_stdout`](crates/taudit-cli/src/stdio_epipe.rs) / `try_println!` for buffered lines; integration tests in [`crates/taudit-cli/tests/broken_pipe.rs`](crates/taudit-cli/tests/broken_pipe.rs).
+- **Broken pipe (EPIPE) on stdout** — All high-volume commands now treat a closed pipeline (e.g. `| head -c 1`) as a clean exit **0**, consistent with `taudit graph` since v1.0.5. Covers **`scan`** (all formats to stdout), **`map`** (text, dot, mermaid), **`verify`**, **`diff`**, **`explain`**, **`invariants`**, **`suppressions`**, **`baseline`**, **`version` / `update`**, **`emit-spec`**, and **`remediate`**. Implementation: [`SilenceBrokenPipe`](crates/taudit-cli/src/stdio_epipe.rs) for streaming writers, [`try_write_stdout`](crates/taudit-cli/src/stdio_epipe.rs) / `try_println!` for buffered lines; integration tests in [`crates/taudit-cli/tests/broken_pipe.rs`](crates/taudit-cli/tests/broken_pipe.rs).
 
 ## v1.0.6 — 2026-04-27
 
@@ -82,13 +91,13 @@ All notable changes to this project will be documented in this file.
 
 ## v1.0.1 — 2026-04-26
 
-> Competitive parity release: snapshot regression suite, multi-OS CI, SLSA L3 provenance, and parser fuzz harnesses.
+> Competitive parity release: snapshot regression suite, multi-OS CI, GitHub Artifact Attestations on release assets, and parser fuzz harnesses.
 
 ### Highlights
 
 - **76 cargo-insta snapshots**: Per-finding regression snapshots across GHA, ADO, and GitLab parsers. Any change to rule IDs, severities, fingerprints, or message copy fails CI explicitly. Gate: `cargo insta test --unreferenced reject`.
 - **Multi-OS CI matrix**: `cargo test --workspace` now passes on ubuntu, macos, and windows on every PR (`test-matrix` job with `fail-fast: false`).
-- **SLSA L3 provenance**: Every release now attaches SLSA L3 provenance via `slsa-framework/slsa-github-generator`. Verifiable with `slsa-verifier verify-artifact`.
+- **Build provenance (GitHub Artifact Attestations):** Release archives and SBOM files are attested with [`actions/attest-build-provenance`](https://github.com/actions/attest-build-provenance) in `.github/workflows/release.yml`. Verify with **`gh attestation verify <path> --repo 0ryant/taudit`** (see [docs/release-trust.md](docs/release-trust.md#verifying-build-attestations-github)). *Errata (2026-04): earlier text referenced `slsa-github-generator` / `slsa-verifier`; that generator path was not adopted.*
 - **Parser fuzz harnesses**: Three `cargo-fuzz` targets (`parse_gha`, `parse_ado`, `parse_gitlab`) with 10 corpus seed files. CI smoke-runs each for 10 s on push to main.
 - **cargo-mutants gate**: Informational mutation coverage report for `taudit-core` runs on every push to main.
 - **572 tests**: 76 new snapshot assertions on top of the v1.0.0 baseline.

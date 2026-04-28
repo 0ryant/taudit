@@ -826,6 +826,7 @@ impl PipelineParser for GhaParser {
             );
         }
 
+        graph.stamp_edge_authority_summaries();
         Ok(graph)
     }
 }

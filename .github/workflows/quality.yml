@@ -105,6 +105,9 @@ jobs:
       - name: Build taudit (release)
         run: cargo build --release -p taudit
 
+      - name: Golden paths smoke (docs/golden-paths.md)
+        run: TAUDIT_BIN=target/release/taudit bash scripts/golden-paths.sh
+
       # Informational — taudit scan always exits 0 in v0.7+; we surface
       # findings via SARIF artifact + a CI warning if the threshold is hit.
       - name: taudit self-scan (SARIF)

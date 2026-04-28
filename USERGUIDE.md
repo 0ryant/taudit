@@ -35,7 +35,7 @@ taudit --version
 # taudit 1.0.8
 ```
 
-`taudit --help` appends a long reference (graph formats `json`/`dot`/`mermaid`, `--job`, stdout/pipes, doc paths). Use `taudit graph --help`, `taudit scan --help`, etc. for subcommand flags. A Troff manual is in the repo: [`man/taudit.1`](../man/taudit.1).
+`taudit --help` appends a long reference (graph formats `json`/`dot`/`mermaid`/`summary`, `--job`, stdout/pipes, doc paths). Use `taudit graph --help`, `taudit scan --help`, etc. for subcommand flags. A Troff manual is in the repo: [`man/taudit.1`](../man/taudit.1). **Blessed CLI flows** on committed fixtures: [`docs/golden-paths.md`](docs/golden-paths.md); run **`just golden-paths`** from a clone to smoke them.
 
 ---
 
@@ -199,11 +199,36 @@ dot -Tsvg graph.dot -o graph.svg
 # Full workflow (all jobs)
 taudit graph --format mermaid .github/workflows/release.yml
 
+# Same Mermaid text from `taudit map` (diagram only — no table header)
+taudit map --format mermaid .github/workflows/release.yml
+
 # Per-job subgraph — smaller diagram, same semantics for `dot` / `mermaid` / `map`
 taudit graph --format mermaid --job build .github/workflows/release.yml
 ```
 
-The output is a Mermaid `flowchart LR` — paste it into a Markdown fenced code block with the `mermaid` language tag (GitHub, GitLab, or any Mermaid-capable preview). You do **not** need the `dot` binary. The **canonical** machine interchange remains `taudit graph --format json` (see [ADR 0001](docs/adr/0001-graph-native-exports-and-leverage.md)). An ASCII picture of how JSON / DOT / Mermaid relate to one `AuthorityGraph` is in [docs/authority-graph.md](docs/authority-graph.md#at-a-glance-one-graph-three-exports). When the parser marks the graph as incomplete, a leading `%%` comment notes that the diagram may omit authority edges; use JSON for `completeness` and `completeness_gaps`.
+The output is a Mermaid `flowchart LR` — paste it into a Markdown fenced code block with the `mermaid` language tag (GitHub, GitLab, or any Mermaid-capable preview). You do **not** need the `dot` binary. The **canonical** machine interchange remains `taudit graph --format json` (see [ADR 0001](docs/adr/0001-graph-native-exports-and-leverage.md)). An ASCII picture of how JSON / DOT / Mermaid / summary relate to one `AuthorityGraph` is in [docs/authority-graph.md](docs/authority-graph.md#at-a-glance-one-graph-several-exports). When the parser marks the graph as incomplete, a leading `%%` comment notes that the diagram may omit authority edges; use JSON for `completeness` and `completeness_gaps`.
+
+#### JSON = contract; diagrams = views (`--rich-labels`)
+
+**`taudit graph --format json`** is the full, schema-backed interchange. **DOT**
+and **Mermaid** are **diagram views** of the same authority graph: default node
+labels stay short (name only). Add **`--rich-labels`** with **`taudit graph`**
+or **`taudit map`** when using **`--format dot`** or **`--format mermaid`** to
+inline trust zone and key node metadata the parser already attached (for
+example identity scope and permissions text on `GITHUB_TOKEN`) — useful for
+small graphs and documentation; skip it for very large workflows. JSON is
+unchanged by this flag. On **`has_access_to`** edges to **identity** nodes, the
+JSON graph also carries an optional **`authority_summary`** (trust zone,
+identity scope, truncated permissions) for tools that prefer edge-shaped data;
+see [docs/authority-graph.md](docs/authority-graph.md#edge-authority_summary-adr-0002-phase-2).
+
+#### Propagation summary (`--format summary`)
+
+**`taudit graph --format summary`** emits a **separate** JSON document (not the graph envelope) with rollups over **boundary-crossing** propagation paths — sinks in a **strictly lower** trust zone than the authority source — plus top sinks/sources by path count. It uses the same **`--max-hops`** and **dense-graph** guard as **`taudit scan`** (override with **`--force-scan-dense`** when you accept the cost). **`--job`** and **`--rich-labels`** do not apply (summary is always the full parsed graph). Schema: [`schemas/authority-propagation-summary.v1.json`](../schemas/authority-propagation-summary.v1.json); details in [docs/authority-graph.md](docs/authority-graph.md#propagation-summary-format-summary).
+
+```bash
+taudit graph --format summary .github/workflows/release.yml | jq '.totals'
+```
 
 The DOT output encodes trust zones as node colors:
 - **green** — `FirstParty`
@@ -221,8 +246,10 @@ Node shapes:
 
 Large workflows produce crowded graphs. Pass **`--job <job_id>`** to restrict
 `taudit map`, **`taudit graph --format dot`**, and **`taudit graph --format mermaid`**
-to the subgraph reachable from that job’s steps (BFS across edge kinds). If the
-name is wrong, taudit lists the job IDs it parsed from the file.
+to the subgraph reachable from that job’s steps (BFS across edge kinds).
+**`taudit graph --format json`**, **`--format summary`**, and JSON from **`taudit scan`**
+always use the **full** graph (job filter does not apply). If the job name is wrong,
+taudit lists the job IDs it parsed from the file.
 
 **Jobs in this repository (copy/paste examples):**
 

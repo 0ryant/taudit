@@ -46,17 +46,40 @@ Mermaid
 .B flowchart LR
 for pasting into Markdown (e.g. GitHub); no Graphviz required.
 .TP
+.B "taudit graph \-\-format summary"
+Bounded propagation rollup JSON (paths into strictly lower trust zones). Schema:
+.IR schemas/authority-propagation-summary.v1.json .
+Same
+.B \-\-max\-hops
+and dense-graph guard as
+.BR "taudit scan" " (\-\-force\-scan\-dense" " to override)."
+.TP
 .B "taudit graph \-\-job \fIname\fR"
 For
 .B dot
 and
 .B mermaid
-only: restrict output to the subgraph reachable from that job. JSON is always the full graph.
+only: restrict output to the subgraph reachable from that job. JSON and summary are always the full graph.
+.TP
+.BR "taudit graph \-\-rich\-labels " " / " "taudit map \-\-rich\-labels"
+With
+.B \-\-format dot
+or
+.BR "\-\-format mermaid" :
+append trust zone and selected node metadata (e.g. identity scope, permissions summary) to diagram labels. No effect on JSON or summary. Incompatible with
+.B \-\-format json
+and
+.B \-\-format summary
+.RB ( graph ),
+or
+.B \-\-format text
+.RB ( map );
+those combinations exit with an error.
 .PP
 ASCII overview:
 .IR docs/authority-graph.md
 .RB ( section
-"At a glance (one graph, three exports)"
+"At a glance (one graph, several exports)"
 ). ADR:
 .IR docs/adr/0001-graph-native-exports-and-leverage.md .
 .SH COMMANDS
@@ -94,14 +117,20 @@ See
 .B taudit scan \-\-help
 for baselines, suppressions, ignore files, and telemetry.
 .SS "taudit map \fIpath...\fR"
-Step\(muauthority table, or Graphviz digraph of the same graph model as
-.BR "taudit graph \-\-format dot" .
+Step\(muauthority table, or the same diagram renderers as
+.B taudit graph
+.RB ( \-\-format dot " or " \-\-format mermaid ).
 .TP
 .B \-\-format \fIfmt\fR
-.BR text " (default) or " dot .
+.BR text " (default), " dot ", or " mermaid .
 .TP
 .B \-\-job \fIname\fR
-Restrict to one job.
+Restrict to one job (diagrams) or filter the table to that job.
+.TP
+.B \-\-rich\-labels
+Same semantics as
+.BR "taudit graph \-\-rich\-labels"
+.RB ( dot " / " mermaid " only)."
 .SS "taudit graph \fIpath...\fR"
 Emit the canonical graph. See
 .B AUTHORITY GRAPH
@@ -209,6 +238,10 @@ taudit graph .github/workflows/release.yml
 
 # Mermaid for a README
 taudit graph .github/workflows/release.yml \-\-format mermaid
+
+# Same Mermaid from map; optional rich labels (zone + metadata on nodes)
+taudit map .github/workflows/release.yml \-\-format mermaid
+taudit graph .github/workflows/release.yml \-\-format mermaid \-\-rich\-labels
 
 # Graphviz
 taudit graph .github/workflows/release.yml \-\-format dot | dot \-Tsvg \-o graph.svg
