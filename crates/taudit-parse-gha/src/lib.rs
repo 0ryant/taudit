@@ -798,7 +798,7 @@ impl PipelineParser for GhaParser {
             if let Some(outputs) = job.outputs.as_ref() {
                 for (out_name, out_value) in outputs {
                     let source = classify_job_output_source(out_value, &step_oidc_by_yaml_id);
-                    job_output_records.push(format!("{}\t{}\t{}", job_name, out_name, source));
+                    job_output_records.push(format!("{job_name}\t{out_name}\t{source}"));
                 }
             }
         }
