@@ -1,8 +1,8 @@
 use crate::graph::{
-    AuthorityCompleteness, AuthorityGraph, EdgeKind, NodeId, NodeKind, TrustZone,
+    AuthorityCompleteness, AuthorityGraph, EdgeKind, Node, NodeId, NodeKind, TrustZone,
     META_IDENTITY_SCOPE, META_JOB_NAME, META_PERMISSIONS,
 };
-use std::collections::{HashSet, VecDeque};
+use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet, VecDeque};
 
 /// A row in the authority map: one step and its authority grants.
 #[derive(Debug)]
@@ -287,6 +287,15 @@ pub enum DiagramLabelDetail {
     Rich,
 }
 
+/// Optional aggregation for DOT authority graphs (ADR 0002 Phase 4).
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Hash)]
+pub enum DotJobCollapse {
+    #[default]
+    Off,
+    /// Merge every [`NodeKind::Step`] in the same `META_JOB_NAME` bucket into one node per job.
+    On,
+}
+
 #[derive(Clone, Copy)]
 enum RichLabelLayout {
     /// Newline-separated blocks (Graphviz `label` string with escaped `\n`).
@@ -423,10 +432,15 @@ fn reachable_set(graph: &AuthorityGraph, seeds: &[NodeId]) -> HashSet<NodeId> {
 ///
 /// `label_detail` controls optional rich labels; [`DiagramLabelDetail::Compact`]
 /// preserves the historical default (node name only).
+///
+/// When `job_collapse` is [`DotJobCollapse::On`], every step in the same
+/// `META_JOB_NAME` bucket is drawn as one ellipse inside a `subgraph cluster_*`
+/// (Graphviz cluster per job). Non-step nodes keep their canonical `n<id>` ids.
 pub fn render_dot(
     graph: &AuthorityGraph,
     filter_job: Option<&str>,
     label_detail: DiagramLabelDetail,
+    job_collapse: DotJobCollapse,
 ) -> String {
     let included: Option<HashSet<NodeId>> = match filter_job {
         Some(name) => {
@@ -444,6 +458,17 @@ pub fn render_dot(
         None => None,
     };
 
+    match job_collapse {
+        DotJobCollapse::Off => render_dot_flat(graph, included, label_detail),
+        DotJobCollapse::On => render_dot_collapsed_by_job(graph, included, label_detail),
+    }
+}
+
+fn render_dot_flat(
+    graph: &AuthorityGraph,
+    included: Option<HashSet<NodeId>>,
+    label_detail: DiagramLabelDetail,
+) -> String {
     let mut out = String::new();
     out.push_str("digraph taudit {\n");
     out.push_str("    rankdir=LR;\n");
@@ -476,6 +501,204 @@ pub fn render_dot(
             edge.from,
             edge.to,
             edge_label(edge.kind),
+        ));
+    }
+
+    out.push_str("}\n");
+    out
+}
+
+fn effective_included(
+    graph: &AuthorityGraph,
+    included: &Option<HashSet<NodeId>>,
+) -> HashSet<NodeId> {
+    match included {
+        Some(s) => s.clone(),
+        None => graph.nodes.iter().map(|n| n.id).collect(),
+    }
+}
+
+fn job_bucket_key(step: &Node) -> String {
+    step.metadata
+        .get(META_JOB_NAME)
+        .cloned()
+        .unwrap_or_default()
+}
+
+fn job_subgraph_title(key: &str) -> String {
+    if key.is_empty() {
+        "(no job)".to_string()
+    } else {
+        key.to_string()
+    }
+}
+
+fn collapsed_job_node_label(
+    job_title: &str,
+    step_count: usize,
+    worst_zone: TrustZone,
+    label_detail: DiagramLabelDetail,
+) -> String {
+    let steps_note = if step_count == 1 {
+        "1 step".to_string()
+    } else {
+        format!("{step_count} steps")
+    };
+    match label_detail {
+        DiagramLabelDetail::Compact => {
+            format!("job: {job_title}\n({steps_note})")
+        }
+        DiagramLabelDetail::Rich => {
+            let zone = format!("{:?}", worst_zone);
+            format!("job: {job_title}\n({steps_note})\nzone: {zone}")
+        }
+    }
+}
+
+fn min_trust_zone<'a, I: Iterator<Item = &'a TrustZone>>(zones: I) -> TrustZone {
+    zones.fold(TrustZone::FirstParty, |acc, z| {
+        if z.is_lower_than(&acc) {
+            *z
+        } else {
+            acc
+        }
+    })
+}
+
+fn render_dot_collapsed_by_job(
+    graph: &AuthorityGraph,
+    included: Option<HashSet<NodeId>>,
+    label_detail: DiagramLabelDetail,
+) -> String {
+    let eff = effective_included(graph, &included);
+
+    let mut job_keys: Vec<String> = graph
+        .nodes
+        .iter()
+        .filter(|n| n.kind == NodeKind::Step && eff.contains(&n.id))
+        .map(job_bucket_key)
+        .collect::<HashSet<_>>()
+        .into_iter()
+        .collect();
+    job_keys.sort();
+
+    let job_index: HashMap<String, usize> = job_keys
+        .iter()
+        .enumerate()
+        .map(|(i, k)| (k.clone(), i))
+        .collect();
+
+    let mut steps_per_job: HashMap<String, Vec<&Node>> = HashMap::new();
+    for n in &graph.nodes {
+        if n.kind != NodeKind::Step || !eff.contains(&n.id) {
+            continue;
+        }
+        let k = job_bucket_key(n);
+        steps_per_job.entry(k).or_default().push(n);
+    }
+
+    let node_by_id: HashMap<NodeId, &Node> = graph.nodes.iter().map(|n| (n.id, n)).collect();
+
+    let mut collapsed_edges: BTreeMap<(String, String), BTreeSet<EdgeKind>> = BTreeMap::new();
+
+    let step_dot_id = |step_id: NodeId| -> Option<String> {
+        let n = node_by_id.get(&step_id)?;
+        if n.kind != NodeKind::Step {
+            return None;
+        }
+        let idx = *job_index.get(&job_bucket_key(n))?;
+        Some(format!("jb{idx}"))
+    };
+
+    let non_step_dot_id = |id: NodeId| -> Option<String> {
+        let n = node_by_id.get(&id)?;
+        if n.kind == NodeKind::Step {
+            return None;
+        }
+        if !eff.contains(&id) {
+            return None;
+        }
+        Some(format!("n{id}"))
+    };
+
+    let endpoint_id = |id: NodeId| -> Option<String> {
+        if let Some(s) = step_dot_id(id) {
+            return Some(s);
+        }
+        non_step_dot_id(id)
+    };
+
+    for e in &graph.edges {
+        if !eff.contains(&e.from) || !eff.contains(&e.to) {
+            continue;
+        }
+        let Some(a) = endpoint_id(e.from) else {
+            continue;
+        };
+        let Some(b) = endpoint_id(e.to) else { continue };
+        if a == b {
+            continue;
+        }
+        collapsed_edges
+            .entry((a.clone(), b.clone()))
+            .or_default()
+            .insert(e.kind);
+    }
+
+    let mut out = String::new();
+    out.push_str("digraph taudit {\n");
+    out.push_str("    rankdir=LR;\n");
+    out.push_str("    node [fontname=\"Helvetica\"];\n");
+
+    for (idx, job_key) in job_keys.iter().enumerate() {
+        let steps = steps_per_job
+            .get(job_key)
+            .map(|v| v.as_slice())
+            .unwrap_or(&[]);
+        let worst = min_trust_zone(steps.iter().map(|n| &n.trust_zone));
+        let title = job_subgraph_title(job_key);
+        let raw_label = collapsed_job_node_label(&title, steps.len(), worst, label_detail);
+        out.push_str(&format!("    subgraph cluster_job_{idx} {{\n"));
+        out.push_str(&format!("        label=\"job: {}\";\n", dot_escape(&title)));
+        out.push_str("        style=\"rounded\";\n");
+        out.push_str(&format!(
+            "        \"jb{idx}\" [label=\"{}\" shape=ellipse color={}];\n",
+            dot_escape(&raw_label),
+            dot_color(worst),
+        ));
+        out.push_str("    }\n");
+    }
+
+    for node in &graph.nodes {
+        if node.kind == NodeKind::Step {
+            continue;
+        }
+        if !eff.contains(&node.id) {
+            continue;
+        }
+        let raw_label = diagram_node_label(node, label_detail, RichLabelLayout::DotMultiline);
+        out.push_str(&format!(
+            "    \"n{}\" [label=\"{}\" shape={} color={}];\n",
+            node.id,
+            dot_escape(&raw_label),
+            dot_shape(node.kind),
+            dot_color(node.trust_zone),
+        ));
+    }
+
+    for ((from, to), kinds) in &collapsed_edges {
+        let mut kinds_v: Vec<EdgeKind> = kinds.iter().copied().collect();
+        kinds_v.sort_unstable();
+        let label = kinds_v
+            .iter()
+            .map(|k| edge_label(*k))
+            .collect::<Vec<_>>()
+            .join(", ");
+        out.push_str(&format!(
+            "    \"{}\" -> \"{}\" [label=\"{}\"];\n",
+            from,
+            to,
+            dot_escape(&label),
         ));
     }
 
@@ -660,7 +883,7 @@ mod tests {
         let step = g.add_node(NodeKind::Step, "build", TrustZone::FirstParty);
         g.add_edge(step, secret, EdgeKind::HasAccessTo);
 
-        let dot = render_dot(&g, None, DiagramLabelDetail::Compact);
+        let dot = render_dot(&g, None, DiagramLabelDetail::Compact, DotJobCollapse::Off);
         assert!(dot.starts_with("digraph taudit"), "dot output: {dot}");
         // Node lines for both endpoints with their kind-driven shapes.
         assert!(
@@ -772,7 +995,7 @@ mod tests {
         let step = g.add_node(NodeKind::Step, "build", TrustZone::FirstParty);
         g.add_edge(step, id, EdgeKind::HasAccessTo);
 
-        let dot = render_dot(&g, None, DiagramLabelDetail::Rich);
+        let dot = render_dot(&g, None, DiagramLabelDetail::Rich, DotJobCollapse::Off);
         assert!(
             dot.contains("zone: FirstParty"),
             "rich dot should include zone: {dot}"
@@ -840,8 +1063,13 @@ mod tests {
             g.add_node_with_metadata(NodeKind::Step, "ship", TrustZone::FirstParty, deploy_meta);
         g.add_edge(deploy_step, deploy_secret, EdgeKind::HasAccessTo);
 
-        let full = render_dot(&g, None, DiagramLabelDetail::Compact);
-        let filtered = render_dot(&g, Some("build"), DiagramLabelDetail::Compact);
+        let full = render_dot(&g, None, DiagramLabelDetail::Compact, DotJobCollapse::Off);
+        let filtered = render_dot(
+            &g,
+            Some("build"),
+            DiagramLabelDetail::Compact,
+            DotJobCollapse::Off,
+        );
 
         // Full output names every node; filtered output drops the deploy job.
         assert!(full.contains("BUILD_SECRET") && full.contains("DEPLOY_SECRET"));
@@ -858,6 +1086,66 @@ mod tests {
         assert!(
             filtered_lines < full_lines,
             "filtered DOT ({filtered_lines} lines) not smaller than full ({full_lines})"
+        );
+    }
+
+    #[test]
+    fn dot_job_collapse_emits_cluster_per_job_and_merges_step_edges() {
+        let mut g = AuthorityGraph::new(source("ci.yml"));
+        let shared = g.add_node(NodeKind::Secret, "SHARED", TrustZone::FirstParty);
+
+        let mut build_meta = std::collections::HashMap::new();
+        build_meta.insert(META_JOB_NAME.to_string(), "build".to_string());
+        let s1 = g.add_node_with_metadata(
+            NodeKind::Step,
+            "compile",
+            TrustZone::FirstParty,
+            build_meta.clone(),
+        );
+        let s2 =
+            g.add_node_with_metadata(NodeKind::Step, "lint", TrustZone::ThirdParty, build_meta);
+        g.add_edge(s1, shared, EdgeKind::HasAccessTo);
+        g.add_edge(s2, shared, EdgeKind::HasAccessTo);
+
+        let mut deploy_meta = std::collections::HashMap::new();
+        deploy_meta.insert(META_JOB_NAME.to_string(), "deploy".to_string());
+        let s3 =
+            g.add_node_with_metadata(NodeKind::Step, "ship", TrustZone::FirstParty, deploy_meta);
+        let deploy_secret = g.add_node(NodeKind::Secret, "DEPLOY_KEY", TrustZone::FirstParty);
+        g.add_edge(s3, deploy_secret, EdgeKind::HasAccessTo);
+
+        let flat = render_dot(&g, None, DiagramLabelDetail::Compact, DotJobCollapse::Off);
+        let collapsed = render_dot(&g, None, DiagramLabelDetail::Compact, DotJobCollapse::On);
+
+        assert!(
+            flat.contains("compile") && flat.contains("lint"),
+            "flat dot should name each step: {flat}"
+        );
+        assert!(
+            !collapsed.contains("compile") && !collapsed.contains("lint"),
+            "collapsed dot should not repeat per-step names: {collapsed}"
+        );
+        assert!(
+            collapsed.contains("subgraph cluster_job_0"),
+            "expected cluster subgraph: {collapsed}"
+        );
+        assert!(
+            collapsed.contains("subgraph cluster_job_1"),
+            "expected second cluster: {collapsed}"
+        );
+        assert!(
+            collapsed.contains("label=\"job: build\"")
+                && collapsed.contains("label=\"job: deploy\""),
+            "cluster titles: {collapsed}"
+        );
+        assert!(
+            collapsed.contains(&format!("\"jb0\" -> \"n{}\"", shared)),
+            "merged edge from build job bucket to secret: {collapsed}"
+        );
+        assert!(
+            collapsed.lines().filter(|l| l.contains("ellipse")).count()
+                < flat.lines().filter(|l| l.contains("ellipse")).count(),
+            "collapsed should have fewer ellipse nodes than flat"
         );
     }
 

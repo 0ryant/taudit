@@ -9,7 +9,8 @@ Authority graph exports (taudit graph)
     --job <name>     For dot and mermaid only: restrict to the subgraph reachable from that job.
                      JSON and summary are always the full graph (job filter does not apply).
     --rich-labels    For dot and mermaid only: add trust zone + key node metadata to labels (JSON unchanged).
-    --collapse-by    Phase 4 (ADR 0002): job | trust-zone — reserved; stderr notice only until implemented.
+    --collapse-by    Phase 4 (ADR 0002): job collapses steps per job in --format dot (subgraph cluster_*).
+                     trust-zone is not implemented yet (stderr notice). JSON/summary ignore job collapse.
     --risk-only      Phase 4 (ADR 0002): risk-only subgraph — reserved; stderr notice only until implemented.
 
 Authority map (taudit map)

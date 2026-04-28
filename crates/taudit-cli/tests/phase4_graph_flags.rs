@@ -1,4 +1,4 @@
-//! ADR 0002 Phase 4: `taudit graph --collapse-by` / `--risk-only` scaffolding (no-op + stderr notice).
+//! ADR 0002 Phase 4: `taudit graph --collapse-by` / `--risk-only` (DOT job collapse + stderr notices).
 
 use std::path::PathBuf;
 use std::process::Command;
@@ -20,7 +20,7 @@ fn taudit() -> Command {
 }
 
 #[test]
-fn graph_collapse_by_job_emits_phase4_notice_and_succeeds() {
+fn graph_collapse_by_job_json_stderr_explains_dot_only() {
     let fixture = clean_fixture();
     let out = taudit()
         .args([
@@ -43,12 +43,50 @@ fn graph_collapse_by_job_emits_phase4_notice_and_succeeds() {
     );
     let err = String::from_utf8_lossy(&out.stderr);
     assert!(
-        err.contains("Phase 4") && err.contains("not implemented"),
-        "expected Phase 4 notice, got: {err}"
+        err.contains("job collapse is DOT-only"),
+        "expected DOT-only notice, got: {err}"
     );
     assert!(
-        err.contains("--collapse-by=job"),
-        "expected flag echo in notice, got: {err}"
+        !err.contains("not implemented"),
+        "JSON export should not claim Phase 4 collapse is unimplemented: {err}"
+    );
+}
+
+#[test]
+fn graph_collapse_by_job_dot_emits_collapsed_clusters_silently() {
+    let fixture = clean_fixture();
+    let out = taudit()
+        .args([
+            "graph",
+            "--format",
+            "dot",
+            "--platform",
+            "github-actions",
+            "--collapse-by",
+            "job",
+            fixture.to_str().expect("utf8 path"),
+        ])
+        .output()
+        .expect("spawn taudit graph");
+
+    assert!(
+        out.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let err = String::from_utf8_lossy(&out.stderr);
+    assert!(
+        err.trim().is_empty(),
+        "expected no Phase 4 stderr for implemented DOT job collapse, got: {err}"
+    );
+    let dot = String::from_utf8_lossy(&out.stdout);
+    assert!(
+        dot.contains("subgraph cluster_job_") && dot.contains("\"jb0\""),
+        "expected job cluster + synthetic job node, got: {dot}"
+    );
+    assert!(
+        dot.contains("label=\"job: test\""),
+        "expected cluster title from job_name, got: {dot}"
     );
 }
 

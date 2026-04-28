@@ -870,7 +870,7 @@ enum MapFormat {
     Mermaid,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, clap::ValueEnum)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, clap::ValueEnum)]
 enum GraphFormat {
     Json,
     Dot,
@@ -3445,7 +3445,12 @@ fn cmd_map(
                 try_write_stdout(buf.as_bytes())?;
             }
             MapFormat::Dot => {
-                let mut s = map::render_dot(&graph, job.as_deref(), diagram_label_detail);
+                let mut s = map::render_dot(
+                    &graph,
+                    job.as_deref(),
+                    diagram_label_detail,
+                    map::DotJobCollapse::Off,
+                );
                 s.push('\n');
                 try_write_stdout(s.as_bytes())?;
             }
@@ -3475,20 +3480,53 @@ fn cmd_map(
 /// `schemas/authority-graph.v1.json`; `--format summary` emits propagation rollup JSON;
 /// `--format dot` and `--format mermaid` reuse the same renderers as `taudit map --format dot|mermaid`
 /// (job filter applies to diagram output only, not JSON or summary).
-fn warn_graph_phase4_flags_unimplemented(collapse_by: Option<GraphCollapseBy>, risk_only: bool) {
+fn warn_graph_phase4_flags(
+    collapse_by: Option<GraphCollapseBy>,
+    risk_only: bool,
+    format: GraphFormat,
+) {
     if collapse_by.is_none() && !risk_only {
         return;
     }
+
+    let job_collapse_dot = matches!(
+        (collapse_by, format),
+        (Some(GraphCollapseBy::Job), GraphFormat::Dot)
+    );
+
+    if job_collapse_dot && !risk_only {
+        return;
+    }
+
     let mut parts = Vec::<String>::new();
     if let Some(by) = collapse_by {
-        parts.push(format!("--collapse-by={}", by.as_cli_value()));
+        match (by, format) {
+            (GraphCollapseBy::Job, GraphFormat::Dot) => {}
+            (GraphCollapseBy::Job, _) => {
+                parts.push(
+                    "--collapse-by=job (ignored for this export format; job collapse is DOT-only)"
+                        .to_string(),
+                );
+            }
+            (GraphCollapseBy::TrustZone, _) => {
+                parts.push(format!("--collapse-by={}", by.as_cli_value()));
+            }
+        }
     }
     if risk_only {
         parts.push("--risk-only".to_owned());
     }
+    if parts.is_empty() {
+        return;
+    }
+    let joined = parts.join(", ");
+    let dot_only_job_notice = parts.len() == 1 && joined.contains("job collapse is DOT-only");
+    if dot_only_job_notice {
+        eprintln!("taudit: notice: {joined}.");
+        return;
+    }
     eprintln!(
-        "taudit: notice: {} — ADR 0002 Phase 4 (scale / composite policy) is not implemented yet; output unchanged.",
-        parts.join(", ")
+        "taudit: notice: {joined} — ADR 0002 Phase 4 (scale / composite policy) is not implemented yet; output unchanged."
     );
 }
 
@@ -3506,7 +3544,7 @@ fn cmd_graph(
     collapse_by: Option<GraphCollapseBy>,
     risk_only: bool,
 ) -> Result<()> {
-    warn_graph_phase4_flags_unimplemented(collapse_by, risk_only);
+    warn_graph_phase4_flags(collapse_by, risk_only, format);
 
     if rich_labels && matches!(format, GraphFormat::Json | GraphFormat::Summary) {
         anyhow::bail!("`--rich-labels` applies only to `--format dot` and `--format mermaid`");
@@ -3630,8 +3668,14 @@ fn cmd_graph(
                 try_write_stdout(&json)?;
             }
             GraphFormat::Dot => {
+                let job_collapse = if collapse_by == Some(GraphCollapseBy::Job) {
+                    map::DotJobCollapse::On
+                } else {
+                    map::DotJobCollapse::Off
+                };
                 let mut dot =
-                    map::render_dot(&graph, job.as_deref(), diagram_label_detail).into_bytes();
+                    map::render_dot(&graph, job.as_deref(), diagram_label_detail, job_collapse)
+                        .into_bytes();
                 dot.push(b'\n');
                 try_write_stdout(&dot)?;
             }

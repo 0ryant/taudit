@@ -439,7 +439,7 @@ pub struct Node {
 
 /// Edge semantics model authority/data flow — not syntactic YAML relations.
 /// Design test: "Can authority propagate along this edge?"
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum EdgeKind {
     /// Step -> Secret or Identity (authority granted at runtime).
