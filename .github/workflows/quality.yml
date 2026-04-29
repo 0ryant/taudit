@@ -126,6 +126,8 @@ jobs:
       # Informational — taudit scan always exits 0 in v0.7+; we surface
       # findings via SARIF artifact + a CI warning if the threshold is hit.
       - name: taudit self-scan (SARIF)
+        env:
+          TAUDIT_CORRELATION_ID: quality-taudit-${{ github.run_id }}-${{ github.run_attempt }}
         run: |
           ./target/release/taudit scan .github/workflows/ \
             --platform github-actions \

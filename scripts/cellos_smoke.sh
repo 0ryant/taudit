@@ -25,10 +25,19 @@ if [[ ! -f "tests/fixtures/clean.yml" ]]; then
   exit 1
 fi
 
-echo "Building taudit binary..."
-cargo build -p taudit --quiet
+TAUDIT_BIN="${TAUDIT_BIN:-${PWD}/target/debug/taudit}"
+if [[ ! -x "${TAUDIT_BIN}" ]]; then
+  echo "Building taudit binary (debug) — set TAUDIT_BIN to skip..."
+  cargo build -p taudit --quiet
+  TAUDIT_BIN="${PWD}/target/debug/taudit"
+fi
 
-TAUDIT_BIN="${PWD}/target/debug/taudit"
+# Absolute path for argv0 allow-list (CellOS supervisor); avoid realpath for macOS portability.
+case "${TAUDIT_BIN}" in
+  /*) ;;
+  *) TAUDIT_BIN="${PWD}/${TAUDIT_BIN}" ;;
+esac
+bin_dir="$(cd "$(dirname "${TAUDIT_BIN}")" && pwd)"
 SPEC_PATH="$(mktemp /tmp/taudit-cellos-spec.XXXXXX)"
 
 cat >"${SPEC_PATH}" <<EOF
@@ -52,7 +61,7 @@ EOF
 
 echo "Running taudit inside CellOS supervisor..."
 CELL_OS_USE_NOOP_SINK=1 \
-CELLOS_RUN_ARGV0_ALLOW_PREFIXES="${PWD}/target/debug,/usr/bin,/bin" \
+CELLOS_RUN_ARGV0_ALLOW_PREFIXES="${bin_dir},/usr/bin,/bin" \
 cargo run --manifest-path "${CELLOS_REPO}/Cargo.toml" -p cellos-supervisor --quiet -- "${SPEC_PATH}"
 
 rm -f "${SPEC_PATH}"

@@ -1,0 +1,106 @@
+# Cross-repo stack smoke: taudit authority scans on sibling workflow trees,
+# plus CellOS supervisor running taudit in an execution cell (when CellOS
+# checkout succeeds). tsafe is exercised as a *scan target* here — the
+# tsafe vault CLI is not invoked in CI (no vault / agent socket).
+#
+# Configure sibling repo ids (owner/name) in Settings → Variables if defaults
+# do not match your org: SIBLING_TSAFE_REPO, SIBLING_CELLOS_REPO.
+name: stack-integration
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  CARGO_TERM_COLOR: always
+  RUST_BACKTRACE: 1
+
+jobs:
+  stack-smoke:
+    name: taudit + tsafe + CellOS (sibling checkouts)
+    runs-on: ubuntu-latest
+    # Fork PRs: skip — default GITHUB_TOKEN cannot read base-org private siblings.
+    if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+
+      - name: Rust toolchain
+        uses: dtolnay/rust-toolchain@98e1b82157cd469e843cb7f524c1313b4ad9492c # 1.88
+
+      - uses: Swatinem/rust-cache@9d47c6ad4b02e050fd481d890b2ea34778fd09d6 # v2.7.8
+        with:
+          key: stack-integration
+
+      - name: Build taudit (release)
+        run: cargo build --release -p taudit
+
+      - name: Resolve sibling repository ids
+        id: siblings
+        shell: bash
+        env:
+          SIBLING_TSAFE_REPO: ${{ vars.SIBLING_TSAFE_REPO }}
+          SIBLING_CELLOS_REPO: ${{ vars.SIBLING_CELLOS_REPO }}
+        run: |
+          owner="${GITHUB_REPOSITORY%%/*}"
+          tsafe_repo="${SIBLING_TSAFE_REPO:-${owner}/tsafe}"
+          cellos_repo="${SIBLING_CELLOS_REPO:-${owner}/CellOS}"
+          echo "tsafe_repo=${tsafe_repo}" >> "${GITHUB_OUTPUT}"
+          echo "cellos_repo=${cellos_repo}" >> "${GITHUB_OUTPUT}"
+          echo "Using sibling tsafe repo: ${tsafe_repo}"
+          echo "Using sibling CellOS repo: ${cellos_repo}"
+
+      - name: Checkout tsafe (sibling)
+        id: checkout_tsafe
+        continue-on-error: true
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          repository: ${{ steps.siblings.outputs.tsafe_repo }}
+          path: _siblings/tsafe
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: taudit scan tsafe GitHub workflows
+        if: steps.checkout_tsafe.outcome == 'success'
+        env:
+          TAUDIT_CORRELATION_ID: stack-tsafe-${{ github.run_id }}-${{ github.run_attempt }}
+        run: |
+          set -euo pipefail
+          wf="_siblings/tsafe/.github/workflows"
+          if [[ ! -d "${wf}" ]]; then
+            echo "::notice::tsafe checkout has no .github/workflows — skipping scan"
+            exit 0
+          fi
+          ./target/release/taudit scan "${wf}/" \
+            --platform github-actions \
+            --severity-threshold high \
+            --quiet
+
+      - name: Notice when tsafe sibling is unavailable
+        if: steps.checkout_tsafe.outcome != 'success'
+        run: |
+          echo "::notice::tsafe sibling checkout failed or repo missing. Set repository variable SIBLING_TSAFE_REPO (owner/name) or ensure GITHUB_TOKEN can read ${{ steps.siblings.outputs.tsafe_repo }}."
+
+      - name: Checkout CellOS (sibling)
+        id: checkout_cellos
+        continue-on-error: true
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          repository: ${{ steps.siblings.outputs.cellos_repo }}
+          path: _siblings/cellos
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: CellOS smoke (taudit inside supervisor)
+        if: steps.checkout_cellos.outcome == 'success'
+        env:
+          CELLOS_REPO: ${{ github.workspace }}/_siblings/cellos
+          TAUDIT_BIN: ${{ github.workspace }}/target/release/taudit
+          TAUDIT_CORRELATION_ID: stack-cellos-${{ github.run_id }}-${{ github.run_attempt }}
+        run: bash scripts/cellos_smoke.sh
+
+      - name: Notice when CellOS sibling is unavailable
+        if: steps.checkout_cellos.outcome != 'success'
+        run: |
+          echo "::notice::CellOS sibling checkout failed or repo missing. Set repository variable SIBLING_CELLOS_REPO (owner/name) or ensure GITHUB_TOKEN can read ${{ steps.siblings.outputs.cellos_repo }}."

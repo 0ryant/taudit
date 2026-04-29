@@ -59,6 +59,8 @@ jobs:
       # our own workflows as blocking. quality.yml keeps the advisory
       # SARIF upload; this job is the gate.
       - name: taudit scan (high+ severity, hard fail)
+        env:
+          TAUDIT_CORRELATION_ID: security-taudit-${{ github.run_id }}-${{ github.run_attempt }}
         run: |
           ./target/release/taudit scan .github/workflows/ \
             --platform github-actions \

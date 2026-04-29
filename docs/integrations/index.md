@@ -89,6 +89,10 @@ before the sibling projects publish.
 **optional context** for triage would be a separate integration, behind an
 explicit flag and ADR — not merged into the core graph parser.
 
+## GitHub Actions: stack-integration (this repo)
+
+The [`stack-integration`](../../.github/workflows/stack-integration.yml) workflow checks out **tsafe** and **CellOS** as sibling repositories (defaults: same owner as this repo, repos `tsafe` and `CellOS`), runs **`taudit scan`** on tsafe’s `.github/workflows/`, and runs [`scripts/cellos_smoke.sh`](../../scripts/cellos_smoke.sh) when CellOS is present. Override ids with repository **Variables** `SIBLING_TSAFE_REPO` / `SIBLING_CELLOS_REPO` (`owner/name`). The **tsafe vault CLI is not invoked** in CI (no vault); tsafe appears only as a scan target. **`quality.yml` / `security.yml`** set `TAUDIT_CORRELATION_ID` on self-scans so CloudEvents sinks can align with upstream correlation.
+
 ## What you can do today, standalone
 
 taudit's standalone surface already covers the local-only flavour of
