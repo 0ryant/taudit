@@ -2,6 +2,12 @@
 
 All notable changes to this project will be documented in this file.
 
+## v1.0.10 — 2026-04-29
+
+### Fixed
+
+- **BUG-2 (complete fix):** `baseline init` now sets all three required waiver fields for Critical findings: `severity_override`, `reason_waived` ("Accepted at baseline init — review before expiry"), and `expires_at`. Previously only `expires_at` was set, but `is_valid_critical_waiver` requires all three to suppress a Critical finding.
+
 ## v1.0.9 — 2026-04-29
 
 ### Fixed
