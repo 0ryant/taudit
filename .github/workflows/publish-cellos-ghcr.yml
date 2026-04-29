@@ -1,9 +1,10 @@
 # Build CellOS `cellos-supervisor` from source and push to GitHub Container Registry
-# (ghcr.io/<owner>/cellos-supervisor). Consumed by stack-integration and local
-# `scripts/cellos_smoke_docker.sh` after `docker login ghcr.io`.
+# (ghcr.io/<this-repo-owner>/cellos-supervisor). CellOS is expected on GitHub under
+# the same org as taudit; GITHUB_TOKEN can clone private same-org repos. Consumed by
+# stack-integration and local `scripts/cellos_smoke_docker.sh` after `docker login ghcr.io`.
 #
-# Repo id for CellOS source defaults to <this owner>/CellOS; override with
-# repository variable SIBLING_CELLOS_REPO (owner/name).
+# Default CellOS repo id: <github.repository_owner>/CellOS. Override with variable
+# SIBLING_CELLOS_REPO (owner/name) if the repo name differs (e.g. lowercase `cellos`).
 name: publish-cellos-ghcr
 
 # Manual runs always build CellOS @ main (Checkov CKV_GHA_7: no workflow_dispatch

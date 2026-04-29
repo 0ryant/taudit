@@ -91,9 +91,11 @@ explicit flag and ADR — not merged into the core graph parser.
 
 ## GitHub Actions: stack-integration (this repo)
 
-The [`stack-integration`](../../.github/workflows/stack-integration.yml) workflow runs **`taudit scan`** on a sibling **tsafe** checkout (defaults: same owner, repo `tsafe`; override **`SIBLING_TSAFE_REPO`**). For **CellOS**, it prefers a **`cellos-supervisor` image from GHCR** (`ghcr.io/<owner>/cellos-supervisor:<tag>`, tag **`CELLOS_SUPERVISOR_TAG`** or full **`CELLOS_SUPERVISOR_IMAGE`**), runs [`scripts/cellos_smoke_docker.sh`](../../scripts/cellos_smoke_docker.sh), and **falls back** to cloning **`SIBLING_CELLOS_REPO`** / `<owner>/CellOS` and [`scripts/cellos_smoke.sh`](../../scripts/cellos_smoke.sh) if the image pull fails.
+The [`stack-integration`](../../.github/workflows/stack-integration.yml) workflow assumes **tsafe** and **CellOS** live in **the same GitHub org as this repository** (default repo ids **`{owner}/tsafe`** and **`{owner}/CellOS`** on `github.com`, where `{owner}` is this repo’s owner). The Actions **`GITHUB_TOKEN`** can clone those repos when they are private to the org. It runs **`taudit scan`** on tsafe’s `.github/workflows/` (override repo id with **`SIBLING_TSAFE_REPO`** if the name differs).
 
-Build and push that image with **[`publish-cellos-ghcr`](../../.github/workflows/publish-cellos-ghcr.yml)** (Dockerfile under [`packaging/docker/cellos-supervisor/`](../../packaging/docker/cellos-supervisor/)); it checks out CellOS at **`main`** (push to this repo on Dockerfile changes, or **workflow_dispatch**). The **tsafe vault CLI is not invoked** in CI. **`quality.yml` / `security.yml`** set `TAUDIT_CORRELATION_ID` on self-scans for CloudEvents correlation.
+For **CellOS**, it prefers a **`cellos-supervisor` image from GHCR** (`ghcr.io/<owner>/cellos-supervisor:<tag>`, tag **`CELLOS_SUPERVISOR_TAG`** or full **`CELLOS_SUPERVISOR_IMAGE`**), runs [`scripts/cellos_smoke_docker.sh`](../../scripts/cellos_smoke_docker.sh), and **falls back** to cloning **`SIBLING_CELLOS_REPO`** / `<owner>/CellOS` and [`scripts/cellos_smoke.sh`](../../scripts/cellos_smoke.sh) if the image pull fails.
+
+Build and push that image with **[`publish-cellos-ghcr`](../../.github/workflows/publish-cellos-ghcr.yml)** (Dockerfile under [`packaging/docker/cellos-supervisor/`](../../packaging/docker/cellos-supervisor/)); it checks out CellOS from GitHub at **`main`** (push to this repo on Dockerfile changes, or **workflow_dispatch**). The **tsafe vault CLI is not invoked** in CI. **`quality.yml` / `security.yml`** set `TAUDIT_CORRELATION_ID` on self-scans for CloudEvents correlation.
 
 ## What you can do today, standalone
 

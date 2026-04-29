@@ -1,13 +1,16 @@
 # Cross-repo stack smoke: taudit authority scans on sibling workflow trees,
 # plus CellOS supervisor running taudit in an execution cell.
 #
-# CellOS: prefer image from ghcr.io (build via publish-cellos-ghcr.yml); if
-# pull fails, fall back to cloning the CellOS repo and scripts/cellos_smoke.sh.
+# tsafe and CellOS are expected on GitHub under the same org as this repo
+# (defaults <owner>/tsafe and <owner>/CellOS). Same-org GITHUB_TOKEN can read
+# private clones; GHCR pulls use packages:read.
+#
+# CellOS: prefer image ghcr.io/<owner>/cellos-supervisor (publish-cellos-ghcr.yml);
+# if pull fails, fall back to cloning CellOS and scripts/cellos_smoke.sh.
 # tsafe is a *scan target* only — the tsafe vault CLI is not invoked in CI.
 #
 # Variables (Settings → Variables): SIBLING_TSAFE_REPO, SIBLING_CELLOS_REPO,
-# CELLOS_SUPERVISOR_IMAGE (full override), CELLOS_SUPERVISOR_TAG (default tag
-# when image override is unset; default main).
+# CELLOS_SUPERVISOR_IMAGE (full override), CELLOS_SUPERVISOR_TAG (default main).
 name: stack-integration
 
 on:
