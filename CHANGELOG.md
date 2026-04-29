@@ -2,7 +2,16 @@
 
 All notable changes to this project will be documented in this file.
 
-## Unreleased
+## v1.0.9 — 2026-04-29
+
+### Fixed
+
+- **BUG-1 (High): Baseline hash breaks silently on Windows CRLF** — `compute_pipeline_hash` now normalises `\r\n → \n` before hashing. Baselines created on Linux/Mac now match on Windows with `git core.autocrlf=true`; `0 pre-existing suppressed` no longer appears on unchanged files.
+- **BUG-2 (Medium): `baseline init` doesn't suppress CRITICAL findings** — `Baseline::from_findings` now auto-sets `expires_at = now + 90 days` for CRITICAL findings on init. Running `taudit baseline init` bulk-accepts all current findings including CRITICAL ones without requiring 144 per-finding `baseline accept` calls.
+- **BUG-3 (Medium): Plain config variables flagged CRITICAL** — When a pipeline declares ADO variable groups (opaque without API access), `$(VAR)` references in scripts no longer create new Secret nodes unless the variable was explicitly declared `isSecret: true`. The variable group's own Secret node is sufficient to model group access.
+- **BUG-4 (Low): `##vso[task.setvariable]` integer count flagged as secret exfiltration** — The ADO parser now stamps `META_ENV_GATE_WRITES_SECRET_VALUE` only when the setvariable VALUE contains a `$(ref)` expression. The `self_mutating_pipeline` rule skips ADO setvariable steps that write plain literals or integer counters (no secret-value marker).
+- **BUG-5 (Low): `--policy .taudit/policy` hard-fails with `--include-builtin`** — If the policy directory doesn't exist and `--include-builtin` is set, `verify` now treats it as zero custom rules rather than exiting with code 2.
+- **BUG-6 (Medium): Variable-group `[partial]` findings can't be bulk-suppressed** — `taudit verify` gains `--ignore-partial`: when set, findings whose `nodes_involved` include a variable-group Secret are suppressed, enabling CI gating on ADO pipelines without API access to resolve variable groups.
 
 ### Added
 
