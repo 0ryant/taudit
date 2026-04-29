@@ -2,6 +2,29 @@
 
 All notable changes to this project will be documented in this file.
 
+## Unreleased
+
+### Added
+- **`GapKind` typed taxonomy** — partial graphs now record why they're partial
+  with one of three typed levels:
+  - `expression` — a template or matrix expression hides a value; graph
+    structure is intact
+  - `structural` — an unresolvable component (composite action, reusable
+    workflow, `extends:`, `include:`) breaks the authority chain
+  - `opaque` — the graph cannot be built at all (zero steps, unknown platform)
+
+  Terminal output shows severity-keyed headers (`error: ⛔` / `note: ⚠` /
+  `note: ·`) and per-gap kind labels (`[opaque]` / `[structural]` /
+  `[expression]`). JSON and CloudEvents outputs carry `{"kind", "reason"}`
+  gap objects. CLI `--help` and man page include a `COMPLETENESS LEVELS`
+  reference. See `docs/authority-graph.md` for the full schema.
+
+- **`taudit scan --verbose` / `-v`** — per-finding `[partial]` inline tags are
+  now suppressed by default (header warning and run summary remain always-on).
+  `--verbose` restores inline tags. `opaque` gaps always emit `[partial:opaque]`
+  inline regardless of verbosity. See `docs/policies/cookbook-partial-graphs.md`
+  Pattern D and Pattern E.
+
 ## v1.0.10 — 2026-04-29
 
 ### Fixed

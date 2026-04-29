@@ -145,6 +145,13 @@ partiality as a first-class signal — gate on the kind, not just the count. See
 [`docs/policies/cookbook-partial-graphs.md`](policies/cookbook-partial-graphs.md)
 for org-level gating patterns including Pattern D (gate on gap kind).
 
+For local investigation, `taudit scan` accepts `--verbose` / `-v` to restore
+per-finding `[partial]` inline tags (suppressed by default to reduce CI noise;
+the header warning, run summary, and `opaque` inline tags are always shown).
+See
+[`docs/policies/cookbook-partial-graphs.md`](policies/cookbook-partial-graphs.md)
+Pattern E.
+
 ### `--format sarif`
 
 SARIF 2.1.0. Each policy invariant is registered as a SARIF rule (so viewers

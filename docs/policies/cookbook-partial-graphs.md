@@ -81,6 +81,19 @@ taudit graph --format json .github/workflows/ci.yml \
     '
 ```
 
+## Pattern E — Verbose mode for local investigation
+
+By default `taudit scan` suppresses per-finding `[partial]` inline tags (only
+the header warning and run summary show partiality). In CI this reduces noise;
+when investigating locally, use `--verbose` to restore inline tags:
+
+```bash
+taudit scan --verbose .github/workflows/
+```
+
+`opaque` gaps always emit `[partial:opaque]` inline regardless of `--verbose`
+because a total graph failure is never silently suppressed.
+
 ## Custom invariants and completeness
 
 The YAML invariant DSL does **not** yet expose `completeness` or gap kinds as a `graph_metadata` predicate. Until it does, use **Pattern A** or **Pattern D** (graph JSON + `jq`) or **`verify` JSON `pipelines`** for completeness-aware gates.

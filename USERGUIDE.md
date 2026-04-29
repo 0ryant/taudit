@@ -302,6 +302,14 @@ and gate on kind, not just count — see
 [`docs/policies/cookbook-partial-graphs.md`](docs/policies/cookbook-partial-graphs.md)
 Pattern D for a `jq` recipe.
 
+By default, `taudit scan` suppresses per-finding `[partial]` inline tags
+to reduce output noise. The per-file header warning and run summary are
+always shown. Gaps with kind `opaque` always emit `[partial:opaque]` inline
+regardless of verbosity — a total graph failure is never silently suppressed.
+
+Use `--verbose` / `-v` to restore inline `[partial]` tags on every finding
+from a partial graph.
+
 ### GitHub Actions — required check
 
 ```yaml

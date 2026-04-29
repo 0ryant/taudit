@@ -62,7 +62,13 @@ enum Cli {
                             [expression] — a template or matrix expression hides a value\n  \
                             [structural] — an unresolvable component (composite action, reusable\n                 \
                             workflow, extends, include) breaks the authority chain\n  \
-                            [opaque]     — the graph cannot be built at all")]
+                            [opaque]     — the graph cannot be built at all\n\n\
+                            Verbosity and [partial] tags:\n\n  \
+                            By default, per-finding [partial] tags are suppressed; the per-file header\n  \
+                            and run summary always show completeness. Opaque gaps (total graph failure)\n  \
+                            always emit [partial:opaque] inline regardless of verbosity.\n\n  \
+                            Use --verbose / -v to show [partial] inline on every finding from a\n  \
+                            partial graph.")]
     Scan {
         /// Path to pipeline YAML file(s) or directory.
         /// Use `-` to read from stdin (e.g. `cat ci.yml | taudit scan -`).
@@ -110,7 +116,8 @@ enum Cli {
         quiet: bool,
 
         /// Show [partial] tags inline on every finding (default: header-only).
-        /// When set, per-finding [partial] tags are always shown regardless of gap kind.
+        /// In default mode, only Opaque gaps emit an inline [partial:opaque] tag.
+        /// Use --verbose to always show inline tags (useful for local investigation).
         #[arg(short = 'v', long, default_value_t = false)]
         verbose: bool,
 

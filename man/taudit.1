@@ -110,6 +110,25 @@ An unresolvable component (composite action, reusable workflow,
 .TP
 .B opaque
 The graph cannot be built at all (zero steps produced, unknown platform).
+.SH "VERBOSITY AND PARTIAL TAGS"
+By default, per\-finding
+.B [partial]
+inline tags are suppressed to reduce output noise. The per\-file header warning
+and run summary always surface completeness state.
+.PP
+Exception:
+.B Opaque
+gaps (the graph could not be built at all) always emit a
+.B [partial:opaque]
+inline tag regardless of verbosity, since suppressing a total graph failure
+would hide critical coverage information.
+.PP
+Use
+.B \-v / \-\-verbose
+to restore inline
+.B [partial]
+tags on every finding from a partial graph. Useful when investigating
+specific findings on a partially\-modelled pipeline.
 .SH COMMANDS
 .SS "taudit scan \fIpath...\fR"
 Scan pipeline files or directories for findings. As of v0.7,
