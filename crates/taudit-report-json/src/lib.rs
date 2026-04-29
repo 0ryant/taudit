@@ -1,6 +1,6 @@
 use taudit_core::error::TauditError;
 use taudit_core::finding::{compute_finding_group_id, compute_fingerprint, rule_id_for, Finding};
-use taudit_core::graph::{AuthorityCompleteness, AuthorityGraph};
+use taudit_core::graph::{AuthorityCompleteness, AuthorityGraph, GapKind};
 use taudit_core::ports::ReportSink;
 
 use serde::Serialize;
@@ -85,6 +85,16 @@ impl<'a> GraphExport<'a> {
     }
 }
 
+/// Structured representation of a single graph completeness gap as it
+/// appears in `summary.completeness_gaps`. Each entry pairs the typed
+/// `GapKind` (so SIEMs can filter by class of imprecision) with the
+/// human-readable `reason` (so analysts can read it).
+#[derive(Serialize)]
+pub struct CompletenessGap {
+    pub kind: GapKind,
+    pub reason: String,
+}
+
 #[derive(Serialize)]
 pub struct Summary {
     pub total_findings: usize,
@@ -96,8 +106,11 @@ pub struct Summary {
     pub total_nodes: usize,
     pub total_edges: usize,
     pub completeness: AuthorityCompleteness,
+    /// Structured `{kind, reason}` entries describing why the graph is
+    /// partial. Built by zipping `AuthorityGraph.completeness_gap_kinds`
+    /// with `AuthorityGraph.completeness_gaps`. Omitted when empty.
     #[serde(skip_serializing_if = "Vec::is_empty")]
-    pub completeness_gaps: Vec<String>,
+    pub completeness_gaps: Vec<CompletenessGap>,
 }
 
 pub struct JsonReportSink;
@@ -162,7 +175,21 @@ impl<W: std::io::Write> ReportSink<W> for JsonReportSink {
                 total_nodes: graph.nodes.len(),
                 total_edges: graph.edges.len(),
                 completeness: graph.completeness,
-                completeness_gaps: graph.completeness_gaps.clone(),
+                // Zip kinds with reasons. `zip` stops at the shorter
+                // iterator, so if `completeness_gap_kinds` is somehow
+                // shorter than `completeness_gaps` (shouldn't happen —
+                // mark_partial pushes both — but be safe), we silently
+                // drop the unkinded extras rather than emit a malformed
+                // gap.
+                completeness_gaps: graph
+                    .completeness_gap_kinds
+                    .iter()
+                    .zip(graph.completeness_gaps.iter())
+                    .map(|(kind, reason)| CompletenessGap {
+                        kind: *kind,
+                        reason: reason.clone(),
+                    })
+                    .collect(),
             },
         };
 
@@ -317,6 +344,16 @@ mod tests {
             crate::AUTHORITY_GRAPH_SCHEMA_VERSION
         );
         assert_eq!(value["schema_uri"], crate::AUTHORITY_GRAPH_SCHEMA_URI);
+
+        // The standalone graph export keeps `completeness_gaps` and
+        // `completeness_gap_kinds` as parallel arrays (this is the
+        // authority-graph v1 schema contract). Confirm the Expression
+        // gap we marked is round-tripped under both keys.
+        assert_eq!(
+            value["graph"]["completeness_gaps"][0],
+            "inline shell scripts not fully resolved"
+        );
+        assert_eq!(value["graph"]["completeness_gap_kinds"][0], "expression");
 
         let schema = read_json("schemas/authority-graph.v1.json");
         let validator =
@@ -475,5 +512,81 @@ mod tests {
         assert_eq!(findings_arr[0]["rule_id"], "authority_propagation");
         // Custom-rule prefix wins over the category id.
         assert_eq!(findings_arr[1]["rule_id"], "my_custom_rule");
+    }
+
+    /// Lane 1F contract: `summary.completeness_gaps` is an array of
+    /// `{kind, reason}` objects, not plain strings. Each entry carries
+    /// the typed `GapKind` (snake_case: `expression` | `structural` |
+    /// `opaque`) so downstream consumers can filter / group gaps by
+    /// class without re-parsing the human-readable reason. Exercise
+    /// every variant in one report and assert both shape and values.
+    #[test]
+    fn summary_completeness_gaps_serialize_as_kind_reason_objects() {
+        use taudit_core::graph::GapKind;
+
+        let mut graph = taudit_core::graph::AuthorityGraph::new(PipelineSource {
+            file: ".github/workflows/ci.yml".into(),
+            repo: None,
+            git_ref: None,
+            commit_sha: None,
+        });
+        graph.mark_partial(GapKind::Structural, "composite action not found: ./action");
+        graph.mark_partial(
+            GapKind::Expression,
+            "matrix strategy hides some authority paths",
+        );
+        graph.mark_partial(GapKind::Opaque, "platform unknown; zero steps produced");
+
+        let mut buf = Vec::new();
+        JsonReportSink.emit(&mut buf, &graph, &[]).unwrap();
+        let report: serde_json::Value = serde_json::from_slice(&buf).unwrap();
+
+        let gaps = report["summary"]["completeness_gaps"]
+            .as_array()
+            .expect("summary.completeness_gaps must be an array");
+        assert_eq!(gaps.len(), 3, "all three gaps round-trip");
+
+        // Index 0: Structural
+        assert_eq!(gaps[0]["kind"], "structural");
+        assert_eq!(gaps[0]["reason"], "composite action not found: ./action");
+        // Index 1: Expression
+        assert_eq!(gaps[1]["kind"], "expression");
+        assert_eq!(
+            gaps[1]["reason"],
+            "matrix strategy hides some authority paths"
+        );
+        // Index 2: Opaque
+        assert_eq!(gaps[2]["kind"], "opaque");
+        assert_eq!(gaps[2]["reason"], "platform unknown; zero steps produced");
+
+        // Every entry must be an object with exactly the two contract
+        // keys — guards against a regression that drops the structured
+        // shape and falls back to bare strings.
+        for (i, gap) in gaps.iter().enumerate() {
+            assert!(gap.is_object(), "gap[{i}] must be an object, got: {gap:?}");
+            assert!(
+                gap.get("kind").and_then(|v| v.as_str()).is_some(),
+                "gap[{i}].kind must be a string"
+            );
+            assert!(
+                gap.get("reason").and_then(|v| v.as_str()).is_some(),
+                "gap[{i}].reason must be a string"
+            );
+        }
+
+        // The emitted report (with structured gaps) must still validate
+        // against the published JSON Schema — catches drift between the
+        // Rust types and `contracts/schemas/taudit-report.schema.json`.
+        let schema = read_json("contracts/schemas/taudit-report.schema.json");
+        let validator = jsonschema::validator_for(&schema).expect("report schema should compile");
+        let errors: Vec<String> = validator
+            .iter_errors(&report)
+            .map(|err| err.to_string())
+            .collect();
+        assert!(
+            errors.is_empty(),
+            "partial-graph report does not match report schema:\n{}",
+            errors.join("\n")
+        );
     }
 }

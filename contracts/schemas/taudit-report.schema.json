@@ -45,6 +45,13 @@
           "type": "array",
           "items": { "type": "string" }
         },
+        "completeness_gap_kinds": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "enum": ["expression", "structural", "opaque"]
+          }
+        },
         "metadata": {
           "type": "object",
           "additionalProperties": { "type": "string" }
@@ -301,7 +308,18 @@
         "completeness": { "$ref": "#/$defs/AuthorityCompleteness" },
         "completeness_gaps": {
           "type": "array",
-          "items": { "type": "string" }
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["kind", "reason"],
+            "properties": {
+              "kind": {
+                "type": "string",
+                "enum": ["expression", "structural", "opaque"]
+              },
+              "reason": { "type": "string" }
+            }
+          }
         }
       }
     }
