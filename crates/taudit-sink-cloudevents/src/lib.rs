@@ -31,6 +31,15 @@ pub struct CloudEventV1 {
     /// Authority graph completeness: "complete", "partial", or "unknown".
     #[serde(skip_serializing_if = "Option::is_none")]
     pub tauditcompleteness: Option<String>,
+    /// Structured per-gap detail for `Partial` graphs. Each entry pairs the
+    /// typed `GapKind` (`expression` | `structural` | `opaque`, serde
+    /// snake_case) with the original human-readable reason string. Lets SIEMs
+    /// route or suppress events by gap *category* without parsing prose.
+    /// Omitted entirely for `Complete` / `Unknown` graphs (no null, no empty
+    /// array). Per CloudEvents 1.0, extension attribute names must be
+    /// lowercase with no separators — hence `tauditcompletenessgaps`.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub tauditcompletenessgaps: Option<Vec<serde_json::Value>>,
     /// Stable cross-run finding fingerprint. 16 lowercase hex chars,
     /// byte-identical to SARIF `partialFingerprints[primaryLocationLineHash]`
     /// and JSON `findings[].fingerprint`. SIEMs key on this attribute to
@@ -209,6 +218,25 @@ fn finding_to_event(
             _ => None,
         });
 
+    // Pair each typed `GapKind` with its prose reason. `completeness_gap_kinds`
+    // and `completeness_gaps` are append-only parallel vectors maintained by
+    // `AuthorityGraph::mark_partial`, so `.zip` yields one entry per gap with
+    // the original ordering preserved. Emit as `Some(vec)` only when the graph
+    // actually has gaps — `skip_serializing_if` then drops the attribute on
+    // Complete / Unknown graphs (no null, no empty `[]`).
+    let tauditcompletenessgaps = if graph.completeness_gap_kinds.is_empty() {
+        None
+    } else {
+        Some(
+            graph
+                .completeness_gap_kinds
+                .iter()
+                .zip(graph.completeness_gaps.iter())
+                .map(|(kind, reason)| serde_json::json!({"kind": kind, "reason": reason}))
+                .collect::<Vec<_>>(),
+        )
+    };
+
     CloudEventV1 {
         specversion: "1.0".into(),
         id: uuid::Uuid::new_v4().to_string(),
@@ -219,6 +247,7 @@ fn finding_to_event(
         time: Some(chrono::Utc::now().to_rfc3339()),
         data: Some(data),
         tauditcompleteness: Some(completeness_str.into()),
+        tauditcompletenessgaps,
         tauditfindingfingerprint: compute_fingerprint(finding, graph),
         tauditplatform,
         tauditfindinggroup: finding
@@ -358,7 +387,14 @@ mod tests {
     #[test]
     fn partial_graph_sets_completeness_extension() {
         let mut graph = AuthorityGraph::new(test_source());
-        graph.mark_partial(GapKind::Expression, "inferred secret in run: block");
+        // Use `Structural` — it represents the more impactful failure class
+        // (unresolvable composite / reusable-workflow / extends / include),
+        // and exercises a different `GapKind` variant than the parser-side
+        // tests so this regression covers the full enum surface.
+        graph.mark_partial(
+            GapKind::Structural,
+            "composite action ref unresolved at scan time",
+        );
         let findings = vec![test_finding(
             FindingCategory::AuthorityPropagation,
             Severity::Critical,
@@ -374,6 +410,23 @@ mod tests {
             serde_json::from_str(output.lines().next().unwrap()).unwrap();
 
         assert_eq!(event["tauditcompleteness"], "partial");
+
+        // The new structured `tauditcompletenessgaps` extension must surface
+        // the typed kind alongside the prose reason. Asserting both fields
+        // on entry [0] guarantees the parallel-vector zip stays aligned and
+        // the serde snake_case rename for `GapKind` is wired through.
+        let gaps = event["tauditcompletenessgaps"]
+            .as_array()
+            .expect("tauditcompletenessgaps must be an array on Partial graphs");
+        assert_eq!(gaps.len(), 1, "exactly one gap was recorded");
+        assert_eq!(
+            gaps[0]["kind"], "structural",
+            "GapKind::Structural must serialize as snake_case `structural`",
+        );
+        assert_eq!(
+            gaps[0]["reason"], "composite action ref unresolved at scan time",
+            "original reason string must be preserved verbatim",
+        );
     }
 
     #[test]
