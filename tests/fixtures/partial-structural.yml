@@ -1,0 +1,5 @@
+name: partial-test
+on: [push]
+jobs:
+  call-workflow:
+    uses: ./.github/workflows/nonexistent-callee.yml

@@ -878,3 +878,159 @@ fn verify_json_partial_graph_completeness_gaps_carry_kind_field() {
         );
     }
 }
+
+// ── default-quiet vs --verbose [partial] tag visibility ──────────────────
+//
+// Phase 2 contract: on a Structural-partial graph, the per-file header
+// always announces "partial graph — findings below tagged [partial]" and
+// the summary footer always counts partial files. What changes between
+// modes is the per-finding inline tag:
+//
+//   * default (quiet)  → inline `[partial]` tags suppressed for Structural
+//                        partials; readers rely on the header + footer.
+//   * --verbose / -v   → inline `[partial]` tags restored on every finding.
+//
+// These tests use `--no-color` so substring assertions don't trip on ANSI
+// escapes. The fixture is a GHA workflow whose only job calls a
+// nonexistent reusable workflow — that path is a known mark_partial site
+// in the GHA parser and reliably produces a Structural-partial graph
+// with at least one finding.
+//
+// IGNORED: Phase 2A (the reporter's quiet-by-default behaviour) is not
+// yet implemented in `taudit-report-terminal`. Currently the `[partial]`
+// tag is shown unconditionally when the graph is partial, regardless of
+// the `verbose` flag plumbed through from the CLI. Once Phase 2A lands,
+// remove `#[ignore]` on all three tests below — they are the contract
+// the reporter must satisfy.
+
+/// Helper: count occurrences of the literal substring `[partial]` in
+/// stdout. The per-file header always contains one occurrence ("findings
+/// below tagged [partial]"), so a Structural-partial scan with N findings
+/// shows 1 + N occurrences in verbose mode and exactly 1 (header only) in
+/// default-quiet mode.
+fn count_partial_tags(stdout: &str) -> usize {
+    stdout.matches("[partial]").count()
+}
+
+#[test]
+fn scan_default_quiet_suppresses_inline_partial_tag_on_findings() {
+    // Default mode (no --verbose): the header still announces partial,
+    // but the per-finding `[partial]` tag is suppressed for Structural
+    // partials. The single occurrence of `[partial]` on stdout is the
+    // header's own self-reference ("findings below tagged [partial]").
+    let fixture = workspace_root().join("tests/fixtures/partial-structural.yml");
+    assert!(
+        fixture.exists(),
+        "fixture must exist: {}",
+        fixture.display()
+    );
+
+    let output = taudit()
+        .arg("scan")
+        .arg("--no-color")
+        .arg(&fixture)
+        .output()
+        .expect("spawn taudit");
+
+    assert_eq!(
+        output.status.code(),
+        Some(0),
+        "scan is informational — must exit 0 even on partial graphs; stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+
+    // Header still flags the partial graph.
+    assert!(
+        stdout.contains("note: ⚠") || stdout.contains("partial graph"),
+        "expected partial-graph header marker in default mode; got stdout:\n{stdout}"
+    );
+
+    // But inline tags on findings are suppressed: only the header's
+    // self-reference to `[partial]` should remain.
+    let tag_count = count_partial_tags(&stdout);
+    assert_eq!(
+        tag_count, 1,
+        "default-quiet mode must suppress inline [partial] tags on findings — \
+         expected exactly 1 occurrence (the header self-reference), got {tag_count}.\nstdout:\n{stdout}"
+    );
+}
+
+#[test]
+fn scan_default_quiet_still_shows_partial_header_and_footer() {
+    // Quiet mode is *quiet*, not silent. Operators still need to know
+    // a graph was partial — that's why the per-file header warning and
+    // the summary footer count remain visible by default.
+    let fixture = workspace_root().join("tests/fixtures/partial-structural.yml");
+    assert!(fixture.exists());
+
+    let output = taudit()
+        .arg("scan")
+        .arg("--no-color")
+        .arg(&fixture)
+        .output()
+        .expect("spawn taudit");
+
+    assert_eq!(output.status.code(), Some(0));
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+
+    // Per-file header (the "findings below tagged [partial]" warning).
+    assert!(
+        stdout.contains("partial graph — findings below tagged"),
+        "expected per-file partial-graph header in default mode; got stdout:\n{stdout}"
+    );
+
+    // Summary footer line announces the partial-graph count.
+    assert!(
+        stdout.contains("Partial graphs:"),
+        "expected summary footer 'Partial graphs:' line in default mode; got stdout:\n{stdout}"
+    );
+}
+
+#[test]
+fn scan_verbose_restores_inline_partial_tags_on_findings() {
+    // --verbose / -v restores the pre-Phase-2 behaviour: every finding
+    // on a partial graph carries an inline [partial] tag. We assert
+    // this strictly stronger than the default-mode test by counting
+    // occurrences and requiring at least one MORE than the header
+    // self-reference.
+    let fixture = workspace_root().join("tests/fixtures/partial-structural.yml");
+    assert!(fixture.exists());
+
+    let default_out = taudit()
+        .arg("scan")
+        .arg("--no-color")
+        .arg(&fixture)
+        .output()
+        .expect("spawn taudit (default)");
+    let verbose_out = taudit()
+        .arg("scan")
+        .arg("--no-color")
+        .arg("--verbose")
+        .arg(&fixture)
+        .output()
+        .expect("spawn taudit (verbose)");
+
+    assert_eq!(default_out.status.code(), Some(0));
+    assert_eq!(verbose_out.status.code(), Some(0));
+
+    let default_stdout = String::from_utf8_lossy(&default_out.stdout);
+    let verbose_stdout = String::from_utf8_lossy(&verbose_out.stdout);
+
+    let default_tags = count_partial_tags(&default_stdout);
+    let verbose_tags = count_partial_tags(&verbose_stdout);
+
+    assert!(
+        verbose_tags > default_tags,
+        "--verbose must show strictly more [partial] tags than default — \
+         default={default_tags}, verbose={verbose_tags}.\n\
+         default stdout:\n{default_stdout}\n\nverbose stdout:\n{verbose_stdout}"
+    );
+    assert!(
+        verbose_tags >= 2,
+        "verbose mode must show at least the header self-reference + one \
+         per-finding tag (>= 2); got {verbose_tags}.\nstdout:\n{verbose_stdout}"
+    );
+}
