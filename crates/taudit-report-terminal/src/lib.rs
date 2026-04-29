@@ -119,8 +119,25 @@ impl<W: std::io::Write> ReportSink<W> for TerminalReport {
         wln!(w)?;
         for finding in findings {
             let sev_tag = severity_tag(finding.severity);
+            // Default-quiet: per-finding [partial] tags add a lot of inline
+            // noise on long runs where every file has Expression/Structural
+            // gaps (the common case). Suppress them unless --verbose, with one
+            // hard exception: when the worst gap is `Opaque`, the graph is
+            // effectively unusable and we always surface `[partial:opaque]`
+            // inline so an operator can't miss it. The header warning and the
+            // run-summary footer are unaffected — they remain always-on.
             let partial_tag = if is_partial {
-                format!(" {}", "[partial]".yellow().dimmed())
+                let always_show = graph.worst_gap_kind() == Some(GapKind::Opaque);
+                if self.verbose || always_show {
+                    if always_show && !self.verbose {
+                        format!(" {}", "[partial:opaque]".red().bold())
+                    } else {
+                        format!(" {}", "[partial]".yellow().dimmed())
+                    }
+                } else {
+                    // Suppressed by default for Expression/Structural gaps.
+                    String::new()
+                }
             } else {
                 String::new()
             };
@@ -452,6 +469,9 @@ pub fn print_summary<W: std::io::Write>(w: &mut W, s: &RunSummary) -> std::io::R
 #[cfg(test)]
 mod tests {
     use super::*;
+    use taudit_core::finding::{
+        Finding, FindingCategory, FindingExtras, FindingSource, Recommendation, Severity,
+    };
     use taudit_core::graph::{GapKind, PipelineSource};
     use taudit_core::ports::ReportSink;
 
@@ -550,6 +570,119 @@ mod tests {
         assert!(
             out.contains("[expression]"),
             "expected [expression] gap label, got:\n{out}"
+        );
+    }
+
+    /// Minimal finding for verbosity tests. Severity Medium so the rendered
+    /// line contains `[MEDIUM]` — used as a neighbour in substring assertions
+    /// to be sure we're inspecting the per-finding line, not the header.
+    fn test_finding() -> Finding {
+        Finding {
+            severity: Severity::Medium,
+            category: FindingCategory::UnpinnedAction,
+            path: None,
+            nodes_involved: vec![],
+            message: "test finding for verbosity gating".into(),
+            recommendation: Recommendation::Manual {
+                action: "fix".into(),
+            },
+            source: FindingSource::BuiltIn,
+            extras: FindingExtras::default(),
+        }
+    }
+
+    /// Render a graph + findings at the requested verbosity. Mirrors the
+    /// no-findings `render` helper above, but lets each verbosity test pin
+    /// the `verbose` flag explicitly and supply its own findings vector.
+    fn render_with(graph: &AuthorityGraph, findings: &[Finding], verbose: bool) -> String {
+        colored::control::set_override(false);
+        let reporter = TerminalReport { verbose };
+        let mut buf: Vec<u8> = Vec::new();
+        reporter
+            .emit(&mut buf, graph, findings)
+            .expect("emit should succeed");
+        let raw = String::from_utf8(buf).expect("utf-8 output");
+        strip_ansi(&raw)
+    }
+
+    #[test]
+    fn default_quiet_structural_gap_suppresses_inline_tag() {
+        let mut g = test_graph();
+        g.mark_partial(GapKind::Structural, "composite unresolved");
+        let findings = vec![test_finding()];
+        let out = render_with(&g, &findings, false);
+
+        // Header warning stays always-on — confirms we didn't break Phase 1.
+        assert!(
+            out.contains("note: ⚠"),
+            "expected structural header 'note: ⚠', got:\n{out}"
+        );
+        // The per-finding inline tag must be suppressed in default-quiet mode
+        // for Structural gaps. Anchor the search to the finding line itself
+        // (after `[MEDIUM]`) so the `[partial]` substring inside the header
+        // hint can't false-positive this check.
+        let finding_line = out
+            .lines()
+            .find(|l| l.contains("[MEDIUM]"))
+            .expect("expected a finding line containing [MEDIUM]");
+        assert!(
+            !finding_line.contains("[partial]"),
+            "default-quiet should suppress inline [partial] for Structural, \
+             but finding line had it: {finding_line}"
+        );
+        assert!(
+            !finding_line.contains("[partial:opaque]"),
+            "Structural gap must not render [partial:opaque]: {finding_line}"
+        );
+    }
+
+    #[test]
+    fn default_quiet_opaque_gap_shows_inline_tag() {
+        let mut g = test_graph();
+        g.mark_partial(GapKind::Opaque, "zero steps");
+        let findings = vec![test_finding()];
+        let out = render_with(&g, &findings, false);
+
+        // Header still shows the opaque error prefix.
+        assert!(
+            out.contains("error: ⛔"),
+            "expected opaque header 'error: ⛔', got:\n{out}"
+        );
+        // Opaque gaps override the default-quiet suppression: the inline
+        // `[partial:opaque]` tag must appear on the finding line so a total
+        // graph failure can't slip past triage.
+        let finding_line = out
+            .lines()
+            .find(|l| l.contains("[MEDIUM]"))
+            .expect("expected a finding line containing [MEDIUM]");
+        assert!(
+            finding_line.contains("[partial:opaque]"),
+            "Opaque gap must render inline [partial:opaque] even in quiet mode: {finding_line}"
+        );
+    }
+
+    #[test]
+    fn verbose_structural_gap_shows_inline_tag() {
+        let mut g = test_graph();
+        g.mark_partial(GapKind::Structural, "composite unresolved");
+        let findings = vec![test_finding()];
+        let out = render_with(&g, &findings, true);
+
+        // With --verbose the legacy `[partial]` tag returns for non-opaque
+        // gaps. Confirm it lands on the finding line, not just the header.
+        let finding_line = out
+            .lines()
+            .find(|l| l.contains("[MEDIUM]"))
+            .expect("expected a finding line containing [MEDIUM]");
+        assert!(
+            finding_line.contains("[partial]"),
+            "verbose should render inline [partial] for Structural gap: {finding_line}"
+        );
+        // Make sure we didn't accidentally promote a structural gap to opaque
+        // styling under --verbose.
+        assert!(
+            !finding_line.contains("[partial:opaque]"),
+            "Structural gap must not render [partial:opaque] under --verbose: {finding_line}"
         );
     }
 }
