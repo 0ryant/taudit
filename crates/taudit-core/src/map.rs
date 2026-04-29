@@ -936,7 +936,7 @@ mod tests {
         let secret = g.add_node(NodeKind::Secret, "K", TrustZone::FirstParty);
         let step = g.add_node(NodeKind::Step, "s", TrustZone::FirstParty);
         g.add_edge(step, secret, EdgeKind::HasAccessTo);
-        g.mark_partial("fixture: unresolved composite");
+        g.mark_partial(GapKind::Expression, "fixture: unresolved composite");
 
         let mer = render_mermaid(&g, None, DiagramLabelDetail::Compact);
         assert!(

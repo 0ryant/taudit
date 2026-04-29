@@ -51,6 +51,7 @@ impl PipelineParser for GhaParser {
         }
         if extra_docs {
             graph.mark_partial(
+                GapKind::Expression,
                 "file contains multiple YAML documents (--- separator) — only the first was analyzed".to_string(),
             );
         }
@@ -62,6 +63,7 @@ impl PipelineParser for GhaParser {
         // for that scope; static rules cannot reason about runtime-resolved env shapes.
         if let Some(EnvSpec::Template(_)) = workflow.env {
             graph.mark_partial(
+                GapKind::Expression,
                 "workflow-level env: uses template expression — environment variable shape unknown"
                     .to_string(),
             );
@@ -169,9 +171,12 @@ impl PipelineParser for GhaParser {
             // whose shape is unknown statically. Mark Partial once per job and skip
             // env processing for that scope.
             if let Some(EnvSpec::Template(_)) = job.env {
-                graph.mark_partial(format!(
-                    "job '{job_name}' env: uses template expression — environment variable shape unknown"
-                ));
+                graph.mark_partial(
+                    GapKind::Expression,
+                    format!(
+                        "job '{job_name}' env: uses template expression — environment variable shape unknown"
+                    ),
+                );
             }
 
             // Job-level permissions override workflow-level
@@ -225,9 +230,12 @@ impl PipelineParser for GhaParser {
                 if let Some(tok_id) = job_token_id {
                     graph.add_edge(job_step_id, tok_id, EdgeKind::HasAccessTo);
                 }
-                graph.mark_partial(format!(
-                    "reusable workflow '{uses}' in job '{job_name}' cannot be resolved inline — authority within the called workflow is unknown"
-                ));
+                graph.mark_partial(
+                    GapKind::Expression,
+                    format!(
+                        "reusable workflow '{uses}' in job '{job_name}' cannot be resolved inline — authority within the called workflow is unknown"
+                    ),
+                );
                 continue;
             }
 
@@ -238,9 +246,12 @@ impl PipelineParser for GhaParser {
                 .and_then(|s| s.get("matrix"))
                 .is_some()
             {
-                graph.mark_partial(format!(
-                    "job '{job_name}' uses matrix strategy — authority shape may differ per matrix entry"
-                ));
+                graph.mark_partial(
+                    GapKind::Expression,
+                    format!(
+                        "job '{job_name}' uses matrix strategy — authority shape may differ per matrix entry"
+                    ),
+                );
             }
 
             // Self-hosted runner detection: `runs-on: self-hosted` or a sequence
@@ -619,9 +630,12 @@ impl PipelineParser for GhaParser {
                         }
                     }
                     Some(EnvSpec::Template(_)) => {
-                        graph.mark_partial(format!(
-                            "step '{step_name}' in job '{job_name}' env: uses template expression — environment variable shape unknown"
-                        ));
+                        graph.mark_partial(
+                            GapKind::Expression,
+                            format!(
+                                "step '{step_name}' in job '{job_name}' env: uses template expression — environment variable shape unknown"
+                            ),
+                        );
                     }
                     None => {}
                 }
@@ -754,9 +768,12 @@ impl PipelineParser for GhaParser {
                                         .insert(META_INFERRED.into(), META_INFERRED_VAL.into());
                                 }
                                 graph.add_edge(step_id, secret_id, EdgeKind::HasAccessTo);
-                                graph.mark_partial(format!(
-                                    "secret '{secret_name}' referenced in run: script — inferred, not precisely mapped"
-                                ));
+                                graph.mark_partial(
+                                    GapKind::Expression,
+                                    format!(
+                                        "secret '{secret_name}' referenced in run: script — inferred, not precisely mapped"
+                                    ),
+                                );
                             }
                             pos = abs_start + end;
                         }
@@ -822,6 +839,7 @@ impl PipelineParser for GhaParser {
             .count();
         if step_count == 0 && !workflow.jobs.is_empty() {
             graph.mark_partial(
+                GapKind::Expression,
                 "jobs: parsed but produced 0 step nodes — possible non-GHA YAML wrong-platform-classified".to_string(),
             );
         }
@@ -1120,7 +1138,10 @@ fn try_inline_composite_action(
     let action_path = match resolve_local_action_path(pipeline_file, uses_path) {
         Some(p) => p,
         None => {
-            graph.mark_partial(format!("composite action not found: {uses_path}"));
+            graph.mark_partial(
+                GapKind::Expression,
+                format!("composite action not found: {uses_path}"),
+            );
             return;
         }
     };
@@ -1128,9 +1149,10 @@ fn try_inline_composite_action(
     let content = match std::fs::read_to_string(&action_path) {
         Ok(c) => c,
         Err(e) => {
-            graph.mark_partial(format!(
-                "failed to read composite action '{uses_path}': {e}"
-            ));
+            graph.mark_partial(
+                GapKind::Expression,
+                format!("failed to read composite action '{uses_path}': {e}"),
+            );
             return;
         }
     };
@@ -1138,9 +1160,10 @@ fn try_inline_composite_action(
     let action: serde_yaml::Value = match serde_yaml::from_str(&content) {
         Ok(v) => v,
         Err(e) => {
-            graph.mark_partial(format!(
-                "failed to parse composite action '{uses_path}': {e}"
-            ));
+            graph.mark_partial(
+                GapKind::Expression,
+                format!("failed to parse composite action '{uses_path}': {e}"),
+            );
             return;
         }
     };
@@ -1153,9 +1176,10 @@ fn try_inline_composite_action(
         .and_then(|u| u.as_str())
         .unwrap_or("");
     if using != "composite" {
-        graph.mark_partial(format!(
-            "non-composite local action: {uses_path} (using: {using})"
-        ));
+        graph.mark_partial(
+            GapKind::Expression,
+            format!("non-composite local action: {uses_path} (using: {using})"),
+        );
         return;
     }
 
@@ -1166,7 +1190,10 @@ fn try_inline_composite_action(
     {
         Some(s) => s,
         None => {
-            graph.mark_partial(format!("composite action '{uses_path}' has no runs.steps"));
+            graph.mark_partial(
+                GapKind::Expression,
+                format!("composite action '{uses_path}' has no runs.steps"),
+            );
             return;
         }
     };
@@ -1285,9 +1312,12 @@ fn try_inline_composite_action(
                                 .insert(META_INFERRED.into(), META_INFERRED_VAL.into());
                         }
                         graph.add_edge(inlined_id, secret_id, EdgeKind::HasAccessTo);
-                        graph.mark_partial(format!(
-                            "secret '{secret_name}' referenced in composite action run: script — inferred, not precisely mapped"
-                        ));
+                        graph.mark_partial(
+                            GapKind::Expression,
+                            format!(
+                                "secret '{secret_name}' referenced in composite action run: script — inferred, not precisely mapped"
+                            ),
+                        );
                     }
                     pos = abs_start + end;
                 }

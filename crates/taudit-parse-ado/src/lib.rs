@@ -73,6 +73,7 @@ impl PipelineParser for AdoParser {
                         .metadata
                         .insert(META_PLATFORM.into(), "azure-devops".into());
                     graph.mark_partial(
+                        GapKind::Expression,
                         "ADO template fragment with top-level parameter conditional — root structure depends on parent pipeline context".to_string(),
                     );
                     graph.stamp_edge_authority_summaries();
@@ -89,6 +90,7 @@ impl PipelineParser for AdoParser {
             .insert(META_PLATFORM.into(), "azure-devops".into());
         if extra_docs {
             graph.mark_partial(
+                GapKind::Expression,
                 "file contains multiple YAML documents (--- separator) — only the first was analyzed".to_string(),
             );
         }
@@ -330,6 +332,7 @@ impl PipelineParser for AdoParser {
             || pipeline.steps.as_ref().is_some_and(|s| !s.is_empty());
         if step_count == 0 && had_step_carrier {
             graph.mark_partial(
+                GapKind::Expression,
                 "stages/jobs/steps parsed but produced 0 step nodes — possible non-ADO YAML wrong-platform-classified".to_string(),
             );
         }
@@ -608,9 +611,12 @@ fn process_variables(
                 // We can't resolve them statically — mark Partial but don't create
                 // a misleading Secret node with the expression as its name.
                 if group.contains("${{") {
-                    graph.mark_partial(format!(
-                        "variable group in {scope} uses template expression — group name unresolvable at parse time"
-                    ));
+                    graph.mark_partial(
+                        GapKind::Expression,
+                        format!(
+                            "variable group in {scope} uses template expression — group name unresolvable at parse time"
+                        ),
+                    );
                     continue;
                 }
                 *has_variable_groups = true;
@@ -624,9 +630,12 @@ fn process_variables(
                 );
                 cache.insert(group.clone(), id);
                 ids.push(id);
-                graph.mark_partial(format!(
-                    "variable group '{group}' in {scope} — contents unresolvable without ADO API access"
-                ));
+                graph.mark_partial(
+                    GapKind::Expression,
+                    format!(
+                        "variable group '{group}' in {scope} — contents unresolvable without ADO API access"
+                    ),
+                );
             }
             AdoVariable::Named {
                 name, is_secret, ..
@@ -1015,9 +1024,12 @@ fn add_template_delegation(
     let tpl_id = graph.add_node(NodeKind::Image, template_path, tpl_trust_zone);
     graph.add_edge(step_id, tpl_id, EdgeKind::DelegatesTo);
     graph.add_edge(step_id, token_id, EdgeKind::HasAccessTo);
-    graph.mark_partial(format!(
-        "template '{template_path}' cannot be resolved inline — authority within the template is unknown"
-    ));
+    graph.mark_partial(
+        GapKind::Expression,
+        format!(
+            "template '{template_path}' cannot be resolved inline — authority within the template is unknown"
+        ),
+    );
 }
 
 /// Returns true if a `##vso[task.setvariable ...]VALUE` call's VALUE contains

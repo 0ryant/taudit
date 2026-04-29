@@ -275,7 +275,9 @@ mod tests {
     /// and the published schema before downstream consumers do.
     #[test]
     fn authority_graph_export_matches_v1_schema() {
-        use taudit_core::graph::{AuthorityGraph, EdgeKind, NodeKind, PipelineSource, TrustZone};
+        use taudit_core::graph::{
+            AuthorityGraph, EdgeKind, GapKind, NodeKind, PipelineSource, TrustZone,
+        };
 
         let mut graph = AuthorityGraph::new(PipelineSource {
             file: "tests/fixtures/over-privileged.yml".into(),
@@ -283,7 +285,10 @@ mod tests {
             git_ref: Some("main".into()),
             commit_sha: None,
         });
-        graph.mark_partial("inline shell scripts not fully resolved");
+        graph.mark_partial(
+            GapKind::Expression,
+            "inline shell scripts not fully resolved",
+        );
 
         let secret = graph.add_node(NodeKind::Secret, "AWS_KEY", TrustZone::FirstParty);
         let identity = graph.add_node(NodeKind::Identity, "GITHUB_TOKEN", TrustZone::FirstParty);

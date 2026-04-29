@@ -90,6 +90,7 @@ impl PipelineParser for GitlabParser {
         // reason about remote URLs and unpinned project refs.
         if let Some(inc) = mapping.get("include") {
             graph.mark_partial(
+                GapKind::Expression,
                 "include: directive present — included templates not resolved".to_string(),
             );
             let entries = extract_include_entries(inc);
@@ -127,9 +128,10 @@ impl PipelineParser for GitlabParser {
 
             // Hidden jobs (starting with a dot) are templates — mark Partial, skip
             if job_name.starts_with('.') {
-                graph.mark_partial(format!(
-                    "job '{job_name}' is a hidden/template job — not resolved"
-                ));
+                graph.mark_partial(
+                    GapKind::Expression,
+                    format!("job '{job_name}' is a hidden/template job — not resolved"),
+                );
                 continue;
             }
 
@@ -141,9 +143,12 @@ impl PipelineParser for GitlabParser {
             // extends: — job template inheritance, can't resolve statically
             let extends_names = extract_extends_list(job_map.get("extends"));
             if !extends_names.is_empty() {
-                graph.mark_partial(format!(
-                    "job '{job_name}' uses extends: — inherited configuration not resolved"
-                ));
+                graph.mark_partial(
+                    GapKind::Expression,
+                    format!(
+                        "job '{job_name}' uses extends: — inherited configuration not resolved"
+                    ),
+                );
             }
 
             // Detect PR/MR trigger in this job's rules: or only:
@@ -337,6 +342,7 @@ impl PipelineParser for GitlabParser {
         });
         if step_count == 0 && had_job_carrier {
             graph.mark_partial(
+                GapKind::Expression,
                 "non-reserved top-level keys parsed but produced 0 step nodes — possible non-GitLab YAML wrong-platform-classified".to_string(),
             );
         }

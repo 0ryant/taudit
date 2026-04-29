@@ -54,6 +54,14 @@
           "description": "Human-readable reasons why the graph is partial (omitted when empty).",
           "items": { "type": "string" }
         },
+        "completeness_gap_kinds": {
+          "type": "array",
+          "description": "Typed categories for each completeness gap, parallel to completeness_gaps (omitted when empty).",
+          "items": {
+            "type": "string",
+            "enum": ["expression", "structural", "opaque"]
+          }
+        },
         "metadata": {
           "type": "object",
           "description": "Graph-level metadata set by parsers (e.g. trigger type, platform-specific flags). Omitted when empty.",

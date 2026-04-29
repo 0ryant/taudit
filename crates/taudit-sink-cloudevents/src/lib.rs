@@ -269,7 +269,7 @@ mod tests {
     use super::*;
     use std::{fs, path::PathBuf};
     use taudit_core::finding::{FindingExtras, Recommendation, Severity};
-    use taudit_core::graph::PipelineSource;
+    use taudit_core::graph::{GapKind, PipelineSource};
 
     fn test_source() -> PipelineSource {
         PipelineSource {
@@ -358,7 +358,7 @@ mod tests {
     #[test]
     fn partial_graph_sets_completeness_extension() {
         let mut graph = AuthorityGraph::new(test_source());
-        graph.mark_partial("inferred secret in run: block");
+        graph.mark_partial(GapKind::Expression, "inferred secret in run: block");
         let findings = vec![test_finding(
             FindingCategory::AuthorityPropagation,
             Severity::Critical,

@@ -340,6 +340,19 @@ pub fn is_pin_semantically_valid(ref_str: &str) -> bool {
 
 // ── Graph-level precision markers ───────────────────────
 
+/// The category of reason why a graph is partial.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum GapKind {
+    /// A template or matrix expression hides a value; graph structure is intact.
+    Expression,
+    /// An unresolvable component (composite action, reusable workflow, extends,
+    /// include) breaks the authority chain.
+    Structural,
+    /// The graph cannot be built at all (zero steps produced, unknown platform).
+    Opaque,
+}
+
 /// How complete is this authority graph? Parsers set this based on whether
 /// they could fully resolve all authority relationships in the pipeline YAML.
 ///
@@ -563,6 +576,9 @@ pub struct AuthorityGraph {
     /// Human-readable reasons why the graph is Partial (if applicable).
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub completeness_gaps: Vec<String>,
+    /// Typed categories for each completeness gap (parallel to `completeness_gaps`).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub completeness_gap_kinds: Vec<GapKind>,
     /// Graph-level metadata set by parsers (e.g. trigger type, platform-specific flags).
     /// Serialized in sorted-key order — see `Node.metadata` rationale.
     #[serde(
@@ -591,15 +607,29 @@ impl AuthorityGraph {
             edges: Vec::new(),
             completeness: AuthorityCompleteness::Complete,
             completeness_gaps: Vec::new(),
+            completeness_gap_kinds: Vec::new(),
             metadata: HashMap::new(),
             parameters: HashMap::new(),
         }
     }
 
     /// Mark the graph as partially complete with a reason.
-    pub fn mark_partial(&mut self, reason: impl Into<String>) {
+    pub fn mark_partial(&mut self, kind: GapKind, reason: impl Into<String>) {
         self.completeness = AuthorityCompleteness::Partial;
         self.completeness_gaps.push(reason.into());
+        self.completeness_gap_kinds.push(kind);
+    }
+
+    /// Returns the most severe GapKind present, or None if the graph is complete/unknown.
+    pub fn worst_gap_kind(&self) -> Option<GapKind> {
+        self.completeness_gap_kinds
+            .iter()
+            .max_by_key(|k| match k {
+                GapKind::Expression => 0u8,
+                GapKind::Structural => 1,
+                GapKind::Opaque => 2,
+            })
+            .copied()
     }
 
     /// Add a node, returns its ID.
@@ -805,9 +835,13 @@ mod tests {
             git_ref: None,
             commit_sha: None,
         });
-        g.mark_partial("secrets in run: block inferred, not precisely mapped");
+        g.mark_partial(
+            GapKind::Expression,
+            "secrets in run: block inferred, not precisely mapped",
+        );
         assert_eq!(g.completeness, AuthorityCompleteness::Partial);
         assert_eq!(g.completeness_gaps.len(), 1);
+        assert_eq!(g.completeness_gap_kinds.len(), 1);
     }
 
     #[test]

@@ -7189,7 +7189,10 @@ mod tests {
     #[test]
     fn partial_graph_preserves_critical_findings() {
         let mut g = AuthorityGraph::new(source("ci.yml"));
-        g.mark_partial("matrix strategy hides some authority paths");
+        g.mark_partial(
+            GapKind::Expression,
+            "matrix strategy hides some authority paths",
+        );
 
         let identity = g.add_node(NodeKind::Identity, "GITHUB_TOKEN", TrustZone::FirstParty);
         let step = g.add_node(NodeKind::Step, "deploy", TrustZone::Untrusted);
