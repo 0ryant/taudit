@@ -231,7 +231,7 @@ impl PipelineParser for GhaParser {
                     graph.add_edge(job_step_id, tok_id, EdgeKind::HasAccessTo);
                 }
                 graph.mark_partial(
-                    GapKind::Expression,
+                    GapKind::Structural,
                     format!(
                         "reusable workflow '{uses}' in job '{job_name}' cannot be resolved inline — authority within the called workflow is unknown"
                     ),
@@ -839,7 +839,7 @@ impl PipelineParser for GhaParser {
             .count();
         if step_count == 0 && !workflow.jobs.is_empty() {
             graph.mark_partial(
-                GapKind::Expression,
+                GapKind::Structural,
                 "jobs: parsed but produced 0 step nodes — possible non-GHA YAML wrong-platform-classified".to_string(),
             );
         }
@@ -1139,7 +1139,7 @@ fn try_inline_composite_action(
         Some(p) => p,
         None => {
             graph.mark_partial(
-                GapKind::Expression,
+                GapKind::Structural,
                 format!("composite action not found: {uses_path}"),
             );
             return;
@@ -1150,7 +1150,7 @@ fn try_inline_composite_action(
         Ok(c) => c,
         Err(e) => {
             graph.mark_partial(
-                GapKind::Expression,
+                GapKind::Structural,
                 format!("failed to read composite action '{uses_path}': {e}"),
             );
             return;
@@ -1161,7 +1161,7 @@ fn try_inline_composite_action(
         Ok(v) => v,
         Err(e) => {
             graph.mark_partial(
-                GapKind::Expression,
+                GapKind::Structural,
                 format!("failed to parse composite action '{uses_path}': {e}"),
             );
             return;
@@ -1177,7 +1177,7 @@ fn try_inline_composite_action(
         .unwrap_or("");
     if using != "composite" {
         graph.mark_partial(
-            GapKind::Expression,
+            GapKind::Structural,
             format!("non-composite local action: {uses_path} (using: {using})"),
         );
         return;
@@ -1191,7 +1191,7 @@ fn try_inline_composite_action(
         Some(s) => s,
         None => {
             graph.mark_partial(
-                GapKind::Expression,
+                GapKind::Structural,
                 format!("composite action '{uses_path}' has no runs.steps"),
             );
             return;
@@ -1811,6 +1811,13 @@ jobs:
         );
         assert_eq!(graph.completeness, AuthorityCompleteness::Partial);
         assert!(!graph.completeness_gaps.is_empty());
+        // Inferred secret in a `run:` shell script — the structure is intact,
+        // a value-shaped reference hides behind a shell-script expression.
+        assert!(
+            graph.completeness_gap_kinds.contains(&GapKind::Expression),
+            "inferred secret in run: must record an Expression-kind gap, got: {:?}",
+            graph.completeness_gap_kinds
+        );
     }
 
     #[test]
@@ -1998,6 +2005,13 @@ jobs:
             graph.completeness_gaps.iter().any(|g| g.contains("matrix")),
             "matrix strategy should be recorded as a completeness gap"
         );
+        // Matrix is a runtime expression hiding values across job instances —
+        // the graph structure for one matrix entry is intact.
+        assert!(
+            graph.completeness_gap_kinds.contains(&GapKind::Expression),
+            "matrix strategy must record an Expression-kind gap, got: {:?}",
+            graph.completeness_gap_kinds
+        );
     }
 
     #[test]
@@ -2038,6 +2052,14 @@ jobs:
         assert_eq!(delegates.len(), 1);
 
         assert_eq!(graph.completeness, AuthorityCompleteness::Partial);
+        // Reusable workflow `uses:` is unresolvable here — the called workflow's
+        // authority chain is invisible, which is a Structural gap, not an
+        // expression substitution.
+        assert!(
+            graph.completeness_gap_kinds.contains(&GapKind::Structural),
+            "reusable workflow must record a Structural-kind gap, got: {:?}",
+            graph.completeness_gap_kinds
+        );
     }
 
     #[test]
@@ -2654,6 +2676,13 @@ jobs:
             "missing action.yml must be recorded as a completeness gap, got: {:?}",
             graph.completeness_gaps
         );
+        // A composite action that can't be resolved on disk breaks the
+        // authority chain — Structural, not Expression.
+        assert!(
+            graph.completeness_gap_kinds.contains(&GapKind::Structural),
+            "missing composite action must record a Structural-kind gap, got: {:?}",
+            graph.completeness_gap_kinds
+        );
 
         let _ = std::fs::remove_dir_all(&dir);
     }
@@ -2694,6 +2723,14 @@ jobs:
                 .any(|g| g.contains("non-composite local action")),
             "docker action must mark graph Partial, got: {:?}",
             graph.completeness_gaps
+        );
+        // A non-composite local action (docker / node20 / ...) hides its
+        // internal steps behind a runtime we can't introspect — the chain
+        // structure is broken, not just a hidden value.
+        assert!(
+            graph.completeness_gap_kinds.contains(&GapKind::Structural),
+            "non-composite local action must record a Structural-kind gap, got: {:?}",
+            graph.completeness_gap_kinds
         );
 
         // No inlined steps — only the calling step.
@@ -2805,6 +2842,13 @@ jobs:
             saw_template_gap,
             "completeness_gaps must mention env: template, got: {:?}",
             graph.completeness_gaps
+        );
+        // Job-level `env:` as a template expression is the canonical
+        // Expression-kind gap — env shape is hidden, structure is intact.
+        assert!(
+            graph.completeness_gap_kinds.contains(&GapKind::Expression),
+            "job-level env: template must record an Expression-kind gap, got: {:?}",
+            graph.completeness_gap_kinds
         );
         // Steps still parsed normally.
         let steps: Vec<_> = graph.nodes_of_kind(NodeKind::Step).collect();
@@ -2924,6 +2968,14 @@ jobs:
                 .any(|g| g.contains("0 step nodes")),
             "completeness_gaps must mention 0 step nodes: {:?}",
             graph.completeness_gaps
+        );
+        // `jobs:` parsed but produced 0 step nodes — the graph carrier is
+        // missing entirely. Structural, because there are no recognisable
+        // steps for the authority chain to attach to.
+        assert!(
+            graph.completeness_gap_kinds.contains(&GapKind::Structural),
+            "0-step-nodes gap must be Structural, got: {:?}",
+            graph.completeness_gap_kinds
         );
     }
 
