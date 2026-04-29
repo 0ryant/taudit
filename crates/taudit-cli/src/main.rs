@@ -5,7 +5,7 @@ use std::path::{Path, PathBuf};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use taudit_core::finding::{FindingExtras, Severity};
-use taudit_core::graph::{AuthorityCompleteness, PipelineSource};
+use taudit_core::graph::{AuthorityCompleteness, GapKind, PipelineSource};
 use taudit_core::ignore::{glob_match, IgnoreConfig};
 use taudit_core::map;
 use taudit_core::ports::ReportSink;
@@ -55,6 +55,14 @@ macro_rules! try_println {
 )]
 enum Cli {
     /// Scan pipeline file(s) for authority findings
+    #[command(long_about = "Scan pipeline file(s) for authority findings.\n\n\
+                            As of v0.7 `scan` is informational and always exits 0 unless a structural \
+                            error occurs — use `taudit verify` to gate CI.\n\n\
+                            Partial graphs are annotated with their gap kind:\n  \
+                            [expression] — a template or matrix expression hides a value\n  \
+                            [structural] — an unresolvable component (composite action, reusable\n                 \
+                            workflow, extends, include) breaks the authority chain\n  \
+                            [opaque]     — the graph cannot be built at all")]
     Scan {
         /// Path to pipeline YAML file(s) or directory.
         /// Use `-` to read from stdin (e.g. `cat ci.yml | taudit scan -`).
@@ -448,6 +456,22 @@ enum Cli {
     ///   0 — no policy violations
     ///   1 — at least one policy violation
     ///   2 — usage error / file not found / parse error
+    #[command(
+        long_about = "Enforce policy invariants — exit non-zero on any violation.\n\n\
+                            `verify` is the policy-driven enforcement entrypoint for CI required \
+                            checks and merge gates. Unlike `scan` (which always runs the 61 built-in \
+                            rules), `verify` runs ONLY the user-supplied invariants in `--policy` \
+                            unless `--include-builtin` is set.\n\n\
+                            Exit codes are deterministic:\n  \
+                            0 — no policy violations\n  \
+                            1 — at least one policy violation\n  \
+                            2 — usage error / file not found / parse error\n\n\
+                            Partial graphs are annotated with their gap kind:\n  \
+                            [expression] — a template or matrix expression hides a value\n  \
+                            [structural] — an unresolvable component (composite action, reusable\n                 \
+                            workflow, extends, include) breaks the authority chain\n  \
+                            [opaque]     — the graph cannot be built at all"
+    )]
     Verify {
         /// Path to pipeline YAML file(s) or directory.
         #[arg(required = true)]
@@ -2250,11 +2274,16 @@ struct Violation {
 
 /// Per-pipeline authority-graph completeness for `verify` text/JSON output
 /// (ADR 0003 Phase 2 — gate-adjacent surfacing).
+///
+/// `gap_kinds` parallels `completeness_gaps` (one entry per gap, same index)
+/// so renderers can prefix each reason with its severity label
+/// (`[expression]` / `[structural]` / `[opaque]`). Lengths must match.
 #[derive(Debug, Clone)]
 struct VerifyPipelineModeling {
     path: String,
     completeness: AuthorityCompleteness,
     completeness_gaps: Vec<String>,
+    gap_kinds: Vec<GapKind>,
 }
 
 /// `taudit verify` entrypoint. Computes the exit code via `run_verify_io`
@@ -2421,6 +2450,7 @@ fn run_verify_io<W: std::io::Write>(opts: &VerifyOpts, writer: &mut W) -> i32 {
             path: graph.source.file.clone(),
             completeness: graph.completeness,
             completeness_gaps: graph.completeness_gaps.clone(),
+            gap_kinds: graph.completeness_gap_kinds.clone(),
         });
 
         let propagation_paths =
@@ -2667,6 +2697,16 @@ fn completeness_snake(c: AuthorityCompleteness) -> &'static str {
     }
 }
 
+/// Snake-case label for a `GapKind`. Matches the JSON `kind` field and the
+/// `[expression]` / `[structural]` / `[opaque]` text-output prefixes.
+fn gap_kind_snake(k: GapKind) -> &'static str {
+    match k {
+        GapKind::Expression => "expression",
+        GapKind::Structural => "structural",
+        GapKind::Opaque => "opaque",
+    }
+}
+
 /// One rollup line plus per-pipeline detail when not `complete` (ADR 0003).
 fn write_verify_authority_modeling_text<W: std::io::Write>(
     w: &mut W,
@@ -2694,19 +2734,39 @@ fn write_verify_authority_modeling_text<W: std::io::Write>(
         if p.completeness == AuthorityCompleteness::Complete {
             continue;
         }
-        let gaps = if p.completeness_gaps.is_empty() {
-            "(no gap strings recorded)".to_string()
-        } else {
-            p.completeness_gaps.join("; ")
-        };
-        let gaps = truncate_for_verify_line(&gaps, 400);
+        if p.completeness_gaps.is_empty() {
+            writeln!(
+                w,
+                "verify:   {} — {} — (no gap strings recorded)",
+                p.path,
+                completeness_snake(p.completeness),
+            )?;
+            continue;
+        }
+        // Header line for the pipeline; one indented line per gap follows,
+        // each prefixed with its `[kind]` label. The struct invariant
+        // (gap_kinds parallels completeness_gaps) lets us zip safely; if a
+        // future producer breaks that invariant we fall back to a neutral
+        // `[partial]` label so output stays useful instead of panicking.
         writeln!(
             w,
-            "verify:   {} — {} — {}",
+            "verify:   {} — {}",
             p.path,
             completeness_snake(p.completeness),
-            gaps
         )?;
+        let n = p.completeness_gaps.len();
+        for (i, reason) in p.completeness_gaps.iter().enumerate() {
+            let kind_label = p
+                .gap_kinds
+                .get(i)
+                .copied()
+                .map(gap_kind_snake)
+                .unwrap_or("partial");
+            let line = format!("[{kind_label}] {reason}");
+            let line = truncate_for_verify_line(&line, 400);
+            let connector = if i + 1 == n { "└──" } else { "├──" };
+            writeln!(w, "verify:     {connector} {line}")?;
+        }
     }
     Ok(())
 }
@@ -2754,11 +2814,32 @@ fn render_verify_json<W: std::io::Write>(
                 "info": summary.info,
             }
         },
-        "pipelines": pipeline_modeling.iter().map(|p| serde_json::json!({
-            "path": p.path,
-            "completeness": completeness_snake(p.completeness),
-            "completeness_gaps": p.completeness_gaps,
-        })).collect::<Vec<_>>(),
+        "pipelines": pipeline_modeling.iter().map(|p| {
+            // Each gap becomes a {kind, reason} object so consumers can
+            // filter on severity (expression < structural < opaque) without
+            // string-parsing. If gap_kinds is shorter than completeness_gaps
+            // (struct invariant violation) we emit a neutral "partial" kind
+            // for the trailing entries rather than panic.
+            let gaps: Vec<serde_json::Value> = p
+                .completeness_gaps
+                .iter()
+                .enumerate()
+                .map(|(i, reason)| {
+                    let kind = p
+                        .gap_kinds
+                        .get(i)
+                        .copied()
+                        .map(gap_kind_snake)
+                        .unwrap_or("partial");
+                    serde_json::json!({"kind": kind, "reason": reason})
+                })
+                .collect();
+            serde_json::json!({
+                "path": p.path,
+                "completeness": completeness_snake(p.completeness),
+                "completeness_gaps": gaps,
+            })
+        }).collect::<Vec<_>>(),
     });
     serde_json::to_writer_pretty(w, &json).with_context(|| "Failed to write verify JSON report")?;
     Ok(())

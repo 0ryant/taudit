@@ -82,6 +82,34 @@ ASCII overview:
 "At a glance (one graph, several exports)"
 ). ADR:
 .IR docs/adr/0001-graph-native-exports-and-leverage.md .
+.SH "COMPLETENESS LEVELS"
+When
+.B taudit
+cannot fully resolve a pipeline, it marks the authority graph
+.I partial
+and records the reason with one of three severity levels. The level appears
+as a
+.RB [ kind ]
+prefix in
+.B taudit verify
+text output and as the
+.I kind
+field on each
+.I completeness_gaps
+entry in JSON output (most severe first: opaque > structural > expression).
+.TP
+.B expression
+A template or matrix expression hides a value; the graph structure is intact.
+.TP
+.B structural
+An unresolvable component (composite action, reusable workflow,
+.B extends
+,
+.B include
+) breaks the authority chain.
+.TP
+.B opaque
+The graph cannot be built at all (zero steps produced, unknown platform).
 .SH COMMANDS
 .SS "taudit scan \fIpath...\fR"
 Scan pipeline files or directories for findings. As of v0.7,

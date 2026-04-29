@@ -792,3 +792,89 @@ fn suppressions_list_emits_loaded_entries() {
     assert!(stdout.contains("unpinned_action"));
     assert!(stdout.contains("alice@example.com"));
 }
+
+// ── GapKind surfacing in verify JSON output ─────────────────────────────
+//
+// The verify JSON `pipelines[*].completeness_gaps` items must be objects with
+// `kind` and `reason` fields (not bare strings) so downstream consumers can
+// filter by severity (expression < structural < opaque) without parsing prose.
+// Pairs with the [kind] prefixes added to the verify text output and the
+// COMPLETENESS LEVELS section in the man page.
+
+#[test]
+fn verify_json_partial_graph_completeness_gaps_carry_kind_field() {
+    let dir = unique_tmp_dir("verify-json-gap-kind");
+
+    // A reusable-workflow `uses:` at job level is a known mark_partial site
+    // in the GHA parser — it produces a Partial graph with at least one
+    // recorded gap. That guarantees the `pipelines[].completeness_gaps`
+    // array we're asserting on is non-empty.
+    let pipeline = dir.join("partial.yml");
+    std::fs::write(
+        &pipeline,
+        "name: ci\n\
+         on: push\n\
+         permissions:\n  contents: read\n\
+         jobs:\n  delegate:\n    uses: org/reusable/.github/workflows/wf.yml@main\n",
+    )
+    .expect("write partial pipeline");
+
+    // Empty-but-syntactically-valid policy. We don't care about violations
+    // here — only that JSON serialisation of pipeline modeling round-trips
+    // through the new {kind, reason} shape.
+    let policy = dir.join("policy.yml");
+    std::fs::write(
+        &policy,
+        "id: never_fires\nname: never\nseverity: info\ncategory: authority_propagation\nmatch:\n  sink:\n    trust_zone: untrusted\n",
+    )
+    .expect("write policy");
+
+    let output = taudit()
+        .arg("verify")
+        .arg("--policy")
+        .arg(&policy)
+        .arg("--format")
+        .arg("json")
+        .arg("--platform")
+        .arg("github-actions")
+        .arg(&pipeline)
+        .output()
+        .expect("spawn taudit");
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let parsed: serde_json::Value = serde_json::from_str(&stdout)
+        .unwrap_or_else(|e| panic!("verify JSON must parse: {e}\nstdout:\n{stdout}"));
+
+    let pipelines = parsed["pipelines"]
+        .as_array()
+        .expect("pipelines must be an array");
+    assert_eq!(pipelines.len(), 1, "expected one pipeline entry");
+
+    let pipeline_entry = &pipelines[0];
+    assert_eq!(
+        pipeline_entry["completeness"], "partial",
+        "reusable-workflow fixture should produce a partial graph: {pipeline_entry}"
+    );
+
+    let gaps = pipeline_entry["completeness_gaps"]
+        .as_array()
+        .expect("completeness_gaps must be an array of objects");
+    assert!(
+        !gaps.is_empty(),
+        "expected at least one gap on a partial graph"
+    );
+
+    for gap in gaps {
+        let kind = gap["kind"]
+            .as_str()
+            .unwrap_or_else(|| panic!("each gap must have a string `kind`: {gap}"));
+        assert!(
+            matches!(kind, "expression" | "structural" | "opaque"),
+            "gap kind must be one of expression/structural/opaque, got {kind}"
+        );
+        assert!(
+            gap["reason"].is_string(),
+            "each gap must have a string `reason`: {gap}"
+        );
+    }
+}
