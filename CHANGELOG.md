@@ -2,7 +2,7 @@
 
 All notable changes to this project will be documented in this file.
 
-## Unreleased
+## v1.0.11 — 2026-04-29
 
 ### Added
 - **`GapKind` typed taxonomy** — partial graphs now record why they're partial
