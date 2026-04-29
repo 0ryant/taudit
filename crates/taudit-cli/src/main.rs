@@ -109,9 +109,9 @@ enum Cli {
         #[arg(long, default_value_t = false)]
         quiet: bool,
 
-        /// Verbose output: show node metadata (kind, trust zone, permissions)
-        /// for each node in a finding's propagation path.
-        #[arg(long, default_value_t = false)]
+        /// Show [partial] tags inline on every finding (default: header-only).
+        /// When set, per-finding [partial] tags are always shown regardless of gap kind.
+        #[arg(short = 'v', long, default_value_t = false)]
         verbose: bool,
 
         /// In `--quiet` terminal mode, suppress the per-file line for files
