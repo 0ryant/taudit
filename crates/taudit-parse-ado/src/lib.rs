@@ -73,7 +73,7 @@ impl PipelineParser for AdoParser {
                         .metadata
                         .insert(META_PLATFORM.into(), "azure-devops".into());
                     graph.mark_partial(
-                        GapKind::Expression,
+                        GapKind::Structural,
                         "ADO template fragment with top-level parameter conditional — root structure depends on parent pipeline context".to_string(),
                     );
                     graph.stamp_edge_authority_summaries();
@@ -332,7 +332,7 @@ impl PipelineParser for AdoParser {
             || pipeline.steps.as_ref().is_some_and(|s| !s.is_empty());
         if step_count == 0 && had_step_carrier {
             graph.mark_partial(
-                GapKind::Expression,
+                GapKind::Structural,
                 "stages/jobs/steps parsed but produced 0 step nodes — possible non-ADO YAML wrong-platform-classified".to_string(),
             );
         }
@@ -631,7 +631,7 @@ fn process_variables(
                 cache.insert(group.clone(), id);
                 ids.push(id);
                 graph.mark_partial(
-                    GapKind::Expression,
+                    GapKind::Structural,
                     format!(
                         "variable group '{group}' in {scope} — contents unresolvable without ADO API access"
                     ),
@@ -1025,7 +1025,7 @@ fn add_template_delegation(
     graph.add_edge(step_id, tpl_id, EdgeKind::DelegatesTo);
     graph.add_edge(step_id, token_id, EdgeKind::HasAccessTo);
     graph.mark_partial(
-        GapKind::Expression,
+        GapKind::Structural,
         format!(
             "template '{template_path}' cannot be resolved inline — authority within the template is unknown"
         ),
@@ -1847,6 +1847,14 @@ steps:
                 .any(|g| g.contains("MySecretGroup")),
             "completeness gap should name the variable group"
         );
+        // External variable group is unresolvable without ADO API access —
+        // that's a Structural break in the authority chain, not an expression
+        // substitution.
+        assert!(
+            graph.completeness_gap_kinds.contains(&GapKind::Structural),
+            "variable group gap must be Structural, got: {:?}",
+            graph.completeness_gap_kinds
+        );
     }
 
     #[test]
@@ -2428,6 +2436,14 @@ parameters:
             "completeness_gaps must mention the template-fragment reason, got: {:?}",
             graph.completeness_gaps
         );
+        // A template fragment's root structure depends on the parent pipeline
+        // — this is a Structural break, not a missing expression value.
+        assert_eq!(
+            graph.completeness_gap_kinds.len(),
+            1,
+            "template-fragment graph should record exactly one gap kind"
+        );
+        assert_eq!(graph.completeness_gap_kinds[0], GapKind::Structural);
     }
 
     #[test]
@@ -2705,6 +2721,14 @@ jobs:
                 .any(|g| g.contains("0 step nodes")),
             "completeness_gaps must mention 0 step nodes: {:?}",
             graph.completeness_gaps
+        );
+        // A jobs/steps carrier that yields zero step nodes is a Structural
+        // break — the authority chain stops mid-graph rather than hiding a
+        // value behind an expression.
+        assert!(
+            graph.completeness_gap_kinds.contains(&GapKind::Structural),
+            "0-step-nodes gap must be Structural, got: {:?}",
+            graph.completeness_gap_kinds
         );
     }
 
