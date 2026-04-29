@@ -247,6 +247,12 @@ impl Baseline {
         rules_version: &str,
         now: DateTime<Utc>,
     ) -> Self {
+        // BUG-2: baseline init bulk-accepts ALL current findings. For CRITICAL
+        // findings the waiver contract requires a dated expiry ≤ 90 days.
+        // init sets expires_at = now + 90 days automatically so that running
+        // `taudit baseline init` on a fresh repo doesn't leave 100+ critical
+        // findings unwaived and requires 0 per-finding `baseline accept` calls.
+        let critical_expiry = now + chrono::Duration::days(MAX_CRITICAL_WAIVER_DAYS);
         let mut baseline_findings: Vec<BaselineFinding> = findings
             .iter()
             .map(|f| BaselineFinding {
@@ -256,7 +262,11 @@ impl Baseline {
                 first_seen_at: now,
                 reason_waived: None,
                 severity_override: None,
-                expires_at: None,
+                expires_at: if f.severity == Severity::Critical {
+                    Some(critical_expiry)
+                } else {
+                    None
+                },
             })
             .collect();
         // Dedup on fingerprint (template instances collapse into one entry).
@@ -452,8 +462,17 @@ pub fn diff(
 /// SHA-256 of `content` formatted as `sha256:<64-hex>`. The `sha256:`
 /// prefix mirrors OCI / git object naming so logs and dashboards can
 /// strip the algorithm tag uniformly.
+///
+/// CRLF is normalised to LF before hashing so that a pipeline file produces
+/// the same hash regardless of whether git's `core.autocrlf` converted its
+/// line endings (BUG-1: Windows baselines silently suppressed nothing).
 pub fn compute_pipeline_hash(content: &str) -> String {
-    let digest = Sha256::digest(content.as_bytes());
+    let normalised: std::borrow::Cow<str> = if content.contains('\r') {
+        content.replace("\r\n", "\n").into()
+    } else {
+        content.into()
+    };
+    let digest = Sha256::digest(normalised.as_bytes());
     format_digest(digest)
 }
 
@@ -652,6 +671,20 @@ mod tests {
     }
 
     #[test]
+    fn pipeline_hash_crlf_equals_lf() {
+        // BUG-1: git core.autocrlf converts \n → \r\n on Windows checkout.
+        // The hash must be identical so baselines created on Unix work on
+        // Windows and vice versa.
+        let lf = "on: push\njobs:\n  build:\n    runs-on: ubuntu-latest\n";
+        let crlf = "on: push\r\njobs:\r\n  build:\r\n    runs-on: ubuntu-latest\r\n";
+        assert_eq!(
+            compute_pipeline_hash(lf),
+            compute_pipeline_hash(crlf),
+            "CRLF and LF content must produce the same pipeline hash"
+        );
+    }
+
+    #[test]
     fn identity_material_hash_changes_when_dependency_metadata_changes() {
         let (mut g1, _) = make_graph("ci.yml");
         g1.metadata.insert(
@@ -742,11 +775,24 @@ mod tests {
         let mut sorted = fps.clone();
         sorted.sort();
         assert_eq!(fps, sorted, "entries must be fingerprint-sorted");
-        // No waiver fields on init
+        // On init: reason_waived and severity_override are always None.
+        // expires_at is None for non-critical findings, and set to a 90-day
+        // future date for CRITICAL findings (BUG-2: bulk accept without
+        // requiring per-finding baseline accept calls).
         for entry in &baseline.baseline_findings {
             assert!(entry.reason_waived.is_none());
             assert!(entry.severity_override.is_none());
-            assert!(entry.expires_at.is_none());
+            if entry.severity == Severity::Critical {
+                assert!(
+                    entry.expires_at.is_some(),
+                    "critical finding from baseline init must have auto-expiry"
+                );
+            } else {
+                assert!(
+                    entry.expires_at.is_none(),
+                    "non-critical finding from baseline init must not have expiry"
+                );
+            }
         }
     }
 

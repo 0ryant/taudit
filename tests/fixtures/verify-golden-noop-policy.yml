@@ -1,0 +1,14 @@
+# Matches no propagation path — used by scripts/golden-paths.sh and docs examples
+# so `taudit verify` can exit 0 on tests/fixtures/clean.yml (ADR 0003 golden path).
+id: golden_path_noop
+name: Golden path noop invariant
+description: Intentionally unsatisfiable match — policy wiring smoke only
+severity: critical
+category: authority_propagation
+match:
+  source:
+    node_type: secret
+    metadata:
+      __golden_path_noop__: "true"
+  sink:
+    trust_zone: untrusted

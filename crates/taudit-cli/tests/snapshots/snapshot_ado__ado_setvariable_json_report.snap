@@ -1,6 +1,5 @@
 ---
 source: crates/taudit-cli/tests/snapshot_ado.rs
-assertion_line: 52
 expression: json
 ---
 findings:
@@ -97,8 +96,10 @@ graph:
     - id: 2
       kind: step
       metadata:
+        env_gate_writes_secret_value: "true"
         job_name: pipeline
         script_body: "echo \"##vso[task.setvariable variable=MY_TOKEN;issecret=false]$(System.AccessToken)\"\necho \"##vso[task.setvariable variable=API_KEY;issecret=false]$(API_KEY_SECRET)\"\n"
+        setvariable_ado: "true"
         writes_env_gate: "true"
       name: Expose secrets as plain variables
       trust_zone: first_party

@@ -26,6 +26,14 @@ pub const META_CLI_FLAG_EXPOSED: &str = "cli_flag_exposed";
 pub const META_TRIGGER: &str = "trigger";
 /// Marks a Step that writes to the environment gate (`$GITHUB_ENV`, ADO `##vso[task.setvariable]`).
 pub const META_WRITES_ENV_GATE: &str = "writes_env_gate";
+/// Marks a Step that writes a `$(secretRef)` value to the env gate. Co-set with
+/// META_WRITES_ENV_GATE when the written VALUE contains an ADO `$(VAR)` expression,
+/// distinguishing secret-exfiltration from plain-integer or literal env-gate writes.
+pub const META_ENV_GATE_WRITES_SECRET_VALUE: &str = "env_gate_writes_secret_value";
+/// Marks a Step that came from an ADO `##vso[task.setvariable]` call (as opposed to
+/// a GHA `>> $GITHUB_ENV` redirect). Used to distinguish the two env-gate write
+/// patterns so BUG-4 suppression only applies to ADO plain-value writes.
+pub const META_SETVARIABLE_ADO: &str = "setvariable_ado";
 /// Marks a Step that reads from the runner-managed environment via an
 /// `env.<NAME>` template reference — `${{ env.X }}` in a `with:` value,
 /// inline script body, or step `env:` mapping. Distinct from `secrets.X`

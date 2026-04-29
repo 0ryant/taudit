@@ -2,6 +2,23 @@
 
 All notable changes to this project will be documented in this file.
 
+## Unreleased
+
+### Added
+
+- **`taudit verify`** — Text and JSON output include per-pipeline **authority graph modeling**: counts of `complete` / `partial` / `unknown` graphs, optional per-file gap lines in text, and a **`pipelines`** array in JSON (`path`, `completeness`, `completeness_gaps`). ADR [0003](docs/adr/0003-strategic-spine-adoption-phased.md) Phase 2.
+
+### Documentation
+
+- **[docs/golden-paths.md](docs/golden-paths.md)** — Path H (graph → scan → verify); stdout-only note for **`taudit graph`**; links to partial-graph cookbook and ADR 0003.
+- **[docs/examples/ci-gate-taudit-verify.yml](docs/examples/ci-gate-taudit-verify.yml)** — Example GitHub Actions job (pinned install, verify, SARIF upload).
+- **[docs/policies/cookbook-partial-graphs.md](docs/policies/cookbook-partial-graphs.md)** — Patterns for gating on `completeness` outside custom invariants.
+- **[docs/research/BACKLOG-parser-depth-adr0003.md](docs/research/BACKLOG-parser-depth-adr0003.md)** — Parser triage backlog (ADR 0003 Phase 4.1).
+- **[docs/positioning.md](docs/positioning.md)**, **[README.md](README.md)**, **[docs/integrations/index.md](docs/integrations/index.md)** — actionlint complementary; tsafe / CellOS pointers; optional future linter ingestion called out as not shipped.
+- **[docs/adr/0003-strategic-spine-adoption-phased.md](docs/adr/0003-strategic-spine-adoption-phased.md)** — Implementation status table.
+- **`tests/fixtures/verify-golden-noop-policy.yml`** — Unsatisfiable invariant for **`scripts/golden-paths.sh`** verify smoke.
+- **[man/taudit.1](man/taudit.1)** — `taudit graph` writes stdout only (no `-o`).
+
 ## v1.0.8 — 2026-04-27
 
 ### Added

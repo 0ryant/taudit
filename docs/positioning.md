@@ -41,6 +41,16 @@ taudit is the graph layer. It is meant to be composed with sibling projects, not
 
 tsign and axiom are sibling projects, not features of taudit. They depend on taudit's graph being a stable contract.
 
+## Composition with workflow linters (actionlint and friends)
+
+**taudit is not a substitute** for linters that validate workflow YAML against
+the platform schema, contexts, and expression syntax (e.g. **actionlint** for
+GitHub Actions). Run both: the linter catches invalid or fragile workflow
+structure; taudit answers **who had access to what** and whether authority
+crosses trust boundaries. Overlapping only where both happen to notice the same
+string pattern is fine; the **typed graph** is the source of truth for
+propagation questions.
+
 ## Not in scope
 
 Per [doctrine](DOCTRINE.md) anti-goals — these stay out of scope permanently:

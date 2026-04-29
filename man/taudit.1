@@ -135,6 +135,20 @@ Same semantics as
 Emit the canonical graph. See
 .B AUTHORITY GRAPH
 above.
+.PP
+All graph formats are written to standard output only; there is no
+.B \-o
+or
+.B \-\-output
+flag on
+.BR graph .
+Use shell redirection (e.g.\ \fB> graph.json\fR).
+.B taudit scan
+and
+.B taudit verify
+accept
+.B \-o
+for machine\-readable reports.
 .SS "taudit diff \fIbefore\fR \fIafter\fR"
 Compare findings between two pipeline files.
 .TP

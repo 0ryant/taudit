@@ -35,6 +35,8 @@ Expect: JSON containing `"schema_version":"1.0.0"` and a `"graph"` object; exit 
 
 (Full file is large; use `jq` locally for exploration.)
 
+**Stdout only:** `taudit graph` has **no** `-o` / `--output` flag — all formats go to **stdout**. Persist with a shell redirect, e.g. `> /tmp/graph.json`. (`taudit scan` and `taudit verify` support `-o` / `--output` for SARIF/JSON reports.) See [ADR 0003 appendix](adr/0003-strategic-spine-adoption-phased.md#appendix-taudit-graph-and-output-files).
+
 ## Path C — Graph propagation summary
 
 ```bash
@@ -67,6 +69,20 @@ NO_COLOR=1 taudit graph tests/fixtures/clean.yml --platform github-actions --for
 
 Expect: first lines include **`flowchart`** (Mermaid `flowchart LR`); exit code **0**.
 
+## Path H — Merge gate (`verify`) after graph + scan
+
+End-to-end spine: export the graph (optional), scan for findings (informational), gate with explicit policy.
+
+```bash
+NO_COLOR=1 taudit graph tests/fixtures/clean.yml --platform github-actions --format json > /tmp/taudit-golden-graph.json
+NO_COLOR=1 taudit scan tests/fixtures/clean.yml --platform github-actions --quiet
+NO_COLOR=1 taudit verify --policy tests/fixtures/verify-golden-noop-policy.yml tests/fixtures/clean.yml --platform github-actions --format text
+```
+
+Expect: graph JSON validates the schema envelope; scan exits **0**; verify exits **0** with `verify: authority graph modeling:` and `verify: 0 violations` (noop policy matches nothing). Replace the policy path with your real `.taudit/policy/` directory in production.
+
+**Pin the binary in CI:** `cargo install taudit --version 1.0.8 --locked` (adjust as you adopt newer releases). Copy-paste workflow: [`docs/examples/ci-gate-taudit-verify.yml`](examples/ci-gate-taudit-verify.yml).
+
 ## Path G — Rule catalog (`explain`)
 
 ```bash
@@ -85,4 +101,7 @@ Expect: rule id and severity in the header; exit code **0**.
 
 - [USERGUIDE.md](../USERGUIDE.md) — tutorials and CI examples
 - [docs/authority-graph.md](authority-graph.md) — graph model, JSON vs Mermaid vs summary
+- [docs/verify.md](verify.md) — exit `0` / `1` / `2`, JSON shape including `pipelines` completeness
+- [docs/policies/cookbook-partial-graphs.md](policies/cookbook-partial-graphs.md) — gating when graphs are `partial` / `unknown`
+- [ADR 0003](adr/0003-strategic-spine-adoption-phased.md) — phased adoption tasks
 - [docs/corpus-research.md](corpus-research.md) — large-directory scans and corpus methodology

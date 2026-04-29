@@ -283,12 +283,18 @@ is acceptable and exits with a deterministic code:
 
 | Exit code | Meaning |
 |-----------|---------|
-| `0` | No policy violations — merge allowed |
-| `1` | At least one violation — block the merge |
-| `2` | Configuration error — missing policy, unreadable file |
+| `0` | **Pass** — no policy violations; merge allowed on policy grounds |
+| `1` | **Fail** — at least one violation; block the merge |
+| `2` | **Could not decide** — usage/config error (missing policy, unreadable file, parse failure on explicit paths, empty policy dir without `--include-builtin`, or `--strict` directory scan errors) |
 
 `verify` runs only your `--policy` invariants (not the 61 built-ins by default).
 This lets you gate on exactly the properties you care about.
+
+Every successful run also summarizes **authority graph modeling** (how completely
+each pipeline was parsed): see the `verify: authority graph modeling:` line in
+text output, or the `pipelines` array in `--format json`. When graphs are
+`partial` or `unknown`, treat coverage as a first-class signal — see
+[`docs/policies/cookbook-partial-graphs.md`](docs/policies/cookbook-partial-graphs.md).
 
 ### GitHub Actions — required check
 

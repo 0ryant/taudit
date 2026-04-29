@@ -28,9 +28,9 @@ Exit codes are part of the contract. Wire them straight into CI:
 
 | Exit | Meaning |
 |------|---------|
-| `0`  | No policy violations. Pipeline is acceptable. |
-| `1`  | At least one policy violation. Block the merge. |
-| `2`  | Usage error — bad CLI args, missing/unreadable policy, or pipeline parse failure. |
+| `0`  | No policy violations — **pass** (merge allowed on policy grounds). |
+| `1`  | At least one policy violation — **fail** (block the merge). |
+| `2`  | Usage or configuration error — **could not decide** (bad CLI args, missing/unreadable policy, empty policy, pipeline parse failure on explicit paths, or `--strict` directory errors). |
 
 Exit `2` is reserved for "we couldn't make a decision" — never conflate it
 with "the policy passed". A required CI check that treats `2` as success will
@@ -84,11 +84,15 @@ One line per violation, plus a final summary:
 
 ```text
 .github/workflows/release.yml: secret_to_untrusted: [secret_to_untrusted] Secret reaching untrusted step: SIGNING_KEY -> untrusted-org/publish-action@main [Critical]
+verify: authority graph modeling: 1 pipeline(s) — complete: 1, partial: 0, unknown: 0
 verify: 1 violation (1 critical / 0 high / 0 medium / 0 low / 0 info)
 ```
 
-The summary line is always emitted, even when the count is zero, so CI logs
-always show the verdict.
+The **authority graph modeling** line is always emitted when at least one
+pipeline was evaluated — counts `complete` / `partial` / `unknown` and prints
+per-pipeline gap detail for anything not `complete`. The **violation summary**
+line is always emitted too, even when the count is zero, so CI logs always show
+the verdict.
 
 ### `--format json`
 
@@ -115,12 +119,26 @@ Stable, versioned schema:
       "low": 0,
       "info": 0
     }
-  }
+  },
+  "pipelines": [
+    {
+      "path": ".github/workflows/release.yml",
+      "completeness": "complete",
+      "completeness_gaps": []
+    }
+  ]
 }
 ```
 
 `summary.by_severity` always carries all five keys so consumers can index
 without missing-key checks.
+
+**`pipelines`** (next release after v1.0.8; see **Unreleased** in `CHANGELOG.md`): one object per successfully parsed pipeline file,
+with the same `completeness` / `completeness_gaps` semantics as the authority
+graph JSON (`complete` | `partial` | `unknown`). Text output includes a rollup
+line `verify: authority graph modeling: …` before the violation summary. See
+[`docs/policies/cookbook-partial-graphs.md`](policies/cookbook-partial-graphs.md)
+for org-level gating patterns.
 
 ### `--format sarif`
 

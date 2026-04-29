@@ -173,13 +173,18 @@ impl PipelineParser for AdoParser {
         // Pipeline-level variable groups and named secrets.
         // plain_vars tracks non-secret named variables so $(VAR) refs in scripts
         // don't generate false-positive Secret nodes for plain config values.
+        // has_variable_groups is set when any variable group is encountered so
+        // extract_dollar_paren_secrets can avoid creating per-variable Secret
+        // nodes from opaque groups (BUG-3).
         let mut plain_vars: HashSet<String> = HashSet::new();
+        let mut has_variable_groups = false;
         let pipeline_secret_ids = process_variables(
             &pipeline.variables,
             &mut graph,
             &mut secret_ids,
             "pipeline",
             &mut plain_vars,
+            &mut has_variable_groups,
         );
 
         // Determine pipeline structure: stages → jobs → steps, or jobs → steps, or steps only
@@ -199,6 +204,7 @@ impl PipelineParser for AdoParser {
                     &mut secret_ids,
                     &stage_name,
                     &mut plain_vars,
+                    &mut has_variable_groups,
                 );
 
                 for job in &stage.jobs {
@@ -209,6 +215,7 @@ impl PipelineParser for AdoParser {
                         &mut secret_ids,
                         &job_name,
                         &mut plain_vars,
+                        &mut has_variable_groups,
                     );
 
                     let effective_workspace =
@@ -231,6 +238,7 @@ impl PipelineParser for AdoParser {
                         token_id,
                         &all_secrets,
                         &plain_vars,
+                        has_variable_groups,
                         &mut graph,
                         &mut secret_ids,
                     );
@@ -259,6 +267,7 @@ impl PipelineParser for AdoParser {
                     &mut secret_ids,
                     &job_name,
                     &mut plain_vars,
+                    &mut has_variable_groups,
                 );
 
                 let effective_workspace = job.workspace.as_ref().or(pipeline.workspace.as_ref());
@@ -279,6 +288,7 @@ impl PipelineParser for AdoParser {
                     token_id,
                     &all_secrets,
                     &plain_vars,
+                    has_variable_groups,
                     &mut graph,
                     &mut secret_ids,
                 );
@@ -298,6 +308,7 @@ impl PipelineParser for AdoParser {
                 token_id,
                 &pipeline_secret_ids,
                 &plain_vars,
+                has_variable_groups,
                 &mut graph,
                 &mut secret_ids,
             );
@@ -581,6 +592,7 @@ fn process_variables(
     cache: &mut HashMap<String, NodeId>,
     scope: &str,
     plain_vars: &mut HashSet<String>,
+    has_variable_groups: &mut bool,
 ) -> Vec<NodeId> {
     let mut ids = Vec::new();
 
@@ -601,6 +613,7 @@ fn process_variables(
                     ));
                     continue;
                 }
+                *has_variable_groups = true;
                 let mut meta = HashMap::new();
                 meta.insert(META_VARIABLE_GROUP.into(), "true".into());
                 let id = graph.add_node_with_metadata(
@@ -632,12 +645,14 @@ fn process_variables(
 }
 
 /// Process a list of ADO steps, adding nodes and edges to the graph.
+#[allow(clippy::too_many_arguments)]
 fn process_steps(
     steps: &[AdoStep],
     job_name: &str,
     token_id: NodeId,
     inherited_secrets: &[NodeId],
     plain_vars: &HashSet<String>,
+    has_variable_groups: bool,
     graph: &mut AuthorityGraph,
     cache: &mut HashMap<String, NodeId>,
 ) {
@@ -830,7 +845,14 @@ fn process_steps(
             // Detect $(varName) references in task input values
             for val in inputs.values() {
                 if let Some(s) = yaml_value_as_str(val) {
-                    extract_dollar_paren_secrets(s, step_id, plain_vars, graph, cache);
+                    extract_dollar_paren_secrets(
+                        s,
+                        step_id,
+                        plain_vars,
+                        has_variable_groups,
+                        graph,
+                        cache,
+                    );
                 }
             }
         }
@@ -850,22 +872,47 @@ fn process_steps(
         // Detect $(varName) in step env values
         if let Some(ref env) = step.env {
             for val in env.values() {
-                extract_dollar_paren_secrets(val, step_id, plain_vars, graph, cache);
+                extract_dollar_paren_secrets(
+                    val,
+                    step_id,
+                    plain_vars,
+                    has_variable_groups,
+                    graph,
+                    cache,
+                );
             }
         }
 
         // Detect $(varName) in inline script text
         if let Some(ref script) = inline_script {
-            extract_dollar_paren_secrets(script, step_id, plain_vars, graph, cache);
+            extract_dollar_paren_secrets(
+                script,
+                step_id,
+                plain_vars,
+                has_variable_groups,
+                graph,
+                cache,
+            );
         }
 
-        // Detect ##vso[task.setvariable] — environment gate mutation in ADO pipelines
+        // Detect ##vso[task.setvariable] — environment gate mutation in ADO pipelines.
+        // META_WRITES_ENV_GATE marks the step as writing to the env gate (always).
+        // META_ENV_GATE_WRITES_SECRET_VALUE marks when the written value contains a
+        // $(secretRef) expression — i.e., a secret is being propagated (BUG-4: plain
+        // integer writes like `##vso[task.setvariable variable=Count]3` should not
+        // fire as secret-exfiltration findings).
         if let Some(ref script) = inline_script {
             let lower = script.to_lowercase();
             if lower.contains("##vso[task.setvariable") {
                 if let Some(node) = graph.nodes.get_mut(step_id) {
                     node.metadata
                         .insert(META_WRITES_ENV_GATE.into(), "true".into());
+                    node.metadata
+                        .insert(META_SETVARIABLE_ADO.into(), "true".into());
+                    if setvariable_value_contains_secret_ref(script) {
+                        node.metadata
+                            .insert(META_ENV_GATE_WRITES_SECRET_VALUE.into(), "true".into());
+                    }
                 }
             }
         }
@@ -973,6 +1020,27 @@ fn add_template_delegation(
     ));
 }
 
+/// Returns true if a `##vso[task.setvariable ...]VALUE` call's VALUE contains
+/// an ADO `$(secretRef)` expression — i.e., the step is writing a secret-derived
+/// value into the environment gate (BUG-4: plain integers and PowerShell vars
+/// like `$psVar` should not fire the secret-exfiltration rule).
+fn setvariable_value_contains_secret_ref(script: &str) -> bool {
+    for line in script.lines() {
+        let lower = line.to_lowercase();
+        if !lower.contains("##vso[task.setvariable") {
+            continue;
+        }
+        // The value starts after the closing `]` of the ##vso directive.
+        if let Some(close_bracket) = line.find(']') {
+            let value_part = &line[close_bracket + 1..];
+            if value_part.contains("$(") {
+                return true;
+            }
+        }
+    }
+    false
+}
+
 /// Extract `$(varName)` references from a string, creating Secret nodes for
 /// non-predefined and non-plain ADO variables.
 /// Only content that is a valid ADO variable identifier (`[A-Za-z][A-Za-z0-9_]*`)
@@ -983,6 +1051,7 @@ fn extract_dollar_paren_secrets(
     text: &str,
     step_id: NodeId,
     plain_vars: &HashSet<String>,
+    has_variable_groups: bool,
     graph: &mut AuthorityGraph,
     cache: &mut HashMap<String, NodeId>,
 ) {
@@ -993,9 +1062,15 @@ fn extract_dollar_paren_secrets(
             let start = pos + 2;
             if let Some(end_offset) = text[start..].find(')') {
                 let var_name = &text[start..start + end_offset];
+                // BUG-3: when variable groups are present the group is opaque —
+                // any $(VAR) could be a plain config value from the group.
+                // Only create a Secret node if the var was explicitly declared
+                // as a secret (is already in cache) or there are no groups.
+                let already_declared_secret = cache.contains_key(var_name);
                 if is_valid_ado_identifier(var_name)
                     && !is_predefined_ado_var(var_name)
                     && !plain_vars.contains(var_name)
+                    && (!has_variable_groups || already_declared_secret)
                 {
                     let id = find_or_create_secret(graph, cache, var_name);
                     // Mark secrets embedded in -var flag arguments: their values appear in

@@ -5,7 +5,7 @@ use std::path::{Path, PathBuf};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use taudit_core::finding::{FindingExtras, Severity};
-use taudit_core::graph::PipelineSource;
+use taudit_core::graph::{AuthorityCompleteness, PipelineSource};
 use taudit_core::ignore::{glob_match, IgnoreConfig};
 use taudit_core::map;
 use taudit_core::ports::ReportSink;
@@ -264,6 +264,10 @@ enum Cli {
     ///
     /// Use `--job` with dot/mermaid to restrict to one job's reachable subgraph.
     /// JSON and summary use the full parsed graph (`--job` does not apply). See docs/authority-graph.md.
+    ///
+    /// **Output:** all formats write to **stdout** only. There is no `-o` /
+    /// `--output` flag on `graph` — use shell redirection (`> file.json`).
+    /// For file output flags, use `taudit scan` or `taudit verify`.
     Graph {
         /// Path to pipeline YAML file(s) or directory.
         #[arg(required = true)]
@@ -510,6 +514,12 @@ enum Cli {
         /// to the current working directory.
         #[arg(long)]
         baseline_root: Option<PathBuf>,
+
+        /// Suppress all findings produced by partial-graph reasoning
+        /// (unresolvable variable groups, opaque templates). Enables CI gating
+        /// on pipelines that use ADO variable groups without API access.
+        #[arg(long, default_value_t = false)]
+        ignore_partial: bool,
     },
 
     /// Manage per-pipeline baselines under `.taudit/baselines/`.
@@ -1370,6 +1380,7 @@ fn run() -> Result<()> {
             gate_on_all,
             strict,
             baseline_root,
+            ignore_partial,
         } => {
             if no_color || std::env::var_os("NO_COLOR").is_some() {
                 colored::control::set_override(false);
@@ -1390,6 +1401,7 @@ fn run() -> Result<()> {
                 gate_on_all,
                 strict,
                 baseline_root,
+                ignore_partial,
             })
         }
         Cli::Suppressions {
@@ -2218,6 +2230,11 @@ struct VerifyOpts {
     strict: bool,
     /// Optional override of `.taudit/` location. Defaults to CWD.
     baseline_root: Option<PathBuf>,
+    /// BUG-6: suppress findings that originate from partial-graph reasoning
+    /// (unresolvable variable groups, template references). Lets CI gate on
+    /// NEW findings while ignoring known-partial noise from groups that
+    /// taudit can't resolve without ADO API access.
+    ignore_partial: bool,
 }
 
 /// One policy violation surfaced by `verify`. Carries enough detail for the
@@ -2229,6 +2246,15 @@ struct Violation {
     severity: Severity,
     category: String,
     message: String,
+}
+
+/// Per-pipeline authority-graph completeness for `verify` text/JSON output
+/// (ADR 0003 Phase 2 — gate-adjacent surfacing).
+#[derive(Debug, Clone)]
+struct VerifyPipelineModeling {
+    path: String,
+    completeness: AuthorityCompleteness,
+    completeness_gaps: Vec<String>,
 }
 
 /// `taudit verify` entrypoint. Computes the exit code via `run_verify_io`
@@ -2268,13 +2294,22 @@ fn cmd_verify(opts: VerifyOpts) -> Result<()> {
 /// to exit 2 with a stderr line. This is the testable entrypoint.
 fn run_verify_io<W: std::io::Write>(opts: &VerifyOpts, writer: &mut W) -> i32 {
     // Step 1: load custom rules. Bad path / parse error => exit 2 (usage).
+    // BUG-5: if --include-builtin is set and the policy path simply doesn't
+    // exist, treat it as zero custom rules rather than a hard error — the
+    // caller wants built-in coverage and the directory hasn't been created
+    // yet (common in fresh repos using `taudit verify --include-builtin`).
     let custom_rules = match load_policy(&opts.policy) {
         Ok(rules) => rules,
         Err(errors) => {
-            for err in &errors {
-                eprintln!("error: {err}");
+            let path_not_found = errors.iter().any(|e| e.contains("policy path not found"));
+            if path_not_found && opts.include_builtin {
+                Vec::new()
+            } else {
+                for err in &errors {
+                    eprintln!("error: {err}");
+                }
+                return 2;
             }
-            return 2;
         }
     };
 
@@ -2321,6 +2356,7 @@ fn run_verify_io<W: std::io::Write>(opts: &VerifyOpts, writer: &mut W) -> i32 {
         taudit_core::graph::AuthorityGraph,
         Vec<taudit_core::finding::Finding>,
     )> = Vec::new();
+    let mut pipeline_modeling: Vec<VerifyPipelineModeling> = Vec::new();
 
     // Step 3: parse each pipeline file and evaluate the loaded invariants.
     // For explicitly-named files a parse error is fatal (exit 2). For files
@@ -2381,6 +2417,12 @@ fn run_verify_io<W: std::io::Write>(opts: &VerifyOpts, writer: &mut W) -> i32 {
             },
         };
 
+        pipeline_modeling.push(VerifyPipelineModeling {
+            path: graph.source.file.clone(),
+            completeness: graph.completeness,
+            completeness_gaps: graph.completeness_gaps.clone(),
+        });
+
         let propagation_paths =
             taudit_core::propagation::propagation_analysis(&graph, opts.max_hops);
 
@@ -2394,6 +2436,23 @@ fn run_verify_io<W: std::io::Write>(opts: &VerifyOpts, writer: &mut W) -> i32 {
         // Optionally fold in the 61 built-in rules.
         if opts.include_builtin {
             findings.extend(rules::run_all_rules(&graph, opts.max_hops));
+        }
+
+        // BUG-6: --ignore-partial suppresses findings whose nodes_involved
+        // include a variable-group Secret (unresolvable without ADO API).
+        // Only active when the graph is non-Complete AND --ignore-partial set.
+        if opts.ignore_partial
+            && graph.completeness != taudit_core::graph::AuthorityCompleteness::Complete
+        {
+            findings.retain(|f| {
+                !f.nodes_involved.iter().any(|&nid| {
+                    graph
+                        .node(nid)
+                        .and_then(|n| n.metadata.get(taudit_core::graph::META_VARIABLE_GROUP))
+                        .map(|v| v == "true")
+                        .unwrap_or(false)
+                })
+            });
         }
 
         // Apply .taudit-suppressions.yml before the threshold filter so a
@@ -2498,8 +2557,8 @@ fn run_verify_io<W: std::io::Write>(opts: &VerifyOpts, writer: &mut W) -> i32 {
 
     // Step 4: emit the report in the requested format.
     let render_result = match opts.format {
-        VerifyFormat::Text => render_verify_text(writer, &violations),
-        VerifyFormat::Json => render_verify_json(writer, &violations),
+        VerifyFormat::Text => render_verify_text(writer, &violations, &pipeline_modeling),
+        VerifyFormat::Json => render_verify_json(writer, &violations, &pipeline_modeling),
         VerifyFormat::Sarif => {
             let items: Vec<_> = sarif_buffer
                 .iter()
@@ -2572,7 +2631,11 @@ fn extract_invariant_id(message: &str) -> String {
 /// Render the human-readable text format. One line per violation:
 /// `path: invariant_id: message [severity]`. Includes a final summary line
 /// even when there are zero violations so CI logs always show the verdict.
-fn render_verify_text<W: std::io::Write>(w: &mut W, violations: &[Violation]) -> Result<()> {
+fn render_verify_text<W: std::io::Write>(
+    w: &mut W,
+    violations: &[Violation],
+    pipeline_modeling: &[VerifyPipelineModeling],
+) -> Result<()> {
     for v in violations {
         writeln!(
             w,
@@ -2580,6 +2643,7 @@ fn render_verify_text<W: std::io::Write>(w: &mut W, violations: &[Violation]) ->
             v.path, v.invariant_id, v.message, v.severity
         )?;
     }
+    write_verify_authority_modeling_text(w, pipeline_modeling)?;
     let summary = severity_summary(violations);
     writeln!(
         w,
@@ -2595,10 +2659,81 @@ fn render_verify_text<W: std::io::Write>(w: &mut W, violations: &[Violation]) ->
     Ok(())
 }
 
+fn completeness_snake(c: AuthorityCompleteness) -> &'static str {
+    match c {
+        AuthorityCompleteness::Complete => "complete",
+        AuthorityCompleteness::Partial => "partial",
+        AuthorityCompleteness::Unknown => "unknown",
+    }
+}
+
+/// One rollup line plus per-pipeline detail when not `complete` (ADR 0003).
+fn write_verify_authority_modeling_text<W: std::io::Write>(
+    w: &mut W,
+    pipelines: &[VerifyPipelineModeling],
+) -> Result<()> {
+    if pipelines.is_empty() {
+        return Ok(());
+    }
+    let n = pipelines.len();
+    let mut n_complete: u32 = 0;
+    let mut n_partial: u32 = 0;
+    let mut n_unknown: u32 = 0;
+    for p in pipelines {
+        match p.completeness {
+            AuthorityCompleteness::Complete => n_complete += 1,
+            AuthorityCompleteness::Partial => n_partial += 1,
+            AuthorityCompleteness::Unknown => n_unknown += 1,
+        }
+    }
+    writeln!(
+        w,
+        "verify: authority graph modeling: {n} pipeline(s) — complete: {n_complete}, partial: {n_partial}, unknown: {n_unknown}"
+    )?;
+    for p in pipelines {
+        if p.completeness == AuthorityCompleteness::Complete {
+            continue;
+        }
+        let gaps = if p.completeness_gaps.is_empty() {
+            "(no gap strings recorded)".to_string()
+        } else {
+            p.completeness_gaps.join("; ")
+        };
+        let gaps = truncate_for_verify_line(&gaps, 400);
+        writeln!(
+            w,
+            "verify:   {} — {} — {}",
+            p.path,
+            completeness_snake(p.completeness),
+            gaps
+        )?;
+    }
+    Ok(())
+}
+
+fn truncate_for_verify_line(s: &str, max_chars: usize) -> String {
+    if s.chars().count() <= max_chars {
+        return s.to_string();
+    }
+    let mut out = String::new();
+    for (i, ch) in s.chars().enumerate() {
+        if i + 1 >= max_chars {
+            out.push('…');
+            break;
+        }
+        out.push(ch);
+    }
+    out
+}
+
 /// Render the structured JSON format with stable field names and a versioned
 /// schema marker. `summary.by_severity` is a fixed-key object so consumers
 /// can index without checking for missing keys.
-fn render_verify_json<W: std::io::Write>(w: &mut W, violations: &[Violation]) -> Result<()> {
+fn render_verify_json<W: std::io::Write>(
+    w: &mut W,
+    violations: &[Violation],
+    pipeline_modeling: &[VerifyPipelineModeling],
+) -> Result<()> {
     let summary = severity_summary(violations);
     let json = serde_json::json!({
         "schema_version": "taudit.verify.v1",
@@ -2618,7 +2753,12 @@ fn render_verify_json<W: std::io::Write>(w: &mut W, violations: &[Violation]) ->
                 "low": summary.low,
                 "info": summary.info,
             }
-        }
+        },
+        "pipelines": pipeline_modeling.iter().map(|p| serde_json::json!({
+            "path": p.path,
+            "completeness": completeness_snake(p.completeness),
+            "completeness_gaps": p.completeness_gaps,
+        })).collect::<Vec<_>>(),
     });
     serde_json::to_writer_pretty(w, &json).with_context(|| "Failed to write verify JSON report")?;
     Ok(())
@@ -5282,6 +5422,7 @@ mod tests {
             gate_on_all: false,
             strict: false,
             baseline_root: None,
+            ignore_partial: false,
         };
 
         let mut buf = Vec::new();
@@ -5294,6 +5435,10 @@ mod tests {
         assert!(
             output.contains("verify: 0 violations"),
             "missing summary: {output}"
+        );
+        assert!(
+            output.contains("verify: authority graph modeling:"),
+            "expected completeness rollup in verify text: {output}"
         );
     }
 
@@ -5316,6 +5461,7 @@ mod tests {
             gate_on_all: false,
             strict: false,
             baseline_root: None,
+            ignore_partial: false,
         };
 
         let mut buf = Vec::new();
@@ -5348,6 +5494,7 @@ mod tests {
             gate_on_all: false,
             strict: false,
             baseline_root: None,
+            ignore_partial: false,
         };
 
         let mut buf = Vec::new();
@@ -5374,6 +5521,7 @@ mod tests {
             gate_on_all: false,
             strict: false,
             baseline_root: None,
+            ignore_partial: false,
         };
 
         let mut buf = Vec::new();
@@ -5384,6 +5532,9 @@ mod tests {
         assert_eq!(parsed["schema_version"], "taudit.verify.v1");
         assert!(parsed["summary"]["total"].as_u64().unwrap() >= 1);
         assert!(parsed["summary"]["by_severity"].is_object());
+        let pipelines = parsed["pipelines"].as_array().expect("pipelines array");
+        assert_eq!(pipelines.len(), 1);
+        assert_eq!(pipelines[0]["completeness"], "complete");
     }
 
     #[test]
@@ -5409,6 +5560,7 @@ mod tests {
             gate_on_all: false,
             strict: false,
             baseline_root: None,
+            ignore_partial: false,
         };
 
         let mut buf = Vec::new();
@@ -5461,6 +5613,7 @@ mod tests {
             gate_on_all: false,
             strict: false,
             baseline_root: Some(dir.clone()),
+            ignore_partial: false,
         };
 
         let mut buf = Vec::new();
@@ -5526,6 +5679,7 @@ mod tests {
             gate_on_all: false,
             strict: false,
             baseline_root: Some(dir),
+            ignore_partial: false,
         };
 
         let mut buf = Vec::new();
@@ -5590,6 +5744,7 @@ mod tests {
             gate_on_all: false,
             strict: false,
             baseline_root: Some(dir),
+            ignore_partial: false,
         };
 
         let mut buf = Vec::new();
@@ -5634,6 +5789,7 @@ mod tests {
             gate_on_all: true, // bypass baseline suppression
             strict: false,
             baseline_root: Some(dir),
+            ignore_partial: false,
         };
 
         let mut buf = Vec::new();
@@ -5708,6 +5864,7 @@ mod tests {
             gate_on_all: false,
             strict: false,
             baseline_root: None,
+            ignore_partial: false,
         };
 
         let mut buf = Vec::new();
@@ -5746,6 +5903,7 @@ mod tests {
             gate_on_all: false,
             strict: true,
             baseline_root: None,
+            ignore_partial: false,
         };
 
         let mut buf = Vec::new();

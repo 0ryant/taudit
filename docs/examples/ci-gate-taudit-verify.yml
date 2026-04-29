@@ -1,0 +1,33 @@
+# Example: required PR check — pin taudit, run verify, upload SARIF (ADR 0003).
+# Copy into .github/workflows/ and adjust paths / policy directory.
+name: taudit policy gate
+on:
+  pull_request:
+    paths:
+      - ".github/workflows/**"
+      - ".taudit/**"
+      - "invariants/**"
+
+permissions:
+  contents: read
+  security-events: write
+
+jobs:
+  taudit-verify:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+
+      - name: Install taudit (pin major.minor for reproducible CI)
+        run: cargo install taudit --version 1.0.8 --locked
+
+      - name: Verify authority invariants (exit 0 = pass, 1 = violations, 2 = config/parse error)
+        run: taudit verify --policy .taudit/policy/ .github/workflows/
+
+      - name: Scan for SARIF (informational exit codes — upload separately)
+        run: taudit scan .github/workflows/ --format sarif -o taudit-results.sarif
+
+      - name: Upload SARIF
+        uses: github/codeql-action/upload-sarif@v3
+        with:
+          sarif_file: taudit-results.sarif

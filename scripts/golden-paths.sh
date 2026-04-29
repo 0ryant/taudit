@@ -17,6 +17,7 @@ export NO_COLOR=1
 
 clean="tests/fixtures/clean.yml"
 leaky="tests/fixtures/propagation-leaky.yml"
+noop_policy="tests/fixtures/verify-golden-noop-policy.yml"
 
 log() { echo "+ $*" >&2; }
 
@@ -44,5 +45,10 @@ log "$BIN graph ... --format mermaid"
 
 log "$BIN explain authority_propagation"
 "$BIN" explain authority_propagation | grep -q authority_propagation
+
+log "$BIN verify (noop policy on clean fixture)"
+out_verify=$("$BIN" verify --policy "$noop_policy" "$clean" --platform github-actions --format text)
+echo "$out_verify" | grep -q "verify: authority graph modeling:"
+echo "$out_verify" | grep -q "verify: 0 violations"
 
 echo "golden-paths: OK"

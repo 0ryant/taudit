@@ -223,6 +223,11 @@ The `schema_version` field at the document root tells consumers exactly
 which contract they're parsing. `schema_uri` is the canonical URL of the
 schema document and is safe to cache.
 
+**`taudit verify --format json`:** the report uses `schema_version: "taudit.verify.v1"`.
+New top-level keys (e.g. per-pipeline `pipelines` with `completeness`) are
+**additive** within `1.x` the same way optional graph fields are — consumers
+should ignore unknown keys.
+
 ## How downstream consumers should use it
 
 Recommended integration pattern:

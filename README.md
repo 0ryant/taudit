@@ -91,6 +91,12 @@ taudit is **the graph layer** of a small, composable stack. It is meant to be co
 
 The graph is the contract between these layers. Keeping it stable, versioned, and inspectable is a higher priority than adding new rules. See [`docs/positioning.md`](docs/positioning.md) for the full framing.
 
+For **workflow YAML shape and platform contexts**, keep using your platform linter (e.g. **[actionlint](https://github.com/rhysd/actionlint)** for GitHub Actions) alongside taudit — taudit models **authority propagation**, not full expression evaluation or every schema knob.
+
+## Golden path (docs + CI)
+
+Blessed copy-paste flows (graph → scan → verify, exit codes, stdout vs `-o`): **[`docs/golden-paths.md`](docs/golden-paths.md)**. Example workflow with pinned `taudit` + SARIF upload: **[`docs/examples/ci-gate-taudit-verify.yml`](docs/examples/ci-gate-taudit-verify.yml)**. Adoption checklist: **[`docs/adr/0003-strategic-spine-adoption-phased.md`](docs/adr/0003-strategic-spine-adoption-phased.md)**.
+
 ## Outputs
 
 The graph is the artifact. Everything else is a view onto it.
@@ -105,7 +111,7 @@ The graph is the artifact. Everything else is a view onto it.
 | **CloudEvents JSONL** | `taudit scan --format cloudevents` | Event-driven pipelines, SIEM ingestion |
 | **Diff** | `taudit diff before.yml after.yml` | Authority changes between two pipeline revisions |
 | **Verify enforcement** | `taudit verify` *(v1.0)* | PR-gate against an explicit invariant set with semver-stable semantics |
-| **Dedicated graph command** | `taudit graph` *(v1.0)* | First-class graph generator separate from scan/map |
+| **Dedicated graph command** | `taudit graph` *(v1.0)* | First-class graph generator separate from scan/map (writes to **stdout** only — use `>` for a file; no `-o` on `graph`) |
 
 ## Install
 

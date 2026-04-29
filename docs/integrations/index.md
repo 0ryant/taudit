@@ -77,6 +77,18 @@ before the sibling projects publish.
   without tsign or axiom. tsign would be useful even without axiom
   consuming it. axiom is the multiplier when everything is in place.
 
+## Related tooling (outside the three-layer diagram)
+
+| Layer | Role | Contract / docs |
+|-------|------|-------------------|
+| **tsafe** | Scoped secret execution — reduce ambient token exposure when findings recommend it | Product loop in [`docs/DOCTRINE.md`](../DOCTRINE.md) |
+| **CellOS / isolation runtime** | Contain execution when findings require isolation | [`CellosRemediation`](../../crates/taudit-core/src/finding.rs) hints in findings |
+| **actionlint** (et al.) | Workflow correctness, contexts, expression sanity | [actionlint](https://github.com/rhysd/actionlint) — **complementary** to taudit, not replaced by it ([`docs/positioning.md`](../positioning.md)) |
+
+**Future (not shipped):** consuming external linter SARIF or diagnostics as
+**optional context** for triage would be a separate integration, behind an
+explicit flag and ADR — not merged into the core graph parser.
+
 ## What you can do today, standalone
 
 taudit's standalone surface already covers the local-only flavour of
