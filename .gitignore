@@ -80,6 +80,9 @@ cobertura.xml
 .taudit/backups/
 .taudit/baselines/
 
+# Ephemeral CellOS smoke spec (scripts/cellos_smoke_docker.sh)
+.cellos-spec.*.json
+
 # cargo-mutants output
 mutants.out/
 mutants.out.old/

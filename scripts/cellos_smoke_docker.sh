@@ -26,6 +26,18 @@ if [[ ! -x "${TAUDIT_BIN}" ]]; then
   exit 1
 fi
 
+# Linux container runs the bind-mounted taudit; macOS/Windows host binaries are not ELF.
+if command -v file >/dev/null 2>&1; then
+  ft=$(file -b "${TAUDIT_BIN}" 2>/dev/null || true)
+  case "${ft}" in
+    *ELF*) ;;
+    *)
+      echo "cellos_smoke_docker.sh: need a Linux ELF taudit (e.g. build on ubuntu-latest in CI, or cross-compile). file(1): ${ft}" >&2
+      exit 1
+      ;;
+  esac
+fi
+
 # Path as seen inside the container (/work is ROOT).
 if [[ "${TAUDIT_BIN}" != "${ROOT}"/* ]]; then
   echo "TAUDIT_BIN must be under ROOT (${ROOT})" >&2
@@ -36,7 +48,10 @@ argv0="/work/${rel}"
 # Prefixes are evaluated in the container; argv0 lives under /work/...
 work_bin_prefix="/work/$(dirname "${rel}")"
 
-SPEC_PATH="$(mktemp /tmp/taudit-cellos-docker-spec.XXXXXX)"
+# Spec must live under ROOT (single /work bind mount). File bind-mounts from
+# /tmp are unreliable on some Docker engines ("Is a directory"). The container
+# runs as non-root (uid 10001); chmod a+r so the cellos user can read the spec.
+SPEC_PATH="$(mktemp "${ROOT}/.cellos-spec.XXXXXX.json")"
 cleanup() { rm -f "${SPEC_PATH}"; }
 trap cleanup EXIT
 
@@ -59,12 +74,14 @@ cat >"${SPEC_PATH}" <<EOF
 }
 EOF
 
+chmod a+r "${SPEC_PATH}"
+spec_in_container="/work/$(basename "${SPEC_PATH}")"
+
 echo "Running taudit inside CellOS supervisor container (${IMAGE})..."
 docker run --rm \
   -v "${ROOT}:/work" \
-  -v "${SPEC_PATH}:/cellos-spec.json:ro" \
   -w /work \
   -e CELL_OS_USE_NOOP_SINK=1 \
   -e "CELLOS_RUN_ARGV0_ALLOW_PREFIXES=${work_bin_prefix},/usr/bin,/bin" \
   "${IMAGE}" \
-  "/cellos-spec.json"
+  "${spec_in_container}"

@@ -144,6 +144,7 @@ jobs:
         run: bash scripts/cellos_smoke.sh
 
       - name: Notice when CellOS image pull and sibling checkout both failed
-        if: steps.cellos_pull.outcome != 'success' && steps.checkout_cellos.outcome != 'success'
+        # When GHCR pull succeeds, checkout is skipped (outcome skipped) — do not treat as failure.
+        if: steps.cellos_pull.outcome != 'success' && steps.checkout_cellos.outcome == 'failure'
         run: |
           echo "::notice::CellOS GHCR pull failed (${{ steps.cellos_img.outputs.image }}) and sibling checkout failed (${{ steps.siblings.outputs.cellos_repo }}). Run publish-cellos-ghcr workflow once, or set CELLOS_SUPERVISOR_IMAGE / SIBLING_CELLOS_REPO."
