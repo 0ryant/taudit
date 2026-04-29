@@ -1,7 +1,7 @@
 use colored::Colorize;
 use taudit_core::error::TauditError;
 use taudit_core::finding::{Finding, FindingSource, Recommendation, Severity};
-use taudit_core::graph::{AuthorityCompleteness, AuthorityGraph, EdgeKind, NodeKind};
+use taudit_core::graph::{AuthorityCompleteness, AuthorityGraph, EdgeKind, GapKind, NodeKind};
 use taudit_core::ports::ReportSink;
 
 macro_rules! w {
@@ -64,13 +64,37 @@ impl<W: std::io::Write> ReportSink<W> for TerminalReport {
             wln!(w)?;
             match graph.completeness {
                 AuthorityCompleteness::Partial => {
+                    let header_prefix = match graph.worst_gap_kind() {
+                        Some(GapKind::Opaque) => "error: ⛔".red().bold().to_string(),
+                        Some(GapKind::Expression) => "note: ·".dimmed().to_string(),
+                        // Structural or None
+                        _ => "note: ⚠".bright_yellow().bold().to_string(),
+                    };
                     wln!(
                         w,
                         "  {} partial graph — findings below tagged {}",
-                        "note: ⚠".bright_yellow().bold(),
+                        header_prefix,
                         "[partial]".yellow().dimmed()
                     )?;
-                    for gap in &graph.completeness_gaps {
+                    for (kind, gap) in graph
+                        .completeness_gap_kinds
+                        .iter()
+                        .zip(graph.completeness_gaps.iter())
+                    {
+                        let kind_label = match kind {
+                            GapKind::Opaque => "[opaque]".red().to_string(),
+                            GapKind::Structural => "[structural]".yellow().to_string(),
+                            GapKind::Expression => "[expression]".dimmed().to_string(),
+                        };
+                        wln!(w, "    {} {}", kind_label, gap.dimmed())?;
+                    }
+                    // Fallback: if gap_kinds is shorter than gaps, print remaining gaps
+                    // without prefix (defensive — keeps behaviour graceful if invariants slip).
+                    for gap in graph
+                        .completeness_gaps
+                        .iter()
+                        .skip(graph.completeness_gap_kinds.len())
+                    {
                         wln!(w, "    {}", format!("- {gap}").yellow())?;
                     }
                 }
@@ -423,4 +447,109 @@ pub fn print_summary<W: std::io::Write>(w: &mut W, s: &RunSummary) -> std::io::R
     }
 
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use taudit_core::graph::{GapKind, PipelineSource};
+    use taudit_core::ports::ReportSink;
+
+    /// Build a fresh graph for tests. Single mutex-free entry point — keeps each
+    /// test self-contained.
+    fn test_graph() -> AuthorityGraph {
+        AuthorityGraph::new(PipelineSource {
+            file: "test.yml".into(),
+            repo: None,
+            git_ref: None,
+            commit_sha: None,
+        })
+    }
+
+    /// Render a graph with no findings and return the raw string. Disables ANSI
+    /// colour codes so substring assertions stay deterministic.
+    fn render(graph: &AuthorityGraph) -> String {
+        // Force colour off so assertions can compare against plain text.
+        // Other tests in this binary may run in parallel and re-enable colour;
+        // since we set BEFORE rendering and the override is process-global, the
+        // only safe pattern across crates is to drop ANSI from the output.
+        // We do both: set_override(false) AND strip any residual escapes.
+        colored::control::set_override(false);
+        let reporter = TerminalReport { verbose: false };
+        let mut buf: Vec<u8> = Vec::new();
+        reporter
+            .emit(&mut buf, graph, &[])
+            .expect("emit should succeed");
+        let raw = String::from_utf8(buf).expect("utf-8 output");
+        strip_ansi(&raw)
+    }
+
+    /// Strip ANSI CSI escape sequences (`ESC [ ... <final-byte> `) while
+    /// preserving multi-byte UTF-8 (⛔, ⚠, ·, →). Iterates over chars, not
+    /// bytes, so glyphs survive intact when colour override happens to be
+    /// re-enabled by a neighbouring test sharing this process.
+    fn strip_ansi(s: &str) -> String {
+        let mut out = String::with_capacity(s.len());
+        let mut chars = s.chars().peekable();
+        while let Some(c) = chars.next() {
+            if c == '\u{1B}' && chars.peek() == Some(&'[') {
+                chars.next(); // consume '['
+                              // CSI runs until a final byte in 0x40..=0x7E.
+                for fc in chars.by_ref() {
+                    let cp = fc as u32;
+                    if (0x40..=0x7E).contains(&cp) {
+                        break;
+                    }
+                }
+            } else {
+                out.push(c);
+            }
+        }
+        out
+    }
+
+    #[test]
+    fn opaque_gap_header_shows_error_prefix() {
+        let mut g = test_graph();
+        g.mark_partial(GapKind::Opaque, "zero steps");
+        let out = render(&g);
+        assert!(
+            out.contains("error: ⛔"),
+            "expected opaque header 'error: ⛔', got:\n{out}"
+        );
+        assert!(
+            out.contains("[opaque]"),
+            "expected [opaque] gap label, got:\n{out}"
+        );
+    }
+
+    #[test]
+    fn structural_gap_header_shows_warning_prefix() {
+        let mut g = test_graph();
+        g.mark_partial(GapKind::Structural, "composite unresolved");
+        let out = render(&g);
+        assert!(
+            out.contains("note: ⚠"),
+            "expected structural header 'note: ⚠', got:\n{out}"
+        );
+        assert!(
+            out.contains("[structural]"),
+            "expected [structural] gap label, got:\n{out}"
+        );
+    }
+
+    #[test]
+    fn expression_gap_header_shows_note_prefix() {
+        let mut g = test_graph();
+        g.mark_partial(GapKind::Expression, "matrix hides paths");
+        let out = render(&g);
+        assert!(
+            out.contains("note: ·"),
+            "expected expression header 'note: ·', got:\n{out}"
+        );
+        assert!(
+            out.contains("[expression]"),
+            "expected [expression] gap label, got:\n{out}"
+        );
+    }
 }
