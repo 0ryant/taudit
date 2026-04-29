@@ -90,7 +90,7 @@ impl PipelineParser for GitlabParser {
         // reason about remote URLs and unpinned project refs.
         if let Some(inc) = mapping.get("include") {
             graph.mark_partial(
-                GapKind::Expression,
+                GapKind::Structural,
                 "include: directive present — included templates not resolved".to_string(),
             );
             let entries = extract_include_entries(inc);
@@ -129,7 +129,7 @@ impl PipelineParser for GitlabParser {
             // Hidden jobs (starting with a dot) are templates — mark Partial, skip
             if job_name.starts_with('.') {
                 graph.mark_partial(
-                    GapKind::Expression,
+                    GapKind::Structural,
                     format!("job '{job_name}' is a hidden/template job — not resolved"),
                 );
                 continue;
@@ -144,7 +144,7 @@ impl PipelineParser for GitlabParser {
             let extends_names = extract_extends_list(job_map.get("extends"));
             if !extends_names.is_empty() {
                 graph.mark_partial(
-                    GapKind::Expression,
+                    GapKind::Structural,
                     format!(
                         "job '{job_name}' uses extends: — inherited configuration not resolved"
                     ),
@@ -342,7 +342,7 @@ impl PipelineParser for GitlabParser {
         });
         if step_count == 0 && had_job_carrier {
             graph.mark_partial(
-                GapKind::Expression,
+                GapKind::Opaque,
                 "non-reserved top-level keys parsed but produced 0 step nodes — possible non-GitLab YAML wrong-platform-classified".to_string(),
             );
         }
@@ -1201,6 +1201,7 @@ build:
 "#;
         let graph = parse(yaml);
         assert_eq!(graph.completeness, AuthorityCompleteness::Partial);
+        assert_eq!(graph.completeness_gap_kinds[0], GapKind::Structural);
     }
 
     #[test]
@@ -1216,6 +1217,16 @@ my-job:
 "#;
         let graph = parse(yaml);
         assert_eq!(graph.completeness, AuthorityCompleteness::Partial);
+        // Two structural gaps: the hidden `.base` template job and the
+        // `extends:` inheritance on my-job.
+        assert!(
+            graph
+                .completeness_gap_kinds
+                .iter()
+                .all(|k| *k == GapKind::Structural),
+            "expected all gaps Structural, got: {:?}",
+            graph.completeness_gap_kinds
+        );
     }
 
     #[test]
@@ -1351,5 +1362,9 @@ test:
         assert_eq!(step_count, 0);
         // Hidden jobs already mark partial with their own reason.
         assert_eq!(graph.completeness, AuthorityCompleteness::Partial);
+        // The hidden `.template-only` job is a Structural gap. The zero-steps
+        // fall-through does NOT fire here because `had_job_carrier` only
+        // counts non-dot-prefixed mapping-valued top-level keys.
+        assert_eq!(graph.completeness_gap_kinds[0], GapKind::Structural);
     }
 }
