@@ -7194,6 +7194,14 @@ mod tests {
             "matrix strategy hides some authority paths",
         );
 
+        // A matrix expression hides values but doesn't break graph structure,
+        // so the gap is Expression (the lowest-severity GapKind).
+        assert_eq!(
+            g.completeness_gap_kinds,
+            vec![GapKind::Expression],
+            "matrix-strategy gap must be classified as Expression"
+        );
+
         let identity = g.add_node(NodeKind::Identity, "GITHUB_TOKEN", TrustZone::FirstParty);
         let step = g.add_node(NodeKind::Step, "deploy", TrustZone::Untrusted);
         let image = g.add_node(NodeKind::Image, "evil/action@main", TrustZone::Untrusted);

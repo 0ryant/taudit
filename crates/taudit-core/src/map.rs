@@ -936,7 +936,15 @@ mod tests {
         let secret = g.add_node(NodeKind::Secret, "K", TrustZone::FirstParty);
         let step = g.add_node(NodeKind::Step, "s", TrustZone::FirstParty);
         g.add_edge(step, secret, EdgeKind::HasAccessTo);
-        g.mark_partial(GapKind::Expression, "fixture: unresolved composite");
+        // An unresolved composite action breaks the authority chain — that's
+        // a Structural gap, not an Expression-level value-hiding one.
+        g.mark_partial(GapKind::Structural, "fixture: unresolved composite");
+
+        assert_eq!(
+            g.completeness_gap_kinds,
+            vec![GapKind::Structural],
+            "unresolved-composite gap must be classified as Structural"
+        );
 
         let mer = render_mermaid(&g, None, DiagramLabelDetail::Compact);
         assert!(
