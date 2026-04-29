@@ -2,9 +2,16 @@
 
 All notable changes to this project will be documented in this file.
 
+## v1.0.12 — 2026-04-29
+
+### Fixed
+
+- **BUG-1 (complete fix): CRLF normalisation at the read boundary** — Previous fix normalised only inside `compute_pipeline_hash`. On Windows with `git core.autocrlf=true`, `git add`/`checkout` silently converts LF → CRLF in the working tree; because the same CRLF content also reaches the parser and the `content_for_baseline` capture, `sha256` still diverged. `normalise_line_endings()` now runs immediately after every `read_to_string` on a pipeline file (scan loop, verify loop, baseline init loop, `parse_content`) so both the parser and the hash always see LF regardless of platform or git configuration.
+
 ## v1.0.11 — 2026-04-29
 
 ### Added
+
 - **`GapKind` typed taxonomy** — partial graphs now record why they're partial
   with one of three typed levels:
   - `expression` — a template or matrix expression hides a value; graph
@@ -24,10 +31,6 @@ All notable changes to this project will be documented in this file.
   `--verbose` restores inline tags. `opaque` gaps always emit `[partial:opaque]`
   inline regardless of verbosity. See `docs/policies/cookbook-partial-graphs.md`
   Pattern D and Pattern E.
-
-### Fixed
-
-- **BUG-1 (complete fix): CRLF normalisation at the read boundary** — Previous fix normalised only inside `compute_pipeline_hash`. On Windows with `git core.autocrlf=true`, `git add` silently converts LF → CRLF in the working tree; because the same CRLF content also reaches the parser and the `content_for_baseline` capture, `sha256` diverged. `normalise_line_endings()` now runs immediately after every `read_to_string` on a pipeline file (scan, verify, baseline init) so both the parser and the hash always see LF regardless of platform or git configuration.
 
 ## v1.0.10 — 2026-04-29
 
