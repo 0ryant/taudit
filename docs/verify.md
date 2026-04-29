@@ -136,9 +136,14 @@ without missing-key checks.
 **`pipelines`** (next release after v1.0.8; see **Unreleased** in `CHANGELOG.md`): one object per successfully parsed pipeline file,
 with the same `completeness` / `completeness_gaps` semantics as the authority
 graph JSON (`complete` | `partial` | `unknown`). Text output includes a rollup
-line `verify: authority graph modeling: …` before the violation summary. See
+line `verify: authority graph modeling: …` before the violation summary. For
+gap-**kind** detail (`expression` / `structural` / `opaque`), use
+**`taudit graph --format json`** — the graph export carries a parallel
+`completeness_gap_kinds` array (see
+[`docs/authority-graph.md`](authority-graph.md#completeness-gap-kinds)). Treat
+partiality as a first-class signal — gate on the kind, not just the count. See
 [`docs/policies/cookbook-partial-graphs.md`](policies/cookbook-partial-graphs.md)
-for org-level gating patterns.
+for org-level gating patterns including Pattern D (gate on gap kind).
 
 ### `--format sarif`
 

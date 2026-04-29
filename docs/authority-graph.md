@@ -111,6 +111,7 @@ a versioned envelope:
     "edges":    [ ... ],
     "completeness":      "complete" | "partial" | "unknown",
     "completeness_gaps": [ "human-readable reasons ..." ],
+    "completeness_gap_kinds": [ "expression" | "structural" | "opaque", ... ],
     "metadata":          { "trigger": "push", ... }
   }
 }
@@ -174,11 +175,23 @@ other edges and on older exports. It is not a general-purpose metadata map.
 | Value      | Meaning                                                                   |
 | ---------- | ------------------------------------------------------------------------- |
 | `complete` | The parser fully resolved every authority relationship in the file.       |
-| `partial`  | Some constructs (composite actions, reusable workflows, shell strings) couldn't be fully resolved. `completeness_gaps` lists why. The graph is still useful — just incomplete. |
+| `partial`  | Some constructs (composite actions, reusable workflows, shell strings) couldn't be fully resolved. `completeness_gaps` lists why, and `completeness_gap_kinds` annotates each entry with a typed severity (see [Completeness gap kinds](#completeness-gap-kinds)). The graph is still useful — just incomplete. |
 | `unknown`  | The parser couldn't determine completeness.                               |
 
 Treat `partial` graphs as a floor on risk: every edge present is real,
 but more may exist that the parser couldn't see.
+
+## Completeness gap kinds
+
+`completeness_gaps` and `completeness_gap_kinds` are **parallel arrays** — same length, same order — so a consumer can pair the human-readable reason at index `i` with its typed kind at index `i`. Both are omitted when empty (i.e. on `complete` graphs).
+
+| Kind | Serialised | Meaning |
+|---|---|---|
+| `Expression` | `"expression"` | A template or matrix expression hides a value; graph structure is intact |
+| `Structural` | `"structural"` | An unresolvable component (composite action, reusable workflow, `extends:`, `include:`) breaks the authority chain |
+| `Opaque` | `"opaque"` | The graph cannot be built at all (zero steps produced, unknown platform) |
+
+The kinds are ordered by severity: `expression < structural < opaque`. Use the most severe kind present in policy logic to distinguish noise (`expression`) from broken authority chains (`structural`) and unmodeled pipelines (`opaque`). See [`docs/policies/cookbook-partial-graphs.md`](policies/cookbook-partial-graphs.md) — Pattern D — for a `jq` recipe that gates on gap kind.
 
 ### Node metadata
 

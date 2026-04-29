@@ -293,8 +293,14 @@ This lets you gate on exactly the properties you care about.
 Every successful run also summarizes **authority graph modeling** (how completely
 each pipeline was parsed): see the `verify: authority graph modeling:` line in
 text output, or the `pipelines` array in `--format json`. When graphs are
-`partial` or `unknown`, treat coverage as a first-class signal — see
-[`docs/policies/cookbook-partial-graphs.md`](docs/policies/cookbook-partial-graphs.md).
+`partial` or `unknown`, treat coverage as a first-class signal. Each gap is
+classified with a typed kind — `expression` (template noise, structure intact),
+`structural` (a composite action, reusable workflow, `extends:`, or `include:`
+broke the authority chain), or `opaque` (the graph couldn't be built at all).
+Pull the typed `completeness_gap_kinds` array from `taudit graph --format json`
+and gate on kind, not just count — see
+[`docs/policies/cookbook-partial-graphs.md`](docs/policies/cookbook-partial-graphs.md)
+Pattern D for a `jq` recipe.
 
 ### GitHub Actions — required check
 

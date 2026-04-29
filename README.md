@@ -66,7 +66,7 @@ taudit does three things, in this order:
 
 Custom YAML invariants are loaded from `--rules-dir <path>` and participate in the same propagation engine — see [`docs/custom-rules.md`](docs/custom-rules.md).
 
-Severity is graduated from real-world signal: constrained identity to SHA-pinned action = Medium. Broad identity to unpinned action = Critical. The tool handles unknowns honestly — if it can't fully resolve the authority graph, it marks it `Partial`, tells you why, and caps findings at High until the graph is complete.
+Severity is graduated from real-world signal: constrained identity to SHA-pinned action = Medium. Broad identity to unpinned action = Critical. The tool handles unknowns honestly — if it can't fully resolve the authority graph, it marks it `Partial`, records why with a typed severity (`expression` / `structural` / `opaque`), and caps findings at High until the graph is complete.
 
 ## Adopting on existing repos: per-pipeline baselines
 
