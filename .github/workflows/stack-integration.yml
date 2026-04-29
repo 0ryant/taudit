@@ -1,10 +1,13 @@
 # Cross-repo stack smoke: taudit authority scans on sibling workflow trees,
-# plus CellOS supervisor running taudit in an execution cell (when CellOS
-# checkout succeeds). tsafe is exercised as a *scan target* here — the
-# tsafe vault CLI is not invoked in CI (no vault / agent socket).
+# plus CellOS supervisor running taudit in an execution cell.
 #
-# Configure sibling repo ids (owner/name) in Settings → Variables if defaults
-# do not match your org: SIBLING_TSAFE_REPO, SIBLING_CELLOS_REPO.
+# CellOS: prefer image from ghcr.io (build via publish-cellos-ghcr.yml); if
+# pull fails, fall back to cloning the CellOS repo and scripts/cellos_smoke.sh.
+# tsafe is a *scan target* only — the tsafe vault CLI is not invoked in CI.
+#
+# Variables (Settings → Variables): SIBLING_TSAFE_REPO, SIBLING_CELLOS_REPO,
+# CELLOS_SUPERVISOR_IMAGE (full override), CELLOS_SUPERVISOR_TAG (default tag
+# when image override is unset; default main).
 name: stack-integration
 
 on:
@@ -14,6 +17,7 @@ on:
 
 permissions:
   contents: read
+  packages: read
 
 env:
   CARGO_TERM_COLOR: always
@@ -83,7 +87,43 @@ jobs:
         run: |
           echo "::notice::tsafe sibling checkout failed or repo missing. Set repository variable SIBLING_TSAFE_REPO (owner/name) or ensure GITHUB_TOKEN can read ${{ steps.siblings.outputs.tsafe_repo }}."
 
-      - name: Checkout CellOS (sibling)
+      - name: Log in to GHCR (CellOS supervisor image)
+        uses: docker/login-action@4907a6ddec9925e35a0a9e82d7399ccc52663121 # v4.1.0
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Resolve CellOS supervisor image
+        id: cellos_img
+        shell: bash
+        env:
+          OVERRIDE: ${{ vars.CELLOS_SUPERVISOR_IMAGE }}
+          OWNER: ${{ github.repository_owner }}
+          TAG: ${{ vars.CELLOS_SUPERVISOR_TAG }}
+        run: |
+          tag="${TAG:-main}"
+          if [[ -n "${OVERRIDE}" ]]; then
+            echo "image=${OVERRIDE}" >> "${GITHUB_OUTPUT}"
+          else
+            echo "image=ghcr.io/${OWNER}/cellos-supervisor:${tag}" >> "${GITHUB_OUTPUT}"
+          fi
+
+      - name: Pull CellOS supervisor image
+        id: cellos_pull
+        continue-on-error: true
+        run: docker pull "${{ steps.cellos_img.outputs.image }}"
+
+      - name: CellOS smoke (supervisor from GHCR)
+        if: steps.cellos_pull.outcome == 'success'
+        env:
+          CELLOS_SUPERVISOR_IMAGE: ${{ steps.cellos_img.outputs.image }}
+          TAUDIT_BIN: ${{ github.workspace }}/target/release/taudit
+          TAUDIT_CORRELATION_ID: stack-cellos-${{ github.run_id }}-${{ github.run_attempt }}
+        run: bash scripts/cellos_smoke_docker.sh
+
+      - name: Checkout CellOS (sibling, fallback when GHCR image unavailable)
+        if: steps.cellos_pull.outcome != 'success'
         id: checkout_cellos
         continue-on-error: true
         uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
@@ -92,15 +132,15 @@ jobs:
           path: _siblings/cellos
           token: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: CellOS smoke (taudit inside supervisor)
-        if: steps.checkout_cellos.outcome == 'success'
+      - name: CellOS smoke (supervisor built from sibling checkout)
+        if: steps.cellos_pull.outcome != 'success' && steps.checkout_cellos.outcome == 'success'
         env:
           CELLOS_REPO: ${{ github.workspace }}/_siblings/cellos
           TAUDIT_BIN: ${{ github.workspace }}/target/release/taudit
           TAUDIT_CORRELATION_ID: stack-cellos-${{ github.run_id }}-${{ github.run_attempt }}
         run: bash scripts/cellos_smoke.sh
 
-      - name: Notice when CellOS sibling is unavailable
-        if: steps.checkout_cellos.outcome != 'success'
+      - name: Notice when CellOS image pull and sibling checkout both failed
+        if: steps.cellos_pull.outcome != 'success' && steps.checkout_cellos.outcome != 'success'
         run: |
-          echo "::notice::CellOS sibling checkout failed or repo missing. Set repository variable SIBLING_CELLOS_REPO (owner/name) or ensure GITHUB_TOKEN can read ${{ steps.siblings.outputs.cellos_repo }}."
+          echo "::notice::CellOS GHCR pull failed (${{ steps.cellos_img.outputs.image }}) and sibling checkout failed (${{ steps.siblings.outputs.cellos_repo }}). Run publish-cellos-ghcr workflow once, or set CELLOS_SUPERVISOR_IMAGE / SIBLING_CELLOS_REPO."

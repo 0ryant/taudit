@@ -1,0 +1,78 @@
+# Build CellOS `cellos-supervisor` from source and push to GitHub Container Registry
+# (ghcr.io/<owner>/cellos-supervisor). Consumed by stack-integration and local
+# `scripts/cellos_smoke_docker.sh` after `docker login ghcr.io`.
+#
+# Repo id for CellOS source defaults to <this owner>/CellOS; override with
+# repository variable SIBLING_CELLOS_REPO (owner/name).
+name: publish-cellos-ghcr
+
+# Manual runs always build CellOS @ main (Checkov CKV_GHA_7: no workflow_dispatch
+# inputs when the workflow is also push-triggered).
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - 'packaging/docker/cellos-supervisor/**'
+      - '.github/workflows/publish-cellos-ghcr.yml'
+
+permissions:
+  contents: read
+  packages: write
+
+concurrency:
+  group: publish-cellos-ghcr-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  IMAGE_NAME: cellos-supervisor
+
+jobs:
+  docker:
+    name: Build and push cellos-supervisor
+    runs-on: ubuntu-latest
+    if: github.event.repository.fork == false
+    steps:
+      - name: Checkout taudit (Dockerfile)
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+
+      - name: Resolve CellOS repository id and git ref
+        id: cellos
+        shell: bash
+        env:
+          SIBLING_CELLOS_REPO: ${{ vars.SIBLING_CELLOS_REPO }}
+        run: |
+          owner="${GITHUB_REPOSITORY%%/*}"
+          repo="${SIBLING_CELLOS_REPO:-${owner}/CellOS}"
+          ref="main"
+          echo "repo=${repo}" >> "${GITHUB_OUTPUT}"
+          echo "ref=${ref}" >> "${GITHUB_OUTPUT}"
+          echo "Building CellOS from ${repo} @ ${ref}"
+
+      - name: Checkout CellOS source
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          repository: ${{ steps.cellos.outputs.repo }}
+          ref: ${{ steps.cellos.outputs.ref }}
+          path: cellos-src
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@4d04d5d9486b7bd6fa91e7baf45bbb4f8b9deedd # v4.0.0
+
+      - name: Log in to GHCR
+        uses: docker/login-action@4907a6ddec9925e35a0a9e82d7399ccc52663121 # v4.1.0
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build and push
+        uses: docker/build-push-action@bcafcacb16a39f128d818304e6c9c0c18556b85f # v7.1.0
+        with:
+          context: ./cellos-src
+          file: ./packaging/docker/cellos-supervisor/Dockerfile
+          push: true
+          tags: |
+            ghcr.io/${{ github.repository_owner }}/${{ env.IMAGE_NAME }}:main
+            ghcr.io/${{ github.repository_owner }}/${{ env.IMAGE_NAME }}:${{ github.sha }}
