@@ -1,14 +1,18 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# Resolve CellOS repository path. Prefer the workspace symlink, then common local path,
-# then CELLOS_REPO override for custom setups.
+# Resolve CellOS repository path. Prefer the workspace symlink, sibling clone,
+# home-directory checkouts (e.g. ~/CellOS), then CELLOS_REPO override.
 CELLOS_REPO="${CELLOS_REPO:-}"
 if [[ -z "${CELLOS_REPO}" ]]; then
   if [[ -d ".refs/cellos" ]]; then
     CELLOS_REPO=".refs/cellos"
   elif [[ -d "../CellOS" ]]; then
     CELLOS_REPO="../CellOS"
+  elif [[ -n "${HOME:-}" && -d "${HOME}/CellOS" ]]; then
+    CELLOS_REPO="${HOME}/CellOS"
+  elif [[ -n "${HOME:-}" && -d "${HOME}/cellos" ]]; then
+    CELLOS_REPO="${HOME}/cellos"
   else
     echo "CellOS repository not found. Set CELLOS_REPO=/path/to/CellOS." >&2
     exit 1
