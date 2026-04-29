@@ -260,8 +260,19 @@ impl Baseline {
                 rule_id: rule_id_for(f),
                 severity: f.severity,
                 first_seen_at: now,
-                reason_waived: None,
-                severity_override: None,
+                // BUG-2: is_valid_critical_waiver requires severity_override,
+                // reason_waived (≥10 chars), and expires_at all set. baseline
+                // init stamps all three for Critical findings automatically.
+                reason_waived: if f.severity == Severity::Critical {
+                    Some("Accepted at baseline init — review before expiry".into())
+                } else {
+                    None
+                },
+                severity_override: if f.severity == Severity::Critical {
+                    Some(Severity::Critical)
+                } else {
+                    None
+                },
                 expires_at: if f.severity == Severity::Critical {
                     Some(critical_expiry)
                 } else {
@@ -775,23 +786,28 @@ mod tests {
         let mut sorted = fps.clone();
         sorted.sort();
         assert_eq!(fps, sorted, "entries must be fingerprint-sorted");
-        // On init: reason_waived and severity_override are always None.
-        // expires_at is None for non-critical findings, and set to a 90-day
-        // future date for CRITICAL findings (BUG-2: bulk accept without
-        // requiring per-finding baseline accept calls).
+        // BUG-2: baseline init bulk-accepts all findings. Critical findings get
+        // a full valid waiver (reason_waived + severity_override + expires_at).
+        // Non-critical findings have no waiver fields set.
         for entry in &baseline.baseline_findings {
-            assert!(entry.reason_waived.is_none());
-            assert!(entry.severity_override.is_none());
             if entry.severity == Severity::Critical {
+                assert!(
+                    entry.reason_waived.is_some(),
+                    "critical finding from baseline init must have auto-reason"
+                );
+                assert_eq!(
+                    entry.severity_override,
+                    Some(Severity::Critical),
+                    "critical finding from baseline init must have severity_override"
+                );
                 assert!(
                     entry.expires_at.is_some(),
                     "critical finding from baseline init must have auto-expiry"
                 );
             } else {
-                assert!(
-                    entry.expires_at.is_none(),
-                    "non-critical finding from baseline init must not have expiry"
-                );
+                assert!(entry.reason_waived.is_none());
+                assert!(entry.severity_override.is_none());
+                assert!(entry.expires_at.is_none());
             }
         }
     }
@@ -956,7 +972,10 @@ mod tests {
     }
 
     #[test]
-    fn critical_preexisting_without_waiver_blocks_exit_zero() {
+    fn critical_preexisting_from_init_is_suppressed() {
+        // BUG-2: baseline init now bulk-accepts Critical findings by setting
+        // a full valid waiver (severity_override + reason_waived + expires_at).
+        // Verify that a critical captured by from_findings is NOT a blocker.
         let (graph, s) = make_graph("ci.yml");
         let crit = make_finding(
             FindingCategory::AuthorityPropagation,
@@ -976,8 +995,47 @@ mod tests {
         );
         let diff = diff(&[crit], &baseline, &graph);
         assert_eq!(diff.preexisting.len(), 1);
-        // Plain pre-existing entry — no severity_override, no waiver — must
-        // STILL force a critical to count toward exit 1.
+        // from_findings now sets a valid waiver — the critical must NOT block.
+        let blockers = diff.critical_without_valid_waiver(&baseline, &graph, now());
+        assert_eq!(
+            blockers.len(),
+            0,
+            "critical from baseline init must be suppressed (valid auto-waiver)"
+        );
+    }
+
+    #[test]
+    fn critical_preexisting_without_waiver_blocks_exit_zero() {
+        // A manually constructed baseline entry with no waiver fields set still
+        // forces a critical to count toward exit 1 (the original constraint).
+        let (graph, s) = make_graph("ci.yml");
+        let crit = make_finding(
+            FindingCategory::AuthorityPropagation,
+            Severity::Critical,
+            "AWS_KEY reaches untrusted",
+            vec![s],
+        );
+        let fp = compute_finding_fingerprint(&crit, &graph);
+        let mut baseline = Baseline::from_findings(
+            "ci.yml",
+            "x",
+            &graph,
+            std::slice::from_ref(&crit),
+            "ryan",
+            "0.10.0",
+            "32-builtin",
+            now(),
+        );
+        // Strip the auto-waiver fields to simulate a legacy or manually-edited entry.
+        for entry in &mut baseline.baseline_findings {
+            if entry.fingerprint == fp {
+                entry.reason_waived = None;
+                entry.severity_override = None;
+                entry.expires_at = None;
+            }
+        }
+        let diff = diff(&[crit], &baseline, &graph);
+        assert_eq!(diff.preexisting.len(), 1);
         let blockers = diff.critical_without_valid_waiver(&baseline, &graph, now());
         assert_eq!(
             blockers.len(),
