@@ -1,6 +1,9 @@
 # Rust / Cargo (any workspace member or nested package — not only repo root)
 target/
 
+# Local Python venvs (schema validation scripts)
+.venv/
+
 # OS noise
 .DS_Store
 Thumbs.db

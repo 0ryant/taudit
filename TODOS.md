@@ -2,6 +2,8 @@
 
 MoSCoW: **Must** | **Should** | **Could** | **Won't**
 
+**Parallel execution:** [`docs/jobs-phased-lanes.md`](docs/jobs-phased-lanes.md) (Phase 3 — ADO variable-group enrichment).
+
 ---
 
 ## Could Have

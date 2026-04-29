@@ -267,7 +267,57 @@ fn finding_to_event(
 // ReportSink implementation — one JSONL line per finding.
 // ---------------------------------------------------------------------------
 
-pub struct CloudEventsJsonlSink;
+/// Environment variable used as the inbound channel for a caller-supplied
+/// correlation id. Set by CellOS supervisor or CI runners to thread the
+/// caller's `correlationId` through to every emitted CloudEvent in this
+/// scan, so the taudit findings can be joined to the upstream run that
+/// triggered them. Falls back to a freshly minted `Uuid::new_v4()` when
+/// unset.
+///
+/// Precedence (highest → lowest):
+///   1. `CloudEventsJsonlSink { correlation_id: Some(_) }` — explicit
+///      constructor argument wins (programmatic embedders).
+///   2. `TAUDIT_CORRELATION_ID` env var — for CLI / CI use.
+///   3. `Uuid::new_v4()` — preserves prior behaviour for unconfigured callers.
+pub const CORRELATION_ID_ENV: &str = "TAUDIT_CORRELATION_ID";
+
+/// JSONL CloudEvents sink — one event per finding.
+///
+/// Construct with `CloudEventsJsonlSink::default()` (or `::new()`) for the
+/// historical "mint a fresh UUID per emit" behaviour, or with
+/// `CloudEventsJsonlSink::with_correlation_id(Some("…"))` to thread a
+/// caller-supplied correlation id through every event in the emission.
+#[derive(Debug, Default, Clone)]
+pub struct CloudEventsJsonlSink {
+    /// Caller-supplied correlation id. When `Some`, takes precedence over
+    /// the `TAUDIT_CORRELATION_ID` env var and the minted UUID fallback.
+    correlation_id: Option<String>,
+}
+
+impl CloudEventsJsonlSink {
+    /// Construct a sink with the default (unconfigured) correlation source —
+    /// equivalent to `CloudEventsJsonlSink::default()`.
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// Construct a sink with an explicit caller-supplied correlation id.
+    /// `Some(id)` overrides both the `TAUDIT_CORRELATION_ID` env var and
+    /// the UUID fallback; `None` defers to env var, then UUID.
+    pub fn with_correlation_id(correlation_id: Option<String>) -> Self {
+        Self { correlation_id }
+    }
+
+    /// Resolve the correlation id for one `emit` call using the documented
+    /// precedence: explicit ctor arg → `TAUDIT_CORRELATION_ID` env var →
+    /// minted `Uuid::new_v4()`.
+    fn resolve_correlation_id(&self) -> String {
+        self.correlation_id
+            .clone()
+            .or_else(|| std::env::var(CORRELATION_ID_ENV).ok())
+            .unwrap_or_else(|| uuid::Uuid::new_v4().to_string())
+    }
+}
 
 impl<W: std::io::Write> ReportSink<W> for CloudEventsJsonlSink {
     fn emit(
@@ -276,7 +326,7 @@ impl<W: std::io::Write> ReportSink<W> for CloudEventsJsonlSink {
         graph: &AuthorityGraph,
         findings: &[Finding],
     ) -> Result<(), TauditError> {
-        let correlation_id = uuid::Uuid::new_v4().to_string();
+        let correlation_id = self.resolve_correlation_id();
 
         for finding in findings {
             let event = finding_to_event(finding, graph, &correlation_id);
@@ -343,7 +393,7 @@ mod tests {
         ];
 
         let mut buf = Vec::new();
-        CloudEventsJsonlSink
+        CloudEventsJsonlSink::default()
             .emit(&mut buf, &graph, &findings)
             .unwrap();
 
@@ -361,7 +411,7 @@ mod tests {
         )];
 
         let mut buf = Vec::new();
-        CloudEventsJsonlSink
+        CloudEventsJsonlSink::default()
             .emit(&mut buf, &graph, &findings)
             .unwrap();
 
@@ -401,7 +451,7 @@ mod tests {
         )];
 
         let mut buf = Vec::new();
-        CloudEventsJsonlSink
+        CloudEventsJsonlSink::default()
             .emit(&mut buf, &graph, &findings)
             .unwrap();
 
@@ -438,7 +488,7 @@ mod tests {
         )];
 
         let mut buf = Vec::new();
-        CloudEventsJsonlSink
+        CloudEventsJsonlSink::default()
             .emit(&mut buf, &graph, &findings)
             .unwrap();
 
@@ -508,7 +558,7 @@ mod tests {
         )];
 
         let mut buf = Vec::new();
-        CloudEventsJsonlSink
+        CloudEventsJsonlSink::default()
             .emit(&mut buf, &graph, &findings)
             .unwrap();
 
@@ -556,7 +606,7 @@ mod tests {
         )];
 
         let mut buf = Vec::new();
-        CloudEventsJsonlSink
+        CloudEventsJsonlSink::default()
             .emit(&mut buf, &graph, &findings)
             .unwrap();
 
@@ -622,7 +672,7 @@ mod tests {
         ];
 
         let mut buf = Vec::new();
-        CloudEventsJsonlSink
+        CloudEventsJsonlSink::default()
             .emit(&mut buf, &graph, &findings)
             .unwrap();
 
@@ -644,7 +694,9 @@ mod tests {
         let graph = AuthorityGraph::new(test_source());
 
         let mut buf = Vec::new();
-        CloudEventsJsonlSink.emit(&mut buf, &graph, &[]).unwrap();
+        CloudEventsJsonlSink::default()
+            .emit(&mut buf, &graph, &[])
+            .unwrap();
 
         assert!(buf.is_empty(), "no findings = no output");
     }
@@ -666,7 +718,7 @@ mod tests {
             )];
 
             let mut buf = Vec::new();
-            CloudEventsJsonlSink
+            CloudEventsJsonlSink::default()
                 .emit(&mut buf, &graph, &findings)
                 .unwrap();
 
@@ -692,7 +744,7 @@ mod tests {
         )];
 
         let mut buf = Vec::new();
-        CloudEventsJsonlSink
+        CloudEventsJsonlSink::default()
             .emit(&mut buf, &graph, &findings)
             .unwrap();
 
@@ -720,7 +772,7 @@ mod tests {
         )];
 
         let mut buf = Vec::new();
-        CloudEventsJsonlSink
+        CloudEventsJsonlSink::default()
             .emit(&mut buf, &graph, &findings)
             .unwrap();
 
@@ -742,7 +794,7 @@ mod tests {
         ];
 
         let mut buf = Vec::new();
-        CloudEventsJsonlSink
+        CloudEventsJsonlSink::default()
             .emit(&mut buf, &graph, &findings)
             .unwrap();
 

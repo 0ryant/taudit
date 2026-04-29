@@ -2149,7 +2149,7 @@ fn cmd_scan(opts: ScanOpts) -> Result<()> {
                         })
                         .collect()
                 };
-                CloudEventsJsonlSink
+                CloudEventsJsonlSink::default()
                     .emit(&mut writer, &graph, &to_emit)
                     .with_context(|| "Failed to write CloudEvents JSONL")?;
             }

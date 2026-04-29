@@ -26,12 +26,14 @@ See [`positioning.md`](positioning.md) for the long-form framing and [`authority
 
 ## Near term: the v1.0 charter
 
+**Multi-agent backlog (phased lanes):** [`jobs-phased-lanes.md`](jobs-phased-lanes.md) — parallel workstreams, file ownership, verification.
+
 Before chasing more invariants or platforms, v1.0 turns the existing authority model into a contract. No date — this is a quality bar, not a release calendar.
 
 | # | Item | Effort | Status |
 |---|------|--------|--------|
 | **V1-1** | **Versioned graph schema** — JSON Schema for the `AuthorityGraph` (`NodeKinds`, `TrustZones`, `EdgeKinds`, completeness, metadata). **Canonical:** [`schemas/authority-graph.v1.json`](../schemas/authority-graph.v1.json) (validated in CI via report-json / CLI tests). **Also:** scan envelope in [`contracts/schemas/taudit-report.schema.json`](../contracts/schemas/taudit-report.schema.json). Optional: mirror or deep-link graph schema under `contracts/schemas/` for packaging-only consumers. | M | **Done** (iterate as additive 1.x) |
-| **V1-2** | **Stable invariant DSL** — custom-rule YAML loader + docs; promote to a **published v1 JSON Schema** for rule files, semver-stable additive fields. | M | **In progress** (loader ships; schema promotion / governance TBD) |
+| **V1-2** | **Stable invariant DSL** — custom-rule YAML loader + docs; **published v1 JSON Schema** [`contracts/schemas/authority-invariant-v1.schema.json`](../contracts/schemas/authority-invariant-v1.schema.json); CI checks generator drift + validates `invariants/starter/`. Semver: additive fields only on 1.x. | M | **Done** |
 | **V1-3** | **`taudit verify` command** — invariant-set gate for PRs; machine-readable violations; stable exit codes (`0` / `1` / `2`). | M | **Done** (iterate on policy bundles + SARIF details) |
 | **V1-4** | **`taudit graph` command** — first-class export: **`--format json`** (lossless), **`dot`**, **`mermaid`**, **`summary`** (propagation rollup); `--job` for diagrams; schema’d JSON. | S | **Done** |
 | **V1-5** | **Three-platform parity at `Complete`** — every parser (GHA, ADO, GitLab) reaches `AuthorityCompleteness::Complete` on its supported feature surface, with every gap explicitly modelled rather than silently approximated. | L | In progress |

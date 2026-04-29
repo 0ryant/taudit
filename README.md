@@ -171,6 +171,7 @@ taudit graph .github/workflows/release.yml --format summary | jq '.totals'
 
 - Product support: open a GitHub issue in this repository.
 - Security issues: follow the process in `SECURITY.md`.
+- **Phased & laned jobs** (multi-agent / parallel workstreams): [`docs/jobs-phased-lanes.md`](docs/jobs-phased-lanes.md).
 - **Golden paths** (blessed copy-paste flows on committed fixtures): [`docs/golden-paths.md`](docs/golden-paths.md); smoke them with **`just golden-paths`**.
 - Large-directory / corpus methodology and **citing upstream workflow examples** (licensing, fingerprints, JSON vs SARIF): [`docs/corpus-research.md`](docs/corpus-research.md).
 - Council synthesis on **docs, golden paths, and screenshots** as first-class: [`docs/research/2026-04-27-council-docs-golden-paths-screenshots.md`](docs/research/2026-04-27-council-docs-golden-paths-screenshots.md).

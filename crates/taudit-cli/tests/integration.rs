@@ -198,7 +198,7 @@ fn fingerprint_is_identical_across_sarif_json_and_cloudevents() {
 
     // ── CloudEvents
     let mut ce_buf = Vec::new();
-    taudit_sink_cloudevents::CloudEventsJsonlSink
+    taudit_sink_cloudevents::CloudEventsJsonlSink::default()
         .emit(&mut ce_buf, &graph, &findings)
         .unwrap();
     let ce_str = String::from_utf8(ce_buf).unwrap();

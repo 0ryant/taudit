@@ -56,6 +56,22 @@ Each YAML file declares one invariant. All top-level fields are required
 except `description`. Match predicates under `match:` are all optional —
 an absent predicate matches everything (wildcard).
 
+### JSON Schema (v1)
+
+The published contract for invariant YAML is **JSON Schema Draft 2020-12**:
+[`contracts/schemas/authority-invariant-v1.schema.json`](../contracts/schemas/authority-invariant-v1.schema.json).
+The `category` string enum is kept in sync with `FindingCategory` in
+`crates/taudit-core/src/finding.rs` — regenerate the file after adding a
+category variant:
+
+```bash
+python3 scripts/generate-authority-invariant-schema.py --write
+```
+
+CI runs `scripts/generate-authority-invariant-schema.py --check` (no drift)
+and validates everything under `invariants/starter/` with
+`scripts/validate-authority-invariant-yaml.py`.
+
 ```yaml
 # Required — unique identifier. Appears in SARIF rule entries, terminal
 # output, and the finding message. Use snake_case.
