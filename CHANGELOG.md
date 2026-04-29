@@ -25,6 +25,10 @@ All notable changes to this project will be documented in this file.
   inline regardless of verbosity. See `docs/policies/cookbook-partial-graphs.md`
   Pattern D and Pattern E.
 
+### Fixed
+
+- **BUG-1 (complete fix): CRLF normalisation at the read boundary** — Previous fix normalised only inside `compute_pipeline_hash`. On Windows with `git core.autocrlf=true`, `git add` silently converts LF → CRLF in the working tree; because the same CRLF content also reaches the parser and the `content_for_baseline` capture, `sha256` diverged. `normalise_line_endings()` now runs immediately after every `read_to_string` on a pipeline file (scan, verify, baseline init) so both the parser and the hash always see LF regardless of platform or git configuration.
+
 ## v1.0.10 — 2026-04-29
 
 ### Fixed

@@ -1866,7 +1866,7 @@ fn cmd_scan(opts: ScanOpts) -> Result<()> {
             // the parser; otherwise reuse the pre-built one. We then call
             // `parse_content` directly to avoid a redundant filesystem read.
             let content = match std::fs::read_to_string(path) {
-                Ok(c) => c,
+                Ok(c) => normalise_line_endings(c),
                 Err(err) => match tagged_path {
                     ResolvedPath::Discovered(_) => {
                         eprintln!("warning: skipping {}: {err:#}", path.display());
@@ -2401,7 +2401,7 @@ fn run_verify_io<W: std::io::Write>(opts: &VerifyOpts, writer: &mut W) -> i32 {
     for tagged_path in &resolved {
         let path = tagged_path.path();
         let content = match std::fs::read_to_string(path) {
-            Ok(c) => c,
+            Ok(c) => normalise_line_endings(c),
             Err(err) => match tagged_path {
                 ResolvedPath::Explicit(_) => {
                     eprintln!("error: failed to read {}: {err}", path.display());
@@ -4625,6 +4625,18 @@ fn resolve_platform(platform: &Platform, content: &str, path: Option<&Path>) -> 
     }
 }
 
+/// Normalise CRLF → LF so every downstream consumer (parser, hash, baseline)
+/// sees identical content regardless of `git core.autocrlf` or platform.
+/// Called immediately after every `read_to_string` on a pipeline file.
+#[inline]
+fn normalise_line_endings(s: String) -> String {
+    if s.contains('\r') {
+        s.replace("\r\n", "\n")
+    } else {
+        s
+    }
+}
+
 fn parse_content(
     parser: &dyn taudit_core::ports::PipelineParser,
     content: String,
@@ -4636,6 +4648,8 @@ fn parse_content(
         git_ref: None,
         commit_sha: None,
     };
+    // Normalise at the parse boundary so parser, hash and baseline all see LF.
+    let content = normalise_line_endings(content);
     parser.parse(&content, &source).with_context(|| {
         format!(
             "Failed to parse {source_file}\n\
@@ -4882,7 +4896,7 @@ fn cmd_baseline_init(
     for tagged in &resolved {
         let path = tagged.path();
         let content = match std::fs::read_to_string(path) {
-            Ok(c) => c,
+            Ok(c) => normalise_line_endings(c),
             Err(err) => match tagged {
                 ResolvedPath::Discovered(_) => {
                     eprintln!("warning: skipping {}: {err}", path.display());
