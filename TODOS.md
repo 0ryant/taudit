@@ -109,3 +109,16 @@ In CI:
   now.
 - Service connection resolution (separate API, separate scope, separate
   feature).
+
+### VulnOps tooling in CI/CD
+
+**Status:** Not started  
+**Effort:** TBD  
+**Impact:** Centralise vulnerability-operations style checks alongside existing supply-chain gates (Trivy, Checkov, Gitleaks, `cargo deny` / `cargo audit`).
+
+#### Scope (draft)
+
+- [ ] Select **vulnops** (or named successor / integration path) and map overlap vs `scripts/quality-gate.sh`, `.github/workflows/security.yml`, and **CI mirrors** (`azure-pipelines.yml`, `.gitlab-ci.yml`).
+- [ ] Add GitHub Actions job or extend governance stage; keep **secrets out of logs** and document any PAT/API scope.
+- [ ] Mirror the same gate into **ADO / GitLab** mirrors once stable on `main`.
+- [ ] Update [`docs/integrations/ci-mirrors.md`](docs/integrations/ci-mirrors.md) and release notes when behaviour is contract-stable.
