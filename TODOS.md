@@ -122,3 +122,29 @@ In CI:
 - [ ] Add GitHub Actions job or extend governance stage; keep **secrets out of logs** and document any PAT/API scope.
 - [ ] Mirror the same gate into **ADO / GitLab** mirrors once stable on `main`.
 - [ ] Update [`docs/integrations/ci-mirrors.md`](docs/integrations/ci-mirrors.md) and release notes when behaviour is contract-stable.
+
+### Linters in CI (workflow + infra YAML)
+
+**Status:** Not started  
+**Effort:** TBD  
+**Impact:** Earlier catch of expression / schema mistakes in pipelines taudit already parses; **complementary** to the authority graph (see [`docs/positioning.md`](docs/positioning.md), [`docs/integrations/index.md`](docs/integrations/index.md)).
+
+#### Scope (draft)
+
+- [ ] Inventory: **actionlint** (GHA), **yamllint** / schema checks, ADO/GitLab-native linters where they add signal without duplicating taudit.
+- [ ] Wire **non-blocking** or **blocking** jobs in `.github/workflows/quality.yml` (or a dedicated workflow) with pinned versions; mirror only where the mirror host has an equivalent (ADO `yaml` validation tasks, etc.).
+- [ ] Document overlap vs **taudit** (correctness / context vs authority graph) in [`docs/integrations/ci-mirrors.md`](docs/integrations/ci-mirrors.md) or positioning.
+- [ ] Optional follow-up (separate item if scope grows): ingest external linter **SARIF** as triage context — only behind an explicit flag + ADR ([`docs/integrations/index.md`](docs/integrations/index.md) already calls this not shipped).
+
+### FinOps tooling in CI/CD
+
+**Status:** Not started  
+**Effort:** TBD  
+**Impact:** Cost signal on IaC and pipeline-adjacent resources (PR comments, drift vs budget), aligned with governance without conflating **authority** findings with **spend**.
+
+#### Scope (draft)
+
+- [ ] Pick stack: e.g. **Infracost** / **OpenCost** / cloud-native **cost APIs** (Azure Cost Management, AWS CE, GCP Billing) — org-specific credentials stay in variable groups / OIDC.
+- [ ] Add a **FinOps** lane (advisory first): run on `main` + optional PR comment when infra paths change; **no secrets in logs**; document required IAM / API scope.
+- [ ] Keep boundaries clear in docs: **FinOps output is not a taudit finding** unless we later define an explicit contract (out of scope until ADR).
+- [ ] Mirror to **ADO / GitLab** mirrors or document “GitHub-only FinOps lane” if third-party integrations differ.
