@@ -6,6 +6,10 @@
 
 CI/CD pipelines move secrets, identities, and tokens between steps every minute of every day, but the platforms that run them have no type system for authority. Permissions are YAML strings. Trust boundaries are implicit. Whether a `GITHUB_TOKEN` reaches an unpinned action three jobs downstream is something engineers infer by reading the file top to bottom and hoping. Reviews catch obvious mistakes; everything else ships. This is not a tooling gap — it is a missing layer of the platform.
 
+## What taudit is not
+
+taudit is **not** a substitute for **workflow linters** (expression shape, invalid keys, deprecated syntax — use platform linters such as **actionlint** alongside taudit). It is **not** a **CVE database scanner** or generic “misconfig linter” over uninterpreted YAML. It is **not** a standalone **policy-as-code product**: you *can* gate merges on declarative invariants, but those invariants are evaluated **on top of** the authority graph — the graph remains the source of truth. Positioning taudit as “just another scanner” undersells the model; positioning it as the graph layer makes the differentiation obvious at first glance.
+
 ## The model
 
 taudit treats a pipeline as a directed graph of authority propagation. The primitives are fixed:

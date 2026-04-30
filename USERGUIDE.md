@@ -1,8 +1,6 @@
 # taudit User Guide
 
-taudit is a static-analysis CLI that models CI/CD pipelines as **authority graphs**
-and applies 61 built-in security rules against them.
-It understands GitHub Actions, Azure DevOps, and GitLab CI.
+taudit is a **CI/CD authority graph** tool: it parses pipeline YAML into a deterministic model of how **credentials, tokens, identities, and artifacts** propagate, then surfaces **implicit trust-boundary breaks** and **non-obvious privilege-escalation paths**. It is **not** a workflow YAML linter, a CVE scanner, or a standalone policy engine — those concerns stay in other tools; here the **graph** comes first. It understands **GitHub Actions**, **Azure DevOps**, and **GitLab CI**. Built-in checks and optional YAML invariants are **predicates over that graph**.
 
 ---
 

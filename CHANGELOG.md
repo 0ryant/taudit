@@ -2,6 +2,13 @@
 
 All notable changes to this project will be documented in this file.
 
+## Unreleased
+
+### Changed
+
+- **Crate metadata** — `homepage` and `documentation` (GitHub) on all publishable crates; refreshed `description` fields to emphasize CI/CD authority graph analysis, propagation, and trust-boundary differentiation from linters/scanners/policy runtimes.
+- **Docs** — README, USERGUIDE, `docs/positioning.md`, and `man/taudit.1` aligned with that positioning; `CONTRIBUTING.md` documents a **maximum of one release per calendar week** cadence (security fixes excepted).
+
 ## v1.0.12 — 2026-04-29
 
 ### Fixed

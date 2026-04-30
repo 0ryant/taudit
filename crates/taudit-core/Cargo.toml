@@ -1,12 +1,14 @@
 [package]
 name = "taudit-core"
-description = "Authority graph, propagation engine, finding rules — no I/O"
+description = "Deterministic authority graph and propagation engine for CI/CD: typed nodes, trust zones, and edges for how credentials and identities flow—used by graph analysis, not standalone linting."
 version = "1.0.12"
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
 authors.workspace = true
 repository.workspace = true
+homepage.workspace = true
+documentation.workspace = true
 keywords.workspace = true
 categories.workspace = true
 

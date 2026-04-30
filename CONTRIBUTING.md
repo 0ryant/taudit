@@ -72,4 +72,6 @@ just runtime-smoke
 
 ## Release expectations
 
-For public release work, keep the repository owner, install instructions, and report output examples aligned with shipped behavior.
+**Cadence — at most one crates.io / GitHub release per calendar week** unless a security fix forces an out-of-band ship. Batch doc-only tweaks, small fixes, and metadata into that weekly window instead of tagging every merge. Prefer fewer, intentional releases over changelog noise.
+
+For each release, keep the repository owner, install instructions, and report output examples aligned with shipped behavior. When you bump `version` in the crate manifests, update `CHANGELOG.md`, align any pinned `cargo install taudit --version …` strings in docs and examples, and push the `vM.m.p` tag only when `main` is green and the set of changes is what you want users to consume together.

@@ -2,7 +2,7 @@
 
 ## Wedge
 
-**taudit** -- the pipeline authority scanner. Models how authority propagates through CI/CD pipelines, so you can prove least privilege. Not a scanner -- a privilege dataflow analyser.
+**taudit** — a **CI/CD authority graph** layer: a deterministic model of how credentials, tokens, identities, and artifacts **propagate** across pipelines so you can surface **implicit trust-boundary violations** and **non-obvious privilege escalation**. It is not a workflow YAML linter, a CVE-style vulnerability scanner, or a standalone policy product—those stay elsewhere; here the **typed graph** is the contract that proves least-privilege claims.
 
 taudit is one layer in a closed governance loop:
 **taudit** (detect over-authority) --> **tsafe** (constrain secrets) --> **execution isolation runtime** (contain execution) --> runtime --> **taudit** (re-observe).

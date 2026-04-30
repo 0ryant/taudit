@@ -1,6 +1,6 @@
 # Adoption runbook — Day 0 → Day 1
 
-Single checklist for rolling **taudit** onto a repository: local bootstrap, policy layout, baselines / suppressions, optional SARIF, and **merge-gating CI** for **GitHub Actions**, **GitLab CI**, and **Azure DevOps**.
+Single checklist for rolling **taudit** onto a repository: local bootstrap, policy layout, baselines / suppressions, optional SARIF, and **merge-gating CI** for **GitHub Actions**, **GitLab CI**, and **Azure DevOps**. taudit is **graph-first**—it models **authority propagation** across CI/CD; merge gates and YAML invariants sit on top of that model, not the other way around.
 
 **Version pinning:** replace `1.0.12` below with the **exact** crate version your org pins (same value in every `cargo install` line). Prefer **`--locked`** so transitive deps do not drift between CI runs.
 

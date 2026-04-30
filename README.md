@@ -4,9 +4,13 @@
 
 > **CI/CD is an untyped authority system. taudit makes it explicit, inspectable, and enforceable.**
 
+**What taudit is:** a **CI/CD authority graph analyzer**. It models how **credentials, tokens, identities, and artifacts** propagate across **GitHub Actions, Azure DevOps, and GitLab CI** so you can surface **implicit trust-boundary violations** and **non-obvious privilege-escalation paths** that line-by-line YAML review rarely catches.
+
+**What taudit is not:** a general-purpose **workflow YAML linter** (keep using e.g. **actionlint** for schema and expression shape), a **CVE-style vulnerability scanner**, or a standalone **policy engine**. The **typed authority graph** is the product. Findings, SARIF, merge gates, and optional YAML invariants are **consumers** of that graph—not the other way around.
+
 Release archives and SBOMs use **GitHub Artifact Attestations** ([`actions/attest-build-provenance`](https://github.com/actions/attest-build-provenance) in [`.github/workflows/release.yml`](.github/workflows/release.yml)) — aligned with [SLSA](https://slsa.dev)-style *build provenance* goals, not a third-party “SLSA certified” audit. Verify downloads with **`gh attestation verify`** ([Install](#install), [Release trust](docs/release-trust.md#verifying-build-attestations-github)).
 
-taudit models how authority — secrets, identities, tokens, image trust — propagates through a CI/CD pipeline as a deterministic, typed graph. The graph is the product. Findings, SARIF reports, the terminal scanner, and PR-gate enforcement are all consumers of that graph.
+taudit models how authority — secrets, identities, tokens, image trust — propagates through a CI/CD pipeline as a deterministic, typed graph. The graph is the product. Findings, SARIF, terminal output, and PR-gate enforcement are all consumers of that graph.
 
 ```
 $ taudit map --format dot .github/workflows/release.yml | dot -Tsvg > release.svg
@@ -37,8 +41,8 @@ MEDIUM  GITHUB_TOKEN (release-artifacts) propagated to actions/checkout@sha acro
 taudit does three things, in this order:
 
 1. **Models authority propagation as a deterministic graph.** Typed `NodeKinds` (`Step`, `Secret`, `Identity`, `Image`, `Artifact`), explicit `TrustZones` (`FirstParty`, `ThirdParty`, `Untrusted`), and named `EdgeKinds` (`HasAccessTo`, `Produces`, `Consumes`, `UsesImage`, `DelegatesTo`, `PersistsTo`). Same YAML in, same graph out. See [`docs/authority-graph.md`](docs/authority-graph.md) for the full specification.
-2. **Detects 61 built-in rules** across GitHub Actions, Azure DevOps, and GitLab CI. The graph is what makes the invariants tractable — each rule is a predicate over typed nodes and edges, not a regex over YAML.
-3. **Lets you write custom invariants** via declarative YAML rules (`--rules-dir`), and (in v1.0) gate PR merges with `taudit verify` against an explicit invariant set.
+2. **Evaluates 61 built-in graph predicates** (rules) across GitHub Actions, Azure DevOps, and GitLab CI — each one is a query over nodes and edges, not a style or schema lint over raw YAML.
+3. **Optionally expresses org-specific expectations** as declarative YAML invariants (`--rules-dir`) and, when you want merge discipline, runs `taudit verify` against a chosen invariant set — still grounded in the graph, not a separate policy runtime.
 
 ### Built-in rules (61 total)
 

@@ -1,12 +1,14 @@
 [package]
 name = "taudit-parse-gitlab"
-description = "GitLab CI YAML pipeline to AuthorityGraph parser"
+description = "Parses GitLab CI YAML into taudit typed authority graphs for CI/CD propagation and trust-boundary analysis."
 version = "1.0.12"
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
 authors.workspace = true
 repository.workspace = true
+homepage.workspace = true
+documentation.workspace = true
 keywords.workspace = true
 categories.workspace = true
 

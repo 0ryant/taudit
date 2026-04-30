@@ -18,7 +18,9 @@ rust-version = "1.85"
 license = "MIT OR Apache-2.0"
 authors = ["Ryan Tilcock"]
 repository = "https://github.com/0ryant/taudit"
-keywords = ["security", "github-actions", "azure-devops", "devsecops", "pipeline-security"]
+homepage = "https://github.com/0ryant/taudit"
+documentation = "https://github.com/0ryant/taudit/blob/main/USERGUIDE.md"
+keywords = ["security", "authority-graph", "github-actions", "azure-devops", "gitlab-ci"]
 categories = ["command-line-utilities", "development-tools", "development-tools::testing"]
 
 [workspace.dependencies]

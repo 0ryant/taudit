@@ -1,6 +1,6 @@
-.TH TAUDIT 1 "2026-04-27" "taudit 1.0.8" "User Commands"
+.TH TAUDIT 1 "2026-04-30" "taudit 1.0.12" "User Commands"
 .SH NAME
-taudit \- pipeline authority scanner (GitHub Actions, Azure DevOps, GitLab CI)
+taudit \- CI/CD authority graph analyzer (GitHub Actions, Azure DevOps, GitLab CI)
 .SH SYNOPSIS
 .B taudit
 .RI [ global-options ]
@@ -8,11 +8,17 @@ taudit \- pipeline authority scanner (GitHub Actions, Azure DevOps, GitLab CI)
 .RI [ command-options ]
 .SH DESCRIPTION
 .B taudit
-parses CI/CD pipeline YAML, builds a directed
+parses CI/CD pipeline YAML and builds a directed
 .B authority graph
-(steps, secrets, identities, images, artifacts), and reports security findings
-(propagation across trust zones, over\-privileged tokens, unpinned actions,
-persisted credentials, and more).
+that models how credentials, tokens, identities, and artifacts
+.B propagate
+across the pipeline. That graph makes
+implicit trust boundaries and non\-obvious privilege\-escalation paths
+inspectable. Built\-in checks and optional merge gates are
+.B consumers
+of the graph; taudit is not a generic YAML linter, CVE scanner, or standalone policy engine.
+The graph uses typed nodes (steps, secrets, identities, images, artifacts),
+trust zones, and edges (access, delegation, persistence, and more).
 .PP
 Machine\-readable graph export conforms to
 .I schemas/authority-graph.v1.json
@@ -24,7 +30,7 @@ Use
 .B taudit scan
 for discovery,
 .B taudit verify
-to enforce policy in CI, and
+to fail CI when chosen graph invariants are violated, and
 .B taudit graph
 to emit the graph for downstream tools or diagrams.
 .SH "AUTHORITY GRAPH"
