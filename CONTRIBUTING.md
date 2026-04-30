@@ -70,8 +70,12 @@ just runtime-smoke
 - If you change JSON schemas, examples, or machine-readable outputs, treat them as release-contract changes and update them together.
 - Include tests for behavior changes when practical.
 
-## Release expectations
+## Releases
 
-**Cadence — at most one crates.io / GitHub release per calendar week** unless a security fix forces an out-of-band ship. Batch doc-only tweaks, small fixes, and metadata into that weekly window instead of tagging every merge. Prefer fewer, intentional releases over changelog noise.
+taudit is closer to a **static analysis engine for authority propagation** than a casual utility CLI. **Detection semantics are part of the public API** for anyone who pins versions or gates CI.
 
-For each release, keep the repository owner, install instructions, and report output examples aligned with shipped behavior. When you bump `version` in the crate manifests, update `CHANGELOG.md`, align any pinned `cargo install taudit --version …` strings in docs and examples, and push the `vM.m.p` tag only when `main` is green and the set of changes is what you want users to consume together.
+**Canonical policy:** read **[`docs/release-strategy.md`](docs/release-strategy.md)** — two lanes (**stable** = crates.io trust, **edge** = GitHub velocity), **hard gates** before registry publish, **semver** that signals graph/detection change, and **changelog** rules (what changed in detection, more/fewer findings, FP/FN shifts).
+
+**In short:** ship to **crates.io** when you have a **coherent, defensible** change set and contracts are clear — **at most ~one stable publish per week** as a *ceiling*, not a quota (**zero** ships in a quiet week is good). Put **fast iteration** on **GitHub** (pre-releases, commit tags, nightlies), not on the default registry. Security fixes may ship out of band; still document **detection impact** in `CHANGELOG.md`.
+
+When you bump `version` in the crate manifests for a **stable** release, update `CHANGELOG.md`, align pinned `cargo install taudit --version …` strings in docs and examples, and push `vM.m.p` only when `main` is green. Keep install instructions and output examples aligned with shipped behaviour ([`docs/release-trust.md`](docs/release-trust.md) for verification of built artifacts).

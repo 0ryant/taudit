@@ -7,7 +7,11 @@ All notable changes to this project will be documented in this file.
 ### Changed
 
 - **Crate metadata** — `homepage` and `documentation` (GitHub) on all publishable crates; refreshed `description` fields to emphasize CI/CD authority graph analysis, propagation, and trust-boundary differentiation from linters/scanners/policy runtimes.
-- **Docs** — README, USERGUIDE, `docs/positioning.md`, and `man/taudit.1` aligned with that positioning; `CONTRIBUTING.md` documents a **maximum of one release per calendar week** cadence (security fixes excepted).
+- **Docs** — README, USERGUIDE, `docs/positioning.md`, and `man/taudit.1` aligned with that positioning; `CONTRIBUTING.md` and new **`docs/release-strategy.md`** document **stable vs edge** lanes, **crates.io publish gates**, **semver for detection**, **changelog discipline**, and weekly stable shipping as a **ceiling** (not a quota).
+
+### Release notes (stable lane reminder)
+
+When folding **Unreleased** into a crates.io version, the changelog entry must spell out **detection delta** (what changed in rules/graph semantics), **whether findings increase or decrease** on typical pipelines, and **false positive / false negative** risk — see [`docs/release-strategy.md`](docs/release-strategy.md#4-changelog-discipline-trust).
 
 ## v1.0.12 — 2026-04-29
 

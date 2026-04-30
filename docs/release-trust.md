@@ -2,6 +2,8 @@
 
 This document describes what a tagged `taudit` release ships and how to verify it.
 
+**Policy (when to cut stable crates.io releases, edge vs stable lanes, semver for detection, changelog expectations):** [`docs/release-strategy.md`](release-strategy.md). **This** page focuses on **artifacts** and **verification** once a tag exists.
+
 ## What ships with each `vX.Y.Z` tag
 
 Every version tag produces:
