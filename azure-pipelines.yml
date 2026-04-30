@@ -1,0 +1,280 @@
+# Azure DevOps mirror of GitHub quality + security CI.
+# Setup (org **0ryant**): Project → Pipelines → New → GitHub YAML → `0ryant/taudit`
+# → branch `main` → path `/azure-pipelines.yml`. Grant the pipeline permission to
+# read the GitHub repo (OAuth or GitHub App).
+#
+# Rust 1.88 matches `.github/workflows/quality.yml` (dtolnay/rust-toolchain).
+---
+trigger:
+  branches:
+    include:
+      - main
+
+pr:
+  branches:
+    include:
+      - main
+
+variables:
+  RUST_TOOLCHAIN: "1.88"
+  CARGO_TERM_COLOR: always
+  RUST_BACKTRACE: "1"
+
+stages:
+  - stage: ci
+    displayName: Test + quality + security
+    jobs:
+      - job: test_ubuntu
+        displayName: test (Ubuntu)
+        pool:
+          vmImage: ubuntu-latest
+        steps:
+          - checkout: self
+            fetchDepth: 0
+          - bash: |
+              set -euo pipefail
+              curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --default-toolchain "$(RUST_TOOLCHAIN)"
+              echo "##vso[task.prependpath]$HOME/.cargo/bin"
+              . "$HOME/.cargo/env"
+              rustc -Vv
+            displayName: Install Rust
+          - bash: cargo test --workspace
+            displayName: cargo test
+
+      - job: test_macos
+        displayName: test (macOS)
+        pool:
+          vmImage: macos-latest
+        steps:
+          - checkout: self
+            fetchDepth: 0
+          - bash: |
+              set -euo pipefail
+              curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --default-toolchain "$(RUST_TOOLCHAIN)"
+              echo "##vso[task.prependpath]$HOME/.cargo/bin"
+              . "$HOME/.cargo/env"
+              rustc -Vv
+            displayName: Install Rust
+          - bash: cargo test --workspace
+            displayName: cargo test
+
+      - job: test_windows
+        displayName: test (Windows)
+        pool:
+          vmImage: windows-latest
+        steps:
+          - checkout: self
+            fetchDepth: 0
+          - powershell: |
+              $ProgressPreference = 'SilentlyContinue'
+              Invoke-WebRequest -Uri "https://win.rustup.rs/x86_64" -OutFile "$env:TEMP\rustup-init.exe"
+              & "$env:TEMP\rustup-init.exe" -y --default-toolchain "$(RUST_TOOLCHAIN)" --profile minimal
+              Write-Host "##vso[task.prependpath]$env:USERPROFILE\.cargo\bin"
+            displayName: Install Rust (Windows)
+          - pwsh: cargo test --workspace
+            displayName: cargo test
+
+      - job: quality_ubuntu
+        displayName: quality (Ubuntu)
+        pool:
+          vmImage: ubuntu-latest
+        timeoutInMinutes: 120
+        steps:
+          - checkout: self
+            fetchDepth: 0
+
+          - bash: |
+              set -euo pipefail
+              curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --default-toolchain "$(RUST_TOOLCHAIN)"
+              echo "##vso[task.prependpath]$HOME/.cargo/bin"
+              . "$HOME/.cargo/env"
+              rustup component add rustfmt clippy
+              rustc -Vv
+            displayName: Install Rust + rustfmt + clippy
+
+          - bash: cargo fmt --all -- --check
+            displayName: cargo fmt
+
+          - bash: cargo clippy --workspace --all-targets -- -D warnings
+            displayName: cargo clippy
+
+          - task: UsePythonVersion@0
+            inputs:
+              versionSpec: "3.12"
+            displayName: Use Python 3.12
+
+          - bash: |
+              set -euo pipefail
+              pip install pyyaml jsonschema
+              python3 scripts/generate-authority-invariant-schema.py --check
+              python3 scripts/validate-authority-invariant-yaml.py invariants/starter
+            displayName: Authority invariant schema + starter YAML
+
+          - bash: |
+              set -euo pipefail
+              cargo install cargo-insta --locked
+              cargo insta test --workspace --unreferenced reject
+            displayName: cargo insta
+
+          - bash: |
+              set -euo pipefail
+              cargo install cargo-deny --locked
+              cargo deny check licenses bans sources
+            displayName: cargo deny
+
+          - bash: |
+              set -euo pipefail
+              cargo install cargo-audit --locked
+              cargo audit
+            displayName: cargo audit
+
+          - bash: |
+              set -euo pipefail
+              sudo apt-get update
+              sudo apt-get install -y wget gnupg lsb-release python3-pip
+              wget -qO - https://aquasecurity.github.io/trivy-repo/deb/public.key | sudo gpg --dearmor -o /usr/share/keyrings/trivy.gpg
+              echo "deb [signed-by=/usr/share/keyrings/trivy.gpg] https://aquasecurity.github.io/trivy-repo/deb $(lsb_release -sc) main" | sudo tee /etc/apt/sources.list.d/trivy.list
+              sudo apt-get update
+              sudo apt-get install -y trivy
+              python3 -m pip install --user checkov
+              echo "##vso[task.prependpath]$HOME/.local/bin"
+              GITLEAKS_VERSION=8.24.2
+              wget -q "https://github.com/gitleaks/gitleaks/releases/download/v${GITLEAKS_VERSION}/gitleaks_${GITLEAKS_VERSION}_linux_x64.tar.gz"
+              tar -xzf "gitleaks_${GITLEAKS_VERSION}_linux_x64.tar.gz"
+              sudo install -m 0755 gitleaks /usr/local/bin/gitleaks
+            displayName: Install governance tooling (Trivy, Checkov, Gitleaks)
+
+          - bash: bash scripts/quality-gate.sh ci-governance
+            displayName: Governance quality gate
+
+          - bash: |
+              set -euo pipefail
+              cargo test -p taudit-report-json
+              cargo test -p taudit-sink-cloudevents
+            displayName: Validate report + CloudEvents contracts
+
+          - bash: cargo build --release -p taudit
+            displayName: Build taudit (release)
+
+          - bash: TAUDIT_BIN="$(Build.SourcesDirectory)/target/release/taudit" bash scripts/golden-paths.sh
+            displayName: Golden paths smoke
+
+          - bash: |
+              set -euo pipefail
+              export TAUDIT_CORRELATION_ID="ado-quality-$(Build.BuildId)-$(System.JobAttempt)"
+              ./target/release/taudit scan .github/workflows/ \
+                --platform github-actions \
+                --severity-threshold high \
+                --format sarif \
+                > taudit-self-scan-gha.sarif
+              ./target/release/taudit scan azure-pipelines.yml \
+                --platform azure-devops \
+                --severity-threshold high \
+                --format sarif \
+                > taudit-self-scan-ado.sarif
+            displayName: taudit self-scan (GHA + ADO YAML)
+
+          - task: PublishPipelineArtifact@1
+            inputs:
+              targetPath: taudit-self-scan-gha.sarif
+              artifact: taudit-self-scan-gha-sarif
+            displayName: Publish GHA self-scan SARIF
+
+          - task: PublishPipelineArtifact@1
+            inputs:
+              targetPath: taudit-self-scan-ado.sarif
+              artifact: taudit-self-scan-ado-sarif
+            displayName: Publish ADO self-scan SARIF
+
+          - bash: |
+              set +e
+              ./target/release/taudit verify \
+                --policy invariants/starter/ \
+                --platform github-actions \
+                .github/workflows/
+              echo "##vso[task.logissue type=warning]taudit verify starter (advisory on this repo)"
+            displayName: taudit verify (starter — advisory)
+            condition: succeededOrFailed()
+
+          - bash: |
+              set +e
+              ./target/release/taudit verify \
+                --policy invariants/policies/example-enterprise-ado.yml \
+                --platform azure-devops \
+                tests/fixtures/clean.yml
+              echo "##vso[task.logissue type=warning]example ADO policy on clean fixture (advisory)"
+            displayName: taudit verify (example ADO policy — advisory)
+            condition: succeededOrFailed()
+
+          - bash: |
+              set -euo pipefail
+              rustup toolchain install nightly --no-self-update
+              cargo +nightly install cargo-fuzz --locked
+            displayName: Install nightly + cargo-fuzz
+            condition: and(succeeded(), eq(variables['Build.SourceBranch'], 'refs/heads/main'))
+
+          - bash: cargo +nightly fuzz run parse_gha -- -max_total_time=10
+            displayName: fuzz smoke parse_gha
+            workingDirectory: crates/taudit-parse-gha
+            condition: and(succeeded(), eq(variables['Build.SourceBranch'], 'refs/heads/main'))
+
+          - bash: cargo +nightly fuzz run parse_ado -- -max_total_time=10
+            displayName: fuzz smoke parse_ado
+            workingDirectory: crates/taudit-parse-ado
+            condition: and(succeeded(), eq(variables['Build.SourceBranch'], 'refs/heads/main'))
+
+          - bash: cargo +nightly fuzz run parse_gitlab -- -max_total_time=10
+            displayName: fuzz smoke parse_gitlab
+            workingDirectory: crates/taudit-parse-gitlab
+            condition: and(succeeded(), eq(variables['Build.SourceBranch'], 'refs/heads/main'))
+
+      - job: security_deny
+        displayName: cargo-deny (advisories)
+        pool:
+          vmImage: ubuntu-latest
+        steps:
+          - checkout: self
+            fetchDepth: 0
+          - bash: |
+              set -euo pipefail
+              curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --default-toolchain "$(RUST_TOOLCHAIN)"
+              echo "##vso[task.prependpath]$HOME/.cargo/bin"
+              . "$HOME/.cargo/env"
+            displayName: Install Rust
+          - bash: |
+              set -euo pipefail
+              cargo install cargo-deny --locked
+              cargo deny check advisories bans licenses sources
+            displayName: cargo deny (full)
+
+      - job: security_taudit
+        displayName: taudit scan (high+, hard fail)
+        pool:
+          vmImage: ubuntu-latest
+        steps:
+          - checkout: self
+            fetchDepth: 0
+          - bash: |
+              set -euo pipefail
+              curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --default-toolchain "$(RUST_TOOLCHAIN)"
+              echo "##vso[task.prependpath]$HOME/.cargo/bin"
+              . "$HOME/.cargo/env"
+            displayName: Install Rust
+          - bash: cargo build --release -p taudit
+            displayName: Build taudit (release)
+          - bash: |
+              set -euo pipefail
+              export TAUDIT_CORRELATION_ID="ado-security-$(Build.BuildId)-$(System.JobAttempt)"
+              ./target/release/taudit scan .github/workflows/ \
+                --platform github-actions \
+                --severity-threshold high \
+                --quiet \
+                --format sarif \
+                > taudit-security-scan.sarif
+            displayName: taudit scan high+
+          - task: PublishPipelineArtifact@1
+            inputs:
+              targetPath: taudit-security-scan.sarif
+              artifact: taudit-security-scan-sarif
+            displayName: Publish security SARIF
+            condition: always()

@@ -6,6 +6,7 @@ All notable changes to this project will be documented in this file.
 
 ### Changed
 
+- **CI mirrors** — [`azure-pipelines.yml`](azure-pipelines.yml) (Azure DevOps), [`.gitlab-ci.yml`](.gitlab-ci.yml) (GitLab CI), [`bitbucket-pipelines.yml`](bitbucket-pipelines.yml) (Bitbucket Pipelines, Rust subset until a parser exists); guide in [`docs/integrations/ci-mirrors.md`](docs/integrations/ci-mirrors.md).
 - **CI** — `cargo-mutants` removed from the blocking [`quality.yml`](.github/workflows/quality.yml) job (cancellation could still fail the run); added [`mutation-coverage.yml`](.github/workflows/mutation-coverage.yml) (weekly schedule + `workflow_dispatch`) with artifact upload. `quality.yml` now uses **concurrency** with `cancel-in-progress` so superseded runs release runners quickly.
 - **Crate metadata** — `homepage` and `documentation` (GitHub) on all publishable crates; refreshed `description` fields to emphasize CI/CD authority graph analysis, propagation, and trust-boundary differentiation from linters/scanners/policy runtimes.
 - **Docs** — README, USERGUIDE, `docs/positioning.md`, and `man/taudit.1` aligned with that positioning; `CONTRIBUTING.md` and new **`docs/release-strategy.md`** document **stable vs edge** lanes, **crates.io publish gates**, **semver for detection**, **changelog discipline**, and weekly stable shipping as a **ceiling** (not a quota).

@@ -1,0 +1,33 @@
+# Bitbucket Pipelines — Rust quality mirror (fmt, clippy, test, deny, audit, contracts).
+# Bitbucket-native pipeline YAML is not yet a taudit parse target; this file is for
+# CI parity and future parser work. See docs/integrations/ci-mirrors.md.
+---
+image: rust:1.88-bookworm
+
+definitions:
+  caches:
+    cargo: ~/.cargo/registry
+
+pipelines:
+  default:
+    - parallel:
+        - step:
+            name: fmt + clippy + test
+            caches:
+              - cargo
+            script:
+              - rustup component add rustfmt clippy
+              - cargo fmt --all -- --check
+              - cargo clippy --workspace --all-targets -- -D warnings
+              - cargo test --workspace
+        - step:
+            name: deny + audit + contracts
+            caches:
+              - cargo
+            script:
+              - cargo install cargo-deny --locked
+              - cargo deny check licenses bans sources
+              - cargo install cargo-audit --locked
+              - cargo audit
+              - cargo test -p taudit-report-json
+              - cargo test -p taudit-sink-cloudevents

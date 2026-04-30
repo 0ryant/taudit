@@ -1,0 +1,122 @@
+# GitLab CI mirror — Rust gates + governance + taudit self-scan (parity with GitHub CI).
+# Rust 1.88 matches `.github/workflows/quality.yml`.
+---
+variables:
+  CARGO_TERM_COLOR: always
+  RUST_BACKTRACE: "1"
+
+default:
+  image: rust:1.88-bookworm
+  before_script:
+    - rustup component add rustfmt clippy
+    - rustc -Vv
+
+stages:
+  - test
+  - quality
+  - security
+
+.cache: &cargo_cache
+  key:
+    files:
+      - Cargo.lock
+  paths:
+    - .cargo/registry
+    - .cargo/git
+    - target/
+
+test:linux:
+  stage: test
+  cache: *cargo_cache
+  script:
+    - cargo test --workspace
+  rules:
+    - if: $CI_PIPELINE_SOURCE == "merge_request_event"
+    - if: $CI_COMMIT_BRANCH == "main"
+
+quality:linux:
+  stage: quality
+  cache: *cargo_cache
+  before_script:
+    - rustup component add rustfmt clippy
+    - rustc -Vv
+    - apt-get update && apt-get install -y python3-pip wget gnupg lsb-release
+  script:
+    - cargo fmt --all -- --check
+    - cargo clippy --workspace --all-targets -- -D warnings
+    - pip install --break-system-packages pyyaml jsonschema 2>/dev/null || pip install pyyaml jsonschema
+    - python3 scripts/generate-authority-invariant-schema.py --check
+    - python3 scripts/validate-authority-invariant-yaml.py invariants/starter
+    - cargo install cargo-insta --locked
+    - cargo insta test --workspace --unreferenced reject
+    - cargo install cargo-deny --locked
+    - cargo deny check licenses bans sources
+    - cargo install cargo-audit --locked
+    - cargo audit
+    - |
+      set -euo pipefail
+      wget -qO - https://aquasecurity.github.io/trivy-repo/deb/public.key | gpg --dearmor -o /usr/share/keyrings/trivy.gpg
+      echo "deb [signed-by=/usr/share/keyrings/trivy.gpg] https://aquasecurity.github.io/trivy-repo/deb $(lsb_release -sc) main" > /etc/apt/sources.list.d/trivy.list
+      apt-get update && apt-get install -y trivy
+      pip install --break-system-packages checkov 2>/dev/null || pip install checkov
+      export PATH="$HOME/.local/bin:$PATH"
+      GITLEAKS_VERSION=8.24.2
+      wget -q "https://github.com/gitleaks/gitleaks/releases/download/v${GITLEAKS_VERSION}/gitleaks_${GITLEAKS_VERSION}_linux_x64.tar.gz"
+      tar -xzf "gitleaks_${GITLEAKS_VERSION}_linux_x64.tar.gz"
+      install -m 0755 gitleaks /usr/local/bin/gitleaks
+    - bash scripts/quality-gate.sh ci-governance
+    - cargo test -p taudit-report-json
+    - cargo test -p taudit-sink-cloudevents
+    - cargo build --release -p taudit
+    - TAUDIT_BIN="$CI_PROJECT_DIR/target/release/taudit" bash scripts/golden-paths.sh
+    - |
+      export TAUDIT_CORRELATION_ID="gitlab-quality-${CI_PIPELINE_ID}-${CI_JOB_ID}"
+      ./target/release/taudit scan .github/workflows/ --platform github-actions --severity-threshold high --format sarif > taudit-self-scan-gha.sarif
+      ./target/release/taudit scan .gitlab-ci.yml --platform gitlab --severity-threshold high --format sarif > taudit-self-scan-gitlab.sarif
+    - ./target/release/taudit verify --policy invariants/starter/ --platform github-actions .github/workflows/ || true
+    - ./target/release/taudit verify --policy invariants/policies/example-enterprise-ado.yml --platform azure-devops tests/fixtures/clean.yml || true
+  artifacts:
+    when: always
+    paths:
+      - taudit-self-scan-gha.sarif
+      - taudit-self-scan-gitlab.sarif
+    expire_in: 14 days
+  rules:
+    - if: $CI_PIPELINE_SOURCE == "merge_request_event"
+    - if: $CI_COMMIT_BRANCH == "main"
+
+security:deny:
+  stage: security
+  cache: *cargo_cache
+  before_script:
+    - rustc -Vv
+  script:
+    - cargo install cargo-deny --locked
+    - cargo deny check advisories bans licenses sources
+  rules:
+    - if: $CI_PIPELINE_SOURCE == "merge_request_event"
+    - if: $CI_COMMIT_BRANCH == "main"
+
+security:taudit:
+  stage: security
+  cache: *cargo_cache
+  before_script:
+    - rustc -Vv
+  script:
+    - cargo build --release -p taudit
+    - |
+      export TAUDIT_CORRELATION_ID="gitlab-security-${CI_PIPELINE_ID}-${CI_JOB_ID}"
+      ./target/release/taudit scan .github/workflows/ \
+        --platform github-actions \
+        --severity-threshold high \
+        --quiet \
+        --format sarif \
+        > taudit-security-scan.sarif
+  artifacts:
+    when: always
+    paths:
+      - taudit-security-scan.sarif
+    expire_in: 30 days
+  rules:
+    - if: $CI_PIPELINE_SOURCE == "merge_request_event"
+    - if: $CI_COMMIT_BRANCH == "main"

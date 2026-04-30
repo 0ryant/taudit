@@ -89,6 +89,10 @@ before the sibling projects publish.
 **optional context** for triage would be a separate integration, behind an
 explicit flag and ADR — not merged into the core graph parser.
 
+## CI mirrors (ADO, GitLab, Bitbucket)
+
+For **Azure DevOps** (e.g. org **0ryant**), **GitLab CI**, and **Bitbucket Pipelines**, see **[`ci-mirrors.md`](ci-mirrors.md)** — root **`azure-pipelines.yml`**, **`.gitlab-ci.yml`**, and **`bitbucket-pipelines.yml`** mirror the Rust + governance + taudit checks where the platform supports it.
+
 ## GitHub Actions: stack-integration (this repo)
 
 The [`stack-integration`](../../.github/workflows/stack-integration.yml) workflow assumes **tsafe** and **CellOS** live in **the same GitHub org as this repository** (default repo ids **`{owner}/tsafe`** and **`{owner}/CellOS`** on `github.com`, where `{owner}` is this repo’s owner). The Actions **`GITHUB_TOKEN`** can clone those repos when they are private to the org. It runs **`taudit scan`** on tsafe’s `.github/workflows/` (override repo id with **`SIBLING_TSAFE_REPO`** if the name differs).
