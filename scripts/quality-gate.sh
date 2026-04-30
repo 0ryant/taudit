@@ -99,6 +99,38 @@ run_checkov() {
     --quiet
 }
 
+run_actionlint() {
+  require_cmd actionlint
+  echo "quality-gate: actionlint"
+  actionlint -color
+}
+
+run_yamllint() {
+  require_cmd yamllint
+  echo "quality-gate: yamllint"
+  local paths=()
+  for p in \
+    .github/workflows \
+    .github/dependabot.yml \
+    .github/ISSUE_TEMPLATE \
+    azure-pipelines.yml \
+    azure-pipelines.stack-integration.yml \
+    .gitlab-ci.yml \
+    bitbucket-pipelines.yml \
+    invariants/starter \
+    invariants/policies/example-enterprise-ado.yml \
+    docs/examples/ci-gate-taudit-verify.yml; do
+    if [[ -e "$p" ]]; then
+      paths+=("$p")
+    fi
+  done
+  if [[ "${#paths[@]}" -eq 0 ]]; then
+    echo "quality-gate: yamllint skipped (no paths found)"
+    return 0
+  fi
+  yamllint -c .yamllint "${paths[@]}"
+}
+
 case "$STAGE" in
   pre-commit)
     require_cmd cargo
@@ -140,10 +172,14 @@ case "$STAGE" in
     require_cmd gitleaks
     require_cmd trivy
     require_cmd checkov
+    require_cmd actionlint
+    require_cmd yamllint
 
     run_gitleaks_repo
     run_trivy_fs
     run_checkov
+    run_actionlint
+    run_yamllint
     run_taudit_gate
     ;;
 

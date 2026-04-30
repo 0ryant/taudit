@@ -144,8 +144,11 @@ stages:
               sudo install -m 0755 gitleaks /usr/local/bin/gitleaks
             displayName: Install governance tooling (Trivy, Checkov, Gitleaks)
 
+          - bash: bash scripts/install-ci-linters.sh
+            displayName: Install workflow linters (actionlint, yamllint)
+
           - bash: bash scripts/quality-gate.sh ci-governance
-            displayName: Governance quality gate
+            displayName: Governance quality gate (Trivy, Checkov, Gitleaks, linters, taudit)
 
           - bash: |
               set -euo pipefail

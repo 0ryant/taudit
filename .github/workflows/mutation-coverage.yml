@@ -60,6 +60,8 @@ jobs:
       - name: Summarize
         if: always()
         run: |
-          echo "### cargo-mutants finished" >> "$GITHUB_STEP_SUMMARY"
-          echo "- exit: ${{ steps.mutants.outputs.exit_code }}" >> "$GITHUB_STEP_SUMMARY"
-          echo "- Download **cargo-mutants-log-${{ github.run_id }}** from the run artifacts for the full report." >> "$GITHUB_STEP_SUMMARY"
+          {
+            echo "### cargo-mutants finished"
+            echo "- exit: ${{ steps.mutants.outputs.exit_code }}"
+            echo "- Download **cargo-mutants-log-${{ github.run_id }}** from the run artifacts for the full report."
+          } >> "$GITHUB_STEP_SUMMARY"

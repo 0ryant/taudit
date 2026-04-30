@@ -1,0 +1,28 @@
+# Yamllint for CI and policy YAML (GHA, ADO, GitLab mirrors, invariants).
+# Complementary to taudit — schema/style only, not authority semantics.
+---
+extends: default
+
+rules:
+  document-start: disable
+  # GitHub Actions uses `on:` as a mapping key; truthy rules vary by yamllint major.
+  truthy: disable
+  line-length:
+    max: 200
+    level: warning
+  comments:
+    min-spaces-from-content: 1
+  # Workflow files mix list-item comments and step blocks; indentation rules are noisy.
+  comments-indentation: disable
+  braces:
+    max-spaces-inside: 1
+  brackets:
+    max-spaces-inside: 1
+
+ignore: |
+  target/
+  MEMORY/
+  .claude/
+  .git/
+  crates/**/fuzz/corpus/
+  crates/**/fuzz/**/corpus/

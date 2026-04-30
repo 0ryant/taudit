@@ -64,6 +64,7 @@ quality:linux:
       wget -q "https://github.com/gitleaks/gitleaks/releases/download/v${GITLEAKS_VERSION}/gitleaks_${GITLEAKS_VERSION}_linux_x64.tar.gz"
       tar -xzf "gitleaks_${GITLEAKS_VERSION}_linux_x64.tar.gz"
       install -m 0755 gitleaks /usr/local/bin/gitleaks
+    - bash scripts/install-ci-linters.sh
     - bash scripts/quality-gate.sh ci-governance
     - cargo test -p taudit-report-json
     - cargo test -p taudit-sink-cloudevents

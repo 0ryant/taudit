@@ -114,7 +114,10 @@ jobs:
           tar -xzf "gitleaks_${GITLEAKS_VERSION}_linux_x64.tar.gz"
           sudo install -m 0755 gitleaks /usr/local/bin/gitleaks
 
-      - name: Governance quality gate (Trivy, Checkov, Gitleaks, taudit)
+      - name: Install workflow linters (actionlint, yamllint)
+        run: bash scripts/install-ci-linters.sh
+
+      - name: Governance quality gate (Trivy, Checkov, Gitleaks, linters, taudit)
         run: bash scripts/quality-gate.sh ci-governance
 
       - name: Validate report and CloudEvents contracts

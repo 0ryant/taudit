@@ -51,9 +51,11 @@ jobs:
             fi
           done
           if [ -n "$REPORT" ]; then
-            echo "report<<EOF" >> "$GITHUB_OUTPUT"
-            echo -e "$REPORT" >> "$GITHUB_OUTPUT"
-            echo "EOF" >> "$GITHUB_OUTPUT"
+            {
+              echo "report<<EOF"
+              echo -e "$REPORT"
+              echo "EOF"
+            } >> "$GITHUB_OUTPUT"
           fi
 
       - name: Post PR comment

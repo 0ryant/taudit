@@ -88,7 +88,8 @@ jobs:
       - name: Notice when tsafe sibling is unavailable
         if: steps.checkout_tsafe.outcome != 'success'
         run: |
-          echo "::notice::tsafe sibling checkout failed or repo missing. Set repository variable SIBLING_TSAFE_REPO (owner/name) or ensure GITHUB_TOKEN can read ${{ steps.siblings.outputs.tsafe_repo }}."
+          echo "::notice::tsafe sibling checkout failed or repo missing. Set SIBLING_TSAFE_REPO" \
+            "or ensure GITHUB_TOKEN can read ${{ steps.siblings.outputs.tsafe_repo }}."
 
       - name: Log in to GHCR (CellOS supervisor image)
         uses: docker/login-action@4907a6ddec9925e35a0a9e82d7399ccc52663121 # v4.1.0
@@ -147,4 +148,6 @@ jobs:
         # When GHCR pull succeeds, checkout is skipped (outcome skipped) — do not treat as failure.
         if: steps.cellos_pull.outcome != 'success' && steps.checkout_cellos.outcome == 'failure'
         run: |
-          echo "::notice::CellOS GHCR pull failed (${{ steps.cellos_img.outputs.image }}) and sibling checkout failed (${{ steps.siblings.outputs.cellos_repo }}). Run publish-cellos-ghcr workflow once, or set CELLOS_SUPERVISOR_IMAGE / SIBLING_CELLOS_REPO."
+          echo "::notice::CellOS GHCR pull failed (${{ steps.cellos_img.outputs.image }}) and" \
+            "sibling checkout failed (${{ steps.siblings.outputs.cellos_repo }})." \
+            "Run publish-cellos-ghcr once, or set CELLOS_SUPERVISOR_IMAGE / SIBLING_CELLOS_REPO."

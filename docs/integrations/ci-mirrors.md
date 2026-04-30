@@ -23,7 +23,7 @@ This repository’s **primary** CI is **GitHub Actions** (`.github/workflows/`).
 ### What the mirror runs
 
 - **Parallel:** `test` on **Ubuntu**, **macOS**, **Windows** (`cargo test --workspace`).
-- **quality (Ubuntu):** `fmt`, `clippy`, Python invariant schema check, `cargo insta`, `cargo deny`, `cargo audit`, **Trivy + Checkov + Gitleaks** via `scripts/quality-gate.sh ci-governance`, contract tests, **release build**, **golden-paths**, **taudit self-scan** of `.github/workflows/` and **`azure-pipelines.yml`** (SARIF artifacts), advisory `taudit verify` on starter + ADO example policy, **fuzz smoke** on `main` only.
+- **quality (Ubuntu):** `fmt`, `clippy`, Python invariant schema check, `cargo insta`, `cargo deny`, `cargo audit`, **`scripts/install-ci-linters.sh`** (**actionlint** + **yamllint**), **Trivy + Checkov + Gitleaks** via `scripts/quality-gate.sh ci-governance`, contract tests, **release build**, **golden-paths**, **taudit self-scan** of `.github/workflows/` and **`azure-pipelines.yml`** (SARIF artifacts), advisory `taudit verify` on starter + ADO example policy, **fuzz smoke** on `main` only.
 - **Parallel security:** full **`cargo deny`** (incl. advisories) and **hard-fail** **`taudit scan`** of `.github/workflows/` at high+ (SARIF artifact).
 
 ### SARIF in ADO
@@ -65,7 +65,7 @@ The committed **[`azure-pipelines.stack-integration.yml`](../../azure-pipelines.
 ### What runs
 
 - **`test:linux`** — `cargo test --workspace`.
-- **`quality:linux`** — same Rust + Python + insta + deny + audit + governance gate + contracts + release build + golden paths + **taudit scan** of `.github/workflows/` and **`.gitlab-ci.yml`** (artifacts), plus advisory verify steps.
+- **`quality:linux`** — same Rust + Python + insta + deny + audit + **`install-ci-linters.sh`** + governance gate + contracts + release build + golden paths + **taudit scan** of `.github/workflows/` and **`.gitlab-ci.yml`** (artifacts), plus advisory verify steps.
 - **`security:*`** — full `cargo deny` and hard-fail `taudit scan` of `.github/workflows/`.
 
 ### Rules
@@ -96,6 +96,12 @@ Track parser / rule work in [`docs/ROADMAP.md`](../ROADMAP.md) if you open a ded
 - When you change **GitHub** `quality.yml`, update **`azure-pipelines.yml`**, **`.gitlab-ci.yml`**, and (if applicable) **`bitbucket-pipelines.yml`** in the same PR, or follow immediately with a **“ci: sync mirrors”** commit.
 - **Rust toolchain** version is pinned in comments / `variables` — bump with the same cadence as `.github/workflows/quality.yml` (dtolnay pin).
 - **Governance** (`ci-governance`) still scans the **whole repo** (Trivy fs, Checkov on `.github/`, Gitleaks) — that is intentional: we keep scanning **GitHub workflow definitions** even when CI runs on ADO/GitLab, because those files remain in-tree.
+
+---
+
+## FinOps (GitHub Actions)
+
+Terraform smoke under **`infra/finops-smoke/`** and workflow **[`.github/workflows/finops.yml`](../../.github/workflows/finops.yml)** run **`terraform fmt` / `validate`** on path changes; **Infracost** runs when repository secret **`INFRACOST_API_KEY`** is configured ([`infra/finops-smoke/README.md`](../../infra/finops-smoke/README.md)). This lane is **GitHub-only** for now (not mirrored on ADO / GitLab).
 
 ---
 

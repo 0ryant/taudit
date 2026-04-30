@@ -100,3 +100,6 @@ crates/*/fuzz/target/
 
 # Vendored deps (if used)
 vendor/
+
+# Terraform local plugin dir (lock file under infra/ is committed)
+**/.terraform/

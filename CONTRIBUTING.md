@@ -27,6 +27,8 @@ That runs Rust quality checks plus governance/security tooling:
 - **Starter `taudit verify` (advisory)** — why many findings on our own workflows do not fail the gate: [docs/contributing/dogfood-taudit-verify.md](docs/contributing/dogfood-taudit-verify.md)
 - **Mutation coverage** — weekly / manual workflow [`.github/workflows/mutation-coverage.yml`](.github/workflows/mutation-coverage.yml) (not part of the blocking `quality` job; see workflow comment for rationale)
 
+Hosted **`quality`** also runs **`scripts/install-ci-linters.sh`** (pinned **actionlint** + **yamllint**) before **`ci-governance`**. To reproduce that gate locally after you have Trivy, Checkov, and Gitleaks: on **Linux x86_64** run `bash scripts/install-ci-linters.sh`; on **macOS** use `brew install actionlint yamllint` instead (the install script targets the CI runner arch). Then `bash scripts/quality-gate.sh ci-governance`.
+
 Quick Rust-only gate:
 
 ```bash

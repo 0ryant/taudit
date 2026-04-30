@@ -125,26 +125,22 @@ In CI:
 
 ### Linters in CI (workflow + infra YAML)
 
-**Status:** Not started  
-**Effort:** TBD  
-**Impact:** Earlier catch of expression / schema mistakes in pipelines taudit already parses; **complementary** to the authority graph (see [`docs/positioning.md`](docs/positioning.md), [`docs/integrations/index.md`](docs/integrations/index.md)).
+**Status:** Baseline shipped (extend later)  
+**Effort:** Done for GHA + mirrors via governance gate  
+**Impact:** **actionlint** + **yamllint** (pinned installers in [`scripts/install-ci-linters.sh`](scripts/install-ci-linters.sh), config [`.yamllint`](.yamllint)) run inside [`scripts/quality-gate.sh`](scripts/quality-gate.sh) **`ci-governance`** — wired from [`.github/workflows/quality.yml`](.github/workflows/quality.yml), [`azure-pipelines.yml`](azure-pipelines.yml), [`.gitlab-ci.yml`](.gitlab-ci.yml). Complementary to taudit ([`docs/integrations/ci-mirrors.md`](docs/integrations/ci-mirrors.md)).
 
-#### Scope (draft)
+#### Follow-ups (optional)
 
-- [ ] Inventory: **actionlint** (GHA), **yamllint** / schema checks, ADO/GitLab-native linters where they add signal without duplicating taudit.
-- [ ] Wire **non-blocking** or **blocking** jobs in `.github/workflows/quality.yml` (or a dedicated workflow) with pinned versions; mirror only where the mirror host has an equivalent (ADO `yaml` validation tasks, etc.).
-- [ ] Document overlap vs **taudit** (correctness / context vs authority graph) in [`docs/integrations/ci-mirrors.md`](docs/integrations/ci-mirrors.md) or positioning.
-- [ ] Optional follow-up (separate item if scope grows): ingest external linter **SARIF** as triage context — only behind an explicit flag + ADR ([`docs/integrations/index.md`](docs/integrations/index.md) already calls this not shipped).
+- [ ] ADO / GitLab **native** YAML validators beyond actionlint+yamllint if they add signal.
+- [ ] Ingest external linter **SARIF** as triage context — explicit flag + ADR only ([`docs/integrations/index.md`](docs/integrations/index.md)).
 
 ### FinOps tooling in CI/CD
 
-**Status:** Not started  
-**Effort:** TBD  
-**Impact:** Cost signal on IaC and pipeline-adjacent resources (PR comments, drift vs budget), aligned with governance without conflating **authority** findings with **spend**.
+**Status:** Baseline shipped (GitHub-first)  
+**Effort:** Terraform smoke + optional Infracost  
+**Impact:** [`infra/finops-smoke/`](infra/finops-smoke/) + [`.github/workflows/finops.yml`](.github/workflows/finops.yml) — **`terraform fmt` / `validate`** always; **Infracost** when secret **`INFRACOST_API_KEY`** is set (see [`infra/finops-smoke/README.md`](infra/finops-smoke/README.md)). **Not** a taudit finding surface.
 
-#### Scope (draft)
+#### Follow-ups (optional)
 
-- [ ] Pick stack: e.g. **Infracost** / **OpenCost** / cloud-native **cost APIs** (Azure Cost Management, AWS CE, GCP Billing) — org-specific credentials stay in variable groups / OIDC.
-- [ ] Add a **FinOps** lane (advisory first): run on `main` + optional PR comment when infra paths change; **no secrets in logs**; document required IAM / API scope.
-- [ ] Keep boundaries clear in docs: **FinOps output is not a taudit finding** unless we later define an explicit contract (out of scope until ADR).
-- [ ] Mirror to **ADO / GitLab** mirrors or document “GitHub-only FinOps lane” if third-party integrations differ.
+- [ ] PR cost comments / budgets / ADO–GitLab mirrors once org wants them.
+- [ ] OpenCost / cloud billing APIs — separate PAT + ADR.

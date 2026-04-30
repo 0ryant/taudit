@@ -1,0 +1,67 @@
+# FinOps smoke: Terraform fmt/validate + optional Infracost breakdown.
+# Requires repository secret INFRACOST_API_KEY for cost output (free tier at infracost.io).
+# Without the secret, terraform checks still run; Infracost steps are skipped.
+name: finops
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "infra/finops-smoke/**"
+      - ".github/workflows/finops.yml"
+  pull_request:
+    paths:
+      - "infra/finops-smoke/**"
+      - ".github/workflows/finops.yml"
+  workflow_dispatch:
+  schedule:
+    - cron: "37 14 * * 1"
+
+concurrency:
+  group: finops-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  terraform-finops-smoke:
+    name: Terraform + Infracost (smoke)
+    runs-on: ubuntu-latest
+    env:
+      # Step `if:` cannot use `secrets.*` (actionlint / GHA); gate on env instead.
+      INFRACOST_API_KEY: ${{ secrets.INFRACOST_API_KEY }}
+    defaults:
+      run:
+        working-directory: infra/finops-smoke
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+
+      - uses: hashicorp/setup-terraform@b9cd54a3c349d3f38e8881555d616ced269862dd # v3.1.2
+        with:
+          terraform_version: "1.9.8"
+          terraform_wrapper: false
+
+      - name: Terraform format (check)
+        run: terraform fmt -check -recursive
+
+      - name: Terraform init (no backend)
+        run: terraform init -backend=false -input=false
+
+      - name: Terraform validate
+        run: terraform validate
+
+      - name: Install Infracost CLI
+        if: ${{ env.INFRACOST_API_KEY != '' }}
+        uses: infracost/actions/setup@e9d6e6cd65e168e76b0de50ff9957d2fe8bb1832 # v3
+        with:
+          api-key: ${{ secrets.INFRACOST_API_KEY }}
+
+      - name: Infracost breakdown
+        if: ${{ env.INFRACOST_API_KEY != '' }}
+        run: infracost breakdown --path . --format table --show-skipped
+
+      - name: Infracost skipped (no API key)
+        if: ${{ env.INFRACOST_API_KEY == '' }}
+        run: |
+          echo "::notice::Set repository secret INFRACOST_API_KEY to enable Infracost (see infra/finops-smoke/README.md)."
