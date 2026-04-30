@@ -25,6 +25,7 @@ That runs Rust quality checks plus governance/security tooling:
 - `taudit` workflow scan + invariant verification
 - **Golden paths** — after `cargo test`, runs [`scripts/golden-paths.sh`](scripts/golden-paths.sh) against `target/debug/taudit` (same flows as [docs/golden-paths.md](docs/golden-paths.md))
 - **Starter `taudit verify` (advisory)** — why many findings on our own workflows do not fail the gate: [docs/contributing/dogfood-taudit-verify.md](docs/contributing/dogfood-taudit-verify.md)
+- **Mutation coverage** — weekly / manual workflow [`.github/workflows/mutation-coverage.yml`](.github/workflows/mutation-coverage.yml) (not part of the blocking `quality` job; see workflow comment for rationale)
 
 Quick Rust-only gate:
 

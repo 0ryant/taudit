@@ -1,0 +1,65 @@
+# Mutation testing for taudit-core — informational supply-chain signal.
+# Intentionally NOT part of the blocking quality.yml job: cargo-mutants can run
+# 30–60+ minutes and is vulnerable to runner cancellation; a cancelled step
+# still fails the parent job even with continue-on-error in some cases.
+#
+# Run: weekly schedule + manual dispatch. Uploads logs for human review.
+name: mutation-coverage
+
+on:
+  schedule:
+    - cron: "15 6 * * 3" # Wednesdays 06:15 UTC — offset from security Monday cron
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: mutation-coverage-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  CARGO_TERM_COLOR: always
+  RUST_BACKTRACE: 1
+
+jobs:
+  mutants:
+    name: cargo-mutants (taudit-core)
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+
+      - name: Rust toolchain
+        uses: dtolnay/rust-toolchain@98e1b82157cd469e843cb7f524c1313b4ad9492c # 1.88
+
+      - uses: Swatinem/rust-cache@9d47c6ad4b02e050fd481d890b2ea34778fd09d6 # v2.7.8
+
+      - name: Install cargo-mutants
+        run: cargo install cargo-mutants --locked
+
+      - name: Mutation coverage (informational)
+        id: mutants
+        timeout-minutes: 75
+        run: |
+          set +e
+          cargo mutants -p taudit-core --timeout 70 > mutants.log 2>&1
+          MUT_EXIT=$?
+          echo "exit_code=$MUT_EXIT" >> "$GITHUB_OUTPUT"
+          exit 0
+
+      - name: Upload mutants log
+        if: always()
+        uses: actions/upload-artifact@65c4c4a1ddee5b72f698fdd19549f0f0fb45cf08 # v4.6.0
+        with:
+          name: cargo-mutants-log-${{ github.run_id }}
+          path: mutants.log
+          if-no-files-found: warn
+          retention-days: 14
+
+      - name: Summarize
+        if: always()
+        run: |
+          echo "### cargo-mutants finished" >> "$GITHUB_STEP_SUMMARY"
+          echo "- exit: ${{ steps.mutants.outputs.exit_code }}" >> "$GITHUB_STEP_SUMMARY"
+          echo "- Download **cargo-mutants-log-${{ github.run_id }}** from the run artifacts for the full report." >> "$GITHUB_STEP_SUMMARY"

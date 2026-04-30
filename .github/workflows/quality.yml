@@ -5,6 +5,12 @@ on:
     branches: [main]
   pull_request:
 
+# One active quality run per ref — superseded runs cancel so we do not burn
+# runners on obsolete commits (especially on rapid pushes to main).
+concurrency:
+  group: quality-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
 permissions:
   contents: read
 
@@ -194,15 +200,7 @@ jobs:
         run: cargo +nightly fuzz run parse_gitlab -- -max_total_time=10
         working-directory: crates/taudit-parse-gitlab
 
-      # Mutation coverage for the rule engine — informational; do not fail the
-      # quality job (timeout, cancel, or tool error). See run log for results.
-      # Runs on push to main only; skip on PRs to avoid 20-40 min CI cost.
-      - name: Install cargo-mutants
-        if: github.event_name == 'push'
-        run: cargo install cargo-mutants --locked
-
-      - name: mutation coverage (taudit-core — informational)
-        if: github.event_name == 'push'
-        continue-on-error: true
-        timeout-minutes: 50
-        run: cargo mutants -p taudit-core --timeout 45
+      # Mutation testing moved to `.github/workflows/mutation-coverage.yml`
+      # (weekly + workflow_dispatch). Running cargo-mutants inside this job
+      # caused intermittent failures when the step was cancelled (runner
+      # shutdown / superseded run) — cancelled steps still fail the job.
