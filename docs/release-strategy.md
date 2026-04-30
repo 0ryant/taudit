@@ -56,7 +56,37 @@ Patch releases are for **unambiguous** corrections (true bugs, wrong propagation
 
 ---
 
-## 4. Changelog discipline (trust)
+## 4. Prerelease vs stable — mechanics
+
+Separate **stable** and **prerelease** in three places: **semver in manifests**, **Git tags + automation**, and **GitHub Release metadata**.
+
+### Semver (Cargo and crates.io)
+
+- **Stable:** `version = "M.m.p"` only (no hyphen suffix). Plain semver is what most consumers pin (`cargo install taudit --version M.m.p --locked` or a range like `1.0` that resolves to the latest **non-prerelease**).
+- **Prerelease:** Semver **pre-release identifiers** — e.g. `1.1.0-beta.3`, `1.1.0-rc.1` (anything after a **single** hyphen that is not only digits). You can `cargo publish` these to crates.io; resolution **does not** pick them when a dependency asks for `1.1` without a pre-release component — consumers must **opt in** with an exact prerelease version.
+
+Treat **crates.io prerelease** as rare: same honesty rules as stable (detection delta in changelog), but expect only **early adopters** who pin explicitly.
+
+### Git tags and CI (this repository today)
+
+The release workflow (`.github/workflows/release.yml`) triggers on tags matching **`v[0-9]+.[0-9]+.[0-9]+`** — i.e. **`v1.0.14`** style **only**. Tags like **`v1.1.0-beta.1`** do **not** match that pattern, so they **do not** run the current “full release + crates.io publish” pipeline.
+
+**Practical split:**
+
+| Lane | Tag / trigger example | Typical automation |
+|------|------------------------|-------------------|
+| **Stable** | `vM.m.p` + manifests `M.m.p` | Existing workflow: quality → GitHub Release → SBOMs → binaries → **`cargo publish`** |
+| **Edge / prerelease** | `vM.m.p-beta.N`, nightly schedule, or `workflow_dispatch` | Separate workflow or widened tag filter with **`if:`** so **`cargo publish` runs only for stable tags**; use **`gh release create --prerelease`** for GitHub-only edge drops |
+
+**Nightly / commit builds** can skip tags entirely: artifact name includes date or short SHA; attach to a **Pre-release** or leave as workflow-run artifacts only.
+
+### GitHub Release flag
+
+For any tag you treat as edge: create the release with **`gh release create … --prerelease`** so the UI and API show **Pre-release** and downstream tooling can distinguish it from **Latest**.
+
+---
+
+## 5. Changelog discipline (trust)
 
 Every **crates.io** (stable) release note should make security engineers **less** nervous, not more. At minimum, answer explicitly:
 
@@ -68,7 +98,7 @@ If the changelog is silent on detection, **consumers assume the worst** and dela
 
 ---
 
-## 5. Cadence in plain language
+## 6. Cadence in plain language
 
 | Situation | Verdict |
 |-----------|---------|
@@ -79,7 +109,7 @@ If the changelog is silent on detection, **consumers assume the worst** and dela
 
 ---
 
-## 6. Trade-offs (explicit)
+## 7. Trade-offs (explicit)
 
 **High velocity on crates.io (old pattern)**
 
