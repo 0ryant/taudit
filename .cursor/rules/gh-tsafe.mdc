@@ -1,0 +1,31 @@
+---
+description: Run GitHub CLI via tsafe exec for vault-scoped credentials (not bare gh)
+alwaysApply: true
+---
+
+# `gh` under `tsafe exec --`
+
+When running or suggesting **`gh`** for anything that might use **GitHub credentials** (PAT, fine-grained token, `GH_TOKEN`, org/repo scopes), wrap the full command:
+
+```bash
+tsafe exec -- gh <subcommand> …
+```
+
+`{{gh cmd}}` means: substitute the entire `gh …` invocation **after** `tsafe exec -- ` (one argv block: `tsafe exec -- gh pr list …`).
+
+**Do**
+
+- Prefer `tsafe exec -- gh …` for local/agent flows where secrets live in **tsafe** contracts / namespaces.
+- Match the operator’s **`.tsafe.yml`** contract / namespace for the GitHub identity that `gh` should use.
+
+**Do not**
+
+- Default to bare `gh …` for those flows when tsafe is the authority path.
+- Tell users to export long-lived `GH_TOKEN` / PAT into the shell for routine `gh` use.
+
+**Exceptions**
+
+- **GitHub Actions** (and similar CI): use **`GITHUB_TOKEN`** / OIDC / repo secrets as defined in workflow YAML — **`tsafe exec` is not assumed** on the runner unless you explicitly add it.
+- Ephemeral **public** `gh` calls with **no** vault-backed credential (rare): bare `gh` is OK only when clearly no tsafe scope applies; when unsure, still use `tsafe exec --`.
+
+If **`TSAFE_AGENT_SOCK`** / unlock is missing, follow the **Tsafe** skill: ask for agent unlock before `tsafe exec`, then run `tsafe exec -- gh …`.
