@@ -11,7 +11,7 @@ All notable changes to this project will be documented in this file.
 
 ### Release notes (stable lane reminder)
 
-When folding **Unreleased** into a crates.io version, the changelog entry must spell out **detection delta** (what changed in rules/graph semantics), **whether findings increase or decrease** on typical pipelines, and **false positive / false negative** risk — see [`docs/release-strategy.md`](docs/release-strategy.md#4-changelog-discipline-trust).
+When folding **Unreleased** into a crates.io version, the changelog entry must spell out **detection delta** (what changed in rules/graph semantics), **whether findings increase or decrease** on typical pipelines, and **false positive / false negative** risk — see [`docs/release-strategy.md`](docs/release-strategy.md) (section *Changelog discipline*).
 
 ## v1.0.12 — 2026-04-29
 
