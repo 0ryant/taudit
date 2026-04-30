@@ -1,0 +1,121 @@
+# Optional Azure DevOps pipeline: parity with .github/workflows/stack-integration.yml
+# (taudit build → scan tsafe workflows → CellOS smoke via GHCR, else sibling checkout).
+#
+# Register separately from azure-pipelines.yml (Pipelines → New → same repo → this file).
+# See docs/integrations/ci-mirrors.md § "Stack-integration: separate ADO pipeline".
+#
+# Before first run:
+#   - Set resources.repositories[].endpoint to your GitHub service connection name.
+#   - Set resources.repositories[].name to owner/repo for tsafe and CellOS.
+#   - Set variable GITHUB_ORG below (or override in ADO UI) to the GitHub org/user.
+#   - For GHCR: add secret GHCR_TOKEN (read:packages) and GHCR_USERNAME, or rely on
+#     a token embedded in your service connection if your org supports it.
+---
+trigger: none
+pr: none
+
+variables:
+  RUST_TOOLCHAIN: "1.88"
+  CARGO_TERM_COLOR: always
+  RUST_BACKTRACE: "1"
+  # GitHub org or user hosting tsafe + CellOS + GHCR image (override in ADO UI if preferred).
+  GITHUB_ORG: REPLACE_GITHUB_ORG
+
+resources:
+  repositories:
+    - repository: tsafe_sibling
+      type: github
+      endpoint: REPLACE_GITHUB_SERVICE_CONNECTION_NAME
+      name: REPLACE_GITHUB_ORG/tsafe
+    - repository: cellos_sibling
+      type: github
+      endpoint: REPLACE_GITHUB_SERVICE_CONNECTION_NAME
+      name: REPLACE_GITHUB_ORG/CellOS
+
+stages:
+  - stage: stack_integration
+    displayName: Stack integration (tsafe + CellOS)
+    jobs:
+      - job: stack_smoke
+        displayName: taudit + tsafe + CellOS
+        pool:
+          vmImage: ubuntu-latest
+        steps:
+          - checkout: self
+            fetchDepth: 0
+
+          - bash: |
+              set -euo pipefail
+              curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --default-toolchain "$(RUST_TOOLCHAIN)"
+              echo "##vso[task.prependpath]$HOME/.cargo/bin"
+              . "$HOME/.cargo/env"
+              rustc -Vv
+            displayName: Install Rust
+
+          - bash: cargo build --release -p taudit
+            displayName: Build taudit (release)
+
+          - checkout: tsafe_sibling
+            path: _siblings/tsafe
+            continueOnError: true
+            displayName: Checkout tsafe (sibling)
+
+          - bash: |
+              set -euo pipefail
+              ROOT="$(Build.SourcesDirectory)"
+              wf="${ROOT}/_siblings/tsafe/.github/workflows"
+              if [[ ! -d "${wf}" ]]; then
+                echo "##vso[task.logissue type=warning]tsafe workflows dir missing — skipping scan (check service connection + repo name)"
+                exit 0
+              fi
+              export TAUDIT_CORRELATION_ID="ado-stack-tsafe-$(Build.BuildId)-$(System.JobAttempt)"
+              "${ROOT}/target/release/taudit" scan "${wf}/" \
+                --platform github-actions \
+                --severity-threshold high \
+                --quiet
+            displayName: taudit scan tsafe GitHub workflows
+
+          - checkout: cellos_sibling
+            path: _siblings/cellos
+            continueOnError: true
+            displayName: Checkout CellOS (sibling, fallback path)
+
+          - bash: |
+              set -euo pipefail
+              ROOT="$(Build.SourcesDirectory)"
+              owner="$(GITHUB_ORG)"
+              tag="${CELLOS_SUPERVISOR_TAG:-main}"
+              if [[ -n "${CELLOS_SUPERVISOR_IMAGE:-}" ]]; then
+                img="${CELLOS_SUPERVISOR_IMAGE}"
+              else
+                img="ghcr.io/${owner}/cellos-supervisor:${tag}"
+              fi
+              export TAUDIT_BIN="${ROOT}/target/release/taudit"
+              export TAUDIT_CORRELATION_ID="ado-stack-cellos-$(Build.BuildId)-$(System.JobAttempt)"
+
+              if [[ -n "${GHCR_TOKEN:-}" && -n "${GHCR_USERNAME:-}" ]]; then
+                echo "${GHCR_TOKEN}" | docker login ghcr.io -u "${GHCR_USERNAME}" --password-stdin
+              else
+                echo "##vso[task.logissue type=warning]GHCR_TOKEN/GHCR_USERNAME unset — docker pull may fail (set as secret variables)"
+              fi
+
+              if docker pull "${img}"; then
+                export CELLOS_SUPERVISOR_IMAGE="${img}"
+                bash "${ROOT}/scripts/cellos_smoke_docker.sh"
+                exit 0
+              fi
+
+              if [[ -d "${ROOT}/_siblings/cellos/.git" ]]; then
+                export CELLOS_REPO="${ROOT}/_siblings/cellos"
+                bash "${ROOT}/scripts/cellos_smoke.sh"
+                exit 0
+              fi
+
+              echo "##vso[task.logissue type=warning]CellOS: GHCR pull failed for ${img} and sibling checkout missing/failed. Fix GHCR auth or service connection for CellOS repo."
+            displayName: CellOS smoke (GHCR then sibling fallback)
+            env:
+              GITHUB_ORG: $(GITHUB_ORG)
+              GHCR_TOKEN: $(GHCR_TOKEN)
+              GHCR_USERNAME: $(GHCR_USERNAME)
+              CELLOS_SUPERVISOR_IMAGE: $(CELLOS_SUPERVISOR_IMAGE)
+              CELLOS_SUPERVISOR_TAG: $(CELLOS_SUPERVISOR_TAG)

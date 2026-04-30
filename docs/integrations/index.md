@@ -101,6 +101,8 @@ For **CellOS**, it prefers a **`cellos-supervisor` image from GHCR** (`ghcr.io/<
 
 Build and push that image with **[`publish-cellos-ghcr`](../../.github/workflows/publish-cellos-ghcr.yml)** (Dockerfile under [`packaging/docker/cellos-supervisor/`](../../packaging/docker/cellos-supervisor/)); it checks out CellOS from GitHub at **`main`** (push to this repo on Dockerfile changes, or **workflow_dispatch**). The **tsafe vault CLI is not invoked** in CI. **`quality.yml` / `security.yml`** set `TAUDIT_CORRELATION_ID` on self-scans for CloudEvents correlation.
 
+**Azure DevOps:** the same stack smoke is a **separate** pipeline (GitHub service connection + optional GHCR secrets), not part of the default secretless mirror — see **[`ci-mirrors.md` — Stack-integration (sketch)](ci-mirrors.md#stack-integration-separate-ado-pipeline-sketch)** and **[`azure-pipelines.stack-integration.yml`](../../azure-pipelines.stack-integration.yml)**.
+
 ## What you can do today, standalone
 
 taudit's standalone surface already covers the local-only flavour of

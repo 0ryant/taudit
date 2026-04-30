@@ -4,6 +4,10 @@ All notable changes to this project will be documented in this file.
 
 ## Unreleased
 
+### Added
+
+- **ADO stack-integration sketch** — optional **[`azure-pipelines.stack-integration.yml`](azure-pipelines.stack-integration.yml)** (manual trigger) and **[`docs/integrations/ci-mirrors.md`](docs/integrations/ci-mirrors.md)** section for **tsafe / CellOS** parity with [`.github/workflows/stack-integration.yml`](.github/workflows/stack-integration.yml); **[`docs/integrations/index.md`](docs/integrations/index.md)** cross-link.
+
 ### Changed
 
 - **CI mirrors** — [`azure-pipelines.yml`](azure-pipelines.yml) (Azure DevOps), [`.gitlab-ci.yml`](.gitlab-ci.yml) (GitLab CI), [`bitbucket-pipelines.yml`](bitbucket-pipelines.yml) (Bitbucket Pipelines, Rust subset until a parser exists); guide in [`docs/integrations/ci-mirrors.md`](docs/integrations/ci-mirrors.md).
