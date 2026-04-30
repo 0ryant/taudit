@@ -95,7 +95,7 @@ For **workflow YAML shape and platform contexts**, keep using your platform lint
 
 ## Golden path (docs + CI)
 
-Blessed copy-paste flows (graph → scan → verify, exit codes, stdout vs `-o`): **[`docs/golden-paths.md`](docs/golden-paths.md)**. Example workflow with pinned `taudit` + SARIF upload: **[`docs/examples/ci-gate-taudit-verify.yml`](docs/examples/ci-gate-taudit-verify.yml)**. Adoption checklist: **[`docs/adr/0003-strategic-spine-adoption-phased.md`](docs/adr/0003-strategic-spine-adoption-phased.md)**.
+Blessed copy-paste flows (graph → scan → verify, exit codes, stdout vs `-o`): **[`docs/golden-paths.md`](docs/golden-paths.md)**. Example workflow with pinned `taudit` + SARIF upload: **[`docs/examples/ci-gate-taudit-verify.yml`](docs/examples/ci-gate-taudit-verify.yml)**. Adoption checklist: **[`docs/adr/0003-strategic-spine-adoption-phased.md`](docs/adr/0003-strategic-spine-adoption-phased.md)**. Day 0–1 operator runbook (verify, baselines, suppressions, CI per platform): **[`docs/adoption-day0-day1.md`](docs/adoption-day0-day1.md)**.
 
 ## Outputs
 

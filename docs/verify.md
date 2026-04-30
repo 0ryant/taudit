@@ -265,6 +265,7 @@ the second produces the merge-gating exit code.
 
 ## See also
 
+- [`docs/adoption-day0-day1.md`](adoption-day0-day1.md) — day 0–1 verify, baselines, suppressions, CI (GHA / GitLab / ADO)
 - [`docs/custom-rules.md`](custom-rules.md) — invariant schema reference
 - [`docs/DOCTRINE.md`](DOCTRINE.md) — authority model and design philosophy
 - [`docs/rules/index.md`](rules/index.md) — built-in rule reference

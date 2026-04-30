@@ -19,6 +19,7 @@ It understands GitHub Actions, Azure DevOps, and GitLab CI.
 9. [Explaining rules](#9-explaining-rules)
 10. [Output formats](#10-output-formats)
 11. [Corpus research & citing upstream examples](#11-corpus-research--citing-upstream-examples)
+12. [Day 0–1 adoption runbook (CI + baselines)](docs/adoption-day0-day1.md)
 
 ---
 
