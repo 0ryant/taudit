@@ -1,7 +1,7 @@
 [package]
 name = "taudit-sink-cloudevents"
 description = "CloudEvents JSONL sink: one event per graph-derived finding from taudit CI/CD authority analysis."
-version = "1.0.12"
+version = "1.1.0-beta.1"
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
@@ -13,7 +13,7 @@ keywords.workspace = true
 categories.workspace = true
 
 [dependencies]
-taudit-core = { version = "1.0.12", path = "../taudit-core" }
+taudit-core = { version = "1.1.0-beta.1", path = "../taudit-core" }
 serde = { workspace = true }
 serde_json = { workspace = true }
 uuid = { version = "1", features = ["v4"] }
