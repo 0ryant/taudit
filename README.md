@@ -101,6 +101,8 @@ For **workflow YAML shape and platform contexts**, keep using your platform lint
 
 Blessed copy-paste flows (graph → scan → verify, exit codes, stdout vs `-o`): **[`docs/golden-paths.md`](docs/golden-paths.md)**. Example workflow with pinned `taudit` + SARIF upload: **[`docs/examples/ci-gate-taudit-verify.yml`](docs/examples/ci-gate-taudit-verify.yml)**. Adoption checklist: **[`docs/adr/0003-strategic-spine-adoption-phased.md`](docs/adr/0003-strategic-spine-adoption-phased.md)**. Day 0–1 operator runbook (verify, baselines, suppressions, CI per platform): **[`docs/adoption-day0-day1.md`](docs/adoption-day0-day1.md)**. **Stable vs edge releases** (crates.io trust, GitHub velocity, semver for detection): **[`docs/release-strategy.md`](docs/release-strategy.md)**.
 
+**Research (reproducible demos):** public workflow fixtures + rule IDs — [`docs/research/case-study-live-demo.md`](docs/research/case-study-live-demo.md). CVE → rule mapping — [`docs/research/cve-to-taudit-rules.md`](docs/research/cve-to-taudit-rules.md). `pull_request_target` corpus sample (`n=80`) — [`docs/research/pull-request-target-sample-study.md`](docs/research/pull-request-target-sample-study.md).
+
 ## Outputs
 
 The graph is the artifact. Everything else is a view onto it.

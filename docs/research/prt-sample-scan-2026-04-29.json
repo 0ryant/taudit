@@ -1,0 +1,813 @@
+{
+  "query": "pull_request_target path:.github/workflows extension:yml",
+  "limit_requested": 80,
+  "summary": {
+    "sample_size": 80,
+    "fetched_yaml": 80,
+    "taudit_json_ok": 80,
+    "repos_with_findings_gt_0": 80,
+    "pct_flagged_among_scanned": 100.0
+  },
+  "rows": [
+    {
+      "repo": "balena-os/wifi-connect",
+      "path": ".github/workflows/flowzone.yml",
+      "ok_fetch": true,
+      "taudit_ok": true,
+      "findings": 4,
+      "critical": 1,
+      "high": 2,
+      "error": null
+    },
+    {
+      "repo": "snorkel-marlin-repos/paperless-ngx_paperless-ngx_pr_6927_c7206c76-23d5-4bd2-9ce6-44835537ba25",
+      "path": ".github/workflows/project-actions.yml",
+      "ok_fetch": true,
+      "taudit_ok": true,
+      "findings": 8,
+      "critical": 6,
+      "high": 2,
+      "error": null
+    },
+    {
+      "repo": "MIPIT-Team/SSA-YOLO",
+      "path": ".github/workflows/cla.yml",
+      "ok_fetch": true,
+      "taudit_ok": true,
+      "findings": 8,
+      "critical": 5,
+      "high": 2,
+      "error": null
+    },
+    {
+      "repo": "newrelic/node-newrelic",
+      "path": ".github/workflows/board.yml",
+      "ok_fetch": true,
+      "taudit_ok": true,
+      "findings": 2,
+      "critical": 0,
+      "high": 1,
+      "error": null
+    },
+    {
+      "repo": "chef/chef-server",
+      "path": ".github/workflows/labeler.yml",
+      "ok_fetch": true,
+      "taudit_ok": true,
+      "findings": 8,
+      "critical": 6,
+      "high": 1,
+      "error": null
+    },
+    {
+      "repo": "carbon-design-system/ibm-products",
+      "path": ".github/workflows/add-to-merge-queue.yml",
+      "ok_fetch": true,
+      "taudit_ok": true,
+      "findings": 6,
+      "critical": 4,
+      "high": 1,
+      "error": null
+    },
+    {
+      "repo": "unifiedjs/github-tools",
+      "path": ".github/workflows/bb.yml",
+      "ok_fetch": true,
+      "taudit_ok": true,
+      "findings": 3,
+      "critical": 1,
+      "high": 1,
+      "error": null
+    },
+    {
+      "repo": "aryasoni98/AI-Interview",
+      "path": ".github/workflows/greetings.yml",
+      "ok_fetch": true,
+      "taudit_ok": true,
+      "findings": 7,
+      "critical": 4,
+      "high": 1,
+      "error": null
+    },
+    {
+      "repo": "gjtorikian/encrypted_jsonb",
+      "path": ".github/workflows/automerge.yml",
+      "ok_fetch": true,
+      "taudit_ok": true,
+      "findings": 6,
+      "critical": 3,
+      "high": 3,
+      "error": null
+    },
+    {
+      "repo": "gridgentoo/keda",
+      "path": ".github/workflows/pr-e2e-creator.yml",
+      "ok_fetch": true,
+      "taudit_ok": true,
+      "findings": 7,
+      "critical": 5,
+      "high": 1,
+      "error": null
+    },
+    {
+      "repo": "ramda/ramda",
+      "path": ".github/workflows/coverage.yml",
+      "ok_fetch": true,
+      "taudit_ok": true,
+      "findings": 17,
+      "critical": 12,
+      "high": 4,
+      "error": null
+    },
+    {
+      "repo": "ModernAppsNinja/ckastudyguide_sg2378",
+      "path": ".github/workflows/course_user_registration_event.yml",
+      "ok_fetch": true,
+      "taudit_ok": true,
+      "findings": 28,
+      "critical": 26,
+      "high": 1,
+      "error": null
+    },
+    {
+      "repo": "cheeriojs/dom-serializer",
+      "path": ".github/workflows/dependabot-automerge.yml",
+      "ok_fetch": true,
+      "taudit_ok": true,
+      "findings": 10,
+      "critical": 7,
+      "high": 2,
+      "error": null
+    },
+    {
+      "repo": "weseek/growi-training-camp2023-e",
+      "path": ".github/workflows/auto-approve.yml",
+      "ok_fetch": true,
+      "taudit_ok": true,
+      "findings": 10,
+      "critical": 8,
+      "high": 2,
+      "error": null
+    },
+    {
+      "repo": "t-botz/aws-secrets-manager-read-action",
+      "path": ".github/workflows/dependabot-auto.yml",
+      "ok_fetch": true,
+      "taudit_ok": true,
+      "findings": 16,
+      "critical": 11,
+      "high": 3,
+      "error": null
+    },
+    {
+      "repo": "begin-examples/node-create-react-app",
+      "path": ".github/workflows/auto-merge.yml",
+      "ok_fetch": true,
+      "taudit_ok": true,
+      "findings": 9,
+      "critical": 5,
+      "high": 2,
+      "error": null
+    },
+    {
+      "repo": "desktop/gh-cli-and-desktop-shared-workflows",
+      "path": ".github/workflows/triage-label-external-pr.yml",
+      "ok_fetch": true,
+      "taudit_ok": true,
+      "findings": 1,
+      "critical": 0,
+      "high": 1,
+      "error": null
+    },
+    {
+      "repo": "opral/inlang",
+      "path": ".github/workflows/cla.yml",
+      "ok_fetch": true,
+      "taudit_ok": true,
+      "findings": 10,
+      "critical": 7,
+      "high": 3,
+      "error": null
+    },
+    {
+      "repo": "Pyrrha-Platform/Pyrrha-Dashboard",
+      "path": ".github/workflows/linter.yml",
+      "ok_fetch": true,
+      "taudit_ok": true,
+      "findings": 7,
+      "critical": 3,
+      "high": 0,
+      "error": null
+    },
+    {
+      "repo": "LeGmask/numWorkshop",
+      "path": ".github/workflows/pep8-pr.yml",
+      "ok_fetch": true,
+      "taudit_ok": true,
+      "findings": 11,
+      "critical": 6,
+      "high": 2,
+      "error": null
+    },
+    {
+      "repo": "trackrecordsru/grafana_8.5.15_tr_mod",
+      "path": ".github/workflows/pr-commands.yml",
+      "ok_fetch": true,
+      "taudit_ok": true,
+      "findings": 5,
+      "critical": 1,
+      "high": 0,
+      "error": null
+    },
+    {
+      "repo": "Nneji123/Serving-Machine-Learning-Models",
+      "path": ".github/workflows/greetings.yml",
+      "ok_fetch": true,
+      "taudit_ok": true,
+      "findings": 7,
+      "critical": 5,
+      "high": 1,
+      "error": null
+    },
+    {
+      "repo": "alexwilson/enable-github-automerge-action",
+      "path": ".github/workflows/auto-merge-dependabot.yml",
+      "ok_fetch": true,
+      "taudit_ok": true,
+      "findings": 7,
+      "critical": 2,
+      "high": 2,
+      "error": null
+    },
+    {
+      "repo": "warmachine028/nike",
+      "path": ".github/workflows/label-pr.yml",
+      "ok_fetch": true,
+      "taudit_ok": true,
+      "findings": 8,
+      "critical": 6,
+      "high": 2,
+      "error": null
+    },
+    {
+      "repo": "DCC-EX/DCCInspector-EX",
+      "path": ".github/workflows/new-items.yml",
+      "ok_fetch": true,
+      "taudit_ok": true,
+      "findings": 17,
+      "critical": 13,
+      "high": 3,
+      "error": null
+    },
+    {
+      "repo": "antvis/S2",
+      "path": ".github/workflows/pr-auto-set-label.yml",
+      "ok_fetch": true,
+      "taudit_ok": true,
+      "findings": 3,
+      "critical": 1,
+      "high": 1,
+      "error": null
+    },
+    {
+      "repo": "zpix1/yt-anti-translate",
+      "path": ".github/workflows/release.yml",
+      "ok_fetch": true,
+      "taudit_ok": true,
+      "findings": 18,
+      "critical": 10,
+      "high": 3,
+      "error": null
+    },
+    {
+      "repo": "acl-org/acl-anthology",
+      "path": ".github/workflows/print-info.yml",
+      "ok_fetch": true,
+      "taudit_ok": true,
+      "findings": 1,
+      "critical": 0,
+      "high": 0,
+      "error": null
+    },
+    {
+      "repo": "Darven8/Bitnami-Docker",
+      "path": ".github/workflows/triage.yml",
+      "ok_fetch": true,
+      "taudit_ok": true,
+      "findings": 9,
+      "critical": 5,
+      "high": 2,
+      "error": null
+    },
+    {
+      "repo": "lhuang1109/MLOpstest",
+      "path": ".github/workflows/advice.yml",
+      "ok_fetch": true,
+      "taudit_ok": true,
+      "findings": 6,
+      "critical": 2,
+      "high": 0,
+      "error": null
+    },
+    {
+      "repo": "acquia/orca",
+      "path": ".github/workflows/autolabel.yml",
+      "ok_fetch": true,
+      "taudit_ok": true,
+      "findings": 6,
+      "critical": 4,
+      "high": 2,
+      "error": null
+    },
+    {
+      "repo": "tariqs26/lru-cache",
+      "path": ".github/workflows/lint-pr.yml",
+      "ok_fetch": true,
+      "taudit_ok": true,
+      "findings": 7,
+      "critical": 6,
+      "high": 1,
+      "error": null
+    },
+    {
+      "repo": "yasir-khalid/github-actions-workflow-triggers",
+      "path": ".github/workflows/greetings.yml",
+      "ok_fetch": true,
+      "taudit_ok": true,
+      "findings": 7,
+      "critical": 5,
+      "high": 1,
+      "error": null
+    },
+    {
+      "repo": "uriyyo/async-eval",
+      "path": ".github/workflows/automerge.yml",
+      "ok_fetch": true,
+      "taudit_ok": true,
+      "findings": 4,
+      "critical": 2,
+      "high": 1,
+      "error": null
+    },
+    {
+      "repo": "hashicorp/go-tfe",
+      "path": ".github/workflows/merged-pr.yml",
+      "ok_fetch": true,
+      "taudit_ok": true,
+      "findings": 3,
+      "critical": 1,
+      "high": 2,
+      "error": null
+    },
+    {
+      "repo": "w3c/aria-at",
+      "path": ".github/workflows/update-pr.yml",
+      "ok_fetch": true,
+      "taudit_ok": true,
+      "findings": 6,
+      "critical": 4,
+      "high": 1,
+      "error": null
+    },
+    {
+      "repo": "madewithlove/htaccess-cli",
+      "path": ".github/workflows/automerge-dependabot.yml",
+      "ok_fetch": true,
+      "taudit_ok": true,
+      "findings": 6,
+      "critical": 4,
+      "high": 1,
+      "error": null
+    },
+    {
+      "repo": "Sonia-corporation/stale",
+      "path": ".github/workflows/semantic.yml",
+      "ok_fetch": true,
+      "taudit_ok": true,
+      "findings": 3,
+      "critical": 1,
+      "high": 1,
+      "error": null
+    },
+    {
+      "repo": "lucio18/tinyml",
+      "path": ".github/workflows/cortex_m.yml",
+      "ok_fetch": true,
+      "taudit_ok": true,
+      "findings": 7,
+      "critical": 3,
+      "high": 0,
+      "error": null
+    },
+    {
+      "repo": "thatlittleboy/lgtm-db",
+      "path": ".github/workflows/pr-validator.yml",
+      "ok_fetch": true,
+      "taudit_ok": true,
+      "findings": 5,
+      "critical": 3,
+      "high": 1,
+      "error": null
+    },
+    {
+      "repo": "slime-hatena/hugo-github-markdown-style",
+      "path": ".github/workflows/merge_guard_for_main.yml",
+      "ok_fetch": true,
+      "taudit_ok": true,
+      "findings": 7,
+      "critical": 3,
+      "high": 1,
+      "error": null
+    },
+    {
+      "repo": "opensearch-project/opensearch-js",
+      "path": ".github/workflows/backport.yml",
+      "ok_fetch": true,
+      "taudit_ok": true,
+      "findings": 14,
+      "critical": 10,
+      "high": 3,
+      "error": null
+    },
+    {
+      "repo": "get-woke/woke",
+      "path": ".github/workflows/greeting.yml",
+      "ok_fetch": true,
+      "taudit_ok": true,
+      "findings": 7,
+      "critical": 5,
+      "high": 1,
+      "error": null
+    },
+    {
+      "repo": "stackrox/falcosecurity-libs",
+      "path": ".github/workflows/driver-api-version.yml",
+      "ok_fetch": true,
+      "taudit_ok": true,
+      "findings": 4,
+      "critical": 1,
+      "high": 2,
+      "error": null
+    },
+    {
+      "repo": "swapnilsparsh/Rescue",
+      "path": ".github/workflows/Auto_message_on_pr_merge.yml",
+      "ok_fetch": true,
+      "taudit_ok": true,
+      "findings": 6,
+      "critical": 4,
+      "high": 1,
+      "error": null
+    },
+    {
+      "repo": "openimsdk/openim-docs",
+      "path": ".github/workflows/bot-auto-cherry-pick.yml",
+      "ok_fetch": true,
+      "taudit_ok": true,
+      "findings": 6,
+      "critical": 4,
+      "high": 0,
+      "error": null
+    },
+    {
+      "repo": "ioChris/AHoJ",
+      "path": ".github/workflows/ci-conda.yml",
+      "ok_fetch": true,
+      "taudit_ok": true,
+      "findings": 8,
+      "critical": 4,
+      "high": 1,
+      "error": null
+    },
+    {
+      "repo": "ferryproxy/ferry",
+      "path": ".github/workflows/ci-bot.yml",
+      "ok_fetch": true,
+      "taudit_ok": true,
+      "findings": 16,
+      "critical": 13,
+      "high": 3,
+      "error": null
+    },
+    {
+      "repo": "PrismJS/prism",
+      "path": ".github/workflows/danger.yml",
+      "ok_fetch": true,
+      "taudit_ok": true,
+      "findings": 6,
+      "critical": 3,
+      "high": 1,
+      "error": null
+    },
+    {
+      "repo": "ljharb/es-abstract",
+      "path": ".github/workflows/require-allow-edits.yml",
+      "ok_fetch": true,
+      "taudit_ok": true,
+      "findings": 5,
+      "critical": 4,
+      "high": 1,
+      "error": null
+    },
+    {
+      "repo": "axonasif/gearlock",
+      "path": ".github/workflows/enforce_cc.yml",
+      "ok_fetch": true,
+      "taudit_ok": true,
+      "findings": 8,
+      "critical": 5,
+      "high": 2,
+      "error": null
+    },
+    {
+      "repo": "unicornware/ciu",
+      "path": ".github/workflows/dependabot-auto-merge.yml",
+      "ok_fetch": true,
+      "taudit_ok": true,
+      "findings": 6,
+      "critical": 4,
+      "high": 1,
+      "error": null
+    },
+    {
+      "repo": "bible-technology/scribe-scripture-editor",
+      "path": ".github/workflows/lint.yml",
+      "ok_fetch": true,
+      "taudit_ok": true,
+      "findings": 5,
+      "critical": 2,
+      "high": 0,
+      "error": null
+    },
+    {
+      "repo": "scriptcoded/sql-highlight",
+      "path": ".github/workflows/auto-approve.yml",
+      "ok_fetch": true,
+      "taudit_ok": true,
+      "findings": 6,
+      "critical": 4,
+      "high": 2,
+      "error": null
+    },
+    {
+      "repo": "jasperzhong/swift",
+      "path": ".github/workflows/auto_label.yml",
+      "ok_fetch": true,
+      "taudit_ok": true,
+      "findings": 2,
+      "critical": 1,
+      "high": 0,
+      "error": null
+    },
+    {
+      "repo": "micnncim/kubectl-reap",
+      "path": ".github/workflows/size.yml",
+      "ok_fetch": true,
+      "taudit_ok": true,
+      "findings": 14,
+      "critical": 8,
+      "high": 4,
+      "error": null
+    },
+    {
+      "repo": "OP-TEE/optee_website",
+      "path": ".github/workflows/pullrequest.yml",
+      "ok_fetch": true,
+      "taudit_ok": true,
+      "findings": 19,
+      "critical": 13,
+      "high": 4,
+      "error": null
+    },
+    {
+      "repo": "Ivanov-Anton/support-ticket-system",
+      "path": ".github/workflows/dependabot-auto-merge.yml",
+      "ok_fetch": true,
+      "taudit_ok": true,
+      "findings": 12,
+      "critical": 9,
+      "high": 2,
+      "error": null
+    },
+    {
+      "repo": "wulfland/AccelerateDevOps",
+      "path": ".github/workflows/auto-merge.yml",
+      "ok_fetch": true,
+      "taudit_ok": true,
+      "findings": 10,
+      "critical": 7,
+      "high": 2,
+      "error": null
+    },
+    {
+      "repo": "cmelab/notebook_tutorials",
+      "path": ".github/workflows/binder-badge.yml",
+      "ok_fetch": true,
+      "taudit_ok": true,
+      "findings": 3,
+      "critical": 1,
+      "high": 0,
+      "error": null
+    },
+    {
+      "repo": "samclarke/SCEditor",
+      "path": ".github/workflows/labeler.yml",
+      "ok_fetch": true,
+      "taudit_ok": true,
+      "findings": 3,
+      "critical": 1,
+      "high": 1,
+      "error": null
+    },
+    {
+      "repo": "3liz/lizmap-web-client",
+      "path": ".github/workflows/backport.yml",
+      "ok_fetch": true,
+      "taudit_ok": true,
+      "findings": 6,
+      "critical": 4,
+      "high": 1,
+      "error": null
+    },
+    {
+      "repo": "polimediaupv/paella-core",
+      "path": ".github/workflows/check-merge-conflict.yml",
+      "ok_fetch": true,
+      "taudit_ok": true,
+      "findings": 5,
+      "critical": 3,
+      "high": 1,
+      "error": null
+    },
+    {
+      "repo": "KatsuteDev/Background",
+      "path": ".github/workflows/dependabot.yml",
+      "ok_fetch": true,
+      "taudit_ok": true,
+      "findings": 3,
+      "critical": 1,
+      "high": 1,
+      "error": null
+    },
+    {
+      "repo": "bastonero/aiida-vibroscopy",
+      "path": ".github/workflows/cla.yml",
+      "ok_fetch": true,
+      "taudit_ok": true,
+      "findings": 11,
+      "critical": 7,
+      "high": 3,
+      "error": null
+    },
+    {
+      "repo": "david-kariuki/dsa-java-practice1",
+      "path": ".github/workflows/crda.yml",
+      "ok_fetch": true,
+      "taudit_ok": true,
+      "findings": 13,
+      "critical": 9,
+      "high": 3,
+      "error": null
+    },
+    {
+      "repo": "openfoodfacts/power-user-script",
+      "path": ".github/workflows/semantic-pr.yml",
+      "ok_fetch": true,
+      "taudit_ok": true,
+      "findings": 6,
+      "critical": 4,
+      "high": 1,
+      "error": null
+    },
+    {
+      "repo": "openeuler-mirror/zvm",
+      "path": ".github/workflows/backport.yml",
+      "ok_fetch": true,
+      "taudit_ok": true,
+      "findings": 6,
+      "critical": 4,
+      "high": 1,
+      "error": null
+    },
+    {
+      "repo": "linuxdeepin/dde-file-manager",
+      "path": ".github/workflows/call-static-check.yml",
+      "ok_fetch": true,
+      "taudit_ok": true,
+      "findings": 3,
+      "critical": 1,
+      "high": 1,
+      "error": null
+    },
+    {
+      "repo": "MithrilJS/mithril.js",
+      "path": ".github/workflows/issue-create.yml",
+      "ok_fetch": true,
+      "taudit_ok": true,
+      "findings": 4,
+      "critical": 1,
+      "high": 2,
+      "error": null
+    },
+    {
+      "repo": "biantris/dash",
+      "path": ".github/workflows/auto-merge.yml",
+      "ok_fetch": true,
+      "taudit_ok": true,
+      "findings": 6,
+      "critical": 4,
+      "high": 1,
+      "error": null
+    },
+    {
+      "repo": "AdobeDocs/commerce-services",
+      "path": ".github/workflows/add-to-project-board.yml",
+      "ok_fetch": true,
+      "taudit_ok": true,
+      "findings": 4,
+      "critical": 1,
+      "high": 2,
+      "error": null
+    },
+    {
+      "repo": "ExcWasHere/simap",
+      "path": ".github/workflows/pull-requests.yml",
+      "ok_fetch": true,
+      "taudit_ok": true,
+      "findings": 6,
+      "critical": 4,
+      "high": 2,
+      "error": null
+    },
+    {
+      "repo": "axonasif/gearlock",
+      "path": ".github/workflows/main.yml",
+      "ok_fetch": true,
+      "taudit_ok": true,
+      "findings": 5,
+      "critical": 2,
+      "high": 1,
+      "error": null
+    },
+    {
+      "repo": "advanced-security/sample-javascript-monorepo",
+      "path": ".github/workflows/repl.yml",
+      "ok_fetch": true,
+      "taudit_ok": true,
+      "findings": 11,
+      "critical": 8,
+      "high": 1,
+      "error": null
+    },
+    {
+      "repo": "Couchers-org/couchers",
+      "path": ".github/workflows/code-review.yml",
+      "ok_fetch": true,
+      "taudit_ok": true,
+      "findings": 13,
+      "critical": 8,
+      "high": 3,
+      "error": null
+    },
+    {
+      "repo": "sofa-framework/sofa",
+      "path": ".github/workflows/post-github-activity-pr.yml",
+      "ok_fetch": true,
+      "taudit_ok": true,
+      "findings": 14,
+      "critical": 10,
+      "high": 1,
+      "error": null
+    },
+    {
+      "repo": "antvis/S2",
+      "path": ".github/workflows/pr-auto-set-next-label.yml",
+      "ok_fetch": true,
+      "taudit_ok": true,
+      "findings": 6,
+      "critical": 4,
+      "high": 1,
+      "error": null
+    },
+    {
+      "repo": "neo4j/graphql",
+      "path": ".github/workflows/cla-check.yml",
+      "ok_fetch": true,
+      "taudit_ok": true,
+      "findings": 5,
+      "critical": 2,
+      "high": 2,
+      "error": null
+    },
+    {
+      "repo": "MkShehata-hub/ml-fastapi-deployment",
+      "path": ".github/workflows/manual.yml",
+      "ok_fetch": true,
+      "taudit_ok": true,
+      "findings": 13,
+      "critical": 9,
+      "high": 2,
+      "error": null
+    }
+  ]
+}
