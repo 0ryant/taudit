@@ -1,5 +1,4 @@
 use std::collections::HashMap;
-use std::path::Path;
 
 use serde::Deserialize;
 use taudit_core::error::TauditError;
@@ -8,15 +7,6 @@ use taudit_core::ports::PipelineParser;
 
 /// Metadata key for marking inferred (not precisely mapped) secret references.
 const META_INFERRED_VAL: &str = "true";
-
-/// Local metadata key marking a Step node that was inlined from a composite
-/// action's `runs.steps`. Lets downstream consumers (and tests) distinguish
-/// inlined sub-steps from steps written directly in the workflow.
-const META_COMPOSITE_STEP: &str = "composite_step";
-
-/// Local metadata key on the inlined Step recording the source action path
-/// (e.g. `./.github/actions/my-action`) so consumers can attribute findings.
-const META_COMPOSITE_SOURCE: &str = "composite_source";
 
 /// GitHub Actions workflow parser.
 pub struct GhaParser;
@@ -348,23 +338,29 @@ impl PipelineParser for GhaParser {
                     graph.add_edge(step_id, img_id, EdgeKind::UsesImage);
                 }
 
-                // Composite action inlining: if this step uses a local action
-                // (`./path`), try to load its `action.yml` and inline `runs.steps`
-                // as Step nodes with DelegatesTo edges from the calling step.
-                // On any failure (missing file, non-composite, parse error) the
-                // helper marks the graph Partial and returns without inlining.
+                // Composite action references (`uses: ./path`) are NOT inlined.
+                //
+                // Earlier versions walked the filesystem from `pipeline_file`'s
+                // parent looking for an `action.yml` to inline. That made the
+                // graph dependent on (a) whether `pipeline_file` was absolute
+                // or relative, (b) the binary's CWD, and (c) whether the
+                // consumer copied the YAML to a sandbox without the surrounding
+                // repo. Same input bytes, different graphs — a parser-purity
+                // violation.
+                //
+                // We now treat all `./local-action` references as Partial and
+                // record a Structural completeness gap. This matches the
+                // schema's additive-only semver discipline (findings only get
+                // MORE conservative). Downstream rules that care about the
+                // inlined sub-steps will simply not fire — preferred over
+                // CWD-dependent false confidence.
                 if let Some(ref uses) = step.uses {
                     if uses.starts_with("./") {
-                        try_inline_composite_action(
-                            uses,
-                            &source.file,
-                            step_id,
-                            job_name,
-                            job_token_id,
-                            container_image_id,
-                            is_pull_request_target,
-                            &mut graph,
-                            &mut secret_ids,
+                        graph.mark_partial(
+                            GapKind::Structural,
+                            format!(
+                                "composite action not resolved (local action '{uses}' — taudit does not read filesystem)"
+                            ),
                         );
                     }
                 }
@@ -576,68 +572,60 @@ impl PipelineParser for GhaParser {
                     }
                 }
 
-                // Process secrets from workflow-level `env:` (inherited by all jobs/steps).
-                // Template-shaped envs are skipped here — graph already marked Partial above.
-                // Iterate env keys in sorted order so secret-node creation
-                // order is deterministic across runs (HashMap iteration is
-                // randomised per process; secret IDs leak that randomness
-                // into the JSON output otherwise).
+                // Build the EFFECTIVE per-step env map by merging workflow ⊕
+                // job ⊕ step (step wins, then job, then workflow). GHA semantics:
+                // a step-level `env: { K: literal }` SHADOWS the workflow- or
+                // job-level value of `K` for that step at runtime. If we add
+                // HasAccessTo edges from each scope independently, a literal
+                // shadow at the step level still leaves a phantom edge to the
+                // outer secret — a false positive. Merge first, then emit edges
+                // only for the effective values.
+                //
+                // If step.env is a template expression, we cannot statically
+                // know which keys it covers — mark Partial once and fall back
+                // to the workflow⊕job effective map (best-effort, but at least
+                // we record the gap).
+                //
+                // Iterate keys in sorted order so secret-node creation order
+                // is deterministic across runs (HashMap iteration is randomised
+                // per process; secret IDs leak that randomness into the JSON
+                // output otherwise).
+                let step_env_template = matches!(step.env.as_ref(), Some(EnvSpec::Template(_)));
+                if step_env_template {
+                    graph.mark_partial(
+                        GapKind::Expression,
+                        format!(
+                            "step '{step_name}' in job '{job_name}' env: uses template expression — environment variable shape unknown"
+                        ),
+                    );
+                }
+
+                let mut effective_env: HashMap<String, String> = HashMap::new();
                 if let Some(env_map) = workflow.env.as_ref().and_then(EnvSpec::as_map) {
-                    let mut entries: Vec<(&String, &String)> = env_map.iter().collect();
-                    entries.sort_by(|a, b| a.0.cmp(b.0));
-                    for (_k, env_val) in entries {
-                        if is_secret_reference(env_val) {
-                            let secret_name = extract_secret_name(env_val);
-                            let secret_id =
-                                find_or_create_secret(&mut graph, &mut secret_ids, &secret_name);
-                            graph.add_edge(step_id, secret_id, EdgeKind::HasAccessTo);
-                        }
+                    for (k, v) in env_map {
+                        effective_env.insert(k.clone(), v.clone());
                     }
                 }
-
-                // Process secrets from job-level `env:` (inherited by all steps).
-                // Template-shaped envs are skipped here — graph already marked Partial above.
                 if let Some(env_map) = job.env.as_ref().and_then(EnvSpec::as_map) {
-                    let mut entries: Vec<(&String, &String)> = env_map.iter().collect();
-                    entries.sort_by(|a, b| a.0.cmp(b.0));
-                    for (_k, env_val) in entries {
-                        if is_secret_reference(env_val) {
-                            let secret_name = extract_secret_name(env_val);
-                            let secret_id =
-                                find_or_create_secret(&mut graph, &mut secret_ids, &secret_name);
-                            graph.add_edge(step_id, secret_id, EdgeKind::HasAccessTo);
-                        }
+                    for (k, v) in env_map {
+                        effective_env.insert(k.clone(), v.clone());
+                    }
+                }
+                if let Some(EnvSpec::Map(env_map)) = step.env.as_ref() {
+                    for (k, v) in env_map {
+                        effective_env.insert(k.clone(), v.clone());
                     }
                 }
 
-                // Process secrets from step-level `env:` block.
-                // If this step's env: is a template expression, mark Partial once for
-                // this step and skip env processing.
-                match step.env.as_ref() {
-                    Some(EnvSpec::Map(env_map)) => {
-                        let mut entries: Vec<(&String, &String)> = env_map.iter().collect();
-                        entries.sort_by(|a, b| a.0.cmp(b.0));
-                        for (_k, env_val) in entries {
-                            if is_secret_reference(env_val) {
-                                let secret_name = extract_secret_name(env_val);
-                                let secret_id = find_or_create_secret(
-                                    &mut graph,
-                                    &mut secret_ids,
-                                    &secret_name,
-                                );
-                                graph.add_edge(step_id, secret_id, EdgeKind::HasAccessTo);
-                            }
-                        }
+                let mut effective_entries: Vec<(&String, &String)> = effective_env.iter().collect();
+                effective_entries.sort_by(|a, b| a.0.cmp(b.0));
+                for (_k, env_val) in effective_entries {
+                    if is_secret_reference(env_val) {
+                        let secret_name = extract_secret_name(env_val);
+                        let secret_id =
+                            find_or_create_secret(&mut graph, &mut secret_ids, &secret_name);
+                        graph.add_edge(step_id, secret_id, EdgeKind::HasAccessTo);
                     }
-                    Some(EnvSpec::Template(_)) => {
-                        graph.mark_partial(
-                            GapKind::Expression,
-                            format!(
-                                "step '{step_name}' in job '{job_name}' env: uses template expression — environment variable shape unknown"
-                            ),
-                        );
-                    }
-                    None => {}
                 }
 
                 // Process secrets from `with:` block, plus detect any
@@ -1075,264 +1063,6 @@ fn classify_action(uses: &str, graph: &mut AuthorityGraph) -> (TrustZone, NodeId
 
     let id = graph.add_node_with_metadata(NodeKind::Image, uses, zone, meta);
     (zone, id)
-}
-
-/// Resolve a local action path (e.g. `./.github/actions/my-action`) against
-/// the workflow's filesystem location. Tries each ancestor of the workflow
-/// file's directory, returning the first `action.yml` (or `action.yaml`)
-/// found. Returns `None` if no matching file exists within ~6 levels up.
-///
-/// The cap exists because (a) GHA repos rarely nest workflows that deep and
-/// (b) without it we'd `stat` the entire path-to-root for every local action.
-fn resolve_local_action_path(pipeline_file: &str, uses_path: &str) -> Option<std::path::PathBuf> {
-    let start = Path::new(pipeline_file).parent().unwrap_or(Path::new("."));
-    let mut current = Some(start);
-    for _ in 0..6 {
-        let dir = current?;
-        let candidate = dir.join(uses_path);
-        let yml = candidate.join("action.yml");
-        if yml.exists() {
-            return Some(yml);
-        }
-        let yaml = candidate.join("action.yaml");
-        if yaml.exists() {
-            return Some(yaml);
-        }
-        current = dir.parent();
-    }
-    None
-}
-
-/// Try to load and inline a local composite action's steps into the graph.
-///
-/// Resolves `uses_path` (a `./...` reference) relative to the workflow file's
-/// directory, reads `action.yml`, and — only if `runs.using == "composite"` —
-/// creates a Step node per `runs.steps` entry with a DelegatesTo edge from
-/// `calling_step_id`. Inlined steps inherit the calling job's GITHUB_TOKEN and
-/// container image links, run the same secret-detection logic over their
-/// `env:` / `with:` / `run:` fields, and adopt the parent's trust zone rules
-/// (Untrusted for `run:` steps under `pull_request_target`).
-///
-/// On any unresolvable case (file not found, parse error, non-composite
-/// `using`, missing `runs.steps`) the graph is marked Partial with a reason
-/// and the function returns without inlining. We never propagate errors — a
-/// missing action.yml is a completeness gap, not a fatal parse failure.
-#[allow(clippy::too_many_arguments)]
-fn try_inline_composite_action(
-    uses_path: &str,
-    pipeline_file: &str,
-    calling_step_id: NodeId,
-    job_name: &str,
-    job_token_id: Option<NodeId>,
-    container_image_id: Option<NodeId>,
-    is_pull_request_target: bool,
-    graph: &mut AuthorityGraph,
-    secret_cache: &mut HashMap<String, NodeId>,
-) {
-    // GHA semantics: `./...` paths in `uses:` are resolved relative to the
-    // **repository root**, not the workflow file's directory. We don't know
-    // where the repo root is from a single file path, so we walk up from the
-    // workflow's directory probing for the action at each level. This handles
-    // both the common case (`.github/workflows/x.yml` → repo root two levels
-    // up) and edge cases (workflow at repo root, nested mono-repos).
-    let action_path = match resolve_local_action_path(pipeline_file, uses_path) {
-        Some(p) => p,
-        None => {
-            graph.mark_partial(
-                GapKind::Structural,
-                format!("composite action not found: {uses_path}"),
-            );
-            return;
-        }
-    };
-
-    let content = match std::fs::read_to_string(&action_path) {
-        Ok(c) => c,
-        Err(e) => {
-            graph.mark_partial(
-                GapKind::Structural,
-                format!("failed to read composite action '{uses_path}': {e}"),
-            );
-            return;
-        }
-    };
-
-    let action: serde_yaml::Value = match serde_yaml::from_str(&content) {
-        Ok(v) => v,
-        Err(e) => {
-            graph.mark_partial(
-                GapKind::Structural,
-                format!("failed to parse composite action '{uses_path}': {e}"),
-            );
-            return;
-        }
-    };
-
-    // Only `using: composite` is supported. docker/node20/etc. hide steps
-    // behind a runtime we cannot introspect — mark Partial.
-    let using = action
-        .get("runs")
-        .and_then(|r| r.get("using"))
-        .and_then(|u| u.as_str())
-        .unwrap_or("");
-    if using != "composite" {
-        graph.mark_partial(
-            GapKind::Structural,
-            format!("non-composite local action: {uses_path} (using: {using})"),
-        );
-        return;
-    }
-
-    let steps = match action
-        .get("runs")
-        .and_then(|r| r.get("steps"))
-        .and_then(|s| s.as_sequence())
-    {
-        Some(s) => s,
-        None => {
-            graph.mark_partial(
-                GapKind::Structural,
-                format!("composite action '{uses_path}' has no runs.steps"),
-            );
-            return;
-        }
-    };
-
-    for (idx, step) in steps.iter().enumerate() {
-        let step_map = match step.as_mapping() {
-            Some(m) => m,
-            None => continue,
-        };
-
-        let name = step_map
-            .get("name")
-            .and_then(|v| v.as_str())
-            .map(|s| s.to_string())
-            .unwrap_or_else(|| format!("{uses_path}[{idx}]"));
-
-        let uses = step_map.get("uses").and_then(|v| v.as_str());
-        let run = step_map.get("run").and_then(|v| v.as_str());
-
-        // Trust zone mirrors the workflow-level rule: `run:` steps under a
-        // pull_request_target trigger may execute fork code.
-        let (trust_zone, image_node_id) = if let Some(u) = uses {
-            let (zone, image_id) = classify_action(u, graph);
-            (zone, Some(image_id))
-        } else if is_pull_request_target {
-            (TrustZone::Untrusted, None)
-        } else {
-            (TrustZone::FirstParty, None)
-        };
-
-        let inlined_id = graph.add_node(NodeKind::Step, &name, trust_zone);
-        // Tag so downstream consumers can identify inlined sub-steps.
-        if let Some(node) = graph.nodes.get_mut(inlined_id) {
-            node.metadata
-                .insert(META_COMPOSITE_STEP.into(), "true".into());
-            node.metadata
-                .insert(META_COMPOSITE_SOURCE.into(), uses_path.into());
-            // Inlined sub-steps belong to the calling job — propagate parent
-            // job name so per-job filtering captures composite-action steps too.
-            node.metadata.insert(META_JOB_NAME.into(), job_name.into());
-            // Stamp the script body for inlined `run:` steps so script-aware
-            // rules see them too.
-            if let Some(body) = run {
-                if !body.is_empty() {
-                    node.metadata
-                        .insert(META_SCRIPT_BODY.into(), body.to_string());
-                }
-            }
-        }
-
-        // DelegatesTo edge: calling step → inlined sub-step.
-        graph.add_edge(calling_step_id, inlined_id, EdgeKind::DelegatesTo);
-
-        if let Some(img_id) = image_node_id {
-            graph.add_edge(inlined_id, img_id, EdgeKind::UsesImage);
-        }
-        if let Some(img_id) = container_image_id {
-            graph.add_edge(inlined_id, img_id, EdgeKind::UsesImage);
-        }
-        if let Some(tok_id) = job_token_id {
-            graph.add_edge(inlined_id, tok_id, EdgeKind::HasAccessTo);
-        }
-
-        // Secret detection on `env:` block.
-        if let Some(env_val) = step_map.get("env").and_then(|v| v.as_mapping()) {
-            for v in env_val.values() {
-                if let Some(s) = v.as_str() {
-                    if is_secret_reference(s) {
-                        let secret_name = extract_secret_name(s);
-                        let secret_id = find_or_create_secret(graph, secret_cache, &secret_name);
-                        graph.add_edge(inlined_id, secret_id, EdgeKind::HasAccessTo);
-                    }
-                }
-            }
-        }
-
-        // Secret detection on `with:` block.
-        if let Some(with_val) = step_map.get("with").and_then(|v| v.as_mapping()) {
-            for v in with_val.values() {
-                if let Some(s) = v.as_str() {
-                    if is_secret_reference(s) {
-                        let secret_name = extract_secret_name(s);
-                        let secret_id = find_or_create_secret(graph, secret_cache, &secret_name);
-                        graph.add_edge(inlined_id, secret_id, EdgeKind::HasAccessTo);
-                    }
-                }
-            }
-        }
-
-        // Stamp META_SCRIPT_BODY for composite-action `run:` steps too so
-        // script-aware rules see them under the inlined sub-step.
-        if let Some(run_str) = run {
-            if !run_str.is_empty() {
-                if let Some(node) = graph.nodes.get_mut(inlined_id) {
-                    node.metadata
-                        .insert(META_SCRIPT_BODY.into(), run_str.to_string());
-                }
-            }
-        }
-
-        // Inferred secrets in `run:` script blocks (mirrors workflow-level logic).
-        if let Some(run_str) = run {
-            if run_str.contains("${{ secrets.") {
-                let mut pos = 0;
-                while let Some(start) = run_str[pos..].find("secrets.") {
-                    let abs_start = pos + start + 8;
-                    let remaining = &run_str[abs_start..];
-                    let end = remaining
-                        .find(|c: char| !c.is_alphanumeric() && c != '_')
-                        .unwrap_or(remaining.len());
-                    let secret_name = &remaining[..end];
-                    if !secret_name.is_empty() {
-                        let secret_id = find_or_create_secret(graph, secret_cache, secret_name);
-                        if let Some(node) = graph.nodes.get_mut(secret_id) {
-                            node.metadata
-                                .insert(META_INFERRED.into(), META_INFERRED_VAL.into());
-                        }
-                        graph.add_edge(inlined_id, secret_id, EdgeKind::HasAccessTo);
-                        graph.mark_partial(
-                            GapKind::Expression,
-                            format!(
-                                "secret '{secret_name}' referenced in composite action run: script — inferred, not precisely mapped"
-                            ),
-                        );
-                    }
-                    pos = abs_start + end;
-                }
-            }
-
-            // GHA env-gate write detection (mirrors workflow-level logic).
-            let writes_gate = run_str.contains("GITHUB_ENV") || run_str.contains("GITHUB_PATH");
-            if writes_gate {
-                if let Some(node) = graph.nodes.get_mut(inlined_id) {
-                    node.metadata
-                        .insert(META_WRITES_ENV_GATE.into(), "true".into());
-                }
-            }
-        }
-    }
 }
 
 fn is_secret_reference(val: &str) -> bool {
@@ -2581,13 +2311,18 @@ jobs:
     }
 
     #[test]
-    fn composite_action_steps_inlined_into_graph() {
-        let dir = make_temp_dir("composite-inline");
+    fn composite_action_reference_marks_graph_partial_without_inlining() {
+        // Post-fix behaviour: composite-action references are NOT inlined.
+        // Earlier versions walked the filesystem from the workflow's directory
+        // looking for `action.yml`; that made the graph CWD-dependent. We now
+        // mark the graph Partial with a Structural gap and never read disk.
+        let dir = make_temp_dir("composite-no-inline");
         let workflows_dir = dir.join(".github/workflows");
         let action_dir = dir.join(".github/actions/my-action");
         std::fs::create_dir_all(&workflows_dir).unwrap();
         std::fs::create_dir_all(&action_dir).unwrap();
 
+        // Real action.yml on disk — must be ignored.
         let action_yml = r#"
 name: My Action
 runs:
@@ -2596,10 +2331,6 @@ runs:
     - name: Install deps
       run: npm install
       shell: bash
-    - name: Build
-      uses: actions/setup-node@v4
-      with:
-        node-version: '18'
 "#;
         std::fs::write(action_dir.join("action.yml"), action_yml).unwrap();
 
@@ -2615,35 +2346,25 @@ jobs:
 
         let graph = parse_at(workflow, workflow_path.to_str().unwrap());
 
-        // Calling step + 2 inlined steps = 3 Step nodes.
+        // Only the calling step — no inlining.
         let steps: Vec<_> = graph.nodes_of_kind(NodeKind::Step).collect();
-        assert_eq!(steps.len(), 3, "calling step + 2 inlined sub-steps");
+        assert_eq!(steps.len(), 1, "no composite-action step inlining");
 
-        let inlined: Vec<_> = steps
-            .iter()
-            .filter(|s| s.metadata.contains_key(META_COMPOSITE_STEP))
-            .collect();
-        assert_eq!(inlined.len(), 2, "two inlined composite steps");
-        assert!(inlined.iter().any(|s| s.name == "Install deps"));
-        assert!(inlined.iter().any(|s| s.name == "Build"));
-
-        // Calling step has DelegatesTo edges to both inlined steps.
-        let calling = steps
-            .iter()
-            .find(|s| !s.metadata.contains_key(META_COMPOSITE_STEP))
-            .expect("calling step present");
-        let delegates: Vec<_> = graph
-            .edges_from(calling.id)
-            .filter(|e| e.kind == EdgeKind::DelegatesTo)
-            .collect();
-        assert_eq!(delegates.len(), 2, "two DelegatesTo edges to inlined steps");
-
-        // The inlined `uses: actions/setup-node@v4` step must produce an Image node.
+        // Graph is Partial with a Structural gap mentioning the local action.
+        assert_eq!(graph.completeness, AuthorityCompleteness::Partial);
+        assert!(
+            graph.completeness_gap_kinds.contains(&GapKind::Structural),
+            "local action reference must record a Structural-kind gap, got: {:?}",
+            graph.completeness_gap_kinds
+        );
         assert!(
             graph
-                .nodes_of_kind(NodeKind::Image)
-                .any(|n| n.name == "actions/setup-node@v4"),
-            "inlined uses: must create Image node"
+                .completeness_gaps
+                .iter()
+                .any(|g| g.contains("composite action not resolved")
+                    && g.contains("./.github/actions/my-action")),
+            "gap reason must name the action and explain non-resolution, got: {:?}",
+            graph.completeness_gaps
         );
 
         let _ = std::fs::remove_dir_all(&dir);
@@ -2651,11 +2372,13 @@ jobs:
 
     #[test]
     fn missing_action_yml_marks_graph_partial() {
+        // Whether `action.yml` exists on disk is irrelevant after the fix —
+        // any `./local-action` reference is treated as Partial without
+        // touching the filesystem.
         let dir = make_temp_dir("missing-action");
         let workflows_dir = dir.join(".github/workflows");
         std::fs::create_dir_all(&workflows_dir).unwrap();
 
-        // Note: no action.yml created — the path doesn't exist.
         let workflow = r#"
 jobs:
   ci:
@@ -2669,18 +2392,15 @@ jobs:
 
         assert_eq!(graph.completeness, AuthorityCompleteness::Partial);
         assert!(
-            graph
-                .completeness_gaps
-                .iter()
-                .any(|g| g.contains("composite action not found") && g.contains("missing-action")),
-            "missing action.yml must be recorded as a completeness gap, got: {:?}",
+            graph.completeness_gaps.iter().any(
+                |g| g.contains("composite action not resolved") && g.contains("missing-action")
+            ),
+            "missing local action must be recorded as a completeness gap, got: {:?}",
             graph.completeness_gaps
         );
-        // A composite action that can't be resolved on disk breaks the
-        // authority chain — Structural, not Expression.
         assert!(
             graph.completeness_gap_kinds.contains(&GapKind::Structural),
-            "missing composite action must record a Structural-kind gap, got: {:?}",
+            "unresolved composite action must record a Structural-kind gap, got: {:?}",
             graph.completeness_gap_kinds
         );
 
@@ -2689,13 +2409,15 @@ jobs:
 
     #[test]
     fn non_composite_local_action_marks_graph_partial() {
+        // Post-fix: we don't read action.yml, so we cannot distinguish
+        // composite from docker locally. Either way the answer is the same:
+        // mark Partial and don't pretend to know what's inside.
         let dir = make_temp_dir("non-composite");
         let workflows_dir = dir.join(".github/workflows");
         let action_dir = dir.join(".github/actions/docker-action");
         std::fs::create_dir_all(&workflows_dir).unwrap();
         std::fs::create_dir_all(&action_dir).unwrap();
 
-        // Docker-based local action: steps are inside the image, not visible.
         let action_yml = r#"
 name: Docker Action
 runs:
@@ -2717,35 +2439,25 @@ jobs:
 
         assert_eq!(graph.completeness, AuthorityCompleteness::Partial);
         assert!(
-            graph
-                .completeness_gaps
-                .iter()
-                .any(|g| g.contains("non-composite local action")),
-            "docker action must mark graph Partial, got: {:?}",
-            graph.completeness_gaps
-        );
-        // A non-composite local action (docker / node20 / ...) hides its
-        // internal steps behind a runtime we can't introspect — the chain
-        // structure is broken, not just a hidden value.
-        assert!(
             graph.completeness_gap_kinds.contains(&GapKind::Structural),
-            "non-composite local action must record a Structural-kind gap, got: {:?}",
+            "local action reference must record a Structural-kind gap, got: {:?}",
             graph.completeness_gap_kinds
         );
 
-        // No inlined steps — only the calling step.
-        let inlined: Vec<_> = graph
-            .nodes_of_kind(NodeKind::Step)
-            .filter(|s| s.metadata.contains_key(META_COMPOSITE_STEP))
-            .collect();
-        assert!(inlined.is_empty(), "non-composite must not inline steps");
+        // Only the calling step exists — no inlined sub-steps.
+        let steps: Vec<_> = graph.nodes_of_kind(NodeKind::Step).collect();
+        assert_eq!(steps.len(), 1, "must not inline any sub-steps");
 
         let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[test]
-    fn composite_action_inlined_step_secrets_captured() {
-        let dir = make_temp_dir("composite-secrets");
+    fn composite_action_secrets_not_captured_after_partial_marking() {
+        // Post-fix: secrets that live INSIDE a composite action's `action.yml`
+        // are NOT visible to the parser (we don't read the file). The graph
+        // is marked Partial so downstream rules know there's hidden authority.
+        // This is the deliberate trade-off vs CWD-dependent inlining.
+        let dir = make_temp_dir("composite-secrets-hidden");
         let workflows_dir = dir.join(".github/workflows");
         let action_dir = dir.join(".github/actions/deploy");
         std::fs::create_dir_all(&workflows_dir).unwrap();
@@ -2760,10 +2472,6 @@ runs:
       run: |
         curl -H "Authorization: ${{ secrets.DEPLOY_TOKEN }}" https://example.com
       shell: bash
-    - name: Notify
-      uses: some-org/notify@v1
-      with:
-        api-key: "${{ secrets.NOTIFY_KEY }}"
 "#;
         std::fs::write(action_dir.join("action.yml"), action_yml).unwrap();
 
@@ -2783,12 +2491,185 @@ jobs:
             .map(|s| s.name.as_str())
             .collect();
         assert!(
-            secret_names.contains(&"DEPLOY_TOKEN"),
-            "run: secret in composite step must be captured, got: {secret_names:?}"
+            !secret_names.contains(&"DEPLOY_TOKEN"),
+            "secret hidden inside composite action must NOT leak into the graph, got: {secret_names:?}"
         );
+        assert_eq!(
+            graph.completeness,
+            AuthorityCompleteness::Partial,
+            "composite action reference must mark graph Partial"
+        );
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn step_env_literal_shadows_workflow_level_secret() {
+        // regression: step.env shadowing must drop workflow/job-level secret
+        // edges for the shadowed key
+        //
+        // GHA semantics: a step-level `env: { K: literal }` shadows the
+        // workflow- or job-level value of `K` for that step. Earlier versions
+        // emitted HasAccessTo edges from EACH scope independently, so a
+        // literal shadow at the step level still left a phantom edge from the
+        // step to the outer secret. After the fix, edges are emitted only for
+        // the merged effective env map.
+        let yaml = r#"
+on: pull_request_target
+env:
+  TOKEN: ${{ secrets.PROD_TOKEN }}
+jobs:
+  build:
+    steps:
+      - run: ./scan.sh
+        env:
+          TOKEN: literal-non-secret
+"#;
+        let graph = parse(yaml);
+
+        // The PROD_TOKEN secret node may or may not exist (deduplication
+        // could keep it from being created at all). What MUST hold is: no
+        // step has a HasAccessTo edge to a Secret node named PROD_TOKEN.
+        let prod_token_id = graph
+            .nodes_of_kind(NodeKind::Secret)
+            .find(|n| n.name == "PROD_TOKEN")
+            .map(|n| n.id);
+
+        if let Some(secret_id) = prod_token_id {
+            let leaks = graph
+                .edges_to(secret_id)
+                .filter(|e| e.kind == EdgeKind::HasAccessTo)
+                .count();
+            assert_eq!(
+                leaks, 0,
+                "step-level env literal must shadow workflow-level secret — \
+                 expected 0 HasAccessTo edges to PROD_TOKEN, found {leaks}"
+            );
+        }
+    }
+
+    #[test]
+    fn step_env_secret_shadows_workflow_level_secret() {
+        // Variant of the shadowing test where step.env replaces the same key
+        // with a DIFFERENT secret. The step must have access to the new
+        // secret only — not the shadowed one.
+        let yaml = r#"
+on: pull_request_target
+env:
+  TOKEN: ${{ secrets.PROD_TOKEN }}
+jobs:
+  build:
+    steps:
+      - run: ./scan.sh
+        env:
+          TOKEN: ${{ secrets.STAGING_TOKEN }}
+"#;
+        let graph = parse(yaml);
+
+        let secret_names: Vec<_> = graph
+            .nodes_of_kind(NodeKind::Secret)
+            .map(|s| s.name.clone())
+            .collect();
+
+        // STAGING_TOKEN must be present; PROD_TOKEN must not be reachable.
         assert!(
-            secret_names.contains(&"NOTIFY_KEY"),
-            "with: secret in composite step must be captured, got: {secret_names:?}"
+            secret_names.contains(&"STAGING_TOKEN".to_string()),
+            "shadowing secret must be in the graph, got: {secret_names:?}"
+        );
+
+        let prod_id = graph
+            .nodes_of_kind(NodeKind::Secret)
+            .find(|n| n.name == "PROD_TOKEN")
+            .map(|n| n.id);
+        if let Some(prod_id) = prod_id {
+            let leaks = graph
+                .edges_to(prod_id)
+                .filter(|e| e.kind == EdgeKind::HasAccessTo)
+                .count();
+            assert_eq!(
+                leaks, 0,
+                "step-level env secret must shadow workflow-level secret \
+                 (no HasAccessTo edge to PROD_TOKEN), found {leaks}"
+            );
+        }
+    }
+
+    #[test]
+    fn composite_action_resolution_does_not_depend_on_cwd() {
+        // regression: composite-action resolution must not depend on CWD
+        //
+        // Before the fix, `resolve_local_action_path` walked up from
+        // `pipeline_file`'s parent calling `Path::exists()` on disk; the same
+        // YAML produced different graphs depending on (a) whether
+        // `pipeline_file` was absolute or relative, (b) the binary's CWD,
+        // (c) whether the consumer copied the YAML to a sandbox without the
+        // surrounding repo. After the B1 fix, the parser never reads the
+        // filesystem for composite actions — `./local-action` references are
+        // unconditionally Partial.
+        let dir = make_temp_dir("cwd-independence");
+        let workflows_dir = dir.join(".github/workflows");
+        let action_dir = dir.join(".github/actions/x");
+        std::fs::create_dir_all(&workflows_dir).unwrap();
+        std::fs::create_dir_all(&action_dir).unwrap();
+
+        let action_yml = r#"
+name: X
+runs:
+  using: composite
+  steps:
+    - run: echo hi
+      shell: bash
+"#;
+        std::fs::write(action_dir.join("action.yml"), action_yml).unwrap();
+
+        let workflow = r#"
+jobs:
+  ci:
+    steps:
+      - uses: ./.github/actions/x
+"#;
+        let workflow_path = workflows_dir.join("ci.yml");
+        std::fs::write(&workflow_path, workflow).unwrap();
+
+        // Parse 1: from CWD inside the temp dir, with a relative pipeline_file.
+        let prev_cwd = std::env::current_dir().ok();
+        std::env::set_current_dir(&dir).unwrap();
+        let graph_inside = parse_at(workflow, ".github/workflows/ci.yml");
+        if let Some(p) = prev_cwd {
+            std::env::set_current_dir(p).unwrap();
+        }
+
+        // Parse 2: from outside the temp dir, with an absolute pipeline_file.
+        let abs_workflow_path = workflow_path.to_str().unwrap().to_string();
+        let graph_outside = parse_at(workflow, &abs_workflow_path);
+
+        // B1: both must be Partial — composite action filesystem walking is
+        // gone, so neither inlines.
+        assert_eq!(
+            graph_inside.completeness,
+            AuthorityCompleteness::Partial,
+            "graph parsed from inside the worktree must be Partial"
+        );
+        assert_eq!(
+            graph_outside.completeness,
+            AuthorityCompleteness::Partial,
+            "graph parsed from outside the worktree must be Partial"
+        );
+        // CWD-independence: completeness values must match exactly.
+        assert_eq!(
+            graph_inside.completeness, graph_outside.completeness,
+            "CWD-relative vs absolute pipeline_file must produce identical completeness"
+        );
+        // And neither path may inline composite-action sub-steps.
+        assert_eq!(
+            graph_inside.nodes_of_kind(NodeKind::Step).count(),
+            1,
+            "inside parse must not inline composite sub-steps"
+        );
+        assert_eq!(
+            graph_outside.nodes_of_kind(NodeKind::Step).count(),
+            1,
+            "outside parse must not inline composite sub-steps"
         );
 
         let _ = std::fs::remove_dir_all(&dir);
