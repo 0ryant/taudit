@@ -1,3 +1,18 @@
-# Clippy defaults — CI uses `cargo clippy -- -D warnings` (warnings denied).
-# MSRV matches rust-toolchain.toml / standardise-ecosystem.md.
-msrv = "1.88.0"
+# Clippy configuration — keep style decisions deterministic across machines.
+# Workspace-level lint levels live in Cargo.toml's [workspace.lints.clippy].
+# This file is for Clippy *configuration* (thresholds, allowed names, etc.).
+
+# Cognitive complexity threshold for `cognitive_complexity` lint.
+cognitive-complexity-threshold = 30
+
+# Functions with more than this many parameters trigger `too_many_arguments`.
+too-many-arguments-threshold = 8
+
+# Enum variant size lint — flag any enum where the largest variant exceeds this.
+enum-variant-size-threshold = 200
+
+# Disallow specific names that are usually mistakes.
+disallowed-names = ["foo", "bar", "baz", "tmp"]
+
+# MSRV — keep in sync with rust-toolchain.toml and Cargo.toml [workspace.package].rust-version.
+msrv = "1.88"

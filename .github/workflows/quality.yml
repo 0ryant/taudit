@@ -3,7 +3,19 @@ name: quality
 on:
   push:
     branches: [main]
+    paths-ignore:
+      - '*.md'
+      - 'docs/**'
+      - '*.txt'
+      - 'CHANGELOG*'
+      - '.github/ISSUE_TEMPLATE/**'
   pull_request:
+    paths-ignore:
+      - '*.md'
+      - 'docs/**'
+      - '*.txt'
+      - 'CHANGELOG*'
+      - '.github/ISSUE_TEMPLATE/**'
 
 # One active quality run per ref — superseded runs cancel so we do not burn
 # runners on obsolete commits (especially on rapid pushes to main).
@@ -26,7 +38,7 @@ jobs:
     runs-on: ${{ matrix.os }}
     strategy:
       matrix:
-        os: [ubuntu-latest, macos-latest, windows-latest]
+        os: ${{ github.event_name == 'push' && fromJSON('["ubuntu-latest", "macos-latest", "windows-latest"]') || fromJSON('["ubuntu-latest"]') }}
       fail-fast: false
     steps:
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
