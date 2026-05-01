@@ -60,35 +60,73 @@ Patch releases are for **unambiguous** corrections (true bugs, wrong propagation
 
 Separate **stable** and **prerelease** in three places: **semver in manifests**, **Git tags + automation**, and **GitHub Release metadata**.
 
+**Policy (per [ADR 0004](adr/0004-prereleases-publish-to-crates-io.md)):** prereleases publish to **crates.io** alongside stable, gated by Cargo's resolver. The earlier framing ("`cargo publish` runs only for stable tags") is **superseded** — both lanes use the same registry, the same workflow, and the same quality gates. Stable-lane safety comes from how the resolver handles pre-release identifiers, not from withholding the artifact.
+
 ### Semver (Cargo and crates.io)
 
 - **Stable:** `version = "M.m.p"` only (no hyphen suffix). Plain semver is what most consumers pin (`cargo install taudit --version M.m.p --locked` or a range like `1.0` that resolves to the latest **non-prerelease**).
-- **Prerelease:** Semver **pre-release identifiers** — e.g. `1.1.0-beta.3`, `1.1.0-rc.1` (anything after a **single** hyphen that is not only digits). You can `cargo publish` these to crates.io; resolution **does not** pick them when a dependency asks for `1.1` without a pre-release component — consumers must **opt in** with an exact prerelease version.
+- **Prerelease:** Semver **pre-release identifiers** — e.g. `1.1.0-beta.3`, `1.1.0-rc.1` (anything after a **single** hyphen that is not only digits). Published to crates.io the same way as stable; the resolver decides who picks them up.
 
-Treat **crates.io prerelease** as rare: same honesty rules as stable (detection delta in changelog), but expect only **early adopters** who pin explicitly.
+### How Cargo's resolver handles each lane
 
-### Git tags and CI (this repository today)
+This is the load-bearing safety mechanism. **Cargo's rule:** a version requirement without a pre-release component never matches a pre-release version. So pushing `v1.1.0-beta.1` does not affect any consumer who hasn't asked for it explicitly.
 
-The release workflow (`.github/workflows/release.yml`) triggers on tags matching **`v[0-9]+.[0-9]+.[0-9]+`** — i.e. **`v1.0.14`** style **only**. Tags like **`v1.1.0-beta.1`** do **not** match that pattern, so they **do not** run the current “full release + crates.io publish” pipeline.
+| Caller | What gets picked from crates.io |
+|--------|-----------------|
+| `cargo install taudit` (no `--version`) | **Latest stable.** Skips `1.1.0-beta.1`. Stays on `1.0.12`. |
+| `taudit = "1.1"` in `Cargo.toml` | **Latest stable matching `1.1.x`.** If only prereleases exist for `1.1`, errors with "no matching package". |
+| `taudit = "1"` or `"1.0"` | Latest stable in that range. Prereleases ignored. |
+| `taudit = "*"` | Still latest stable — the prerelease-skip rule applies to `*` too. |
+| `cargo update` on a stable-pinned project | Never auto-promotes to a prerelease. |
+| `cargo install taudit --version "1.1.0-beta.1"` | Picks the prerelease (explicit opt-in). |
+| `taudit = "=1.1.0-beta.1"` in `Cargo.toml` | Picks the prerelease (explicit opt-in). |
+| `taudit = "1.1.0-*"` | **Footgun.** Asks to track prereleases — gets them. Document; do not try to prevent. |
+
+When ready to promote: cut `vM.m.0` (no suffix). At next `cargo update`, all `taudit = "1"` / `"1.1"` consumers pull it automatically. The betas remain in the registry as historical artifacts (yankable independently).
+
+### Git tags and CI
+
+The release workflow (`.github/workflows/release.yml`) triggers on **both** of:
+
+- `v[0-9]+.[0-9]+.[0-9]+` — stable tags (e.g. `v1.0.14`, `v1.1.0`).
+- `v[0-9]+.[0-9]+.[0-9]+-*` — prerelease tags (e.g. `v1.1.0-beta.1`, `v1.1.0-rc.2`).
+
+The same job graph runs for both: quality → create-release → SBOMs → binaries → `cargo publish`. The only conditional is on `gh release create`, which adds `--prerelease` when the tag carries a hyphen.
 
 **Practical split:**
 
-| Lane | Tag / trigger example | Typical automation |
-|------|------------------------|-------------------|
-| **Stable** | `vM.m.p` + manifests `M.m.p` | Existing workflow: quality → GitHub Release → SBOMs → binaries → **`cargo publish`** |
-| **Edge / prerelease** | `vM.m.p-beta.N`, nightly schedule, or `workflow_dispatch` | Separate workflow or widened tag filter with **`if:`** so **`cargo publish` runs only for stable tags**; use **`gh release create --prerelease`** for GitHub-only edge drops |
+| Lane | Tag example | Manifest version | GitHub Release flag | crates.io |
+|------|-------------|-------------------|---------------------|-----------|
+| **Stable** | `v1.1.0` | `1.1.0` | (default — Latest) | published, picked by stable resolvers |
+| **Prerelease** | `v1.1.0-beta.1` | `1.1.0-beta.1` | `--prerelease` (no Latest badge) | published, picked only by explicit opt-in |
 
-**Nightly / commit builds** can skip tags entirely: artifact name includes date or short SHA; attach to a **Pre-release** or leave as workflow-run artifacts only.
+**Nightly / commit builds** that don't deserve a registry version can skip tags entirely: artifact name includes date or short SHA; attach to a **Pre-release** GH release or leave as workflow-run artifacts only. The crates.io lane stays tag-driven.
 
 ### GitHub Release flag
 
-For any tag you treat as edge: create the release with **`gh release create … --prerelease`** so the UI and API show **Pre-release** and downstream tooling can distinguish it from **Latest**.
+The workflow detects prerelease by checking for a hyphen in the tag name and passes `--prerelease` to `gh release create` accordingly. This:
+
+- Removes the **Latest** badge from the release in the GH UI.
+- Excludes the release from `gh release view --latest`.
+- Leaves asset downloads (binaries, SBOMs, attestations) working normally — they're just not surfaced as "latest".
+
+`cargo install` doesn't read GH releases at all; this is purely a human/UI concern, orthogonal to the registry mechanics above.
+
+### Yank semantics
+
+- A bad **prerelease** can be yanked without affecting stable. `cargo yank --version 1.1.0-beta.1` removes that one version from new-resolution but leaves stable `1.0.x` and any other prereleases untouched.
+- A yanked **stable** does not retroactively yank a related prerelease.
+- Yanked versions stay downloadable for existing `Cargo.lock` files (so reproducible builds still work) — yank only blocks **new** resolution.
+
+### Pre-flight quality applies to both lanes
+
+A `-beta.N` tag triggers the same fmt / clippy / test / `cargo deny` / `cargo audit` gates as a stable tag. A failing prerelease is not "fix it on the next beta" — fix it before the tag. Once a version number is consumed on crates.io, it cannot be reused (only yanked).
 
 ---
 
 ## 5. Changelog discipline (trust)
 
-Every **crates.io** (stable) release note should make security engineers **less** nervous, not more. At minimum, answer explicitly:
+Every **crates.io** release note — **stable or prerelease** — should make security engineers **less** nervous, not more. A `-beta.N` suffix is not a license to skip the trust paragraph. At minimum, answer explicitly:
 
 1. **What changed in detection?** (rules, graph construction, trust zones, fingerprints if relevant.)
 2. **Will this flag more or fewer issues** than the previous release on typical pipelines?

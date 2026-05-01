@@ -7,6 +7,7 @@ Records in this directory capture **significant** product and technical decision
 | [0001](0001-graph-native-exports-and-leverage.md) | Graph as product: native exports (Mermaid) and leverage strategy |
 | [0002](0002-authority-signal-roadmap-phased.md) | Authority signal roadmap: phased goals, deliverables, non-goals |
 | [0003](0003-strategic-spine-adoption-phased.md) | Strategic spine, merge gate, adoption: phased tasks (council-aligned; see implementation status in ADR) |
+| [0004](0004-prereleases-publish-to-crates-io.md) | Prereleases publish to crates.io, gated by Cargo's resolver |
 
 ## Conventions
 
