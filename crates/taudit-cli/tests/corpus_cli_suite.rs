@@ -94,7 +94,7 @@ fn assert_json_object(stdout: &[u8], ctx: &str) -> serde_json::Value {
 fn assert_scan_report(v: &serde_json::Value, ctx: &str) {
     assert_eq!(
         v.get("schema_version").and_then(|x| x.as_str()),
-        Some("v1"),
+        Some("1.0.0"),
         "{ctx}: scan report schema_version"
     );
     assert!(

@@ -1,6 +1,5 @@
 ---
 source: crates/taudit-cli/tests/snapshot_ado.rs
-assertion_line: 99
 expression: json
 ---
 findings:
@@ -158,7 +157,7 @@ graph:
   source:
     file: azure-pipelines.yml
 schema_uri: "https://taudit.dev/schemas/taudit-report.schema.json"
-schema_version: v1
+schema_version: 1.0.0
 summary:
   completeness: complete
   critical: 1

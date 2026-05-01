@@ -1,6 +1,5 @@
 ---
 source: crates/taudit-cli/tests/snapshot_gha.rs
-assertion_line: 132
 expression: json
 ---
 findings:
@@ -85,7 +84,7 @@ graph:
   source:
     file: test.yml
 schema_uri: "https://taudit.dev/schemas/taudit-report.schema.json"
-schema_version: v1
+schema_version: 1.0.0
 summary:
   completeness: complete
   critical: 0

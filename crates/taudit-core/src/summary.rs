@@ -14,7 +14,7 @@ pub const AUTHORITY_PROPAGATION_SUMMARY_SCHEMA_VERSION: &str = "1.0.0";
 
 /// JSON Schema `$id` for the propagation summary document.
 pub const AUTHORITY_PROPAGATION_SUMMARY_SCHEMA_URI: &str =
-    "https://github.com/0ryant/taudit/schemas/authority-propagation-summary.v1.json";
+    "https://taudit.dev/schemas/authority-propagation-summary.v1.json";
 
 /// Max rows in each ranked list for bounded output size.
 pub const PROPAGATION_SUMMARY_TOP_N: usize = 32;

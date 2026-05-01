@@ -1,6 +1,6 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://github.com/0ryant/taudit/schemas/authority-graph.v1.json",
+  "$id": "https://taudit.dev/schemas/authority-graph.v1.json",
   "title": "taudit Authority Graph",
   "description": "Standalone, versioned authority-graph export from `taudit graph --format json`. Models how authority (secrets, identities) propagates through a CI/CD pipeline. Stable contract — additive changes ship under 1.x.y; breaking changes ship under 2.0.0. The $id is a logical identifier; the URL may not resolve. Treat as schema namespace, not as a content fetch endpoint.",
   "version": "1.0.0",
@@ -16,7 +16,7 @@
     "schema_uri": {
       "type": "string",
       "format": "uri",
-      "const": "https://github.com/0ryant/taudit/schemas/authority-graph.v1.json",
+      "const": "https://taudit.dev/schemas/authority-graph.v1.json",
       "description": "Canonical URI for the schema this document conforms to."
     },
     "graph": {

@@ -1,6 +1,6 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://github.com/0ryant/taudit/schemas/baseline.v1.json",
+  "$id": "https://taudit.dev/schemas/baseline.v1.json",
   "title": "taudit Pipeline Baseline",
   "description": "Per-pipeline baseline file written by `taudit baseline init` and updated by `taudit baseline accept`. Stored at `.taudit/baselines/<pipeline-content-hash>.json`. Diffed by `taudit baseline diff` and `taudit verify`. Stable contract — additive 1.x.y changes are non-breaking; 2.0.0 means breaking changes.",
   "version": "1.1.0",

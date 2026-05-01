@@ -1,6 +1,6 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://github.com/0ryant/taudit/schemas/finding.v1.json",
+  "$id": "https://taudit.dev/schemas/finding.v1.json",
   "title": "taudit Finding v1",
   "description": "Standalone schema for a single taudit Finding object. Published separately from the wrapping report (`taudit-report.schema.json`) and the CloudEvents envelope (`contracts/schemas/taudit-cloudevent-finding-v1.schema.json`) so SIEM teams can validate finding payloads without loading the report wrapper or the CloudEvents envelope. The same Finding shape appears verbatim in three places: as an entry in `findings[]` of the JSON report, as the `data` payload of a `taudit-cloudevent-finding-v1` envelope, and in any external store that round-trips taudit findings (suppression DB, ticket sync, etc.). Schema is `1.x.y` — additive changes only; breaking changes require a `2.0.0` bump.",
   "type": "object",

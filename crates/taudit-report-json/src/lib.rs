@@ -5,7 +5,7 @@ use taudit_core::ports::ReportSink;
 
 use serde::Serialize;
 
-const JSON_REPORT_SCHEMA_VERSION: &str = "v1";
+const JSON_REPORT_SCHEMA_VERSION: &str = "1.0.0";
 const JSON_REPORT_SCHEMA_URI: &str = "https://taudit.dev/schemas/taudit-report.schema.json";
 
 /// Schema version of the standalone authority-graph export
@@ -14,8 +14,7 @@ const JSON_REPORT_SCHEMA_URI: &str = "https://taudit.dev/schemas/taudit-report.s
 pub const AUTHORITY_GRAPH_SCHEMA_VERSION: &str = "1.0.0";
 
 /// Canonical URI of the authority-graph JSON Schema.
-pub const AUTHORITY_GRAPH_SCHEMA_URI: &str =
-    "https://github.com/0ryant/taudit/schemas/authority-graph.v1.json";
+pub const AUTHORITY_GRAPH_SCHEMA_URI: &str = "https://taudit.dev/schemas/authority-graph.v1.json";
 
 /// JSON report containing the full authority graph and all findings.
 #[derive(Serialize)]
@@ -263,7 +262,7 @@ mod tests {
         JsonReportSink.emit(&mut buf, &graph, &findings).unwrap();
 
         let report: serde_json::Value = serde_json::from_slice(&buf).unwrap();
-        assert_eq!(report["schema_version"], "v1");
+        assert_eq!(report["schema_version"], "1.0.0");
 
         let schema = read_json("contracts/schemas/taudit-report.schema.json");
         let validator = jsonschema::validator_for(&schema).expect("report schema should compile");

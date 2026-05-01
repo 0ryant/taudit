@@ -9,7 +9,7 @@
   "properties": {
     "schema_version": {
       "type": "string",
-      "const": "v1",
+      "const": "1.0.0",
       "description": "Stable JSON report contract version"
     },
     "schema_uri": {
@@ -20,7 +20,7 @@
     "graph": { "$ref": "#/$defs/AuthorityGraph" },
     "findings": {
       "type": "array",
-      "description": "Each entry is a `taudit Finding v1` object — see `https://github.com/0ryant/taudit/schemas/finding.v1.json` (also published in this repo at `schemas/finding.v1.json`). The local `#/$defs/Finding` mirrors that schema for inline validation; the standalone schema lets SIEM consumers validate finding payloads without loading the report wrapper.",
+      "description": "Each entry is a `taudit Finding v1` object — see `https://taudit.dev/schemas/finding.v1.json` (also published in this repo at `schemas/finding.v1.json`). The local `#/$defs/Finding` mirrors that schema for inline validation; the standalone schema lets SIEM consumers validate finding payloads without loading the report wrapper.",
       "items": { "$ref": "#/$defs/Finding" }
     },
     "summary": { "$ref": "#/$defs/Summary" }
