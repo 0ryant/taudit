@@ -246,4 +246,10 @@ jobs:
         uses: dtolnay/rust-toolchain@98e1b82157cd469e843cb7f524c1313b4ad9492c # 1.88
 
       - name: Publish to crates.io
-        run: cargo publish --token "${{ secrets.CARGO_REGISTRY_TOKEN }}"
+        # `--workspace` (stable since cargo 1.86) publishes every workspace
+        # member in dependency-topological order, with built-in registry-index
+        # propagation waits between crates. Replaces the previous
+        # virtual-manifest-incompatible `cargo publish` invocation. Works
+        # identically for stable and prerelease tags — crates.io accepts both;
+        # Cargo's resolver gates consumption downstream per ADR 0004.
+        run: cargo publish --workspace --token "${{ secrets.CARGO_REGISTRY_TOKEN }}"
