@@ -1,5 +1,7 @@
 # Contributing
 
+Ecosystem CI / governance norms for this repo (and peers **tsafe**, **CellOS**): **[`standardise-ecosystem.md`](standardise-ecosystem.md)**.
+
 ## Development setup
 
 `taudit` is a Rust workspace. Use the pinned toolchain configured by the repo.

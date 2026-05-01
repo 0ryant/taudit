@@ -1,6 +1,7 @@
 # Bitbucket Pipelines — Rust quality mirror (fmt, clippy, test, deny, audit, contracts).
 # Bitbucket-native pipeline YAML is not yet a taudit parse target; this file is for
 # CI parity and future parser work. See docs/integrations/ci-mirrors.md.
+# Governance stack (gitleaks/trivy/checkov/zizmor) is not mirrored here yet — standardise-ecosystem.md § Multi-platform mirrors.
 ---
 image: rust:1.88-bookworm
 

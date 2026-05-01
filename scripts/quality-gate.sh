@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 STAGE="${1:-quality-gate}"
 
 require_cmd() {
@@ -99,6 +100,23 @@ run_checkov() {
     --quiet
 }
 
+run_zizmor() {
+  require_cmd zizmor
+  echo "quality-gate: zizmor"
+  set +e
+  zizmor .github/workflows
+  zst=$?
+  set -e
+  if [[ "$zst" -ne 0 ]]; then
+    echo "quality-gate: zizmor exited ${zst} (advisory — triage with .zizmor.yml / standardise-ecosystem.md)"
+  fi
+}
+
+run_ecosystem_integrations() {
+  echo "quality-gate: ecosystem CI integrations"
+  bash "${ROOT}/scripts/ecosystem-governance-integrations.sh"
+}
+
 run_actionlint() {
   require_cmd actionlint
   echo "quality-gate: actionlint"
@@ -172,14 +190,17 @@ case "$STAGE" in
     require_cmd gitleaks
     require_cmd trivy
     require_cmd checkov
+    require_cmd zizmor
     require_cmd actionlint
     require_cmd yamllint
 
     run_gitleaks_repo
     run_trivy_fs
     run_checkov
+    run_zizmor
     run_actionlint
     run_yamllint
+    run_ecosystem_integrations
     run_taudit_gate
     ;;
 

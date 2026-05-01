@@ -1,0 +1,3 @@
+# release-plz — https://release-plz.ieni.dev/ (standardise-ecosystem.md)
+[workspace]
+changelog_path = "CHANGELOG.md"

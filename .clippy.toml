@@ -1,0 +1,3 @@
+# Clippy defaults — CI uses `cargo clippy -- -D warnings` (warnings denied).
+# MSRV matches rust-toolchain.toml / standardise-ecosystem.md.
+msrv = "1.88.0"

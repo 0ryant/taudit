@@ -62,6 +62,10 @@ jobs:
       - name: clippy
         run: cargo clippy --workspace --all-targets -- -D warnings
 
+      # Ecosystem `quality` job order (standardise-ecosystem.md): fmt → clippy → test → deny → audit.
+      - name: cargo test (workspace)
+        run: cargo test --workspace
+
       # Authority invariant YAML: JSON Schema is generated from FindingCategory in
       # Rust — --check catches drift; validation ensures starter library matches schema.
       - name: Set up Python (invariant schema tooling)
@@ -93,32 +97,7 @@ jobs:
       - name: cargo audit
         run: cargo audit
 
-      - name: Install governance tooling (Trivy, Checkov, Gitleaks)
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y wget gnupg lsb-release python3-pip
-
-          # Trivy
-          wget -qO - https://aquasecurity.github.io/trivy-repo/deb/public.key | sudo gpg --dearmor -o /usr/share/keyrings/trivy.gpg
-          echo "deb [signed-by=/usr/share/keyrings/trivy.gpg] https://aquasecurity.github.io/trivy-repo/deb $(lsb_release -sc) main" | sudo tee /etc/apt/sources.list.d/trivy.list
-          sudo apt-get update
-          sudo apt-get install -y trivy
-
-          # Checkov
-          python3 -m pip install --user checkov
-          echo "$HOME/.local/bin" >> "$GITHUB_PATH"
-
-          # Gitleaks
-          GITLEAKS_VERSION=8.24.2
-          wget -q "https://github.com/gitleaks/gitleaks/releases/download/v${GITLEAKS_VERSION}/gitleaks_${GITLEAKS_VERSION}_linux_x64.tar.gz"
-          tar -xzf "gitleaks_${GITLEAKS_VERSION}_linux_x64.tar.gz"
-          sudo install -m 0755 gitleaks /usr/local/bin/gitleaks
-
-      - name: Install workflow linters (actionlint, yamllint)
-        run: bash scripts/install-ci-linters.sh
-
-      - name: Governance quality gate (Trivy, Checkov, Gitleaks, linters, taudit)
-        run: bash scripts/quality-gate.sh ci-governance
+      # Governance tools + gate live in `.github/workflows/governance.yml` (job `governance`).
 
       - name: Validate report and CloudEvents contracts
         run: |
@@ -177,31 +156,8 @@ jobs:
             tests/fixtures/clean.yml \
             || echo "::warning::example-enterprise-ado policy reported violations on clean fixture"
 
-      # Fuzz smoke: build each parser fuzz target with nightly and run for
-      # 10 s per target. Catches panics on startup and trivial crash inputs
-      # without running a full fuzzing campaign.
-      # Runs on push to main only — nightly install + 30s fuzz time is too
-      # slow to impose on every PR.
-      - name: Install nightly toolchain and cargo-fuzz
-        if: github.event_name == 'push'
-        run: |
-          rustup toolchain install nightly --no-self-update
-          cargo +nightly install cargo-fuzz --locked
-
-      - name: fuzz smoke (parse_gha — 10 s)
-        if: github.event_name == 'push'
-        run: cargo +nightly fuzz run parse_gha -- -max_total_time=10
-        working-directory: crates/taudit-parse-gha
-
-      - name: fuzz smoke (parse_ado — 10 s)
-        if: github.event_name == 'push'
-        run: cargo +nightly fuzz run parse_ado -- -max_total_time=10
-        working-directory: crates/taudit-parse-ado
-
-      - name: fuzz smoke (parse_gitlab — 10 s)
-        if: github.event_name == 'push'
-        run: cargo +nightly fuzz run parse_gitlab -- -max_total_time=10
-        working-directory: crates/taudit-parse-gitlab
+      # Fuzz smoke: see `.github/workflows/scheduled-fuzz.yml` (Tuesday) and
+      # `workflow_dispatch` for the same targets (standardise-ecosystem.md).
 
       # Mutation testing moved to `.github/workflows/mutation-coverage.yml`
       # (weekly + workflow_dispatch). Running cargo-mutants inside this job

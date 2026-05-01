@@ -40,10 +40,11 @@ quality:linux:
   before_script:
     - rustup component add rustfmt clippy
     - rustc -Vv
-    - apt-get update && apt-get install -y python3-pip wget gnupg lsb-release
+    - apt-get update && apt-get install -y python3-pip wget curl ca-certificates gnupg lsb-release
   script:
     - cargo fmt --all -- --check
     - cargo clippy --workspace --all-targets -- -D warnings
+    - cargo test --workspace
     - pip install --break-system-packages pyyaml jsonschema 2>/dev/null || pip install pyyaml jsonschema
     - python3 scripts/generate-authority-invariant-schema.py --check
     - python3 scripts/validate-authority-invariant-yaml.py invariants/starter
@@ -53,17 +54,8 @@ quality:linux:
     - cargo deny check licenses bans sources
     - cargo install cargo-audit --locked
     - cargo audit
-    - |
-      set -euo pipefail
-      wget -qO - https://aquasecurity.github.io/trivy-repo/deb/public.key | gpg --dearmor -o /usr/share/keyrings/trivy.gpg
-      echo "deb [signed-by=/usr/share/keyrings/trivy.gpg] https://aquasecurity.github.io/trivy-repo/deb $(lsb_release -sc) main" > /etc/apt/sources.list.d/trivy.list
-      apt-get update && apt-get install -y trivy
-      pip install --break-system-packages checkov 2>/dev/null || pip install checkov
-      export PATH="$HOME/.local/bin:$PATH"
-      GITLEAKS_VERSION=8.24.2
-      wget -q "https://github.com/gitleaks/gitleaks/releases/download/v${GITLEAKS_VERSION}/gitleaks_${GITLEAKS_VERSION}_linux_x64.tar.gz"
-      tar -xzf "gitleaks_${GITLEAKS_VERSION}_linux_x64.tar.gz"
-      install -m 0755 gitleaks /usr/local/bin/gitleaks
+    - bash scripts/install-governance-tools.sh
+    - export PATH="$HOME/.local/bin:/usr/local/bin:$PATH"
     - bash scripts/install-ci-linters.sh
     - bash scripts/quality-gate.sh ci-governance
     - cargo test -p taudit-report-json

@@ -1,0 +1,37 @@
+# release-plz — opens release PRs from conventional commits (standardise-ecosystem.md).
+# Requires secrets when publishing: see https://release-plz.ieni.dev/docs/github
+#
+# Start with manual runs; enable `push: branches: [main]` when maintainers wire tokens.
+name: release-plz
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  pull-requests: write
+
+concurrency:
+  group: release-plz-${{ github.workflow }}
+  cancel-in-progress: false
+
+jobs:
+  release-pr:
+    name: release-plz (release-pr)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          fetch-depth: 0
+
+      - name: Rust toolchain
+        uses: dtolnay/rust-toolchain@98e1b82157cd469e843cb7f524c1313b4ad9492c # 1.88
+
+      - uses: Swatinem/rust-cache@9d47c6ad4b02e050fd481d890b2ea34778fd09d6 # v2.7.8
+
+      - name: Run release-plz
+        uses: release-plz/action@49c995b2442b0f60dd4aab07a164cc00643471fc # v0.5.128
+        with:
+          command: release-pr
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

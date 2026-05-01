@@ -4,7 +4,7 @@ This repository’s **primary** CI is **GitHub Actions** (`.github/workflows/`).
 
 | Host | Definition file | taudit native scan of *this* CI file |
 |------|-------------------|--------------------------------------|
-| GitHub Actions | `.github/workflows/*.yml` | Yes (`--platform github-actions`) |
+| GitHub Actions | `.github/workflows/*.yml` (includes **`governance.yml`** for the ecosystem `governance` job) | Yes (`--platform github-actions`) |
 | Azure DevOps | `azure-pipelines.yml` (repo root) | Yes (`--platform azure-devops`) |
 | GitLab | `.gitlab-ci.yml` | Yes (`--platform gitlab`) |
 | Bitbucket Pipelines | `bitbucket-pipelines.yml` | **Not yet** — mirror runs Rust gates only |
@@ -23,7 +23,7 @@ This repository’s **primary** CI is **GitHub Actions** (`.github/workflows/`).
 ### What the mirror runs
 
 - **Parallel:** `test` on **Ubuntu**, **macOS**, **Windows** (`cargo test --workspace`).
-- **quality (Ubuntu):** `fmt`, `clippy`, Python invariant schema check, `cargo insta`, `cargo deny`, `cargo audit`, **`scripts/install-ci-linters.sh`** (**actionlint** + **yamllint**), **Trivy + Checkov + Gitleaks** via `scripts/quality-gate.sh ci-governance`, contract tests, **release build**, **golden-paths**, **taudit self-scan** of `.github/workflows/` and **`azure-pipelines.yml`** (SARIF artifacts), advisory `taudit verify` on starter + ADO example policy, **fuzz smoke** on `main` only.
+- **quality (Ubuntu):** `fmt`, `clippy`, **`cargo test --workspace`**, Python invariant schema check, `cargo insta`, `cargo deny`, `cargo audit`, **`scripts/install-governance-tools.sh`** + **`scripts/install-ci-linters.sh`**, **`scripts/quality-gate.sh ci-governance`** (pinned tools in **[`scripts/tool-versions.env`](../../scripts/tool-versions.env)** — gitleaks, trivy, checkov, **zizmor**, actionlint, yamllint, taudit, ecosystem stubs), contract tests, **release build**, **golden-paths**, **taudit self-scan** of `.github/workflows/` and **`azure-pipelines.yml`** (SARIF artifacts), advisory `taudit verify` on starter + ADO example policy. **Fuzz** runs on a **Tuesday** schedule in **[`scheduled-fuzz.yml`](../../.github/workflows/scheduled-fuzz.yml)**. On GitHub, the dedicated **`governance`** job also lives in **[`governance.yml`](../../.github/workflows/governance.yml)** — see **[`standardise-ecosystem.md`](../../standardise-ecosystem.md)**.
 - **Parallel security:** full **`cargo deny`** (incl. advisories) and **hard-fail** **`taudit scan`** of `.github/workflows/` at high+ (SARIF artifact).
 
 ### SARIF in ADO
@@ -65,7 +65,7 @@ The committed **[`azure-pipelines.stack-integration.yml`](../../azure-pipelines.
 ### What runs
 
 - **`test:linux`** — `cargo test --workspace`.
-- **`quality:linux`** — same Rust + Python + insta + deny + audit + **`install-ci-linters.sh`** + governance gate + contracts + release build + golden paths + **taudit scan** of `.github/workflows/` and **`.gitlab-ci.yml`** (artifacts), plus advisory verify steps.
+- **`quality:linux`** — same Rust + Python + insta + deny + audit + **`install-governance-tools.sh`** + **`install-ci-linters.sh`** + **`ci-governance`** + contracts + release build + golden paths + **taudit scan** of `.github/workflows/` and **`.gitlab-ci.yml`** (artifacts), plus advisory verify steps.
 - **`security:*`** — full `cargo deny` and hard-fail `taudit scan` of `.github/workflows/`.
 
 ### Rules

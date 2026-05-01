@@ -1,0 +1,50 @@
+# Weekly fuzz smoke — standardise-ecosystem.md (Tuesday cadence).
+# Matches parser fuzz steps previously run only on push-to-main in quality.yml.
+name: scheduled-fuzz
+
+on:
+  schedule:
+    - cron: "20 10 * * 2"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: scheduled-fuzz-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  CARGO_TERM_COLOR: always
+  RUST_BACKTRACE: 1
+
+jobs:
+  fuzz-smoke:
+    name: fuzz smoke (parsers)
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+
+      - name: Rust toolchain
+        uses: dtolnay/rust-toolchain@98e1b82157cd469e843cb7f524c1313b4ad9492c # 1.88
+
+      - uses: Swatinem/rust-cache@9d47c6ad4b02e050fd481d890b2ea34778fd09d6 # v2.7.8
+
+      - name: Install nightly + cargo-fuzz
+        run: |
+          set -euo pipefail
+          rustup toolchain install nightly --no-self-update
+          cargo +nightly install cargo-fuzz --locked
+
+      - name: fuzz smoke (parse_gha — 10 s)
+        run: cargo +nightly fuzz run parse_gha -- -max_total_time=10
+        working-directory: crates/taudit-parse-gha
+
+      - name: fuzz smoke (parse_ado — 10 s)
+        run: cargo +nightly fuzz run parse_ado -- -max_total_time=10
+        working-directory: crates/taudit-parse-ado
+
+      - name: fuzz smoke (parse_gitlab — 10 s)
+        run: cargo +nightly fuzz run parse_gitlab -- -max_total_time=10
+        working-directory: crates/taudit-parse-gitlab

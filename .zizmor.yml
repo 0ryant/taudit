@@ -1,0 +1,12 @@
+# zizmor policy — baseline aligned with standardise-ecosystem.md (tool is required;
+# severities are tuned so CI stays green while findings are triaged alongside taudit).
+# Tighten rules (drop `warn`) as workflows absorb fixes.
+rules:
+  excessive-permissions:
+    level: warn
+  template-injection:
+    level: warn
+  cache-poisoning:
+    level: warn
+  unpinned-uses:
+    level: warn
