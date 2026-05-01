@@ -3,7 +3,8 @@ name: release
 on:
   push:
     tags:
-      - 'v[0-9]+.[0-9]+.[0-9]+'
+      - 'v[0-9]+.[0-9]+.[0-9]+'        # stable: v1.1.0
+      - 'v[0-9]+.[0-9]+.[0-9]+-*'      # prerelease: v1.1.0-beta.1, v1.1.0-rc.2 (ADR 0004)
 
 # Minimal workflow-level permissions; jobs that need more declare it themselves.
 permissions:
@@ -51,14 +52,32 @@ jobs:
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
 
       - name: Create GitHub release
-        run: |
-          gh release view "${{ github.ref_name }}" 2>/dev/null || \
-          gh release create "${{ github.ref_name }}" \
-            --generate-notes \
-            --draft=false \
-            --title "taudit ${{ github.ref_name }}"
+        # Prerelease detection: a tag containing `-` is a semver pre-release
+        # (e.g. v1.1.0-beta.1). Stable tags (v1.1.0) get the default Latest
+        # badge; prerelease tags get --prerelease, which removes the Latest
+        # badge and excludes the release from `gh release view --latest`.
+        # crates.io publishing happens in both cases — Cargo's resolver gates
+        # consumers from accidentally picking up a prerelease. See ADR 0004
+        # and docs/release-strategy.md §4.
+        #
+        # Tag is read from $TAG (env-var indirection) rather than expanded
+        # directly into the shell — defends against script injection if a
+        # future tag name contained shell metacharacters.
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ github.ref_name }}
+        run: |
+          set -euo pipefail
+          prerelease_flag=""
+          case "$TAG" in
+            *-*) prerelease_flag="--prerelease" ;;
+          esac
+          gh release view "$TAG" 2>/dev/null || \
+          gh release create "$TAG" \
+            --generate-notes \
+            --draft=false \
+            $prerelease_flag \
+            --title "taudit $TAG"
 
   sbom:
     name: dependency sbom (SPDX + CycloneDX)
