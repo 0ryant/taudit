@@ -1,5 +1,5 @@
 {
-  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://github.com/0ryant/taudit/schemas/baseline.v1.json",
   "title": "taudit Pipeline Baseline",
   "description": "Per-pipeline baseline file written by `taudit baseline init` and updated by `taudit baseline accept`. Stored at `.taudit/baselines/<pipeline-content-hash>.json`. Diffed by `taudit baseline diff` and `taudit verify`. Stable contract — additive 1.x.y changes are non-breaking; 2.0.0 means breaking changes.",
@@ -62,10 +62,10 @@
     "baseline_findings": {
       "type": "array",
       "description": "Sorted ASC by `fingerprint` for deterministic git diffs.",
-      "items": { "$ref": "#/definitions/BaselineFinding" }
+      "items": { "$ref": "#/$defs/BaselineFinding" }
     }
   },
-  "definitions": {
+  "$defs": {
     "BaselineFinding": {
       "type": "object",
       "required": ["fingerprint", "rule_id", "severity", "first_seen_at"],

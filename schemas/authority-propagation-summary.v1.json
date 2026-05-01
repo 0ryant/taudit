@@ -1,5 +1,5 @@
 {
-  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://github.com/0ryant/taudit/schemas/authority-propagation-summary.v1.json",
   "title": "taudit authority propagation summary",
   "description": "Read-only aggregate over boundary-crossing propagation paths (same BFS as rule-engine authority_propagation). Additive 1.x; emitted by `taudit graph --format summary`. Does not replace graph JSON or verify policy.",
@@ -58,14 +58,14 @@
     },
     "top_sinks_by_path_count": {
       "type": "array",
-      "items": { "$ref": "#/definitions/PropagationNodeAgg" }
+      "items": { "$ref": "#/$defs/PropagationNodeAgg" }
     },
     "top_sources_by_path_count": {
       "type": "array",
-      "items": { "$ref": "#/definitions/PropagationNodeAgg" }
+      "items": { "$ref": "#/$defs/PropagationNodeAgg" }
     }
   },
-  "definitions": {
+  "$defs": {
     "PropagationNodeAgg": {
       "type": "object",
       "required": ["node_id", "kind", "name", "trust_zone", "path_count"],

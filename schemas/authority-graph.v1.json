@@ -1,5 +1,5 @@
 {
-  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://github.com/0ryant/taudit/schemas/authority-graph.v1.json",
   "title": "taudit Authority Graph",
   "description": "Standalone, versioned authority-graph export from `taudit graph --format json`. Models how authority (secrets, identities) propagates through a CI/CD pipeline. Stable contract — additive changes ship under 1.x.y; breaking changes ship under 2.0.0. The $id is a logical identifier; the URL may not resolve. Treat as schema namespace, not as a content fetch endpoint.",
@@ -20,11 +20,11 @@
       "description": "Canonical URI for the schema this document conforms to."
     },
     "graph": {
-      "$ref": "#/definitions/AuthorityGraph",
+      "$ref": "#/$defs/AuthorityGraph",
       "description": "The authority graph for a single pipeline file."
     }
   },
-  "definitions": {
+  "$defs": {
     "AuthorityGraph": {
       "type": "object",
       "description": "Directed authority graph. Nodes are pipeline elements (steps, secrets, artifacts, identities, images). Edges model authority/data flow.",
@@ -32,21 +32,21 @@
       "additionalProperties": false,
       "properties": {
         "source": {
-          "$ref": "#/definitions/PipelineSource",
+          "$ref": "#/$defs/PipelineSource",
           "description": "Where the pipeline definition came from."
         },
         "nodes": {
           "type": "array",
           "description": "All nodes in the graph. Node ids are dense integers (0..nodes.length).",
-          "items": { "$ref": "#/definitions/Node" }
+          "items": { "$ref": "#/$defs/Node" }
         },
         "edges": {
           "type": "array",
           "description": "All directed edges in the graph. Edge ids are dense integers (0..edges.length).",
-          "items": { "$ref": "#/definitions/Edge" }
+          "items": { "$ref": "#/$defs/Edge" }
         },
         "completeness": {
-          "$ref": "#/definitions/AuthorityCompleteness",
+          "$ref": "#/$defs/AuthorityCompleteness",
           "description": "How complete is this graph? Set by the parser."
         },
         "completeness_gaps": {
@@ -148,12 +148,12 @@
           "minimum": 0,
           "description": "Dense integer id; matches the index of this node in graph.nodes."
         },
-        "kind": { "$ref": "#/definitions/NodeKind" },
+        "kind": { "$ref": "#/$defs/NodeKind" },
         "name": {
           "type": "string",
           "description": "Display name (step name, secret name, action ref, etc.)."
         },
-        "trust_zone": { "$ref": "#/definitions/TrustZone" },
+        "trust_zone": { "$ref": "#/$defs/TrustZone" },
         "metadata": {
           "type": "object",
           "description": "Flexible string-keyed metadata: pinning status, digest, identity scope, permissions, container/oidc/self-hosted markers, parent job_name, etc. Keys are documented in crates/taudit-core/src/graph.rs (META_* constants).",
@@ -182,9 +182,9 @@
           "minimum": 0,
           "description": "Target node id."
         },
-        "kind": { "$ref": "#/definitions/EdgeKind" },
+        "kind": { "$ref": "#/$defs/EdgeKind" },
         "authority_summary": {
-          "$ref": "#/definitions/AuthorityEdgeSummary",
+          "$ref": "#/$defs/AuthorityEdgeSummary",
           "description": "Optional stamped summary on has_access_to edges to identity nodes (ADR 0002 Phase 2). Omitted when absent."
         }
       }
