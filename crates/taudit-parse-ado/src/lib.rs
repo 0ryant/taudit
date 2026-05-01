@@ -769,7 +769,10 @@ fn process_steps(
                 "environmentservicename",
                 "backendservicearm",
             ];
-            for (raw_key, val) in inputs {
+            // determinism: sort by key — same YAML must produce same NodeId order
+            let mut input_entries: Vec<(&String, &serde_yaml::Value)> = inputs.iter().collect();
+            input_entries.sort_by(|a, b| a.0.cmp(b.0));
+            for (raw_key, val) in input_entries {
                 let lower = raw_key.to_lowercase();
                 if !service_conn_keys.contains(&lower.as_str()) {
                     continue;
@@ -852,7 +855,10 @@ fn process_steps(
             }
 
             // Detect $(varName) references in task input values
-            for val in inputs.values() {
+            // determinism: sort by key — same YAML must produce same NodeId order
+            let mut paren_entries: Vec<(&String, &serde_yaml::Value)> = inputs.iter().collect();
+            paren_entries.sort_by(|a, b| a.0.cmp(b.0));
+            for (_k, val) in paren_entries {
                 if let Some(s) = yaml_value_as_str(val) {
                     extract_dollar_paren_secrets(
                         s,
@@ -880,7 +886,10 @@ fn process_steps(
 
         // Detect $(varName) in step env values
         if let Some(ref env) = step.env {
-            for val in env.values() {
+            // determinism: sort by key — same YAML must produce same NodeId order
+            let mut env_entries: Vec<(&String, &String)> = env.iter().collect();
+            env_entries.sort_by(|a, b| a.0.cmp(b.0));
+            for (_k, val) in env_entries {
                 extract_dollar_paren_secrets(
                     val,
                     step_id,
@@ -980,7 +989,12 @@ fn extract_task_inline_script(
 ) -> Option<String> {
     let inputs = inputs?;
     const KEYS: &[&str] = &["script", "inlinescript", "inline"];
-    for (raw_key, val) in inputs {
+    // determinism: sort by key — same YAML must produce same NodeId order
+    // (first-match semantics: ensure the same key wins across runs when more
+    // than one of `script`/`inlineScript`/`Inline` is present in the same task)
+    let mut entries: Vec<(&String, &serde_yaml::Value)> = inputs.iter().collect();
+    entries.sort_by(|a, b| a.0.cmp(b.0));
+    for (raw_key, val) in entries {
         let lower = raw_key.to_lowercase();
         if KEYS.contains(&lower.as_str()) {
             if let Some(s) = val.as_str() {
@@ -2984,5 +2998,100 @@ trigger:
             "no carrier means no 0-step gap reason; got: {:?}",
             graph.completeness_gaps
         );
+    }
+
+    /// regression: ADO HashMap iteration must be deterministic across runs.
+    ///
+    /// Before the fix, `step.env` and `step.inputs` (both `HashMap`s populated
+    /// by serde_yaml) were iterated in HashMap-random order at four call sites
+    /// in `taudit-parse-ado`. That randomness leaked into `NodeId` allocation
+    /// (Secret/Identity nodes get IDs in the order they're added) and edge
+    /// append order, which then leaked into `pipeline_identity_material_hash`
+    /// and silently broke baseline suppression — same YAML, different hash on
+    /// each run.
+    ///
+    /// Fixture uses non-alphabetic-insertion-order keys (`Z_VAR/A_VAR/M_VAR/...`)
+    /// so the pre-fix HashMap bucket ordering is overwhelmingly unlikely to
+    /// align with the now-enforced sorted iteration. We parse the same YAML
+    /// nine times in sequence and assert that
+    /// `compute_pipeline_identity_material_hash` is byte-identical across all
+    /// runs. Mirrors `taudit-report-json`'s
+    /// `json_output_is_byte_deterministic_across_runs` test pattern.
+    #[test]
+    fn ado_hashmap_iteration_is_deterministic_across_runs() {
+        // Multiple `$(VAR)` references in both `env:` and task `inputs:` so
+        // every secret-creating HashMap-iteration site in the parser is
+        // exercised. Names chosen so HashMap hash bucket order has near-zero
+        // chance of accidentally aligning with the enforced sorted order.
+        let yaml = r#"
+trigger:
+  - main
+
+pool:
+  vmImage: ubuntu-latest
+
+steps:
+  - task: AzureCLI@2
+    displayName: Deploy
+    inputs:
+      azureSubscription: $(SUB_CONN)
+      scriptType: bash
+      inlineScript: |
+        echo $(MIDDLE_INPUT_VAR)
+        echo $(ALPHA_INPUT_VAR)
+        echo $(ZULU_INPUT_VAR)
+    env:
+      Z_VAR: $(Z_SECRET)
+      A_VAR: $(A_SECRET)
+      M_VAR: $(M_SECRET)
+      Q_VAR: $(Q_SECRET)
+      B_VAR: $(B_SECRET)
+"#;
+
+        // Capture the structural shape of the graph that the bug report
+        // identified as drifting: NodeId allocation order (id, kind, name,
+        // trust_zone) and edge append order ((from, to, kind)). We
+        // intentionally exclude `node.metadata` from the comparison — that
+        // map's serialisation is a separate concern handled by the JSON sink
+        // (see `taudit-report-json::json_output_is_byte_deterministic_across_runs`).
+        fn structural_fingerprint(graph: &taudit_core::graph::AuthorityGraph) -> String {
+            let mut out = String::new();
+            for n in &graph.nodes {
+                out.push_str(&format!(
+                    "N {} {:?} {} {:?}\n",
+                    n.id, n.kind, n.name, n.trust_zone
+                ));
+            }
+            for e in &graph.edges {
+                out.push_str(&format!("E {} {} {:?}\n", e.from, e.to, e.kind));
+            }
+            out
+        }
+
+        let mut hashes: Vec<String> = Vec::with_capacity(9);
+        let mut fingerprints: Vec<String> = Vec::with_capacity(9);
+        for _ in 0..9 {
+            let graph = parse(yaml);
+            hashes.push(taudit_core::baselines::compute_pipeline_identity_material_hash(&graph));
+            fingerprints.push(structural_fingerprint(&graph));
+        }
+
+        let first_hash = &hashes[0];
+        for (i, h) in hashes.iter().enumerate().skip(1) {
+            assert_eq!(
+                first_hash, h,
+                "run 0 and run {i} produced different pipeline_identity_material_hash \
+                 — ADO parser HashMap iteration is non-deterministic"
+            );
+        }
+
+        let first_fp = &fingerprints[0];
+        for (i, fp) in fingerprints.iter().enumerate().skip(1) {
+            assert_eq!(
+                first_fp, fp,
+                "run 0 and run {i} produced different graph node-id / edge ordering \
+                 — ADO parser HashMap iteration is non-deterministic"
+            );
+        }
     }
 }
