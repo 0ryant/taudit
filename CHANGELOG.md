@@ -6,6 +6,27 @@ All notable changes to this project will be documented in this file.
 
 _(empty — next prerelease or stable cut accumulates here)_
 
+## v1.1.0-beta.2 — 2026-05-02 (prerelease)
+
+> **Prerelease.** Published to crates.io under semver pre-release identifier `1.1.0-beta.2`. Same opt-in semantics as `-beta.1`: `taudit = "=1.1.0-beta.2"` or `cargo install taudit --version 1.1.0-beta.2`. Stable consumers on v1.0.12 are unaffected. See [ADR 0004](docs/adr/0004-prereleases-publish-to-crates-io.md).
+
+### Detection delta (read first)
+
+**No detection changes in this release.** This is a pure schema-contract canonicalisation cut — every change is to schema-side metadata (URIs, version strings, JSON Schema dialect). Findings, fingerprints, baselines, and graph content are byte-identical to `v1.1.0-beta.1` on every fixture.
+
+### Changed (schema contract — no detection delta)
+
+- **Schema URI namespace canonicalised to `taudit.dev`** ([`schemas/`](schemas/), [`crates/taudit-report-json/src/lib.rs`](crates/taudit-report-json/src/lib.rs), [`crates/taudit-core/src/summary.rs`](crates/taudit-core/src/summary.rs)) — four schemas previously used `$id` under `github.com/0ryant/taudit` while four others used `taudit.dev`. A consumer indexing schemas by `$id` saw two vendor namespaces for the same product. Every schema `$id` and matching Rust `*_SCHEMA_URI` constant now points to `https://taudit.dev/schemas/...`. SARIF `TOOL_URI` and `RULES_BASE_URI` remain on github.com — those are documentation links, not schema `$id`s.
+- **JSON report `schema_version` format `"v1"` → `"1.0.0"`** ([`crates/taudit-report-json/src/lib.rs`](crates/taudit-report-json/src/lib.rs), [`contracts/schemas/taudit-report.schema.json`](contracts/schemas/taudit-report.schema.json), example fixtures) — the standalone graph schema was already on semver `"1.0.0"`; the report's prefixed `"v1"` couldn't express the additive 1.x.y / breaking 2.0.0 contract that ROADMAP promises. Future additive changes will bump the const to `1.1.0` (etc) by editing the const + a CHANGELOG entry. JSON sink output's `schema_version` field changes from `"v1"` to `"1.0.0"` accordingly — consumers that key on the literal `"v1"` need to update.
+- **JSON Schema dialect migrated draft-07 → 2020-12** ([`schemas/authority-graph.v1.json`](schemas/authority-graph.v1.json), [`schemas/baseline.v1.json`](schemas/baseline.v1.json), [`schemas/authority-propagation-summary.v1.json`](schemas/authority-propagation-summary.v1.json)) — three schemas were on draft-07 while the other five were on 2020-12. Validators that pin one dialect (older Python jsonschema, Go gojsonschema; vs modern ajv strict, Rust jsonschema crate) couldn't consume the contract uniformly. All eight schemas now speak draft 2020-12 (`$schema` URL + `definitions` → `$defs` + `#/definitions/X` → `#/$defs/X`). Pure dialect-only migration; the features used (type, const, required, additionalProperties, enum, properties, items, $ref, format, pattern, minimum, description, union types) are syntactically and semantically identical between the two dialects.
+
+### Migration notes
+
+- **`schema_version: "v1"` → `"1.0.0"`.** Consumers that filter or branch on the literal string `"v1"` need to update. `"1.0.0"` is the pre-existing format used by every other taudit schema; this cut closes the inconsistency.
+- **`$id` host change.** Schemas that resolve `$id` for caching / fetching (most validators just use it as an identifier, but some do fetch) now report `taudit.dev`. The URLs are still logical identifiers — they may not resolve over HTTP, as the schema description prose has always stated.
+- **Dialect change in three schemas.** Validators auto-detect dialect from `$schema`, so most consumers see no impact. If you cache compiled schemas keyed by dialect, invalidate that cache for `authority-graph.v1.json`, `baseline.v1.json`, `authority-propagation-summary.v1.json`.
+- **No CLI flag changes, no rule changes, no fingerprint changes, no baseline format changes.** A consumer who was on `v1.1.0-beta.1` and re-baselined for that release is on the same baseline contract for `-beta.2`.
+
 ## v1.1.0-beta.1 — 2026-05-01 (prerelease)
 
 > **Prerelease.** Published to crates.io under semver pre-release identifier `1.1.0-beta.1`. Cargo's resolver does not pick this up for `taudit = "1"` / `"1.0"` / `"1.1"` consumers or for `cargo install taudit` (no `--version`) — opt-in via `taudit = "=1.1.0-beta.1"` in `Cargo.toml` or `cargo install taudit --version 1.1.0-beta.1`. Stable consumers on v1.0.12 are unaffected. See [ADR 0004](docs/adr/0004-prereleases-publish-to-crates-io.md) and [`docs/release-strategy.md`](docs/release-strategy.md) §4.
