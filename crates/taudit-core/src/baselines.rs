@@ -509,10 +509,14 @@ pub fn compute_pipeline_identity_material_hash(graph: &AuthorityGraph) -> String
         .filter_map(|e| {
             let from = graph.node(e.from)?;
             let to = graph.node(e.to)?;
-            Some(format!(
-                "{}:{}->{}:{}:{:?}",
-                from.id, from.name, to.id, to.name, to.trust_zone
-            ))
+            // BUG-7: do NOT include NodeId in this canonical string. NodeId
+            // is a `usize` insertion-order index into `graph.nodes`; any
+            // benign parser change (e.g. capturing one extra Image node)
+            // shifts every subsequent id and silently invalidates every
+            // existing field baseline via `identity_material_matches`.
+            // Names + trust zones are sufficient to detect dependency-shape
+            // drift, which is what this hash is contracted to detect.
+            Some(format!("{}->{}:{:?}", from.name, to.name, to.trust_zone))
         })
         .collect();
     delegations.sort();
@@ -742,6 +746,72 @@ mod tests {
         assert_ne!(
             h1, h2,
             "template delegation target drift must change identity material"
+        );
+    }
+
+    #[test]
+    fn identity_material_hash_is_stable_across_nodeid_shifts() {
+        // regression: NodeId insertion order must not affect identity-material hash.
+        //
+        // BUG-7: `NodeId` is a `usize` index into `graph.nodes` assigned in
+        // strict insertion order by `add_node`. Previously the canonical
+        // string for each delegation edge embedded `from.id`/`to.id`, so any
+        // benign parser change that captured one extra unrelated node (e.g.
+        // an Image for a self-hosted runner that wasn't captured before)
+        // shifted every subsequent NodeId, silently changing the hash and
+        // disabling suppression on every field baseline.
+        //
+        // Graph A inserts `[secret, step, target]` and delegates step→target.
+        // Graph B inserts `[secret, extra_image, step, target]` — the extra
+        // image is benign (no edges) but bumps the NodeIds of `step` and
+        // `target`. The DelegatesTo chain is logically identical in both
+        // graphs, so the identity-material hash MUST be byte-equal.
+
+        // Graph A: [secret, step, target]
+        let mut g_a = AuthorityGraph::new(source("ci.yml"));
+        let _secret_a = g_a.add_node(NodeKind::Secret, "AWS_KEY", TrustZone::FirstParty);
+        let step_a = g_a.add_node(NodeKind::Step, "build", TrustZone::FirstParty);
+        let target_a = g_a.add_node(
+            NodeKind::Image,
+            "templates/release.yml",
+            TrustZone::FirstParty,
+        );
+        g_a.add_edge(step_a, target_a, EdgeKind::DelegatesTo);
+
+        // Graph B: [secret, extra_image, step, target] — same logical
+        // delegation chain, but an unrelated Image node is inserted before
+        // `step`, shifting the NodeIds of `step` and `target` by 1.
+        let mut g_b = AuthorityGraph::new(source("ci.yml"));
+        let _secret_b = g_b.add_node(NodeKind::Secret, "AWS_KEY", TrustZone::FirstParty);
+        let _extra_b = g_b.add_node(
+            NodeKind::Image,
+            "self-hosted-runner-image",
+            TrustZone::FirstParty,
+        );
+        let step_b = g_b.add_node(NodeKind::Step, "build", TrustZone::FirstParty);
+        let target_b = g_b.add_node(
+            NodeKind::Image,
+            "templates/release.yml",
+            TrustZone::FirstParty,
+        );
+        g_b.add_edge(step_b, target_b, EdgeKind::DelegatesTo);
+
+        // Sanity check the test setup: the NodeIds of the delegation
+        // endpoints really do differ between A and B. If this ever stops
+        // being true the test no longer exercises the original bug.
+        assert_ne!(
+            (step_a, target_a),
+            (step_b, target_b),
+            "test precondition: extra node must shift NodeIds of delegation endpoints"
+        );
+
+        let h_a = compute_pipeline_identity_material_hash(&g_a);
+        let h_b = compute_pipeline_identity_material_hash(&g_b);
+        assert_eq!(
+            h_a, h_b,
+            "identity-material hash must be insensitive to NodeId insertion order; \
+             a benign parser change that captures one extra unrelated node MUST NOT \
+             invalidate existing field baselines"
         );
     }
 
