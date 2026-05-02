@@ -62,6 +62,8 @@ use serde::{Deserialize, Serialize};
 
 use crate::finding::{downgrade_severity, Finding};
 
+const MAX_CONFIG_BYTES: u64 = 2 * 1024 * 1024;
+
 /// Mode controlling how the suppression applicator modifies a matched
 /// finding. `Downgrade` (default) drops severity one tier; `Suppress`
 /// flips a boolean and leaves severity untouched.
@@ -139,6 +141,14 @@ pub enum SuppressionError {
         #[source]
         source: serde_yaml::Error,
     },
+    #[error("refusing to read suppression file symlink {path}")]
+    Symlink { path: String },
+    #[error("suppression file {path} exceeds {max_bytes} byte limit ({actual_bytes} bytes)")]
+    TooLarge {
+        path: String,
+        max_bytes: u64,
+        actual_bytes: u64,
+    },
     #[error(
         "suppression for fingerprint {fingerprint} (rule {rule_id}) waives a critical finding but has no expires_at — critical waivers must expire"
     )]
@@ -176,13 +186,10 @@ impl SuppressionConfig {
     /// check (useful for the `suppressions list/review` subcommands
     /// which inspect waivers without a scan in flight).
     pub fn load_from_path(path: &std::path::Path) -> Result<Self, SuppressionError> {
-        if !path.exists() {
+        let content = read_config_file(path)?;
+        if content.is_empty() && !path.exists() {
             return Ok(Self::default());
         }
-        let content = std::fs::read_to_string(path).map_err(|e| SuppressionError::Io {
-            path: path.display().to_string(),
-            source: e,
-        })?;
         let cfg: SuppressionConfig =
             serde_yaml::from_str(&content).map_err(|e| SuppressionError::Parse {
                 path: path.display().to_string(),
@@ -348,6 +355,43 @@ impl SuppressionConfig {
         }
         SuppressionStatus::Active
     }
+}
+
+fn read_config_file(path: &std::path::Path) -> Result<String, SuppressionError> {
+    let metadata = match std::fs::symlink_metadata(path) {
+        Ok(m) => m,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(String::new()),
+        Err(e) => {
+            return Err(SuppressionError::Io {
+                path: path.display().to_string(),
+                source: e,
+            })
+        }
+    };
+    if metadata.file_type().is_symlink() {
+        return Err(SuppressionError::Symlink {
+            path: path.display().to_string(),
+        });
+    }
+    if metadata.len() > MAX_CONFIG_BYTES {
+        return Err(SuppressionError::TooLarge {
+            path: path.display().to_string(),
+            max_bytes: MAX_CONFIG_BYTES,
+            actual_bytes: metadata.len(),
+        });
+    }
+    let content = std::fs::read_to_string(path).map_err(|e| SuppressionError::Io {
+        path: path.display().to_string(),
+        source: e,
+    })?;
+    if content.len() as u64 > MAX_CONFIG_BYTES {
+        return Err(SuppressionError::TooLarge {
+            path: path.display().to_string(),
+            max_bytes: MAX_CONFIG_BYTES,
+            actual_bytes: content.len() as u64,
+        });
+    }
+    Ok(content)
 }
 
 impl SuppressionStatus {

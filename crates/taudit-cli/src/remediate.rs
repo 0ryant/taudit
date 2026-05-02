@@ -138,6 +138,21 @@ struct VerifyRun {
     stderr: String,
 }
 
+struct RollbackWrite {
+    target: PathBuf,
+    original: String,
+}
+
+struct IndexLock {
+    path: PathBuf,
+}
+
+impl Drop for IndexLock {
+    fn drop(&mut self) {
+        let _ = fs::remove_file(&self.path);
+    }
+}
+
 pub fn cmd_suggest(opts: SuggestOpts) -> Result<()> {
     let files = collect_pipeline_files(&opts.paths)?;
     let suggestions = build_suggestions(&files)?;
@@ -426,6 +441,7 @@ pub fn cmd_rollback(opts: RollbackOpts) -> Result<()> {
     )
     .with_context(|| format!("failed to parse {}", manifest_path.display()))?;
 
+    let mut writes = Vec::with_capacity(manifest.files.len());
     for record in &manifest.files {
         let target = PathBuf::from(&record.path);
         let original_path = backup_root.join(&record.original_snapshot);
@@ -449,7 +465,11 @@ pub fn cmd_rollback(opts: RollbackOpts) -> Result<()> {
             continue;
         }
 
-        write_text(&target, &original)?;
+        writes.push(RollbackWrite { target, original });
+    }
+
+    for write in writes {
+        write_text(&write.target, &write.original)?;
     }
 
     try_write_stdout(
@@ -769,6 +789,13 @@ fn rand_suffix() -> String {
     format!("{:x}", nanos & 0xfffff)
 }
 
+fn unique_nanos() -> u128 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_nanos())
+        .unwrap_or(0)
+}
+
 fn save_manifest_and_index(
     backup_root: &Path,
     backup_id: &str,
@@ -782,6 +809,7 @@ fn save_manifest_and_index(
     write_text(&manifest_path, &manifest_json)?;
 
     let index_path = backup_root.join("backups").join("index.json");
+    let _lock = lock_index(&index_path)?;
     let mut index = load_backup_index(&index_path)?;
     index.entries.push(BackupIndexEntry {
         backup_id: backup_id.to_string(),
@@ -816,11 +844,65 @@ fn write_text(path: &Path, content: &str) -> Result<()> {
         fs::create_dir_all(parent)
             .with_context(|| format!("failed creating {}", parent.display()))?;
     }
-    let mut file =
-        fs::File::create(path).with_context(|| format!("failed creating {}", path.display()))?;
-    file.write_all(content.as_bytes())
+    atomic_write(path, content.as_bytes())
         .with_context(|| format!("failed writing {}", path.display()))?;
     Ok(())
+}
+
+fn atomic_write(path: &Path, bytes: &[u8]) -> Result<()> {
+    let parent = path.parent().unwrap_or_else(|| Path::new("."));
+    let file_name = path.file_name().and_then(|s| s.to_str()).unwrap_or("file");
+    let tmp_path = parent.join(format!(
+        ".{file_name}.{}.{}.tmp",
+        std::process::id(),
+        unique_nanos()
+    ));
+
+    let mut file = fs::OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(&tmp_path)
+        .with_context(|| format!("failed creating temporary file {}", tmp_path.display()))?;
+    if let Err(err) = file.write_all(bytes).and_then(|_| file.sync_all()) {
+        let _ = fs::remove_file(&tmp_path);
+        return Err(err)
+            .with_context(|| format!("failed writing temporary file {}", tmp_path.display()));
+    }
+    drop(file);
+
+    if let Err(err) = fs::rename(&tmp_path, path) {
+        let _ = fs::remove_file(&tmp_path);
+        return Err(err).with_context(|| {
+            format!(
+                "failed atomically replacing {} with {}",
+                path.display(),
+                tmp_path.display()
+            )
+        });
+    }
+    if let Ok(dir) = fs::File::open(parent) {
+        let _ = dir.sync_all();
+    }
+    Ok(())
+}
+
+fn lock_index(index_path: &Path) -> Result<IndexLock> {
+    let lock_path = index_path.with_file_name("index.json.lock");
+    if let Some(parent) = lock_path.parent() {
+        fs::create_dir_all(parent)
+            .with_context(|| format!("failed creating {}", parent.display()))?;
+    }
+    fs::OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(&lock_path)
+        .with_context(|| {
+            format!(
+                "failed to acquire backup index lock {}",
+                lock_path.display()
+            )
+        })?;
+    Ok(IndexLock { path: lock_path })
 }
 
 fn sha256_hex(s: &str) -> String {

@@ -11,6 +11,9 @@ use std::fs;
 use std::io;
 use std::path::{Path, PathBuf};
 
+const MAX_INPUT_BYTES: u64 = 2 * 1024 * 1024;
+const MAX_CUSTOM_RULE_VEC_ITEMS: usize = 1024;
+
 /// Human-readable spelling of the `CustomRule.id` charset+length contract.
 /// Reused in every validation error so operators always see the same regex.
 const RULE_ID_REGEX: &str = "^[A-Za-z_][A-Za-z0-9_-]{0,63}$";
@@ -59,6 +62,36 @@ where
     let raw = String::deserialize(deserializer)?;
     validate_rule_id(&raw).map_err(de::Error::custom)?;
     Ok(raw)
+}
+
+fn deserialize_capped_vec<'de, D, T>(deserializer: D) -> Result<Vec<T>, D::Error>
+where
+    D: Deserializer<'de>,
+    T: Deserialize<'de>,
+{
+    let values = Vec::<T>::deserialize(deserializer)?;
+    if values.len() > MAX_CUSTOM_RULE_VEC_ITEMS {
+        return Err(de::Error::custom(format!(
+            "custom-rule list exceeds {MAX_CUSTOM_RULE_VEC_ITEMS} entries"
+        )));
+    }
+    Ok(values)
+}
+
+fn deserialize_optional_capped_vec<'de, D, T>(deserializer: D) -> Result<Option<Vec<T>>, D::Error>
+where
+    D: Deserializer<'de>,
+    T: Deserialize<'de>,
+{
+    let values = Option::<Vec<T>>::deserialize(deserializer)?;
+    if let Some(ref v) = values {
+        if v.len() > MAX_CUSTOM_RULE_VEC_ITEMS {
+            return Err(de::Error::custom(format!(
+                "custom-rule list exceeds {MAX_CUSTOM_RULE_VEC_ITEMS} entries"
+            )));
+        }
+    }
+    Ok(values)
 }
 
 /// A user-defined rule loaded from YAML. Fires when source, sink, and path
@@ -118,11 +151,39 @@ pub struct MatchSpec {
 /// A scalar-or-list helper. Lets YAML write `node_type: secret` (single value)
 /// or `node_type: [secret, identity]` (any-of). Single form preserved for
 /// backward compatibility with v0.4.x rule files.
-#[derive(Debug, Clone, Deserialize)]
-#[serde(untagged)]
+#[derive(Debug, Clone)]
 pub enum OneOrMany<T> {
     One(T),
     Many(Vec<T>),
+}
+
+impl<'de, T> Deserialize<'de> for OneOrMany<T>
+where
+    T: Deserialize<'de>,
+{
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        #[derive(Deserialize)]
+        #[serde(untagged)]
+        enum RawOneOrMany<T> {
+            One(T),
+            Many(Vec<T>),
+        }
+
+        match RawOneOrMany::deserialize(deserializer)? {
+            RawOneOrMany::One(v) => Ok(OneOrMany::One(v)),
+            RawOneOrMany::Many(v) => {
+                if v.len() > MAX_CUSTOM_RULE_VEC_ITEMS {
+                    return Err(de::Error::custom(format!(
+                        "custom-rule list exceeds {MAX_CUSTOM_RULE_VEC_ITEMS} entries"
+                    )));
+                }
+                Ok(OneOrMany::Many(v))
+            }
+        }
+    }
 }
 
 impl<T: PartialEq> OneOrMany<T> {
@@ -156,7 +217,11 @@ pub struct MetadataOp {
     /// Substring match on the string-valued metadata field.
     #[serde(default)]
     pub contains: Option<String>,
-    #[serde(default, rename = "in")]
+    #[serde(
+        default,
+        rename = "in",
+        deserialize_with = "deserialize_optional_capped_vec"
+    )]
     pub in_: Option<Vec<String>>,
 }
 
@@ -293,7 +358,7 @@ pub struct NodeMatcher {
 
 #[derive(Debug, Clone, Default, Deserialize)]
 pub struct PathMatcher {
-    #[serde(default)]
+    #[serde(default, deserialize_with = "deserialize_capped_vec")]
     pub crosses_to: Vec<TrustZone>,
 }
 
@@ -301,6 +366,11 @@ pub struct PathMatcher {
 pub enum CustomRuleError {
     FileRead(PathBuf, io::Error),
     YamlParse(PathBuf, serde_yaml::Error),
+    FileTooLarge {
+        path: PathBuf,
+        max_bytes: u64,
+        actual_bytes: u64,
+    },
     /// A symlink in the rules directory resolved to a path outside the
     /// declared `--invariants-dir` tree. Refused unless the caller opts in
     /// via `allow_external_symlinks: true` (CLI flag
@@ -328,6 +398,17 @@ impl fmt::Display for CustomRuleError {
                     path.display()
                 )
             }
+            CustomRuleError::FileTooLarge {
+                path,
+                max_bytes,
+                actual_bytes,
+            } => {
+                write!(
+                    f,
+                    "custom rule file {} exceeds {max_bytes} byte limit ({actual_bytes} bytes)",
+                    path.display()
+                )
+            }
             CustomRuleError::SymlinkOutsideDir { link, target } => {
                 write!(
                     f,
@@ -345,6 +426,7 @@ impl std::error::Error for CustomRuleError {
         match self {
             CustomRuleError::FileRead(_, err) => Some(err),
             CustomRuleError::YamlParse(_, err) => Some(err),
+            CustomRuleError::FileTooLarge { .. } => None,
             CustomRuleError::SymlinkOutsideDir { .. } => None,
         }
     }
@@ -514,12 +596,12 @@ pub fn load_rules_dir_with_opts(
 
     let mut rules = Vec::new();
     for (path, _canonical) in files {
-        match fs::read_to_string(&path) {
+        match read_to_string_capped(&path) {
             Ok(content) => match parse_rules_multi_doc_with_source(&content, Some(&path)) {
                 Ok(mut parsed) => rules.append(&mut parsed),
                 Err(err) => errors.push(CustomRuleError::YamlParse(path, err)),
             },
-            Err(err) => errors.push(CustomRuleError::FileRead(path, err)),
+            Err(err) => errors.push(err),
         }
     }
 
@@ -528,6 +610,27 @@ pub fn load_rules_dir_with_opts(
     } else {
         Err(errors)
     }
+}
+
+fn read_to_string_capped(path: &Path) -> Result<String, CustomRuleError> {
+    let metadata = fs::metadata(path).map_err(|err| CustomRuleError::FileRead(path.into(), err))?;
+    if metadata.len() > MAX_INPUT_BYTES {
+        return Err(CustomRuleError::FileTooLarge {
+            path: path.into(),
+            max_bytes: MAX_INPUT_BYTES,
+            actual_bytes: metadata.len(),
+        });
+    }
+    let content =
+        fs::read_to_string(path).map_err(|err| CustomRuleError::FileRead(path.into(), err))?;
+    if content.len() as u64 > MAX_INPUT_BYTES {
+        return Err(CustomRuleError::FileTooLarge {
+            path: path.into(),
+            max_bytes: MAX_INPUT_BYTES,
+            actual_bytes: content.len() as u64,
+        });
+    }
+    Ok(content)
 }
 
 /// Parse a YAML string containing one or more `CustomRule` documents (separated

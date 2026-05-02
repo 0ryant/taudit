@@ -2,6 +2,8 @@ use serde::Deserialize;
 
 use crate::finding::{Finding, FindingCategory};
 
+const MAX_CONFIG_BYTES: u64 = 2 * 1024 * 1024;
+
 /// A single ignore rule. Matches findings by category and optionally by
 /// pipeline source file path.
 #[derive(Debug, Clone, Deserialize)]
@@ -24,6 +26,30 @@ pub struct IgnoreConfig {
     pub ignore: Vec<IgnoreRule>,
 }
 
+#[derive(Debug, thiserror::Error)]
+pub enum IgnoreError {
+    #[error("failed to read ignore file {path}: {source}")]
+    Io {
+        path: String,
+        #[source]
+        source: std::io::Error,
+    },
+    #[error("failed to parse ignore file {path}: {source}")]
+    Parse {
+        path: String,
+        #[source]
+        source: serde_yaml::Error,
+    },
+    #[error("refusing to read ignore file symlink {path}")]
+    Symlink { path: String },
+    #[error("ignore file {path} exceeds {max_bytes} byte limit ({actual_bytes} bytes)")]
+    TooLarge {
+        path: String,
+        max_bytes: u64,
+        actual_bytes: u64,
+    },
+}
+
 /// Result of applying ignore rules to a set of findings.
 pub struct IgnoreResult {
     /// Findings that passed through (not ignored).
@@ -33,6 +59,17 @@ pub struct IgnoreResult {
 }
 
 impl IgnoreConfig {
+    pub fn load_from_path(path: &std::path::Path) -> Result<Self, IgnoreError> {
+        let content = read_config_file(path)?;
+        if content.is_empty() && !path.exists() {
+            return Ok(Self::default());
+        }
+        serde_yaml::from_str(&content).map_err(|source| IgnoreError::Parse {
+            path: path.display().to_string(),
+            source,
+        })
+    }
+
     /// Apply ignore rules to a set of findings, given the source file path.
     /// Returns findings that were NOT matched by any ignore rule, plus a
     /// count of how many were suppressed.
@@ -67,6 +104,43 @@ impl IgnoreConfig {
             .iter()
             .any(|rule| rule.matches(finding, source_file))
     }
+}
+
+fn read_config_file(path: &std::path::Path) -> Result<String, IgnoreError> {
+    let metadata = match std::fs::symlink_metadata(path) {
+        Ok(m) => m,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(String::new()),
+        Err(e) => {
+            return Err(IgnoreError::Io {
+                path: path.display().to_string(),
+                source: e,
+            })
+        }
+    };
+    if metadata.file_type().is_symlink() {
+        return Err(IgnoreError::Symlink {
+            path: path.display().to_string(),
+        });
+    }
+    if metadata.len() > MAX_CONFIG_BYTES {
+        return Err(IgnoreError::TooLarge {
+            path: path.display().to_string(),
+            max_bytes: MAX_CONFIG_BYTES,
+            actual_bytes: metadata.len(),
+        });
+    }
+    let content = std::fs::read_to_string(path).map_err(|source| IgnoreError::Io {
+        path: path.display().to_string(),
+        source,
+    })?;
+    if content.len() as u64 > MAX_CONFIG_BYTES {
+        return Err(IgnoreError::TooLarge {
+            path: path.display().to_string(),
+            max_bytes: MAX_CONFIG_BYTES,
+            actual_bytes: content.len() as u64,
+        });
+    }
+    Ok(content)
 }
 
 impl IgnoreRule {
