@@ -173,19 +173,21 @@ impl PipelineParser for AdoParser {
         process_pool(&pipeline.pool, &pipeline.workspace, &mut graph);
 
         // Pipeline-level variable groups and named secrets.
-        // plain_vars tracks non-secret named variables so $(VAR) refs in scripts
-        // don't generate false-positive Secret nodes for plain config values.
+        // pipeline_plain_vars tracks non-secret named variables so $(VAR) refs
+        // in scripts don't generate false-positive Secret nodes for plain
+        // config values. Stage/job scopes clone and extend this set so plain
+        // variables do not leak sideways into unrelated stages or jobs.
         // pipeline_has_variable_groups is set when any pipeline-scope group is encountered so
         // extract_dollar_paren_secrets can avoid creating per-variable Secret
         // nodes from opaque groups (BUG-3).
-        let mut plain_vars: HashSet<String> = HashSet::new();
+        let mut pipeline_plain_vars: HashSet<String> = HashSet::new();
         let mut pipeline_has_variable_groups = false;
         let pipeline_secret_ids = process_variables(
             &pipeline.variables,
             &mut graph,
             &mut secret_ids,
             "pipeline",
-            &mut plain_vars,
+            &mut pipeline_plain_vars,
             &mut pipeline_has_variable_groups,
         );
 
@@ -200,13 +202,14 @@ impl PipelineParser for AdoParser {
                 }
 
                 let stage_name = stage.stage.as_deref().unwrap_or("stage").to_string();
+                let mut stage_plain_vars = pipeline_plain_vars.clone();
                 let mut stage_has_variable_groups = false;
                 let stage_secret_ids = process_variables(
                     &stage.variables,
                     &mut graph,
                     &mut secret_ids,
                     &stage_name,
-                    &mut plain_vars,
+                    &mut stage_plain_vars,
                     &mut stage_has_variable_groups,
                 );
                 let stage_scope_has_variable_groups =
@@ -220,13 +223,14 @@ impl PipelineParser for AdoParser {
 
                 for job in &stage.jobs {
                     let job_name = job.effective_name();
+                    let mut job_plain_vars = stage_plain_vars.clone();
                     let mut job_has_variable_groups = false;
                     let job_secret_ids = process_variables(
                         &job.variables,
                         &mut graph,
                         &mut secret_ids,
                         &job_name,
-                        &mut plain_vars,
+                        &mut job_plain_vars,
                         &mut job_has_variable_groups,
                     );
                     let step_scope_has_variable_groups =
@@ -267,7 +271,7 @@ impl PipelineParser for AdoParser {
                         &job_name,
                         token_id,
                         &all_secrets,
-                        &plain_vars,
+                        &job_plain_vars,
                         step_scope_has_variable_groups,
                         outer_condition.as_deref(),
                         job_depends_on.as_deref(),
@@ -293,13 +297,14 @@ impl PipelineParser for AdoParser {
         } else if let Some(ref jobs) = pipeline.jobs {
             for job in jobs {
                 let job_name = job.effective_name();
+                let mut job_plain_vars = pipeline_plain_vars.clone();
                 let mut job_has_variable_groups = false;
                 let job_secret_ids = process_variables(
                     &job.variables,
                     &mut graph,
                     &mut secret_ids,
                     &job_name,
-                    &mut plain_vars,
+                    &mut job_plain_vars,
                     &mut job_has_variable_groups,
                 );
                 let step_scope_has_variable_groups =
@@ -328,7 +333,7 @@ impl PipelineParser for AdoParser {
                     &job_name,
                     token_id,
                     &all_secrets,
-                    &plain_vars,
+                    &job_plain_vars,
                     step_scope_has_variable_groups,
                     job_condition,
                     job_depends_on.as_deref(),
@@ -350,7 +355,7 @@ impl PipelineParser for AdoParser {
                 "pipeline",
                 token_id,
                 &pipeline_secret_ids,
-                &plain_vars,
+                &pipeline_plain_vars,
                 pipeline_has_variable_groups,
                 None,
                 None,
@@ -3544,6 +3549,33 @@ stages:
                 .nodes_of_kind(NodeKind::Secret)
                 .any(|n| n.name == "STAGE_TWO_SECRET"),
             "variable group in first stage must not suppress secret refs in unrelated stages"
+        );
+    }
+
+    #[test]
+    fn plain_variables_are_scoped_to_their_stage_or_job() {
+        let yaml = r#"
+stages:
+  - stage: PlainStage
+    variables:
+      - name: SHARED_NAME
+        value: plain
+    jobs:
+      - job: A
+        steps:
+          - script: echo $(SHARED_NAME)
+  - stage: SecretRefStage
+    jobs:
+      - job: B
+        steps:
+          - script: echo $(SHARED_NAME)
+"#;
+        let graph = parse(yaml);
+        assert!(
+            graph
+                .nodes_of_kind(NodeKind::Secret)
+                .any(|n| n.name == "SHARED_NAME"),
+            "plain variable in one stage must not suppress same-name secret refs in another stage"
         );
     }
 

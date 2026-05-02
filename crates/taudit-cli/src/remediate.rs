@@ -6,9 +6,13 @@ use crate::stdio_epipe::try_write_stdout;
 use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
+use std::collections::HashSet;
+use std::env;
 use std::fs;
-use std::io::Write;
+use std::io::{Read, Write};
 use std::path::{Component, Path, PathBuf};
+
+const MAX_INPUT_BYTES: u64 = 2 * 1024 * 1024;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum OutputFormat {
@@ -435,19 +439,32 @@ pub fn cmd_rollback(opts: RollbackOpts) -> Result<()> {
         std::process::exit(2);
     }
 
-    let manifest: BackupManifest = serde_json::from_str(
-        &fs::read_to_string(&manifest_path)
-            .with_context(|| format!("failed to read {}", manifest_path.display()))?,
-    )
-    .with_context(|| format!("failed to parse {}", manifest_path.display()))?;
+    let manifest_text = read_text_file_capped(&manifest_path)
+        .with_context(|| format!("failed to read {}", manifest_path.display()))?;
+    let manifest: BackupManifest = serde_json::from_str(&manifest_text)
+        .with_context(|| format!("failed to parse {}", manifest_path.display()))?;
+
+    let workspace_root = env::current_dir().context("failed to resolve current directory")?;
+    let workspace_root = fs::canonicalize(&workspace_root)
+        .with_context(|| format!("failed to resolve {}", workspace_root.display()))?;
+    let operation_dir = manifest_path
+        .parent()
+        .context("backup manifest path has no parent directory")?;
+    let operation_dir = fs::canonicalize(operation_dir)
+        .with_context(|| format!("failed to resolve {}", operation_dir.display()))?;
 
     let mut writes = Vec::with_capacity(manifest.files.len());
     for record in &manifest.files {
-        let target = PathBuf::from(&record.path);
-        let original_path = backup_root.join(&record.original_snapshot);
-        let original = fs::read_to_string(&original_path)
+        let target = resolve_manifest_target(&record.path, &workspace_root)?;
+        let original_path = resolve_manifest_snapshot(
+            &backup_root,
+            &operation_dir,
+            "original",
+            &record.original_snapshot,
+        )?;
+        let original = read_text_file_capped(&original_path)
             .with_context(|| format!("failed to read {}", original_path.display()))?;
-        let current = fs::read_to_string(&target)
+        let current = read_text_file_capped(&target)
             .with_context(|| format!("failed to read current file {}", target.display()))?;
 
         let current_hash = sha256_hex(&current);
@@ -516,9 +533,14 @@ pub fn cmd_list_backups(opts: ListBackupsOpts) -> Result<()> {
 fn collect_pipeline_files(paths: &[PathBuf]) -> Result<Vec<PathBuf>> {
     let mut out = Vec::new();
     for p in paths {
-        if p.is_dir() {
+        let meta = fs::symlink_metadata(p)
+            .with_context(|| format!("failed to read metadata {}", p.display()))?;
+        if meta.file_type().is_symlink() {
+            anyhow::bail!("refusing to follow symlink {}", p.display());
+        }
+        if meta.is_dir() {
             collect_yaml_recursively(p, &mut out)?;
-        } else if p.is_file() {
+        } else if meta.is_file() {
             out.push(p.clone());
         } else {
             return Err(anyhow::anyhow!(
@@ -533,14 +555,37 @@ fn collect_pipeline_files(paths: &[PathBuf]) -> Result<Vec<PathBuf>> {
 }
 
 fn collect_yaml_recursively(dir: &Path, out: &mut Vec<PathBuf>) -> Result<()> {
-    for entry in
-        fs::read_dir(dir).with_context(|| format!("failed to read directory {}", dir.display()))?
-    {
-        let entry =
-            entry.with_context(|| format!("failed to read entry under {}", dir.display()))?;
+    let mut visited_dirs = HashSet::new();
+    if let Ok(root) = fs::canonicalize(dir) {
+        visited_dirs.insert(root);
+    }
+    collect_yaml_recursively_inner(dir, out, &mut visited_dirs)
+}
+
+fn collect_yaml_recursively_inner(
+    dir: &Path,
+    out: &mut Vec<PathBuf>,
+    visited_dirs: &mut HashSet<PathBuf>,
+) -> Result<()> {
+    let mut entries = fs::read_dir(dir)
+        .with_context(|| format!("failed to read directory {}", dir.display()))?
+        .collect::<std::result::Result<Vec<_>, _>>()
+        .with_context(|| format!("failed to read entry under {}", dir.display()))?;
+    entries.sort_by_key(|e| e.path());
+
+    for entry in entries {
         let path = entry.path();
-        if path.is_dir() {
-            collect_yaml_recursively(&path, out)?;
+        let meta = fs::symlink_metadata(&path)
+            .with_context(|| format!("failed to read metadata {}", path.display()))?;
+        if meta.file_type().is_symlink() {
+            continue;
+        }
+        if meta.is_dir() {
+            let canonical = fs::canonicalize(&path)
+                .with_context(|| format!("failed to resolve directory {}", path.display()))?;
+            if visited_dirs.insert(canonical) {
+                collect_yaml_recursively_inner(&path, out, visited_dirs)?;
+            }
         } else if path
             .extension()
             .and_then(|e| e.to_str())
@@ -556,7 +601,7 @@ fn collect_yaml_recursively(dir: &Path, out: &mut Vec<PathBuf>) -> Result<()> {
 fn build_suggestions(files: &[PathBuf]) -> Result<Vec<FileSuggestion>> {
     let mut out = Vec::new();
     for path in files {
-        let before = fs::read_to_string(path)
+        let before = read_text_file_capped(path)
             .with_context(|| format!("failed to read {}", path.display()))?;
         let suggestions = detect_suggestions(path, &before)?;
         if !suggestions.is_empty() {
@@ -572,7 +617,7 @@ fn build_suggestions(files: &[PathBuf]) -> Result<Vec<FileSuggestion>> {
 fn build_plan(files: &[PathBuf]) -> Result<Vec<PlannedEdit>> {
     let mut out = Vec::new();
     for path in files {
-        let before = fs::read_to_string(path)
+        let before = read_text_file_capped(path)
             .with_context(|| format!("failed to read {}", path.display()))?;
         let suggestions = detect_suggestions(path, &before)?;
         if suggestions.is_empty() {
@@ -832,7 +877,7 @@ fn load_backup_index(index_path: &Path) -> Result<BackupIndex> {
         });
     }
 
-    let txt = fs::read_to_string(index_path)
+    let txt = read_text_file_capped(index_path)
         .with_context(|| format!("failed reading {}", index_path.display()))?;
     let index: BackupIndex = serde_json::from_str(&txt)
         .with_context(|| format!("failed parsing {}", index_path.display()))?;
@@ -847,6 +892,38 @@ fn write_text(path: &Path, content: &str) -> Result<()> {
     atomic_write(path, content.as_bytes())
         .with_context(|| format!("failed writing {}", path.display()))?;
     Ok(())
+}
+
+fn read_text_file_capped(path: &Path) -> Result<String> {
+    let metadata = fs::symlink_metadata(path)
+        .with_context(|| format!("failed to read metadata for {}", path.display()))?;
+    if metadata.file_type().is_symlink() {
+        anyhow::bail!("refusing to read symlink {}", path.display());
+    }
+    if metadata.len() > MAX_INPUT_BYTES {
+        anyhow::bail!(
+            "input file {} exceeds {} byte limit ({} bytes)",
+            path.display(),
+            MAX_INPUT_BYTES,
+            metadata.len()
+        );
+    }
+
+    let file =
+        fs::File::open(path).with_context(|| format!("failed to open {}", path.display()))?;
+    let mut content = String::new();
+    file.take(MAX_INPUT_BYTES + 1)
+        .read_to_string(&mut content)
+        .with_context(|| format!("failed to read {}", path.display()))?;
+    if content.len() as u64 > MAX_INPUT_BYTES {
+        anyhow::bail!(
+            "input file {} exceeds {} byte limit ({} bytes)",
+            path.display(),
+            MAX_INPUT_BYTES,
+            content.len()
+        );
+    }
+    Ok(content)
 }
 
 fn atomic_write(path: &Path, bytes: &[u8]) -> Result<()> {
@@ -882,6 +959,79 @@ fn atomic_write(path: &Path, bytes: &[u8]) -> Result<()> {
     }
     if let Ok(dir) = fs::File::open(parent) {
         let _ = dir.sync_all();
+    }
+    Ok(())
+}
+
+fn resolve_manifest_target(record_path: &str, workspace_root: &Path) -> Result<PathBuf> {
+    let raw = Path::new(record_path);
+    ensure_no_parent_components(raw, "manifest target path")?;
+    let target = if raw.is_absolute() {
+        raw.to_path_buf()
+    } else {
+        workspace_root.join(raw)
+    };
+    let meta = fs::symlink_metadata(&target)
+        .with_context(|| format!("failed to read metadata {}", target.display()))?;
+    if meta.file_type().is_symlink() {
+        anyhow::bail!("refusing to rollback through symlink {}", target.display());
+    }
+    if !meta.is_file() {
+        anyhow::bail!("rollback target is not a file: {}", target.display());
+    }
+    let canonical = fs::canonicalize(&target)
+        .with_context(|| format!("failed to resolve rollback target {}", target.display()))?;
+    if !canonical.starts_with(workspace_root) {
+        anyhow::bail!(
+            "rollback target {} escapes workspace {}",
+            canonical.display(),
+            workspace_root.display()
+        );
+    }
+    Ok(target)
+}
+
+fn resolve_manifest_snapshot(
+    backup_root: &Path,
+    operation_dir: &Path,
+    expected_subdir: &str,
+    manifest_path: &str,
+) -> Result<PathBuf> {
+    let rel = Path::new(manifest_path);
+    ensure_safe_relative_manifest_path(rel, "manifest snapshot path")?;
+    let path = backup_root.join(rel);
+    let canonical =
+        fs::canonicalize(&path).with_context(|| format!("failed to resolve {}", path.display()))?;
+    let expected_root = operation_dir.join(expected_subdir);
+    let expected_root = fs::canonicalize(&expected_root)
+        .with_context(|| format!("failed to resolve {}", expected_root.display()))?;
+    if !canonical.starts_with(&expected_root) {
+        anyhow::bail!(
+            "manifest snapshot {} escapes expected backup directory {}",
+            canonical.display(),
+            expected_root.display()
+        );
+    }
+    Ok(path)
+}
+
+fn ensure_safe_relative_manifest_path(path: &Path, label: &str) -> Result<()> {
+    if path.is_absolute() {
+        anyhow::bail!("{label} must be relative: {}", path.display());
+    }
+    ensure_no_parent_components(path, label)?;
+    if path
+        .components()
+        .any(|c| matches!(c, Component::Prefix(_) | Component::RootDir))
+    {
+        anyhow::bail!("{label} contains a root component: {}", path.display());
+    }
+    Ok(())
+}
+
+fn ensure_no_parent_components(path: &Path, label: &str) -> Result<()> {
+    if path.components().any(|c| matches!(c, Component::ParentDir)) {
+        anyhow::bail!("{label} contains '..': {}", path.display());
     }
     Ok(())
 }
@@ -964,6 +1114,19 @@ fn is_valid_backup_id(id: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn unique_tmp_dir(label: &str) -> PathBuf {
+        let nanos = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .expect("clock")
+            .as_nanos();
+        let dir = std::env::temp_dir().join(format!(
+            "taudit-remediate-unit-{}-{nanos}-{label}",
+            std::process::id()
+        ));
+        std::fs::create_dir_all(&dir).expect("create tmp dir");
+        dir
+    }
 
     #[test]
     fn insert_permissions_is_deterministic() {
@@ -1058,6 +1221,91 @@ mod tests {
     #[test]
     fn hash_mismatch_detection_works() {
         assert_ne!(sha256_hex("one"), sha256_hex("two"));
+    }
+
+    #[test]
+    fn capped_read_rejects_oversized_remediation_input() {
+        let dir = unique_tmp_dir("oversized");
+        let path = dir.join("big.yml");
+        std::fs::write(&path, vec![b'a'; (MAX_INPUT_BYTES + 1) as usize]).expect("write big file");
+
+        let err = read_text_file_capped(&path).expect_err("oversized file rejected");
+        assert!(
+            err.to_string().contains("exceeds"),
+            "unexpected error: {err:#}"
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn collect_pipeline_files_refuses_explicit_symlink() {
+        let dir = unique_tmp_dir("explicit-symlink");
+        let real = dir.join("real.yml");
+        let link = dir.join("link.yml");
+        std::fs::write(&real, "name: ci\n").expect("write real");
+        std::os::unix::fs::symlink(&real, &link).expect("create symlink");
+
+        let err = collect_pipeline_files(&[link]).expect_err("explicit symlink refused");
+        assert!(
+            err.to_string().contains("symlink"),
+            "unexpected error: {err:#}"
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn collect_pipeline_files_skips_discovered_symlinks() {
+        let dir = unique_tmp_dir("discovered-symlink");
+        let real = dir.join("real.yml");
+        let outside = unique_tmp_dir("outside").join("outside.yml");
+        let link = dir.join("link.yml");
+        std::fs::write(&real, "name: ci\n").expect("write real");
+        std::fs::write(&outside, "name: outside\n").expect("write outside");
+        std::os::unix::fs::symlink(&outside, &link).expect("create symlink");
+
+        let files = collect_pipeline_files(std::slice::from_ref(&dir)).expect("collect files");
+        assert_eq!(files, vec![real]);
+    }
+
+    #[test]
+    fn manifest_snapshot_paths_must_stay_under_operation_original_dir() {
+        let dir = unique_tmp_dir("snapshot-escape");
+        let backup_root = dir.join(".taudit");
+        let operation_dir = backup_root.join("backups").join("id");
+        let original_dir = operation_dir.join("original");
+        let escaped_dir = backup_root.join("backups").join("other").join("original");
+        std::fs::create_dir_all(&original_dir).expect("create original");
+        std::fs::create_dir_all(&escaped_dir).expect("create escaped");
+        std::fs::write(escaped_dir.join("ci.yml"), "payload").expect("write escaped");
+
+        let operation_dir = std::fs::canonicalize(operation_dir).expect("canonical op");
+        let err = resolve_manifest_snapshot(
+            &backup_root,
+            &operation_dir,
+            "original",
+            "backups/other/original/ci.yml",
+        )
+        .expect_err("snapshot from another backup id rejected");
+        assert!(
+            err.to_string()
+                .contains("escapes expected backup directory"),
+            "unexpected error: {err:#}"
+        );
+    }
+
+    #[test]
+    fn manifest_target_paths_must_stay_under_workspace() {
+        let workspace = unique_tmp_dir("workspace");
+        let outside = unique_tmp_dir("outside-target").join("ci.yml");
+        std::fs::write(&outside, "name: ci\n").expect("write outside");
+        let workspace = std::fs::canonicalize(workspace).expect("canonical workspace");
+
+        let err = resolve_manifest_target(outside.to_str().expect("utf8 path"), &workspace)
+            .expect_err("outside rollback target rejected");
+        assert!(
+            err.to_string().contains("escapes workspace"),
+            "unexpected error: {err:#}"
+        );
     }
 
     #[test]
