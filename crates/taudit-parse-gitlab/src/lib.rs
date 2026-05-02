@@ -117,7 +117,11 @@ impl PipelineParser for GitlabParser {
         }
 
         // Process each job (any top-level key not in RESERVED)
-        for (key, value) in mapping {
+        // determinism: sort by key — same YAML must produce same NodeId order
+        let mut top_level_entries: Vec<(&Value, &Value)> = mapping.iter().collect();
+        top_level_entries
+            .sort_by(|a, b| a.0.as_str().unwrap_or("").cmp(b.0.as_str().unwrap_or("")));
+        for (key, value) in top_level_entries {
             let job_name = match key.as_str() {
                 Some(k) => k,
                 None => continue,
@@ -435,6 +439,13 @@ fn extract_dotenv_file(job_map: &serde_yaml::Mapping) -> Option<String> {
 /// Extract upstream job names from `needs:` and `dependencies:`.
 /// `needs:` may be a list of strings or a list of mappings with `job:`.
 /// `dependencies:` is a list of strings.
+///
+/// F5: GitLab `needs:` entries support an `artifacts: false` opt-out that
+/// stops the upstream's artifacts (including its `dotenv` report) from
+/// flowing into this job. Excluding those entries here means the comma-joined
+/// `META_NEEDS` consumed by `dotenv_artifact_flows_to_privileged_deployment`
+/// only contains jobs whose artifacts genuinely flow — no rule-side change
+/// needed.
 fn extract_needs(job_map: &serde_yaml::Mapping) -> Vec<String> {
     let mut out: Vec<String> = Vec::new();
     if let Some(needs) = job_map.get("needs").and_then(|v| v.as_sequence()) {
@@ -442,9 +453,18 @@ fn extract_needs(job_map: &serde_yaml::Mapping) -> Vec<String> {
             match item {
                 Value::String(s) => out.push(s.clone()),
                 Value::Mapping(m) => {
-                    if let Some(j) = m.get("job").and_then(|j| j.as_str()) {
-                        out.push(j.to_string());
+                    let Some(j) = m.get("job").and_then(|j| j.as_str()) else {
+                        continue;
+                    };
+                    // `artifacts:` defaults to true when omitted. Only skip
+                    // when explicitly set to false — anything else (true,
+                    // missing, weird shape) keeps the dependency.
+                    let artifacts_disabled =
+                        m.get("artifacts").and_then(|v| v.as_bool()) == Some(false);
+                    if artifacts_disabled {
+                        continue;
                     }
+                    out.push(j.to_string());
                 }
                 _ => {}
             }
@@ -462,10 +482,220 @@ fn extract_needs(job_map: &serde_yaml::Mapping) -> Vec<String> {
     out
 }
 
+/// Recognise the canonical "is `var` truthy?" shape inside a GitLab CI
+/// `rules: if:` expression. Returns:
+///
+/// * `Some(true)` — the expression positively asserts `var` is truthy
+///   (e.g. `$VAR == "true"`, `$VAR == true`, bare `$VAR`, or any of those
+///   joined to other clauses with `&&`).
+/// * `Some(false)` — the expression negates `var`'s truthiness
+///   (e.g. `$VAR != "true"`, `$VAR == "false"`, `$VAR == null`).
+/// * `None` — the shape isn't recognisable; caller MUST treat as "no positive
+///   signal" (i.e. do not stamp protected-only or merge_request_event metadata).
+///
+/// We deliberately keep this minimal — better to under-claim protection than
+/// over-claim it. Anything we don't understand returns `None`.
+///
+/// Boundary discipline: `var` matches only when it appears as a `$VAR` token
+/// surrounded by non-identifier chars (or string ends), so `$CI_COMMIT_TAG`
+/// does not silently match `$CI_COMMIT_TAG_MESSAGE`.
+fn check_truthy_comparison(expr: &str, var: &str) -> Option<bool> {
+    // Split on `||` first — if ANY top-level disjunct is positive, the
+    // whole expression is positive (any one matching clause makes the rule
+    // fire). For `&&`, all conjuncts must agree; if any conjunct contradicts
+    // the others, we fall back to None.
+    let trimmed = expr.trim();
+    if trimmed.is_empty() {
+        return None;
+    }
+
+    // Top-level `||` short-circuit: if any disjunct is positive, accept.
+    if let Some((lhs, rhs)) = split_top_level(trimmed, "||") {
+        let l = check_truthy_comparison(&lhs, var);
+        let r = check_truthy_comparison(&rhs, var);
+        return match (l, r) {
+            (Some(true), _) | (_, Some(true)) => Some(true),
+            (Some(false), Some(false)) => Some(false),
+            _ => None,
+        };
+    }
+    // Top-level `&&`: positive only if at least one conjunct is positive
+    // and none is explicitly negative. (A conjunct that doesn't mention
+    // `var` is None — neutral — so we treat it as non-blocking.)
+    if let Some((lhs, rhs)) = split_top_level(trimmed, "&&") {
+        let l = check_truthy_comparison(&lhs, var);
+        let r = check_truthy_comparison(&rhs, var);
+        return match (l, r) {
+            (Some(false), _) | (_, Some(false)) => Some(false),
+            (Some(true), _) | (_, Some(true)) => Some(true),
+            _ => None,
+        };
+    }
+
+    // No top-level boolean op — atomic comparison or bare reference.
+    classify_atom(trimmed, var)
+}
+
+/// Split `expr` at the first top-level (paren-depth zero, not inside a string)
+/// occurrence of `op`. Returns the left and right halves (without `op`).
+/// Returns `None` if `op` is not found at the top level.
+fn split_top_level(expr: &str, op: &str) -> Option<(String, String)> {
+    let bytes = expr.as_bytes();
+    let op_bytes = op.as_bytes();
+    let mut depth: i32 = 0;
+    let mut in_str: Option<u8> = None;
+    let mut in_regex = false;
+    let mut i = 0;
+    while i < bytes.len() {
+        let b = bytes[i];
+        // Track string literals (single + double quotes).
+        if let Some(q) = in_str {
+            if b == b'\\' && i + 1 < bytes.len() {
+                i += 2;
+                continue;
+            }
+            if b == q {
+                in_str = None;
+            }
+            i += 1;
+            continue;
+        }
+        if in_regex {
+            if b == b'\\' && i + 1 < bytes.len() {
+                i += 2;
+                continue;
+            }
+            if b == b'/' {
+                in_regex = false;
+            }
+            i += 1;
+            continue;
+        }
+        match b {
+            b'"' | b'\'' => {
+                in_str = Some(b);
+                i += 1;
+                continue;
+            }
+            b'/' => {
+                // A `/` after `=~` or `!~` starts a regex literal. Only enter
+                // regex mode when preceded (after whitespace) by `~`.
+                let mut j = i;
+                while j > 0 && bytes[j - 1].is_ascii_whitespace() {
+                    j -= 1;
+                }
+                if j > 0 && bytes[j - 1] == b'~' {
+                    in_regex = true;
+                    i += 1;
+                    continue;
+                }
+            }
+            b'(' => depth += 1,
+            b')' => depth -= 1,
+            _ => {}
+        }
+        if depth == 0
+            && i + op_bytes.len() <= bytes.len()
+            && &bytes[i..i + op_bytes.len()] == op_bytes
+        {
+            let lhs = expr[..i].to_string();
+            let rhs = expr[i + op_bytes.len()..].to_string();
+            return Some((lhs, rhs));
+        }
+        i += 1;
+    }
+    None
+}
+
+/// Classify an atomic (no `&&`/`||`) sub-expression against `var`.
+fn classify_atom(atom: &str, var: &str) -> Option<bool> {
+    let s = atom.trim().trim_matches('(').trim_matches(')').trim();
+    // Bare reference: the entire atom is `$VAR` (truthy iff variable is set
+    // and non-empty per GitLab semantics).
+    if s == var {
+        return Some(true);
+    }
+    // Look for `==` / `!=` and a literal RHS. Anything else (regex `=~`,
+    // arbitrary substring, multiple comparisons) → None.
+    let (op, lhs, rhs) = if let Some((l, r)) = s.split_once("==") {
+        ("==", l.trim(), r.trim())
+    } else if let Some((l, r)) = s.split_once("!=") {
+        ("!=", l.trim(), r.trim())
+    } else {
+        return None;
+    };
+    // The variable must appear on exactly one side; the other side is the
+    // literal we compare against.
+    let (lit, side_is_var) = if lhs == var {
+        (rhs, true)
+    } else if rhs == var {
+        (lhs, true)
+    } else {
+        // Neither side is the variable as a bare token — recognise also a
+        // few extremely common forms where the var has surrounding chars
+        // (e.g. quoted: `"$VAR" == "true"`) but otherwise bail.
+        let lhs_unq = lhs.trim_matches('"').trim_matches('\'');
+        let rhs_unq = rhs.trim_matches('"').trim_matches('\'');
+        if lhs_unq == var {
+            (rhs, true)
+        } else if rhs_unq == var {
+            (lhs, true)
+        } else {
+            return None;
+        }
+    };
+    let _ = side_is_var; // currently always true if we got here
+                         // Normalise the literal: strip optional surrounding quotes.
+    let lit_norm = lit
+        .trim_matches('"')
+        .trim_matches('\'')
+        .to_ascii_lowercase();
+    let truthy_lit = matches!(lit_norm.as_str(), "true" | "1");
+    let falsy_lit = matches!(lit_norm.as_str(), "false" | "null" | "" | "0");
+    match (op, truthy_lit, falsy_lit) {
+        ("==", true, _) => Some(true),
+        ("==", _, true) => Some(false),
+        ("!=", true, _) => Some(false),
+        ("!=", _, true) => Some(true),
+        // Comparison against an arbitrary string literal (e.g. a branch name
+        // for `$CI_COMMIT_BRANCH == "main"`) is not a truthy comparison —
+        // return None and let the caller fall through to other heuristics.
+        _ => None,
+    }
+}
+
 /// Classify a variable name as a credential by checking for common fragments.
+///
+/// Each fragment in `CRED_FRAGMENTS` must appear as a *segment* of the name
+/// (bounded by `_` or by the start/end of the string), NOT as a free-floating
+/// substring. This avoids false positives like `CERTAIN_FLAG` (matches `CERT`
+/// substring), `CERTIFICATE_PATH` (path config, not a credential),
+/// `TOKENIZER_VERSION` (matches `TOKEN`), and `UNCERTAIN`.
+///
+/// A multi-token fragment like `PRIVATE_KEY` matches when its full text appears
+/// at a segment boundary on both sides — i.e. surrounded by `_` or string ends.
 fn is_credential_name(name: &str) -> bool {
     let upper = name.to_uppercase();
-    CRED_FRAGMENTS.iter().any(|frag| upper.contains(frag))
+    let bytes = upper.as_bytes();
+    CRED_FRAGMENTS.iter().any(|frag| {
+        let frag_bytes = frag.as_bytes();
+        let n = frag_bytes.len();
+        if bytes.len() < n {
+            return false;
+        }
+        // Slide the fragment across the name, accepting only segment-bounded matches.
+        for i in 0..=bytes.len() - n {
+            if &bytes[i..i + n] != frag_bytes {
+                continue;
+            }
+            let left_ok = i == 0 || bytes[i - 1] == b'_';
+            let right_ok = i + n == bytes.len() || bytes[i + n] == b'_';
+            if left_ok && right_ok {
+                return true;
+            }
+        }
+        false
+    })
 }
 
 /// Parse `variables:` mapping and emit `Secret` nodes for credential-pattern names.
@@ -476,7 +706,10 @@ fn process_variables(vars: Option<&Value>, graph: &mut AuthorityGraph, scope: &s
         Some(m) => m,
         None => return ids,
     };
-    for (k, _v) in map {
+    // determinism: sort by key — same YAML must produce same NodeId order
+    let mut entries: Vec<(&Value, &Value)> = map.iter().collect();
+    entries.sort_by(|a, b| a.0.as_str().unwrap_or("").cmp(b.0.as_str().unwrap_or("")));
+    for (k, _v) in entries {
         let name = match k.as_str() {
             Some(s) => s,
             None => continue,
@@ -511,7 +744,10 @@ fn process_explicit_secrets(
         Some(m) => m,
         None => return ids,
     };
-    for (k, _v) in map {
+    // determinism: sort by key — same YAML must produce same NodeId order
+    let mut entries: Vec<(&Value, &Value)> = map.iter().collect();
+    entries.sort_by(|a, b| a.0.as_str().unwrap_or("").cmp(b.0.as_str().unwrap_or("")));
+    for (k, _v) in entries {
         let name = match k.as_str() {
             Some(s) => s,
             None => continue,
@@ -542,24 +778,51 @@ fn process_id_tokens(
         Some(m) => m,
         None => return ids,
     };
-    for (k, v) in map {
+    // determinism: sort by key — same YAML must produce same NodeId order
+    let mut entries: Vec<(&Value, &Value)> = map.iter().collect();
+    entries.sort_by(|a, b| a.0.as_str().unwrap_or("").cmp(b.0.as_str().unwrap_or("")));
+    for (k, v) in entries {
         let token_name = match k.as_str() {
             Some(s) => s,
             None => continue,
         };
-        // Extract audience for labelling and as discrete metadata
-        // (rules like `id_token_audience_overscoped` need to compare audiences
-        // across jobs without re-parsing the label).
-        let aud = v
-            .as_mapping()
-            .and_then(|m| m.get("aud"))
-            .and_then(|a| a.as_str())
-            .unwrap_or("unknown");
-        let label = format!("{token_name} (aud={aud})");
+        // F3: GitLab supports list-form `aud: [a, b, c]` (multi-cloud broker —
+        // strongest over-scoping signal). Previously `as_str()` on a sequence
+        // returned None and we fell through to "unknown", silently blinding
+        // every multi-aud rule. Handle both shapes explicitly.
+        let aud_value = v.as_mapping().and_then(|m| m.get("aud"));
+        let (aud_joined, is_list) = match aud_value {
+            Some(Value::String(s)) => (s.clone(), false),
+            Some(Value::Sequence(seq)) => {
+                let parts: Vec<String> = seq
+                    .iter()
+                    .filter_map(|item| match item {
+                        Value::String(s) => Some(s.clone()),
+                        _ => None,
+                    })
+                    .collect();
+                if parts.is_empty() {
+                    ("unknown".into(), false)
+                } else {
+                    (parts.join(","), true)
+                }
+            }
+            _ => ("unknown".into(), false),
+        };
+        let label = format!("{token_name} (aud={aud_joined})");
         let mut meta = HashMap::new();
         meta.insert(META_OIDC.into(), "true".into());
         meta.insert(META_IDENTITY_SCOPE.into(), "broad".into());
-        meta.insert(META_OIDC_AUDIENCE.into(), aud.to_string());
+        // Backward-compat: keep the single-`aud` field populated. For the
+        // list form it now holds the comma-joined string so existing
+        // consumers see *something* rather than "unknown".
+        meta.insert(META_OIDC_AUDIENCE.into(), aud_joined.clone());
+        // New (F3): explicit "list form" marker. Only set on the multi-aud
+        // path so downstream rules can distinguish single-aud vs multi-aud
+        // configurations without parsing the comma-joined string.
+        if is_list {
+            meta.insert(META_OIDC_AUDIENCES.into(), aud_joined.clone());
+        }
         let id =
             graph.add_node_with_metadata(NodeKind::Identity, label, TrustZone::FirstParty, meta);
         ids.push(id);
@@ -605,7 +868,11 @@ fn job_has_mr_trigger(job_map: &serde_yaml::Mapping) -> bool {
                 .and_then(|m| m.get("if"))
                 .and_then(|v| v.as_str())
             {
-                if if_expr.contains("merge_request_event") {
+                // F2: MR-trigger only fires for the *positive* equality form.
+                // `$CI_PIPELINE_SOURCE != "merge_request_event"` ("run except
+                // on MRs") used to set META_TRIGGER=merge_request and pollute
+                // every downstream MR-context rule.
+                if matches_mr_event(if_expr) {
                     return true;
                 }
             }
@@ -664,9 +931,13 @@ fn job_has_protected_branch_restriction(job_map: &serde_yaml::Mapping) -> bool {
             else {
                 continue;
             };
-            if if_expr.contains("$CI_COMMIT_REF_PROTECTED")
-                || if_expr.contains("CI_COMMIT_REF_PROTECTED")
-            {
+            // F1: `$CI_COMMIT_REF_PROTECTED` — only a *positive* assertion
+            // ("ref IS protected") counts. `== "false"` or `!= "true"` is the
+            // exact opposite signal and must NOT stamp protected-only.
+            if matches!(
+                check_truthy_comparison(if_expr, "$CI_COMMIT_REF_PROTECTED"),
+                Some(true)
+            ) {
                 return true;
             }
             if if_expr.contains("$CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH")
@@ -674,7 +945,14 @@ fn job_has_protected_branch_restriction(job_map: &serde_yaml::Mapping) -> bool {
             {
                 return true;
             }
-            if if_expr.contains("$CI_COMMIT_TAG") {
+            // F1: `$CI_COMMIT_TAG` — only the truthy form ("running on a
+            // tag", which GitLab protects by default). Reject negations
+            // (`== null`, `!= ...`) and avoid the substring-collision with
+            // `$CI_COMMIT_TAG_MESSAGE` that the previous `contains()` had.
+            if matches!(
+                check_truthy_comparison(if_expr, "$CI_COMMIT_TAG"),
+                Some(true)
+            ) {
                 return true;
             }
         }
@@ -727,12 +1005,57 @@ fn has_mr_trigger_in_workflow(wf: &Value) -> bool {
             .and_then(|m| m.get("if"))
             .and_then(|v| v.as_str())
         {
-            if if_expr.contains("merge_request_event") {
+            // F2: see `job_has_mr_trigger` — only the positive equality form
+            // counts; negations are rejected.
+            if matches_mr_event(if_expr) {
                 return true;
             }
         }
     }
     false
+}
+
+/// Returns true when `if_expr` positively asserts that the pipeline source IS
+/// `merge_request_event`. Accepts `$CI_PIPELINE_SOURCE == "merge_request_event"`
+/// (and quoted/`||`/`&&` variants) at the truthy-comparison level. Rejects the
+/// `!=` negation form. Falls back to `false` for anything we can't parse — the
+/// caller always treats that as "no MR trigger detected".
+fn matches_mr_event(if_expr: &str) -> bool {
+    // We don't have a `var == "merge_request_event"` pseudo-variable, so we
+    // synthesise one: split on `||` ourselves and look for any disjunct that
+    // is exactly `$CI_PIPELINE_SOURCE == "merge_request_event"` (with
+    // tolerable whitespace and quoting variations).
+    fn atom_is_mr_event(atom: &str) -> bool {
+        let s = atom.trim().trim_matches('(').trim_matches(')').trim();
+        let (lhs, rhs) = match s.split_once("==") {
+            Some(parts) => parts,
+            None => return false,
+        };
+        let lhs = lhs.trim();
+        let rhs_norm = rhs.trim().trim_matches('"').trim_matches('\'');
+        // Either side may carry the variable; the other must equal the literal.
+        let lhs_unq = lhs.trim_matches('"').trim_matches('\'');
+        let rhs_raw = rhs.trim().trim_matches('"').trim_matches('\'');
+        if (lhs_unq == "$CI_PIPELINE_SOURCE" && rhs_norm == "merge_request_event")
+            || (rhs_raw == "$CI_PIPELINE_SOURCE" && lhs_unq == "merge_request_event")
+        {
+            return true;
+        }
+        false
+    }
+    let trimmed = if_expr.trim();
+    // Top-level `||` short-circuit: any positive disjunct wins.
+    if let Some((lhs, rhs)) = split_top_level(trimmed, "||") {
+        return atom_is_mr_event(&lhs) || matches_mr_event(&rhs);
+    }
+    // For `&&`, accept if any conjunct is a positive `merge_request_event`
+    // comparison. We don't try to detect contradictory conjuncts —
+    // `merge_request_event` is a string literal, not a boolean, so the
+    // truthiness short-circuiting in `check_truthy_comparison` doesn't apply.
+    if let Some((lhs, rhs)) = split_top_level(trimmed, "&&") {
+        return atom_is_mr_event(&lhs) || matches_mr_event(&rhs);
+    }
+    atom_is_mr_event(trimmed)
 }
 
 /// Structured representation of a single `include:` entry.
@@ -1338,6 +1661,316 @@ test:
             AuthorityCompleteness::Complete,
             "non-mapping values are not job carriers"
         );
+    }
+
+    // ── Regression tests for F1-F6 (gitlab-parser deep review) ──────────
+
+    /// F1: `$CI_COMMIT_REF_PROTECTED == "true"` stamps protected-only;
+    /// the negation `== "false"` must NOT stamp.
+    #[test]
+    fn protected_ref_only_stamps_meta_when_truly_positive() {
+        let positive = r#"
+deploy:
+  rules:
+    - if: '$CI_COMMIT_REF_PROTECTED == "true"'
+  script:
+    - deploy.sh
+"#;
+        let graph = parse(positive);
+        let step = graph.nodes_of_kind(NodeKind::Step).next().unwrap();
+        assert_eq!(
+            step.metadata
+                .get(META_RULES_PROTECTED_ONLY)
+                .map(String::as_str),
+            Some("true"),
+            "positive == \"true\" comparison must stamp META_RULES_PROTECTED_ONLY"
+        );
+
+        let negation = r#"
+deploy:
+  rules:
+    - if: '$CI_COMMIT_REF_PROTECTED == "false"'
+  script:
+    - deploy.sh
+"#;
+        let graph = parse(negation);
+        let step = graph.nodes_of_kind(NodeKind::Step).next().unwrap();
+        assert!(
+            !step.metadata.contains_key(META_RULES_PROTECTED_ONLY),
+            "== \"false\" is the OPPOSITE signal — must NOT stamp META_RULES_PROTECTED_ONLY (got: {:?})",
+            step.metadata.get(META_RULES_PROTECTED_ONLY)
+        );
+
+        // `!= "true"` is also a negation — must not stamp.
+        let inequality = r#"
+deploy:
+  rules:
+    - if: '$CI_COMMIT_REF_PROTECTED != "true"'
+  script:
+    - deploy.sh
+"#;
+        let graph = parse(inequality);
+        let step = graph.nodes_of_kind(NodeKind::Step).next().unwrap();
+        assert!(
+            !step.metadata.contains_key(META_RULES_PROTECTED_ONLY),
+            "!= \"true\" is a negation — must NOT stamp META_RULES_PROTECTED_ONLY"
+        );
+
+        // `$CI_COMMIT_TAG_MESSAGE` substring trap — used to match because
+        // `if_expr.contains("$CI_COMMIT_TAG")` was true even though the var
+        // is a different one.
+        let tag_message_trap = r#"
+deploy:
+  rules:
+    - if: '$CI_COMMIT_TAG_MESSAGE == "release"'
+  script:
+    - deploy.sh
+"#;
+        let graph = parse(tag_message_trap);
+        let step = graph.nodes_of_kind(NodeKind::Step).next().unwrap();
+        assert!(
+            !step.metadata.contains_key(META_RULES_PROTECTED_ONLY),
+            "$CI_COMMIT_TAG_MESSAGE must not match the $CI_COMMIT_TAG predicate"
+        );
+    }
+
+    /// F2: `$CI_PIPELINE_SOURCE != "merge_request_event"` ("run except on MRs")
+    /// must NOT stamp `META_TRIGGER=merge_request`. Only the positive form
+    /// counts.
+    #[test]
+    fn mr_trigger_detection_rejects_negation() {
+        let negation = r#"
+build:
+  rules:
+    - if: '$CI_PIPELINE_SOURCE != "merge_request_event"'
+  script:
+    - make build
+"#;
+        let graph = parse(negation);
+        assert!(
+            graph.metadata.get(META_TRIGGER).map(String::as_str) != Some("merge_request"),
+            "negation form must not stamp META_TRIGGER=merge_request, got: {:?}",
+            graph.metadata.get(META_TRIGGER)
+        );
+        let steps: Vec<_> = graph.nodes_of_kind(NodeKind::Step).collect();
+        assert_eq!(steps.len(), 1);
+        assert!(
+            steps[0].metadata.get(META_TRIGGER).map(String::as_str) != Some("merge_request"),
+            "negation form must not stamp per-step META_TRIGGER=merge_request"
+        );
+
+        // Positive form still works.
+        let positive = r#"
+build:
+  rules:
+    - if: '$CI_PIPELINE_SOURCE == "merge_request_event"'
+  script:
+    - make build
+"#;
+        let graph = parse(positive);
+        assert_eq!(
+            graph.metadata.get(META_TRIGGER).map(String::as_str),
+            Some("merge_request"),
+            "positive form must still stamp META_TRIGGER=merge_request"
+        );
+    }
+
+    /// F3: list-form `aud:` produces `META_OIDC_AUDIENCES` (plural) and a
+    /// comma-joined `META_OIDC_AUDIENCE` for backward compat. Scalar form
+    /// stamps only `META_OIDC_AUDIENCE` and leaves the plural marker absent.
+    #[test]
+    fn id_tokens_aud_list_form_creates_audiences_metadata() {
+        let yaml = r#"
+deploy:
+  id_tokens:
+    MULTI_CLOUD_TOKEN:
+      aud:
+        - https://aws.amazonaws.com
+        - https://gcp.googleapis.com
+  script:
+    - deploy.sh
+"#;
+        let graph = parse(yaml);
+        let oidc: Vec<_> = graph
+            .nodes_of_kind(NodeKind::Identity)
+            .filter(|n| n.metadata.get(META_OIDC).map(String::as_str) == Some("true"))
+            .collect();
+        assert_eq!(oidc.len(), 1);
+        assert_eq!(
+            oidc[0]
+                .metadata
+                .get(META_OIDC_AUDIENCES)
+                .map(String::as_str),
+            Some("https://aws.amazonaws.com,https://gcp.googleapis.com"),
+            "list-form aud must stamp comma-joined META_OIDC_AUDIENCES"
+        );
+        // Backward compat: META_OIDC_AUDIENCE holds the same comma-joined value
+        // (no longer "unknown" as it was before the fix).
+        assert_eq!(
+            oidc[0].metadata.get(META_OIDC_AUDIENCE).map(String::as_str),
+            Some("https://aws.amazonaws.com,https://gcp.googleapis.com"),
+        );
+        assert!(oidc[0].name.contains("aud=https://aws"));
+
+        // Scalar form: META_OIDC_AUDIENCE is the bare string, plural marker absent.
+        let scalar = r#"
+deploy:
+  id_tokens:
+    AWS_TOKEN:
+      aud: https://sts.amazonaws.com
+  script:
+    - deploy.sh
+"#;
+        let graph = parse(scalar);
+        let oidc: Vec<_> = graph
+            .nodes_of_kind(NodeKind::Identity)
+            .filter(|n| n.metadata.get(META_OIDC).map(String::as_str) == Some("true"))
+            .collect();
+        assert_eq!(
+            oidc[0].metadata.get(META_OIDC_AUDIENCE).map(String::as_str),
+            Some("https://sts.amazonaws.com")
+        );
+        assert!(
+            !oidc[0].metadata.contains_key(META_OIDC_AUDIENCES),
+            "scalar form must NOT set the plural META_OIDC_AUDIENCES marker"
+        );
+    }
+
+    /// F4: `is_credential_name` must boundary-check; substring matches like
+    /// `CERTAIN_FLAG` (contains `CERT`), `TOKENIZER_VERSION` (contains `TOKEN`),
+    /// `UNCERTAIN`, and `CERTIFICATE_PATH` (path config, not a credential)
+    /// must all return false. Real credentials still match.
+    #[test]
+    fn is_credential_name_boundary_checks() {
+        // False positives that the substring matcher used to flag.
+        assert!(!is_credential_name("CERTAIN_FLAG"));
+        assert!(!is_credential_name("TOKENIZER_VERSION"));
+        assert!(!is_credential_name("UNCERTAIN"));
+        assert!(!is_credential_name("CERTIFICATE_PATH"));
+        assert!(!is_credential_name("TOKEN1"));
+        assert!(!is_credential_name("CERTIFICATE"));
+
+        // True positives — must still match.
+        assert!(is_credential_name("API_TOKEN"));
+        assert!(is_credential_name("MY_CERT"));
+        assert!(is_credential_name("DB_PASSWORD"));
+        assert!(is_credential_name("DEPLOY_TOKEN"));
+        assert!(is_credential_name("SIGNING_KEY"));
+        assert!(is_credential_name("AWS_SECRET_ACCESS_KEY"));
+        assert!(is_credential_name("TOKEN"));
+        assert!(is_credential_name("CERT"));
+        assert!(is_credential_name("PRIVATE_KEY"));
+        assert!(is_credential_name("CREDENTIAL"));
+    }
+
+    /// F5: a `needs:` entry with `artifacts: false` does NOT promote the
+    /// upstream's dotenv into this job, so it must be excluded from
+    /// `META_NEEDS` (the dotenv-flow rule reads that CSV verbatim).
+    #[test]
+    fn needs_artifacts_false_excludes_dotenv_flow() {
+        let yaml = r#"
+build:
+  artifacts:
+    reports:
+      dotenv: build.env
+  script:
+    - make build
+deploy:
+  needs:
+    - job: build
+      artifacts: false
+  script:
+    - kubectl apply
+"#;
+        let graph = parse(yaml);
+        let deploy_step = graph
+            .nodes_of_kind(NodeKind::Step)
+            .find(|n| n.metadata.get(META_JOB_NAME).map(String::as_str) == Some("deploy"))
+            .expect("deploy step present");
+        let needs_csv = deploy_step
+            .metadata
+            .get(META_NEEDS)
+            .map(String::as_str)
+            .unwrap_or("");
+        assert!(
+            !needs_csv.split(',').any(|s| s == "build"),
+            "build must be excluded from META_NEEDS when artifacts: false (got: {needs_csv:?})"
+        );
+
+        // Sanity check: same YAML with `artifacts: true` (or missing) still
+        // includes the upstream so dotenv-flow rules can fire.
+        let yaml_default = r#"
+build:
+  artifacts:
+    reports:
+      dotenv: build.env
+  script:
+    - make build
+deploy:
+  needs:
+    - job: build
+  script:
+    - kubectl apply
+"#;
+        let graph = parse(yaml_default);
+        let deploy_step = graph
+            .nodes_of_kind(NodeKind::Step)
+            .find(|n| n.metadata.get(META_JOB_NAME).map(String::as_str) == Some("deploy"))
+            .expect("deploy step present");
+        let needs_csv = deploy_step
+            .metadata
+            .get(META_NEEDS)
+            .map(String::as_str)
+            .unwrap_or("");
+        assert!(
+            needs_csv.split(',').any(|s| s == "build"),
+            "default (artifacts implicitly true) must keep build in META_NEEDS (got: {needs_csv:?})"
+        );
+    }
+
+    /// F6: 9× parse with bucket-defeating key names — even if a future
+    /// refactor swapped the indexmap-backed mapping for a HashMap-backed
+    /// one, the explicit sort would keep NodeId order byte-identical.
+    #[test]
+    fn gitlab_mapping_iteration_is_deterministic_across_runs() {
+        // Names chosen to spread across hash buckets.
+        let yaml = r#"
+zeta-job:
+  variables:
+    ZZ_TOKEN: "$CI_TOKEN"
+    AA_PASSWORD: "x"
+    MM_SECRET: "y"
+  script:
+    - echo zeta
+alpha-job:
+  variables:
+    QQ_TOKEN: "$CI_TOKEN"
+    BB_API_KEY: "z"
+  script:
+    - echo alpha
+mid-job:
+  variables:
+    NN_PRIVATE_KEY: "k"
+    GG_SIGNING_KEY: "j"
+  script:
+    - echo mid
+"#;
+        let canonical: Vec<(NodeKind, String)> = parse(yaml)
+            .nodes
+            .iter()
+            .map(|n| (n.kind, n.name.clone()))
+            .collect();
+        for run in 0..9 {
+            let again: Vec<(NodeKind, String)> = parse(yaml)
+                .nodes
+                .iter()
+                .map(|n| (n.kind, n.name.clone()))
+                .collect();
+            assert_eq!(
+                again, canonical,
+                "run {run}: NodeId order must be byte-identical across runs"
+            );
+        }
     }
 
     #[test]

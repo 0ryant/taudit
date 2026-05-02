@@ -188,6 +188,13 @@ pub const META_CACHE_KEY: &str = "cache_key";
 /// etc), so audience reuse across MR-context and protected-context jobs is
 /// the precise privilege-overscope signal. Set by the GitLab parser.
 pub const META_OIDC_AUDIENCE: &str = "oidc_audience";
+/// Records the comma-joined list of `id_tokens.aud:` values when GitLab CI
+/// declares the audience as a YAML sequence (multi-cloud broker — strongest
+/// over-scoping signal). When set, the legacy `META_OIDC_AUDIENCE` field
+/// holds the same comma-joined string for backward compatibility, and this
+/// field is the explicit "this was a list" marker. Set by the GitLab parser
+/// only on the multi-aud path; absent for scalar `aud:` values.
+pub const META_OIDC_AUDIENCES: &str = "oidc_audiences";
 /// Records a Step's `environment:url:` value verbatim. Stamped by the GitLab
 /// parser when the job declares an `environment:` mapping with a `url:`
 /// field. Consumed by `untrusted_ci_var_in_shell_interpolation` because

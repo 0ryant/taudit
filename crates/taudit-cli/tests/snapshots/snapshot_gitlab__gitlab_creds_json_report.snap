@@ -1,5 +1,6 @@
 ---
 source: crates/taudit-cli/tests/snapshot_gitlab.rs
+assertion_line: 52
 expression: json
 ---
 findings:
@@ -8,7 +9,7 @@ findings:
     fingerprint: 7849ccce90a9affb
     message: "API_SECRET_KEY propagated to alpine:latest across trust boundary"
     nodes_involved:
-      - 2
+      - 1
       - 4
     path:
       boundary_crossing:
@@ -18,7 +19,7 @@ findings:
       edges:
         - 4
       sink: 4
-      source: 2
+      source: 1
     recommendation:
       command: tsafe exec --ns <scoped-namespace> -- <command>
       explanation: Scope API_SECRET_KEY to only the steps that need it
@@ -54,6 +55,29 @@ findings:
     fingerprint: 63d395dd2a2674d3
     message: "DATABASE_PASSWORD propagated to alpine:latest across trust boundary"
     nodes_involved:
+      - 2
+      - 4
+    path:
+      boundary_crossing:
+        - first_party
+        - untrusted
+      crossed_boundary: true
+      edges:
+        - 4
+      sink: 4
+      source: 2
+    recommendation:
+      command: tsafe exec --ns <scoped-namespace> -- <command>
+      explanation: Scope DATABASE_PASSWORD to only the steps that need it
+      type: tsafe_remediation
+    rule_id: authority_propagation
+    severity: critical
+    source: built-in
+  - category: authority_propagation
+    finding_group_id: 89b56659-76e2-5da1-ac8f-194ff0779677
+    fingerprint: e9a285367946aec8
+    message: "DEPLOY_TOKEN propagated to alpine:latest across trust boundary"
+    nodes_involved:
       - 3
       - 4
     path:
@@ -67,29 +91,6 @@ findings:
       source: 3
     recommendation:
       command: tsafe exec --ns <scoped-namespace> -- <command>
-      explanation: Scope DATABASE_PASSWORD to only the steps that need it
-      type: tsafe_remediation
-    rule_id: authority_propagation
-    severity: critical
-    source: built-in
-  - category: authority_propagation
-    finding_group_id: 89b56659-76e2-5da1-ac8f-194ff0779677
-    fingerprint: e9a285367946aec8
-    message: "DEPLOY_TOKEN propagated to alpine:latest across trust boundary"
-    nodes_involved:
-      - 1
-      - 4
-    path:
-      boundary_crossing:
-        - first_party
-        - untrusted
-      crossed_boundary: true
-      edges:
-        - 4
-      sink: 4
-      source: 1
-    recommendation:
-      command: tsafe exec --ns <scoped-namespace> -- <command>
       explanation: Scope DEPLOY_TOKEN to only the steps that need it
       type: tsafe_remediation
     rule_id: authority_propagation
@@ -100,7 +101,7 @@ findings:
     fingerprint: 5c1be269511d1b57
     message: "'API_SECRET_KEY' looks like a long-lived static credential"
     nodes_involved:
-      - 2
+      - 1
     recommendation:
       oidc_provider: "GitHub Actions OIDC (id-token: write)"
       static_secret: API_SECRET_KEY
@@ -114,7 +115,7 @@ findings:
     fingerprint: f6d67b78eaa7525d
     message: "'DATABASE_PASSWORD' looks like a long-lived static credential"
     nodes_involved:
-      - 3
+      - 2
     recommendation:
       oidc_provider: "GitHub Actions OIDC (id-token: write)"
       static_secret: DATABASE_PASSWORD
@@ -191,17 +192,17 @@ graph:
     - id: 1
       kind: secret
       metadata: {}
-      name: DEPLOY_TOKEN
+      name: API_SECRET_KEY
       trust_zone: first_party
     - id: 2
       kind: secret
       metadata: {}
-      name: API_SECRET_KEY
+      name: DATABASE_PASSWORD
       trust_zone: first_party
     - id: 3
       kind: secret
       metadata: {}
-      name: DATABASE_PASSWORD
+      name: DEPLOY_TOKEN
       trust_zone: first_party
     - id: 4
       kind: image

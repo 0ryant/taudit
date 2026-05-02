@@ -1,11 +1,12 @@
 ---
 source: crates/taudit-cli/tests/snapshot_gitlab.rs
+assertion_line: 38
 expression: finding
 ---
 severity: critical
 category: authority_propagation
 path:
-  source: 2
+  source: 1
   sink: 4
   edges:
     - 4
@@ -14,7 +15,7 @@ path:
     - first_party
     - untrusted
 nodes_involved:
-  - 2
+  - 1
   - 4
 message: "API_SECRET_KEY propagated to alpine:latest across trust boundary"
 recommendation:

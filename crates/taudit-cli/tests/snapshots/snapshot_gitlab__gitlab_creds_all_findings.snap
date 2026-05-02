@@ -1,11 +1,12 @@
 ---
 source: crates/taudit-cli/tests/snapshot_gitlab.rs
+assertion_line: 29
 expression: findings
 ---
 - severity: critical
   category: authority_propagation
   path:
-    source: 2
+    source: 1
     sink: 4
     edges:
       - 4
@@ -14,7 +15,7 @@ expression: findings
       - first_party
       - untrusted
   nodes_involved:
-    - 2
+    - 1
     - 4
   message: "API_SECRET_KEY propagated to alpine:latest across trust boundary"
   recommendation:
@@ -45,6 +46,26 @@ expression: findings
 - severity: critical
   category: authority_propagation
   path:
+    source: 2
+    sink: 4
+    edges:
+      - 4
+    crossed_boundary: true
+    boundary_crossing:
+      - first_party
+      - untrusted
+  nodes_involved:
+    - 2
+    - 4
+  message: "DATABASE_PASSWORD propagated to alpine:latest across trust boundary"
+  recommendation:
+    type: tsafe_remediation
+    command: tsafe exec --ns <scoped-namespace> -- <command>
+    explanation: Scope DATABASE_PASSWORD to only the steps that need it
+  source: built-in
+- severity: critical
+  category: authority_propagation
+  path:
     source: 3
     sink: 4
     edges:
@@ -56,26 +77,6 @@ expression: findings
   nodes_involved:
     - 3
     - 4
-  message: "DATABASE_PASSWORD propagated to alpine:latest across trust boundary"
-  recommendation:
-    type: tsafe_remediation
-    command: tsafe exec --ns <scoped-namespace> -- <command>
-    explanation: Scope DATABASE_PASSWORD to only the steps that need it
-  source: built-in
-- severity: critical
-  category: authority_propagation
-  path:
-    source: 1
-    sink: 4
-    edges:
-      - 4
-    crossed_boundary: true
-    boundary_crossing:
-      - first_party
-      - untrusted
-  nodes_involved:
-    - 1
-    - 4
   message: "DEPLOY_TOKEN propagated to alpine:latest across trust boundary"
   recommendation:
     type: tsafe_remediation
@@ -85,7 +86,7 @@ expression: findings
 - severity: low
   category: long_lived_credential
   nodes_involved:
-    - 2
+    - 1
   message: "'API_SECRET_KEY' looks like a long-lived static credential"
   recommendation:
     type: federate_identity
@@ -96,7 +97,7 @@ expression: findings
 - severity: low
   category: long_lived_credential
   nodes_involved:
-    - 3
+    - 2
   message: "'DATABASE_PASSWORD' looks like a long-lived static credential"
   recommendation:
     type: federate_identity
