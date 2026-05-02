@@ -1,0 +1,15 @@
+---
+description: After staging work in this repo, commit and push in the same pass (hooks may be slow — use a long-enough terminal wait).
+alwaysApply: true
+---
+
+# Git: commit and push together
+
+When the task includes **recording changes on a branch**, do **both** in one flow:
+
+1. `git commit` (or whatever the repo’s hooks expect).
+2. **`git push`** to the tracked remote branch (typically `origin` + current branch).
+
+Do **not** stop at “commit succeeded” unless push is genuinely impossible (e.g. no `origin`, offline, auth failure after retry) — say so explicitly.
+
+Pre-commit / pre-push hooks in this repo can run **cargo test** and scanners; allocate enough runtime so the invocation is not aborted mid-hook.
