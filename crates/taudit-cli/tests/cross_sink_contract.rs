@@ -260,3 +260,87 @@ fn custom_rule_finding_surfaces_bracketed_id_in_all_three_sinks() {
     assert_eq!(sarif[1].0, "my_custom_rule");
     assert_eq!(ce[1].0, "my_custom_rule");
 }
+
+/// Pins the per-sink rendering contract for messages containing Markdown /
+/// HTML special characters, paired with fingerprint stability:
+///
+///   * JSON sink — RAW bytes (no escape; round-trip preserves exact text).
+///   * SARIF sink — Markdown-ESCAPED in `result.message.text` so Code
+///     Scanning UI cannot render attacker-supplied links.
+///   * Fingerprints — IDENTICAL across all three sinks (sanitisation must
+///     NOT shift fingerprints; inputs are pre-sanitisation finding fields).
+///
+/// Companion to `output_injection_corpus.rs`'s heavier hostile-input cases;
+/// this one stays lightweight and lives next to the existing rule-id /
+/// fingerprint parity assertions so any future cross-sink refactor catches
+/// the contract here too.
+#[test]
+fn markdown_payload_renders_per_sink_contract_with_stable_fingerprint() {
+    let (mut graph, mut findings) = build_graph_with_findings();
+    // Replace the built-in finding's message with a Markdown-link payload
+    // and an HTML-tag payload. Custom-rule finding stays as-is so the
+    // bracketed `[my_custom_rule]` prefix can still resolve its id.
+    findings[0].message = "Click [here](https://attacker.example) <script>alert(1)</script>".into();
+    // Touch the graph to trigger any HashMap-iteration code paths that
+    // could leak non-determinism into the fingerprint.
+    graph.metadata.insert("hostile_marker".into(), "ok".into());
+
+    let custom_rules = custom_rules_for_test();
+
+    // ── JSON: raw bytes preserved through round-trip. ────────────
+    let mut json_buf = Vec::new();
+    JsonReportSink
+        .emit(&mut json_buf, &graph, &findings)
+        .unwrap();
+    let json: serde_json::Value = serde_json::from_slice(&json_buf).unwrap();
+    let json_msg0 = json["findings"][0]["message"].as_str().unwrap();
+    assert!(
+        json_msg0.contains("[here](https://attacker.example)"),
+        "JSON sink must ship RAW Markdown payload (no escape); got: {json_msg0:?}"
+    );
+    assert!(
+        json_msg0.contains("<script>"),
+        "JSON sink must ship RAW HTML payload (no escape); got: {json_msg0:?}"
+    );
+
+    // ── SARIF: Markdown link grammar must be neutralised. ────────
+    let mut sarif_buf = Vec::new();
+    SarifReportSink
+        .emit_multi_with_custom_rules(&mut sarif_buf, &[(&graph, &findings[..])], &custom_rules)
+        .unwrap();
+    let sarif: serde_json::Value = serde_json::from_slice(&sarif_buf).unwrap();
+    let sarif_msg0 = sarif["runs"][0]["results"][0]["message"]["text"]
+        .as_str()
+        .unwrap();
+    assert!(
+        !sarif_msg0.contains("[here]("),
+        "SARIF sink must ESCAPE Markdown link grammar `[here](`; got: {sarif_msg0:?}"
+    );
+    assert!(
+        !sarif_msg0.contains("<script>"),
+        "SARIF sink must ESCAPE HTML tag delimiters; got: {sarif_msg0:?}"
+    );
+    // Defensive: the URL text itself is preserved (we de-fang the wrapper,
+    // we don't strip — visibility is the point of a security alert).
+    assert!(
+        sarif_msg0.contains("https://attacker.example"),
+        "SARIF sink must preserve URL text inside the de-fanged link; got: {sarif_msg0:?}"
+    );
+
+    // ── Fingerprint parity: sanitisation must NOT shift fingerprints. ──
+    let json_pairs = json_pairs(&graph, &findings);
+    let sarif_pairs = sarif_pairs(&graph, &findings, &custom_rules);
+    let ce_pairs = cloudevents_pairs(&graph, &findings);
+    for i in 0..2 {
+        assert_eq!(
+            json_pairs[i].1, sarif_pairs[i].1,
+            "finding[{i}] fingerprint diverges between JSON and SARIF under \
+             Markdown payload — sanitisation leaked into fingerprint inputs"
+        );
+        assert_eq!(
+            sarif_pairs[i].1, ce_pairs[i].1,
+            "finding[{i}] fingerprint diverges between SARIF and CloudEvents \
+             under Markdown payload — sanitisation leaked into fingerprint inputs"
+        );
+    }
+}

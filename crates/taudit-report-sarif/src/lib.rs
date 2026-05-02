@@ -1,3 +1,5 @@
+use std::borrow::Cow;
+
 use serde::Serialize;
 use taudit_core::custom_rules::CustomRule;
 use taudit_core::error::TauditError;
@@ -13,6 +15,77 @@ const SARIF_VERSION: &str = "2.1.0";
 const TOOL_NAME: &str = "taudit";
 const TOOL_URI: &str = "https://github.com/0ryant/taudit";
 const RULES_BASE_URI: &str = "https://github.com/0ryant/taudit/blob/main/docs/rules";
+
+// ── Render-boundary sanitisation ────────────────────────
+
+/// Escape Markdown / HTML special characters in `s` so attacker-controlled
+/// content cannot inject clickable links, images, code-block escapes, or
+/// HTML tags into SARIF `result.message.text`.
+///
+/// **Why this matters:** GitHub Code Scanning (and several other SARIF
+/// consumers) renders Markdown links inside the `text` field. Without this
+/// escape, a `finding.message` of
+/// `"Click [here](https://attacker.example/?steal=1) for context"`
+/// produces a clickable phishing link embedded in what appears to a triage
+/// reviewer as an authentic taudit alert. tsign attests "this YAML produced
+/// these bytes" — it does NOT attest "these bytes are safe to render in a
+/// Markdown viewer". Closing that gap is the responsibility of the render
+/// boundary.
+///
+/// Escaped characters (the EXPLOITABLE Markdown / HTML set — narrow on
+/// purpose to avoid noising up legitimate identifiers like `AWS_KEY`,
+/// `GITHUB_TOKEN`, kebab-case rule ids, and version strings like `v1.2-beta`):
+///   * `\` `[` `]` `(` `)` — link / image / footnote anchors (PHISHING vector)
+///   * `<` `>` — HTML tag delimiters (TAG INJECTION vector)
+///   * `` ` `` — inline code spans (CODE-FENCE BREAKOUT vector)
+///   * `*` — emphasis & unordered-list marker (paired with `[]()` to bold
+///     phishing links; high-density in attacker payloads)
+///   * `!` — image marker (becomes `![...](...)` clickable image when paired
+///     with the bracket/paren forms above)
+///
+/// NOT escaped (cosmetic-only, false-positive on legitimate identifiers):
+/// `_`, `~`, `{`, `}`, `#`, `+`, `-`, `|`. These can produce italic/strike/
+/// heading rendering quirks but cannot mint a clickable link or HTML tag.
+/// If a future SARIF consumer renders any of those into a payload-carrying
+/// element, extend `is_markdown_special` and add a regression test.
+///
+/// Performance: O(n), single-pass. Returns `Cow::Borrowed` (zero-alloc) when
+/// the input contains no Markdown special chars; `Cow::Owned` otherwise.
+///
+/// Hand-rolled, no new dependencies.
+///
+/// ⚠️  Apply ONLY to attacker-controllable strings. Built-in `RULE_DEFS`
+/// short/full descriptions are author-controlled (see `RULE_DEFS` in this
+/// crate) — their Markdown formatting is intentional and MUST NOT be
+/// escaped. Custom-rule names, finding messages, and any string sourced
+/// from pipeline YAML or custom-rule YAML MUST be escaped.
+pub(crate) fn escape_markdown(s: &str) -> Cow<'_, str> {
+    if !needs_markdown_escape(s) {
+        return Cow::Borrowed(s);
+    }
+    // Worst case: every byte gets one backslash prefix → 2× growth.
+    let mut out = String::with_capacity(s.len() + s.len() / 4);
+    for c in s.chars() {
+        if is_markdown_special(c) {
+            out.push('\\');
+        }
+        out.push(c);
+    }
+    Cow::Owned(out)
+}
+
+#[inline]
+fn is_markdown_special(c: char) -> bool {
+    matches!(
+        c,
+        '\\' | '[' | ']' | '(' | ')' | '<' | '>' | '*' | '`' | '!'
+    )
+}
+
+#[inline]
+fn needs_markdown_escape(s: &str) -> bool {
+    s.chars().any(is_markdown_special)
+}
 
 // ── Static rule catalogue ───────────────────────────────
 
@@ -1330,14 +1403,32 @@ fn build_custom_rules(rules: &[CustomRule]) -> Vec<SarifRule> {
                 Severity::Low => "2.0",
                 Severity::Info => "0.1",
             };
-            let short = if r.description.is_empty() {
+            // SECURITY: every field below — `r.id`, `r.name`, `r.description`
+            // — is sourced from custom-rule YAML loaded via
+            // `--invariants-dir`. An attacker who can land a custom-rule
+            // file (or convince an operator to apply one from a hostile
+            // source) controls every byte of these strings. The built-in
+            // catalogue (`RULE_DEFS` above) is author-controlled and uses
+            // intentional Markdown — those descriptors are NOT escaped.
+            // Custom rules are escaped unconditionally.
+            let short_raw = if r.description.is_empty() {
                 r.name.clone()
             } else {
                 r.description.clone()
             };
+            let short = escape_markdown(&short_raw).into_owned();
+            let name = escape_markdown(&r.name).into_owned();
+            // `r.id` is constrained to snake_case + kebab-case + digits at
+            // deserialise time (see `taudit-core/src/custom_rules.rs`
+            // ID_CHARSET_DESC) — letters/digits/`_`/`-` only. Markdown
+            // escaping `-` would break SARIF rule cross-reference (the
+            // result's `ruleId` matches descriptor `id` by string equality
+            // and is computed from the RAW finding message via
+            // `rule_id_for`). We rely on the deserialiser charset gate as
+            // the security boundary and emit the id verbatim.
             SarifRule {
                 id: r.id.clone(),
-                name: r.name.clone(),
+                name,
                 short_description: SarifMessage {
                     text: short.clone(),
                 },
@@ -1398,11 +1489,20 @@ fn finding_to_result(
     let suppressed = finding.extras.suppressed;
     let original_severity = finding.extras.original_severity.map(severity_to_str);
 
+    // SECURITY: GitHub Code Scanning renders Markdown links in
+    // `result.message.text`. `finding.message` is composed from
+    // attacker-controllable inputs (custom-rule `name`, node names from
+    // pipeline YAML keys). Escape Markdown specials at the render boundary
+    // — fingerprints are already computed above against the RAW message,
+    // so this escape does NOT shift fingerprints. JSON sink ships raw;
+    // only SARIF (Markdown-rendering downstream) escapes.
+    let escaped_message = escape_markdown(&finding.message).into_owned();
+
     SarifResult {
         rule_id,
         level,
         message: SarifMessage {
-            text: finding.message.clone(),
+            text: escaped_message,
         },
         locations: vec![SarifLocation {
             physical_location: SarifPhysicalLocation {
@@ -1464,6 +1564,78 @@ mod tests {
     use super::*;
     use taudit_core::finding::{FindingCategory, FindingExtras, Recommendation, Severity};
     use taudit_core::graph::{AuthorityGraph, PipelineSource};
+
+    // ── escape_markdown unit tests ────────────────────────────
+
+    #[test]
+    fn escape_markdown_passes_clean_prose_unchanged() {
+        let s = "AWS_KEY reaches deploy across trust boundary";
+        let out = escape_markdown(s);
+        // Underscores are NOT in our escape set (they're rare in attack
+        // strings and common in legitimate identifiers like AWS_KEY); only
+        // genuine Markdown link / HTML / emphasis chars trigger escaping.
+        assert!(
+            matches!(out, Cow::Borrowed(_)),
+            "clean input must zero-alloc"
+        );
+        assert_eq!(out, s);
+    }
+
+    #[test]
+    fn escape_markdown_neutralises_link_payload() {
+        let hostile = "Click [here](https://attacker.example) for context";
+        let out = escape_markdown(hostile);
+        // Brackets and parens must be backslash-escaped so a Markdown
+        // renderer treats them as literals, not link syntax.
+        assert!(out.contains("\\["));
+        assert!(out.contains("\\]"));
+        assert!(out.contains("\\("));
+        assert!(out.contains("\\)"));
+        // The underlying URL text is preserved (we don't strip — we
+        // de-fang the link wrapper).
+        assert!(out.contains("https://attacker.example"));
+    }
+
+    #[test]
+    fn escape_markdown_neutralises_html_tags() {
+        let hostile = "<script>alert(1)</script>";
+        let out = escape_markdown(hostile);
+        assert!(out.contains("\\<"));
+        assert!(out.contains("\\>"));
+    }
+
+    #[test]
+    fn escape_markdown_neutralises_emphasis_and_code() {
+        let hostile = "**bold** `code`";
+        let out = escape_markdown(hostile);
+        assert!(out.contains("\\*"));
+        assert!(out.contains("\\`"));
+    }
+
+    #[test]
+    fn escape_markdown_handles_image_marker() {
+        let hostile = "![alt](url)";
+        let out = escape_markdown(hostile);
+        assert!(out.contains("\\!"));
+        assert!(out.contains("\\["));
+        assert!(out.contains("\\]"));
+        assert!(out.contains("\\("));
+        assert!(out.contains("\\)"));
+    }
+
+    #[test]
+    fn escape_markdown_preserves_legitimate_identifiers() {
+        // Underscores and hyphens in identifiers like `AWS_KEY`,
+        // `GITHUB_TOKEN`, `my-custom-rule` must NOT be escaped — that
+        // would noise up the common-path render of every taudit alert.
+        let s = "AWS_KEY reaches deploy via my-custom-rule#42";
+        let out = escape_markdown(s);
+        assert!(
+            matches!(out, Cow::Borrowed(_)),
+            "underscore/hyphen/hash must not trigger escape"
+        );
+        assert_eq!(out, s);
+    }
     use taudit_core::ports::ReportSink;
 
     fn source() -> PipelineSource {

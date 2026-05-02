@@ -1,8 +1,97 @@
+use std::borrow::Cow;
+
 use colored::Colorize;
 use taudit_core::error::TauditError;
 use taudit_core::finding::{Finding, FindingSource, Recommendation, Severity};
 use taudit_core::graph::{AuthorityCompleteness, AuthorityGraph, EdgeKind, GapKind, NodeKind};
 use taudit_core::ports::ReportSink;
+
+/// Strip ASCII C0/C1 control characters (`\x00`-`\x1F`, `\x7F`-`\x9F`) and a
+/// small set of Unicode steering codepoints (RTL/LTR overrides, zero-width
+/// joiners, BOM) from `s`, EXCEPT for `\n` and `\t` which are required for
+/// legitimate multi-line / tabular terminal output.
+///
+/// This is the **render-boundary sanitiser** for the terminal sink. Attackers
+/// can plant escape-sequence payloads in pipeline YAML keys and custom-rule
+/// `name`/`id` fields; once those propagate into `finding.message`,
+/// `node.name`, `graph.source.file`, or completeness gap strings, a naive
+/// `writeln!("{}", attacker_string.bold())` lets the attacker:
+///   * clear the screen with `\x1b[2J\x1b[H` and impersonate a clean run,
+///   * wrap subsequent output in fake colour codes (`\x1b[1;32m...\x1b[0m`),
+///   * emit BEL (`\x07`) audio,
+///   * use RTL override (`\u{202e}`) to reverse glyph order,
+///   * inject zero-width joiner (`\u{200d}`) to defeat copy-paste review.
+///
+/// `colored::ColoredString` only WRAPS its input in CSI sequences — it does
+/// not sanitise the wrapped bytes. Callers MUST run this against any
+/// attacker-controllable string BEFORE handing it to `.bold()` /
+/// `.bright_black()` / `format!`.
+///
+/// **Performance:** O(n), single-pass. Returns `Cow::Borrowed` (zero-alloc)
+/// when the input is already clean; `Cow::Owned` otherwise.
+///
+/// **Hand-rolled, no new dependencies.**
+pub fn strip_control_chars(s: &str) -> Cow<'_, str> {
+    if !needs_control_strip(s) {
+        return Cow::Borrowed(s);
+    }
+    let mut out = String::with_capacity(s.len());
+    for c in s.chars() {
+        if is_disallowed_control(c) {
+            // Drop silently — replacing with a marker would itself be
+            // attacker-injectable noise. The threat we're defending is
+            // terminal interpretation; once the bytes are gone, the
+            // interpretation can't fire.
+            continue;
+        }
+        out.push(c);
+    }
+    Cow::Owned(out)
+}
+
+#[inline]
+fn is_disallowed_control(c: char) -> bool {
+    match c {
+        '\n' | '\t' => false,
+        // ASCII C0 (0x00..=0x1F) and DEL (0x7F).
+        '\x00'..='\x1F' | '\x7F' => true,
+        // C1 control range (0x80..=0x9F) — rarely seen in valid UTF-8 prose
+        // but legal codepoints; some terminals interpret them.
+        '\u{80}'..='\u{9F}' => true,
+        // Bidi / steering codepoints abused for spoofing.
+        '\u{200B}' // ZERO WIDTH SPACE
+        | '\u{200C}' // ZERO WIDTH NON-JOINER
+        | '\u{200D}' // ZERO WIDTH JOINER
+        | '\u{200E}' // LEFT-TO-RIGHT MARK
+        | '\u{200F}' // RIGHT-TO-LEFT MARK
+        | '\u{202A}' // LEFT-TO-RIGHT EMBEDDING
+        | '\u{202B}' // RIGHT-TO-LEFT EMBEDDING
+        | '\u{202C}' // POP DIRECTIONAL FORMATTING
+        | '\u{202D}' // LEFT-TO-RIGHT OVERRIDE
+        | '\u{202E}' // RIGHT-TO-LEFT OVERRIDE
+        | '\u{2066}' // LEFT-TO-RIGHT ISOLATE
+        | '\u{2067}' // RIGHT-TO-LEFT ISOLATE
+        | '\u{2068}' // FIRST STRONG ISOLATE
+        | '\u{2069}' // POP DIRECTIONAL ISOLATE
+        | '\u{FEFF}' // BOM / ZERO WIDTH NO-BREAK SPACE
+        => true,
+        _ => false,
+    }
+}
+
+#[inline]
+fn needs_control_strip(s: &str) -> bool {
+    s.chars().any(is_disallowed_control)
+}
+
+/// Sanitise an attacker-controllable string at the terminal render boundary
+/// and return an owned `String` ready to feed into `colored` or `format!`.
+/// Convenience wrapper used at the call sites where we need a `String` (e.g.
+/// `format!("[{label}]", label = clean(name))`).
+#[inline]
+fn clean(s: &str) -> String {
+    strip_control_chars(s).into_owned()
+}
 
 macro_rules! w {
     ($w:expr, $($arg:tt)*) => {
@@ -37,11 +126,19 @@ impl<W: std::io::Write> ReportSink<W> for TerminalReport {
             || graph.completeness == AuthorityCompleteness::Unknown;
 
         // ── File section header ──────────────────────────────────
+        // SECURITY: `graph.source.file` is attacker-controllable (a hostile
+        // PR author can rename a workflow file). Strip control characters at
+        // the render boundary so a filename like
+        // `\x1b[2J\x1b[Hci.yml` cannot clear the screen and impersonate a
+        // fresh run. Sister sinks (JSON / SARIF) ship the raw filename — only
+        // the terminal renderer interprets escape bytes, so only the terminal
+        // renderer sanitises. See `strip_control_chars` doc-comment.
+        let source_file_clean = clean(&graph.source.file);
         wln!(w, "{}", "─".repeat(RULE_WIDTH).bright_black())?;
         wln!(
             w,
             "{}",
-            format!("Authority Graph: {}", graph.source.file)
+            format!("Authority Graph: {source_file_clean}")
                 .bright_white()
                 .bold()
         )?;
@@ -86,7 +183,12 @@ impl<W: std::io::Write> ReportSink<W> for TerminalReport {
                             GapKind::Structural => "[structural]".yellow().to_string(),
                             GapKind::Expression => "[expression]".dimmed().to_string(),
                         };
-                        wln!(w, "    {} {}", kind_label, gap.dimmed())?;
+                        // SECURITY: gap strings are derived from parser output
+                        // and can include attacker-controlled YAML keys
+                        // (composite-action names, expression text). Strip
+                        // control chars before colouring.
+                        let gap_clean = clean(gap);
+                        wln!(w, "    {} {}", kind_label, gap_clean.dimmed())?;
                     }
                     // Fallback: if gap_kinds is shorter than gaps, print remaining gaps
                     // without prefix (defensive — keeps behaviour graceful if invariants slip).
@@ -95,7 +197,8 @@ impl<W: std::io::Write> ReportSink<W> for TerminalReport {
                         .iter()
                         .skip(graph.completeness_gap_kinds.len())
                     {
-                        wln!(w, "    {}", format!("- {gap}").yellow())?;
+                        let gap_clean = clean(gap);
+                        wln!(w, "    {}", format!("- {gap_clean}").yellow())?;
                     }
                 }
                 AuthorityCompleteness::Unknown => {
@@ -147,6 +250,9 @@ impl<W: std::io::Write> ReportSink<W> for TerminalReport {
             // an authentic built-in finding from a planted custom invariant
             // without re-running with --format json. Built-in findings get
             // no prefix to keep the common path uncluttered.
+            // SECURITY: `source_file` is the path to an attacker-controlled
+            // YAML; even the path basename can be crafted to contain ANSI
+            // sequences. Sanitise before rendering.
             let custom_tag = match &finding.source {
                 FindingSource::Custom { source_file } => {
                     let label = if source_file.as_os_str().is_empty() {
@@ -158,28 +264,39 @@ impl<W: std::io::Write> ReportSink<W> for TerminalReport {
                             .file_name()
                             .and_then(|s| s.to_str())
                             .unwrap_or_else(|| source_file.to_str().unwrap_or("custom"));
-                        format!("custom: {name}")
+                        format!("custom: {}", clean(name))
                     };
                     format!(" {}", format!("[{label}]").magenta().dimmed())
                 }
                 FindingSource::BuiltIn => String::new(),
             };
 
+            // SECURITY: `finding.message` is the most attacker-reachable
+            // field. Custom-rule YAML composes the message as
+            // `format!("[{id}] {name}: {nodename}")` — every component is
+            // attacker-controllable. Strip control chars before bolding so a
+            // crafted message like
+            // `"\x1b[2J\x1b[H[1;32m✓ no findings\x1b[0m"`
+            // cannot clear the screen and impersonate a clean run.
+            let message_clean = clean(&finding.message);
             wln!(
                 w,
                 "{}{}{} {}",
                 sev_tag,
                 partial_tag,
                 custom_tag,
-                finding.message.bold()
+                message_clean.bold()
             )?;
 
             // Propagation path
+            // SECURITY: every `node.name` originates from YAML keys (step
+            // names, secret names, environment names). All are
+            // attacker-controllable. Strip control chars before colouring.
             if let Some(ref path) = finding.path {
-                let source_name = graph
+                let source_name_owned = graph
                     .node(path.source)
-                    .map(|n| n.name.as_str())
-                    .unwrap_or("?");
+                    .map(|n| clean(&n.name))
+                    .unwrap_or_else(|| "?".to_string());
                 let source_kind = graph
                     .node(path.source)
                     .map(|n| node_kind_label(n.kind))
@@ -191,13 +308,15 @@ impl<W: std::io::Write> ReportSink<W> for TerminalReport {
                         w,
                         "  {} {} {}",
                         "Path:".bright_black(),
-                        source_name.bright_white(),
+                        source_name_owned.bright_white(),
                         format!("({source_kind})").bright_black()
                     )?;
                     for edge_id in &path.edges {
                         if let Some(edge) = graph.edge(*edge_id) {
                             let target = graph.node(edge.to);
-                            let name = target.map(|n| n.name.as_str()).unwrap_or("?");
+                            let name = target
+                                .map(|n| clean(&n.name))
+                                .unwrap_or_else(|| "?".to_string());
                             let kind = target.map(|n| node_kind_label(n.kind)).unwrap_or("");
                             w!(
                                 w,
@@ -215,13 +334,15 @@ impl<W: std::io::Write> ReportSink<W> for TerminalReport {
                     wln!(
                         w,
                         "      {} {}",
-                        source_name.bright_white(),
+                        source_name_owned.bright_white(),
                         format!("({source_kind})").bright_black()
                     )?;
                     for edge_id in &path.edges {
                         if let Some(edge) = graph.edge(*edge_id) {
                             let target = graph.node(edge.to);
-                            let name = target.map(|n| n.name.as_str()).unwrap_or("?");
+                            let name = target
+                                .map(|n| clean(&n.name))
+                                .unwrap_or_else(|| "?".to_string());
                             let kind = target.map(|n| node_kind_label(n.kind)).unwrap_or("");
                             wln!(
                                 w,
@@ -244,7 +365,9 @@ impl<W: std::io::Write> ReportSink<W> for TerminalReport {
                     emit_verbose_nodes(w, graph, &path_nodes)?;
                 }
             } else if !finding.nodes_involved.is_empty() {
-                // No propagation path — show involved nodes
+                // No propagation path — show involved nodes.
+                // SECURITY: as above, sanitise each `node.name` before
+                // wrapping in `colored` styling.
                 let nodes = &finding.nodes_involved;
                 let display: Vec<String> = nodes
                     .iter()
@@ -253,7 +376,7 @@ impl<W: std::io::Write> ReportSink<W> for TerminalReport {
                     .map(|n| {
                         format!(
                             "{} {}",
-                            n.name.bright_white(),
+                            clean(&n.name).bright_white(),
                             format!("({})", node_kind_label(n.kind)).bright_black()
                         )
                     })
@@ -293,7 +416,10 @@ impl<W: std::io::Write> ReportSink<W> for TerminalReport {
             }
 
             // Recommendation
-            let rec = format_recommendation(&finding.recommendation);
+            // SECURITY: `Recommendation::Manual { action }` is sourced from
+            // custom-rule YAML `description:` (see `evaluate_custom_rules` in
+            // `taudit-core/src/custom_rules.rs`). Sanitise before colouring.
+            let rec = clean(&format_recommendation(&finding.recommendation));
             wln!(w, "  {} {}", "Recommendation:".green().bold(), rec.green())?;
             wln!(w)?;
         }
@@ -342,19 +468,28 @@ fn emit_verbose_nodes<W: std::io::Write>(
     graph: &AuthorityGraph,
     node_ids: &[usize],
 ) -> Result<(), TauditError> {
+    // SECURITY: every metadata value (`scope`, `permissions`, `digest`) is
+    // attacker-controllable — `permissions:` is a top-level YAML map under
+    // operator control of the pipeline definition, `digest` comes from
+    // `image@sha256:…` text which can be padded with control bytes before
+    // the `@`, and `identity_scope` is a free-form string. Strip control
+    // chars at the render boundary so a crafted `permissions:` value cannot
+    // smuggle ANSI past the verbose-mode renderer.
     for &id in node_ids {
         if let Some(node) = graph.node(id) {
             let kind = node_kind_label(node.kind);
             let zone = format!("{:?}", node.trust_zone).to_lowercase();
-            w!(w, "    {} ({kind}, {zone})", node.name.bright_black())?;
+            let name_clean = clean(&node.name);
+            w!(w, "    {} ({kind}, {zone})", name_clean.bright_black())?;
             if let Some(scope) = node.metadata.get("identity_scope") {
-                w!(w, ", scope: {scope}")?;
+                w!(w, ", scope: {}", clean(scope))?;
             }
             if let Some(perms) = node.metadata.get("permissions") {
-                w!(w, ", permissions: {perms}")?;
+                w!(w, ", permissions: {}", clean(perms))?;
             }
             if let Some(digest) = node.metadata.get("digest") {
-                w!(w, ", pin: {}…", &digest[..digest.len().min(12)])?;
+                let digest_clean = clean(digest);
+                w!(w, ", pin: {}…", &digest_clean[..digest_clean.len().min(12)])?;
             }
             if node
                 .metadata
@@ -474,6 +609,70 @@ mod tests {
     };
     use taudit_core::graph::{GapKind, PipelineSource};
     use taudit_core::ports::ReportSink;
+
+    // ── strip_control_chars unit tests ─────────────────────────────
+
+    #[test]
+    fn strip_control_chars_passes_clean_text_unchanged() {
+        let clean = "AWS_KEY reaches deploy";
+        let out = strip_control_chars(clean);
+        assert!(
+            matches!(out, Cow::Borrowed(_)),
+            "clean input must zero-alloc"
+        );
+        assert_eq!(out, clean);
+    }
+
+    #[test]
+    fn strip_control_chars_preserves_newline_and_tab() {
+        let s = "line1\nline2\tcol";
+        let out = strip_control_chars(s);
+        assert!(matches!(out, Cow::Borrowed(_)));
+        assert_eq!(out, s);
+    }
+
+    #[test]
+    fn strip_control_chars_drops_esc_and_clear_screen() {
+        // The headline attack: clear-screen + cursor-home.
+        let hostile = "\x1b[2J\x1b[Hfake clean output\x1b[0m";
+        let out = strip_control_chars(hostile);
+        assert!(!out.contains('\x1b'), "ESC byte must be stripped");
+        assert_eq!(out, "[2J[Hfake clean output[0m");
+    }
+
+    #[test]
+    fn strip_control_chars_drops_bel_and_del() {
+        let hostile = "ding\x07then\x7Fdel";
+        let out = strip_control_chars(hostile);
+        assert!(!out.bytes().any(|b| b == 0x07));
+        assert!(!out.bytes().any(|b| b == 0x7F));
+        assert_eq!(out, "dingthendel");
+    }
+
+    #[test]
+    fn strip_control_chars_drops_rtl_and_zwj() {
+        let hostile = "user\u{202E}name\u{200D}joiner";
+        let out = strip_control_chars(hostile);
+        assert!(!out.contains('\u{202E}'));
+        assert!(!out.contains('\u{200D}'));
+        assert_eq!(out, "usernamejoiner");
+    }
+
+    #[test]
+    fn strip_control_chars_preserves_emoji_and_unicode_prose() {
+        let s = "✓ no findings — Authority Graph: ci.yml";
+        let out = strip_control_chars(s);
+        assert!(matches!(out, Cow::Borrowed(_)));
+        assert_eq!(out, s);
+    }
+
+    #[test]
+    fn strip_control_chars_drops_c1_range() {
+        // 0x80..=0x9F is the C1 control range. Some terminals interpret it.
+        let hostile = "before\u{0080}\u{009F}after";
+        let out = strip_control_chars(hostile);
+        assert_eq!(out, "beforeafter");
+    }
 
     /// Build a fresh graph for tests. Single mutex-free entry point — keeps each
     /// test self-contained.

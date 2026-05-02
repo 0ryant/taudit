@@ -1,5 +1,6 @@
 ---
 source: crates/taudit-cli/tests/snapshot_gha.rs
+assertion_line: 193
 expression: results
 ---
 - level: error
@@ -9,7 +10,7 @@ expression: results
           uri: test.yml
           uriBaseId: "%SRCROOT%"
   message:
-    text: "GITHUB_TOKEN reaches 5 sinks via authority propagation: [actions/checkout@a5ac7e51b41094c92402da3b24376905380afc29, actions/upload-artifact@v4, release-bundle, actions/download-artifact@v4, untrusted-org/publish-action@main]"
+    text: "GITHUB_TOKEN reaches 5 sinks via authority propagation: \\[actions/checkout@a5ac7e51b41094c92402da3b24376905380afc29, actions/upload-artifact@v4, release-bundle, actions/download-artifact@v4, untrusted-org/publish-action@main\\]"
   partialFingerprints:
     primaryLocationLineHash: 4c049f68139514095dad695181c62c92
     taudit/v1: 4c049f68139514095dad695181c62c92
@@ -58,7 +59,7 @@ expression: results
           uri: test.yml
           uriBaseId: "%SRCROOT%"
   message:
-    text: "GITHUB_TOKEN has broad scope (permissions: 'write-all') — likely broader than needed"
+    text: "GITHUB_TOKEN has broad scope \\(permissions: 'write-all'\\) — likely broader than needed"
   partialFingerprints:
     primaryLocationLineHash: f40be29c0ec732f891a8b218b539588e
     taudit/v1: f40be29c0ec732f891a8b218b539588e
@@ -126,7 +127,7 @@ expression: results
           uri: test.yml
           uriBaseId: "%SRCROOT%"
   message:
-    text: "Untrusted step 'build[2]' has direct access to identity 'GITHUB_TOKEN'"
+    text: "Untrusted step 'build\\[2\\]' has direct access to identity 'GITHUB_TOKEN'"
   partialFingerprints:
     primaryLocationLineHash: c86dc7d595e4239cd2ed6ea9deafa290
     taudit/v1: c86dc7d595e4239cd2ed6ea9deafa290
@@ -142,7 +143,7 @@ expression: results
           uri: test.yml
           uriBaseId: "%SRCROOT%"
   message:
-    text: "Untrusted step 'publish[0]' has direct access to identity 'GITHUB_TOKEN'"
+    text: "Untrusted step 'publish\\[0\\]' has direct access to identity 'GITHUB_TOKEN'"
   partialFingerprints:
     primaryLocationLineHash: 5ed638c8ae853fe1fdb2f25c3dc36429
     taudit/v1: 5ed638c8ae853fe1fdb2f25c3dc36429
@@ -158,7 +159,7 @@ expression: results
           uri: test.yml
           uriBaseId: "%SRCROOT%"
   message:
-    text: "Untrusted step 'publish[1]' has direct access to identity 'GITHUB_TOKEN'"
+    text: "Untrusted step 'publish\\[1\\]' has direct access to identity 'GITHUB_TOKEN'"
   partialFingerprints:
     primaryLocationLineHash: 9b5a3597ba20260b9b44b003091941a8
     taudit/v1: 9b5a3597ba20260b9b44b003091941a8
@@ -174,7 +175,7 @@ expression: results
           uri: test.yml
           uriBaseId: "%SRCROOT%"
   message:
-    text: "Untrusted step 'publish[1]' has direct access to secret 'PUBLISH_API_KEY'"
+    text: "Untrusted step 'publish\\[1\\]' has direct access to secret 'PUBLISH_API_KEY'"
   partialFingerprints:
     primaryLocationLineHash: 576c2dd5a7622210fdb7f2220518b0aa
     taudit/v1: 576c2dd5a7622210fdb7f2220518b0aa
@@ -190,7 +191,7 @@ expression: results
           uri: test.yml
           uriBaseId: "%SRCROOT%"
   message:
-    text: 5 step(s) use OIDC/federated identity but no provenance attestation step was detected — artifact integrity cannot be verified
+    text: "5 step\\(s\\) use OIDC/federated identity but no provenance attestation step was detected — artifact integrity cannot be verified"
   partialFingerprints:
     primaryLocationLineHash: 808fed89037072f475af655be504c6fa
     taudit/v1: 808fed89037072f475af655be504c6fa

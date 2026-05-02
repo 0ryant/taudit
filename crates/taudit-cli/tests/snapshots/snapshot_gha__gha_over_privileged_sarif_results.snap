@@ -1,5 +1,6 @@
 ---
 source: crates/taudit-cli/tests/snapshot_gha.rs
+assertion_line: 87
 expression: results
 ---
 - level: error
@@ -25,7 +26,7 @@ expression: results
           uri: test.yml
           uriBaseId: "%SRCROOT%"
   message:
-    text: "GITHUB_TOKEN reaches 2 sinks via authority propagation: [actions/checkout@v4, some-org/deploy-action@main]"
+    text: "GITHUB_TOKEN reaches 2 sinks via authority propagation: \\[actions/checkout@v4, some-org/deploy-action@main\\]"
   partialFingerprints:
     primaryLocationLineHash: 34dfeec1b30291318a55b11421fbac7b
     taudit/v1: 34dfeec1b30291318a55b11421fbac7b
@@ -75,7 +76,7 @@ expression: results
           uri: test.yml
           uriBaseId: "%SRCROOT%"
   message:
-    text: "GITHUB_TOKEN has broad scope (permissions: 'write-all') — likely broader than needed"
+    text: "GITHUB_TOKEN has broad scope \\(permissions: 'write-all'\\) — likely broader than needed"
   partialFingerprints:
     primaryLocationLineHash: 1fbb9cf89e16b2623ad236fcace90316
     taudit/v1: 1fbb9cf89e16b2623ad236fcace90316
@@ -126,7 +127,7 @@ expression: results
           uri: test.yml
           uriBaseId: "%SRCROOT%"
   message:
-    text: "Untrusted step 'build[0]' has direct access to identity 'GITHUB_TOKEN'"
+    text: "Untrusted step 'build\\[0\\]' has direct access to identity 'GITHUB_TOKEN'"
   partialFingerprints:
     primaryLocationLineHash: 4cc63211c9299f9f5965da1d71e83023
     taudit/v1: 4cc63211c9299f9f5965da1d71e83023
@@ -142,7 +143,7 @@ expression: results
           uri: test.yml
           uriBaseId: "%SRCROOT%"
   message:
-    text: "Untrusted step 'deploy[0]' has direct access to identity 'GITHUB_TOKEN'"
+    text: "Untrusted step 'deploy\\[0\\]' has direct access to identity 'GITHUB_TOKEN'"
   partialFingerprints:
     primaryLocationLineHash: b3aac2a7d760a06fdde4c9231697db3d
     taudit/v1: b3aac2a7d760a06fdde4c9231697db3d
@@ -158,7 +159,7 @@ expression: results
           uri: test.yml
           uriBaseId: "%SRCROOT%"
   message:
-    text: "Untrusted step 'deploy[0]' has direct access to secret 'DEPLOY_TOKEN'"
+    text: "Untrusted step 'deploy\\[0\\]' has direct access to secret 'DEPLOY_TOKEN'"
   partialFingerprints:
     primaryLocationLineHash: ccaf29551b139fb5d5c271a9c47d62de
     taudit/v1: ccaf29551b139fb5d5c271a9c47d62de
@@ -174,7 +175,7 @@ expression: results
           uri: test.yml
           uriBaseId: "%SRCROOT%"
   message:
-    text: 3 step(s) use OIDC/federated identity but no provenance attestation step was detected — artifact integrity cannot be verified
+    text: "3 step\\(s\\) use OIDC/federated identity but no provenance attestation step was detected — artifact integrity cannot be verified"
   partialFingerprints:
     primaryLocationLineHash: 72c99cb062f0e9061b7bd3063a3387ca
     taudit/v1: 72c99cb062f0e9061b7bd3063a3387ca

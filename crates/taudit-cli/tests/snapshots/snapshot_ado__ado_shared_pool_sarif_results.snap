@@ -1,5 +1,6 @@
 ---
 source: crates/taudit-cli/tests/snapshot_ado.rs
+assertion_line: 113
 expression: results
 ---
 - level: error
@@ -9,7 +10,7 @@ expression: results
           uri: azure-pipelines.yml
           uriBaseId: "%SRCROOT%"
   message:
-    text: "PR-triggered pipeline checks out the repository at step 'pipeline[0]' — attacker-controlled code from the fork lands on the runner and is readable by all subsequent steps"
+    text: "PR-triggered pipeline checks out the repository at step 'pipeline\\[0\\]' — attacker-controlled code from the fork lands on the runner and is readable by all subsequent steps"
   partialFingerprints:
     primaryLocationLineHash: 481eb03db2f3c50620aead82178810b4
     taudit/v1: 481eb03db2f3c50620aead82178810b4
@@ -26,7 +27,7 @@ expression: results
           uri: azure-pipelines.yml
           uriBaseId: "%SRCROOT%"
   message:
-    text: "System.AccessToken has broad scope (permissions: '') — likely broader than needed"
+    text: "System.AccessToken has broad scope \\(permissions: ''\\) — likely broader than needed"
   partialFingerprints:
     primaryLocationLineHash: fd6a9adae7376318838370392ea657ca
     taudit/v1: fd6a9adae7376318838370392ea657ca
@@ -59,7 +60,7 @@ expression: results
           uri: azure-pipelines.yml
           uriBaseId: "%SRCROOT%"
   message:
-    text: "Self-hosted pool 'SharedBuildAgents' has no workspace isolation (workspace: {clean: all/true} not set); a previous pipeline run can pollute the workspace for the next — including privileged deployment jobs"
+    text: "Self-hosted pool 'SharedBuildAgents' has no workspace isolation \\(workspace: {clean: all/true} not set\\); a previous pipeline run can pollute the workspace for the next — including privileged deployment jobs"
   partialFingerprints:
     primaryLocationLineHash: 4873e5775b5e271f363374e5b504aca1
     taudit/v1: 4873e5775b5e271f363374e5b504aca1
@@ -75,7 +76,7 @@ expression: results
           uri: azure-pipelines.yml
           uriBaseId: "%SRCROOT%"
   message:
-    text: Workflow triggered by pr with secret/identity access — 2 step(s) hold authority that attacker-controlled code could reach
+    text: "Workflow triggered by pr with secret/identity access — 2 step\\(s\\) hold authority that attacker-controlled code could reach"
   partialFingerprints:
     primaryLocationLineHash: b6c2dbaccfb85fcc54955524d5539caa
     taudit/v1: b6c2dbaccfb85fcc54955524d5539caa

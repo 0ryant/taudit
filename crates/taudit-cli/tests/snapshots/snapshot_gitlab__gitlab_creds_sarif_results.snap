@@ -1,5 +1,6 @@
 ---
 source: crates/taudit-cli/tests/snapshot_gitlab.rs
+assertion_line: 66
 expression: results
 ---
 - level: error
@@ -107,7 +108,7 @@ expression: results
           uri: ".gitlab-ci.yml"
           uriBaseId: "%SRCROOT%"
   message:
-    text: "CI_JOB_TOKEN has broad scope (permissions: '') — likely broader than needed"
+    text: "CI_JOB_TOKEN has broad scope \\(permissions: ''\\) — likely broader than needed"
   partialFingerprints:
     primaryLocationLineHash: 1ff9918fc8f89331c28c5c87af76f8ff
     taudit/v1: 1ff9918fc8f89331c28c5c87af76f8ff
