@@ -1,5 +1,10 @@
 #!/usr/bin/env python3
-"""Emit FindingCategory serde strings from crates/taudit-core/src/finding.rs for tooling."""
+"""Emit FindingCategory serde strings from crates/taudit-api/src/lib.rs for tooling.
+
+The wire-type definition for FindingCategory lives in `taudit-api` (the
+externally-stable contract crate) and is re-exported by `taudit-core`. See
+ADR for API stability extraction (RC-C); this script chases the canonical
+definition rather than the re-export."""
 from __future__ import annotations
 
 import re
@@ -18,7 +23,7 @@ def to_snake(name: str) -> str:
 
 def main() -> None:
     root = Path(__file__).resolve().parents[1]
-    path = root / "crates/taudit-core/src/finding.rs"
+    path = root / "crates/taudit-api/src/lib.rs"
     text = path.read_text()
     m = re.search(
         r"pub enum FindingCategory\s*\{(.*?)\n\}",

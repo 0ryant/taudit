@@ -1,23 +1,11 @@
-use crate::graph::{AuthorityGraph, EdgeId, NodeId, TrustZone};
-use serde::{Deserialize, Serialize};
+use crate::graph::{AuthorityGraph, EdgeId, NodeId};
 use std::collections::VecDeque;
 
-/// A path that authority took through the graph.
-/// The path is the product — it's what makes findings persuasive.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct PropagationPath {
-    /// The authority origin (Secret or Identity).
-    pub source: NodeId,
-    /// Where authority ended up.
-    pub sink: NodeId,
-    /// The full edge path from source to sink.
-    pub edges: Vec<EdgeId>,
-    /// Did this path cross a trust zone boundary?
-    pub crossed_boundary: bool,
-    /// If crossed, from which zone to which zone.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub boundary_crossing: Option<(TrustZone, TrustZone)>,
-}
+// `PropagationPath` is a wire type — the BFS engine here computes them, but
+// the struct itself lives in `taudit-api` (it serialises into `Finding.path`
+// in JSON output and into the standalone `authority-propagation-summary.v1.json`
+// schema). Re-export so existing in-tree imports stay green.
+pub use taudit_api::PropagationPath;
 
 /// Default maximum BFS depth. Override via CLI --max-hops.
 pub const DEFAULT_MAX_HOPS: usize = 4;

