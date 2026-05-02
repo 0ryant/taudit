@@ -43,21 +43,28 @@ Companion docs: [`release-strategy.md`](release-strategy.md) (lane policy: stabl
 
 ### 2.2 `rc.N → vM.m.p` stable
 
+> **Operating-model note.** taudit ships as a small-team / solo-maintainer OSS project. There is no enterprise sales motion, no GTM team, no roster of named pilots that maintainers can summon for a 14-day soak by sending an email. An earlier draft of this section asked for "≥2 concurrent pilots × recorded reference call" — that gate assumed a sales motion that doesn't exist for this project, and a gate the maintainer cannot clear becomes "wait forever," which is the same failure mode as no gate at all. This revision replaces that requirement with stability signals a maintainer can produce alone.
+
 **Hard gates** (all required):
 
-- [ ] **≥2 concurrent pilots completed a 14-day soak window.** "Pilot" = a real organisation running taudit on production CI estate with a designated point of contact and recorded findings volume. n=1 is anecdote, not evidence — Johannes was right, and the cost of getting this wrong is higher than the cost of waiting for the second pilot.
-- [ ] **Zero new P0/P1 findings** raised by either pilot during the soak window. A finding raised in week 1 and fixed by week 2 does not reset the clock; a P1 raised in week 13 does.
-- [ ] **At least one recorded reference call** with a buyer-side stakeholder (CISO, AppSec lead, Director of Platform) attesting to specific value delivered. The recording is the artifact that converts the next 9 pilots; without it, "we have pilots" is unverifiable.
-- [ ] All RC-cycle blockers (§2.1) confirmed resolved against pilot estates, not just internal fixtures.
+- [ ] **14-day calendar soak** since the latest `rc.N` tag, with no new commits to `main` that touch parser logic, the JSON/SARIF/CloudEvents wire types, or `compute_fingerprint`. (Documentation, tests, and CI changes do not reset the clock; semantic changes do.)
+- [ ] **Zero new P0/P1 findings** against the public contract surface during the soak. A P1 raised externally (issue tracker, fuzz finding, security disclosure) resets the clock to the day of the fix tag.
+- [ ] **Public-corpus dogfood pass.** taudit successfully scans a curated corpus of ≥100 real-world pipeline files sourced from public GitHub / GitLab / ADO repos (covering all three platforms, varied sizes, including known-pathological shapes) without crashing, hanging, or producing schema-invalid output. Maintain the corpus list in `docs/dogfood-corpus.md` with sources and rationale; refresh quarterly.
+- [ ] **Fuzz clean during soak.** `scheduled-fuzz.yml` runs (Tuesday cron) over the soak window report no new crashers, no new schema-invalid outputs, no new panics on hostile YAML.
+- [ ] **Maintainer self-attestation.** The maintainer runs taudit on the workspace's own CI YAML (`.github/workflows/`, `azure-pipelines.yml`, `.gitlab-ci.yml`, `bitbucket-pipelines.yml`) plus at least two sibling-project CI estates (e.g. tsign, axiom, CellOS once they exist) and writes the findings up as a public dogfood report committed to `docs/dogfood/v{tag}.md`. This is the "we use it on real code" signal that doesn't require a CISO call.
+- [ ] All RC-cycle blockers (§2.1) confirmed resolved at HEAD.
 - [ ] CHANGELOG `## Unreleased` empty stub re-scaffolded for the next cycle.
 
 **Abort criteria (auto-rollback to `rc.N+1`):**
 
-- Any P0 raised by a pilot during the soak window → automatic abort, fix in `rc.N+1`, restart 14-day clock.
-- Any P1 raised in the **second week** of soak (suggests latent issue surfacing under real load, not week-1 superficial discovery) → automatic abort, fix in `rc.N+1`, restart 14-day clock.
-- Pilot pulls out citing tool quality (not procurement / scheduling / personnel) → automatic abort, retrospective in `docs/audit-tracker.md`, do not re-tag until the named cause is resolved.
+- Any P0 raised against the public contract during soak → automatic abort, fix in `rc.N+1`, restart 14-day clock.
+- Any P1 raised against the public contract in the **second week** of soak → automatic abort, fix in `rc.N+1`, restart 14-day clock. (Week-1 P1s are typically superficial / fast to fix; week-2 P1s suggest latent shape issues that need a fresh soak.)
+- Fuzz finds a new crasher mid-soak → automatic abort if the crasher reproduces on the RC binary; fix in `rc.N+1`.
+- Public-corpus regression: a fixture that scanned cleanly on the previous stable now produces schema-invalid output or crashes → automatic abort.
 
-The bar for restarting the soak clock is **deliberately strict.** It is cheaper to ship `rc.5` than to ship a `1.1.0` that gets yanked.
+The bar for restarting the soak clock is **deliberately strict.** It is cheaper to ship `rc.5` than to ship a `1.1.0` that gets yanked. But "deliberately strict" is not "impossible" — every gate above is a maintainer-side artifact, not a customer-side dependency.
+
+**What this section deliberately does NOT require.** Pilots, reference calls, signed customer logos, ARR commitments, analyst briefings, recorded testimonials. These are GTM artifacts; they may eventually be useful but they are not stability signals and they cannot gate stable releases of a small-team OSS project. If a pilot relationship organically develops and produces a P0 finding, that finding still gates the release — the relationship is the input, not the gate itself.
 
 ### 2.3 Major version bumps (`1.x → 2.0`)
 
@@ -71,11 +78,10 @@ Version-as-promise rots ("we'll ship signed manifests in 1.2" → 1.3 → 1.5 �
 
 | Milestone | Calendar target | Lane |
 |-----------|-----------------|------|
-| `v1.1.0-rc.1` cut | **Q3 2026** (target 2026-07-15) | rc |
-| First pilot reference recorded | **Q3 2026** (gate to rc.1, not result of rc.1) | n/a |
-| `v1.1.0` stable cut | **earliest Q4 2026** (gated on §2.2; do not promise sooner) | stable |
-| Signed-manifest support (tsign integration GA) | **Q1 2027** | stable |
-| `axiom` enforcement integration GA | **Q3 2027** | stable |
+| `v1.1.0-rc.1` cut | **shipped 2026-05-02** | rc |
+| `v1.1.0` stable cut | **earliest 2026-05-16** (14 days post-rc.1, gated on §2.2; slips per soak-clock resets) | stable |
+| Signed-manifest support (tsign integration GA) | **target Q1 2027** — slips a quarter at a time, never silently | stable |
+| `axiom` enforcement integration GA | **target Q3 2027** — slips a quarter at a time, never silently | stable |
 | `v2.0.0` (model break) | **no earlier than 2028** unless detection model fundamentally shifts | major |
 
 **Calendar dates supersede version numbers** in commitment language. If the team is going to slip the v1.1.0 stable cut, it slips a quarter on this doc — not a patch number on a roadmap.
@@ -89,10 +95,12 @@ Every promotion-gate decision answers three questions, each owned by a distinct 
 | Lens | Owner role | Question | Failure mode if skipped |
 |------|------------|----------|-------------------------|
 | **Engineering** | maintainer + `cargo` toolchain | "does the contract surface hold?" | semver lies, breakage between minors |
-| **Customer** | designated pilot + reference recording | "does the tool deliver in a real estate?" | shipping a beautiful tool nobody needs |
+| **Real-input** | maintainer-curated public corpus + dogfood report + scheduled fuzz | "does the tool work on YAML the maintainer didn't write?" | shipping a tool that only passes its own fixtures |
 | **Adversary** | security review (Pentester pass + invariants-author insider model) | "is the output channel a trust artifact, not an injection vector?" | tsign signs attacker-controlled bytes |
 
-A gate that clears two of three is **not** cleared. Skipping the customer lens produces 146-finding audits on "stable" code. Skipping the adversary lens turns trust artifacts into attack surface. Skipping engineering produces semver theatre.
+A gate that clears two of three is **not** cleared. Skipping the real-input lens produces 146-finding audits on "stable" code (it happened in v1.0.x; the deep audit caught it). Skipping the adversary lens turns trust artifacts into attack surface. Skipping engineering produces semver theatre.
+
+The previous version of this section named "Customer" as the second lens with "designated pilot + reference recording" as the artifact. That rename was wrong for a small-team OSS project — it imported a sales-motion artifact into a stability-signal role. The renamed lens is **Real-input**, and the artifact is the public-corpus + dogfood report from §2.2. If a real customer relationship organically produces stability signal, that's a bonus input to the same lens; it is not the gate itself.
 
 ---
 
