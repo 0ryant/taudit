@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::collections::{BTreeMap, HashMap};
 
 use serde::Deserialize;
 use taudit_core::error::TauditError;
@@ -220,6 +220,48 @@ impl PipelineParser for GhaParser {
                 if let Some(tok_id) = job_token_id {
                     graph.add_edge(job_step_id, tok_id, EdgeKind::HasAccessTo);
                 }
+
+                // F13: workflow-level `env:` is in scope for the caller's
+                // evaluation of `secrets:` mapping values and `with:` inputs
+                // even when delegating to a reusable workflow. Job-level
+                // `env:` does NOT propagate into reusable-workflow callees per
+                // GHA semantics, so we merge ONLY workflow.env. (The synthetic
+                // step represents the caller-side evaluation context, not the
+                // callee's execution environment.)
+                if let Some(env_map) = workflow.env.as_ref().and_then(EnvSpec::as_map) {
+                    let mut entries: Vec<(&String, &String)> = env_map.iter().collect();
+                    entries.sort_by(|a, b| a.0.cmp(b.0));
+                    for (_k, env_val) in entries {
+                        for secret_name in iter_secret_refs(env_val) {
+                            let secret_id =
+                                find_or_create_secret(&mut graph, &mut secret_ids, secret_name);
+                            graph.add_edge(job_step_id, secret_id, EdgeKind::HasAccessTo);
+                        }
+                    }
+                }
+
+                // F6: `secrets:` mapping form on a reusable-workflow call —
+                // `secrets: { CHILD: ${{ secrets.PARENT }} }`. Each value is a
+                // template expression evaluated in the caller context, so any
+                // `secrets.X` reference produces a HasAccessTo edge to the
+                // caller-side secret. (The literal string `inherit` form is
+                // already handled above.) Sorted by key for determinism —
+                // mirrors the v1.1.0-beta.1 sort pattern used elsewhere.
+                if let Some(serde_yaml::Value::Mapping(map)) = job.secrets.as_ref() {
+                    let mut entries: Vec<(&str, &str)> = map
+                        .iter()
+                        .filter_map(|(k, v)| Some((k.as_str()?, v.as_str()?)))
+                        .collect();
+                    entries.sort_by(|a, b| a.0.cmp(b.0));
+                    for (_child_name, val) in entries {
+                        for secret_name in iter_secret_refs(val) {
+                            let secret_id =
+                                find_or_create_secret(&mut graph, &mut secret_ids, secret_name);
+                            graph.add_edge(job_step_id, secret_id, EdgeKind::HasAccessTo);
+                        }
+                    }
+                }
+
                 graph.mark_partial(
                     GapKind::Structural,
                     format!(
@@ -620,10 +662,12 @@ impl PipelineParser for GhaParser {
                 let mut effective_entries: Vec<(&String, &String)> = effective_env.iter().collect();
                 effective_entries.sort_by(|a, b| a.0.cmp(b.0));
                 for (_k, env_val) in effective_entries {
-                    if is_secret_reference(env_val) {
-                        let secret_name = extract_secret_name(env_val);
+                    // Walk every `secrets.X` reference inside the value's
+                    // template spans — concatenated multi-secret values
+                    // (`${{ secrets.A }}-${{ secrets.B }}`) yield BOTH names.
+                    for secret_name in iter_secret_refs(env_val) {
                         let secret_id =
-                            find_or_create_secret(&mut graph, &mut secret_ids, &secret_name);
+                            find_or_create_secret(&mut graph, &mut secret_ids, secret_name);
                         graph.add_edge(step_id, secret_id, EdgeKind::HasAccessTo);
                     }
                 }
@@ -644,10 +688,11 @@ impl PipelineParser for GhaParser {
                     let mut entries: Vec<(&String, &String)> = with.iter().collect();
                     entries.sort_by(|a, b| a.0.cmp(b.0));
                     for (_k, val) in entries {
-                        if is_secret_reference(val) {
-                            let secret_name = extract_secret_name(val);
+                        // Multi-secret-aware: a single `with:` value may
+                        // concatenate several secrets (`${{ secrets.A }}-${{ secrets.B }}`).
+                        for secret_name in iter_secret_refs(val) {
                             let secret_id =
-                                find_or_create_secret(&mut graph, &mut secret_ids, &secret_name);
+                                find_or_create_secret(&mut graph, &mut secret_ids, secret_name);
                             graph.add_edge(step_id, secret_id, EdgeKind::HasAccessTo);
                         }
                         if is_env_reference(val) {
@@ -735,36 +780,36 @@ impl PipelineParser for GhaParser {
                     }
                 }
 
-                // Detect inferred secrets in `run:` script blocks
+                // Detect inferred secrets in `run:` script blocks. Only counts
+                // `secrets.X` references that appear INSIDE a `${{ … }}` template
+                // span — literal substrings in shell paths or comments
+                // (`# loads /etc/secrets.conf`, `cp $SECRETS_DIR/secrets.json`)
+                // do not produce phantom Secret nodes.
                 if let Some(ref run) = step.run {
-                    if run.contains("${{ secrets.") {
-                        // Extract secret names from the shell script
-                        let mut pos = 0;
-                        while let Some(start) = run[pos..].find("secrets.") {
-                            let abs_start = pos + start + 8;
-                            let remaining = &run[abs_start..];
-                            let end = remaining
-                                .find(|c: char| !c.is_alphanumeric() && c != '_')
-                                .unwrap_or(remaining.len());
-                            let secret_name = &remaining[..end];
-                            if !secret_name.is_empty() {
-                                let secret_id =
-                                    find_or_create_secret(&mut graph, &mut secret_ids, secret_name);
-                                // Mark as inferred — not precisely mapped
-                                if let Some(node) = graph.nodes.get_mut(secret_id) {
-                                    node.metadata
-                                        .insert(META_INFERRED.into(), META_INFERRED_VAL.into());
-                                }
-                                graph.add_edge(step_id, secret_id, EdgeKind::HasAccessTo);
-                                graph.mark_partial(
-                                    GapKind::Expression,
-                                    format!(
-                                        "secret '{secret_name}' referenced in run: script — inferred, not precisely mapped"
-                                    ),
-                                );
-                            }
-                            pos = abs_start + end;
+                    // Collect names first to avoid borrowing `run` while we
+                    // mutate `graph`, and to dedupe per-step (a single run
+                    // body that mentions `secrets.X` 5× still needs only one
+                    // HasAccessTo edge).
+                    let mut seen: std::collections::BTreeSet<&str> =
+                        std::collections::BTreeSet::new();
+                    for name in iter_secret_refs(run) {
+                        seen.insert(name);
+                    }
+                    for secret_name in seen {
+                        let secret_id =
+                            find_or_create_secret(&mut graph, &mut secret_ids, secret_name);
+                        // Mark as inferred — not precisely mapped.
+                        if let Some(node) = graph.nodes.get_mut(secret_id) {
+                            node.metadata
+                                .insert(META_INFERRED.into(), META_INFERRED_VAL.into());
                         }
+                        graph.add_edge(step_id, secret_id, EdgeKind::HasAccessTo);
+                        graph.mark_partial(
+                            GapKind::Expression,
+                            format!(
+                                "secret '{secret_name}' referenced in run: script — inferred, not precisely mapped"
+                            ),
+                        );
                     }
                 }
 
@@ -801,7 +846,12 @@ impl PipelineParser for GhaParser {
             // (sensitive_value_in_job_output) can fire on credentials whose
             // values land in the unmasked `needs.<job>.outputs.*` channel.
             if let Some(outputs) = job.outputs.as_ref() {
-                for (out_name, out_value) in outputs {
+                // Sort by output name so META_JOB_OUTPUTS is byte-deterministic
+                // across runs. `outputs` is a HashMap (randomised iteration);
+                // mirror the v1.1.0-beta.1 pattern used elsewhere.
+                let mut output_entries: Vec<(&String, &String)> = outputs.iter().collect();
+                output_entries.sort_by(|a, b| a.0.cmp(b.0));
+                for (out_name, out_value) in output_entries {
                     let source = classify_job_output_source(out_value, &step_oidc_by_yaml_id);
                     job_output_records.push(format!("{job_name}\t{out_name}\t{source}"));
                 }
@@ -1065,8 +1115,85 @@ fn classify_action(uses: &str, graph: &mut AuthorityGraph) -> (TrustZone, NodeId
     (zone, id)
 }
 
-fn is_secret_reference(val: &str) -> bool {
-    val.contains("${{ secrets.")
+/// Yields every `secrets.<name>` reference found INSIDE any `${{ … }}` template
+/// span in the input. Whitespace-tolerant (handles `${{secrets.X}}`,
+/// `${{ secrets.X }}`, `${{   secrets.X   }}`, tabs, newlines). Handles
+/// concatenated multi-secret values (`${{ secrets.A }}-${{ secrets.B }}` yields
+/// both `A` and `B`). Does NOT match literal `secrets.X` substrings outside
+/// template spans (shell paths, comments, JSON file names like `secrets.json`).
+///
+/// UTF-8-aware: uses `char_indices`, never byte arithmetic into the middle of a
+/// multi-byte sequence. Zero regex — keeps the parser ReDoS-free.
+///
+/// Implementation: scan for `${{` opens, find the matching `}}` close (or end
+/// of string if unterminated), then scan only the inner span for `secrets.`
+/// followed by an identifier (`[A-Za-z0-9_]+`). The identifier terminates at
+/// the first non-identifier char, which catches `secrets.A }}-${{ secrets.B`,
+/// `secrets.A || secrets.B`, etc.
+fn iter_secret_refs(s: &str) -> impl Iterator<Item = &str> {
+    SecretRefIter {
+        src: s,
+        cursor: 0,
+        // When inside a template span, this is `Some(end_byte_offset)`.
+        // When outside, this is `None`.
+        span_end: None,
+    }
+}
+
+struct SecretRefIter<'a> {
+    src: &'a str,
+    cursor: usize,
+    span_end: Option<usize>,
+}
+
+impl<'a> Iterator for SecretRefIter<'a> {
+    type Item = &'a str;
+
+    fn next(&mut self) -> Option<&'a str> {
+        loop {
+            // If we're not inside a template span, find the next one.
+            if self.span_end.is_none() {
+                let rel = self.src.get(self.cursor..)?.find("${{")?;
+                let span_start = self.cursor + rel + 3; // skip "${{"
+                                                        // Locate the matching "}}" so we only scan WITHIN this template.
+                                                        // GHA does not nest `${{`, so a flat search is correct.
+                let inner = &self.src[span_start..];
+                let span_len = inner.find("}}").unwrap_or(inner.len());
+                self.cursor = span_start;
+                self.span_end = Some(span_start + span_len);
+            }
+            let span_end = self.span_end.expect("span_end set just above");
+
+            if self.cursor >= span_end {
+                // Done with this span — advance past `}}` (2 bytes) and resume.
+                self.cursor = span_end.saturating_add(2).min(self.src.len());
+                self.span_end = None;
+                continue;
+            }
+            let window = &self.src[self.cursor..span_end];
+            let Some(rel) = window.find("secrets.") else {
+                self.cursor = span_end.saturating_add(2).min(self.src.len());
+                self.span_end = None;
+                continue;
+            };
+            let name_start = self.cursor + rel + "secrets.".len();
+            // Identifier terminates at first non-[A-Za-z0-9_] char (or span end).
+            let tail = &self.src[name_start..span_end];
+            let name_len = tail
+                .char_indices()
+                .find(|(_, c)| !c.is_ascii_alphanumeric() && *c != '_')
+                .map(|(i, _)| i)
+                .unwrap_or(tail.len());
+            // Advance cursor past this identifier so the next call resumes
+            // after it (lets us find a second secret in the same span).
+            self.cursor = name_start + name_len;
+            if name_len == 0 {
+                // `secrets.` followed by no identifier — skip and continue.
+                continue;
+            }
+            return Some(&self.src[name_start..name_start + name_len]);
+        }
+    }
 }
 
 /// True for any `${{ env.<NAME> }}` template expression. Covers the
@@ -1096,19 +1223,6 @@ fn is_env_reference(val: &str) -> bool {
         idx += rel + 3;
     }
     false
-}
-
-fn extract_secret_name(val: &str) -> String {
-    // Extract from patterns like "${{ secrets.MY_SECRET }}"
-    if let Some(start) = val.find("secrets.") {
-        let after = &val[start + 8..];
-        let end = after
-            .find(|c: char| !c.is_alphanumeric() && c != '_')
-            .unwrap_or(after.len());
-        after[..end].to_string()
-    } else {
-        val.to_string()
-    }
 }
 
 fn find_or_create_secret(
@@ -1221,11 +1335,20 @@ fn classify_cloud_auth(
 // ── Serde models for GHA YAML ──────────────────────────
 
 /// Flexible permissions: can be a string ("write-all") or a map.
+///
+/// The map variant uses `BTreeMap` (not `HashMap`) so the rendered
+/// `Display` output (`{ contents: read, id-token: write }`) is sorted by
+/// scope name and byte-deterministic across runs. `META_PERMISSIONS` is
+/// emitted into JSON / SARIF / `taudit map` text directly, and a HashMap's
+/// randomised iteration order otherwise leaks into every artifact. The
+/// substring check at the workflow- and job-permissions emission sites
+/// (`perm_string.contains("id-token: write")`) still works — BTreeMap
+/// produces the same `key: value` shape, just sorted.
 #[derive(Debug, Clone, Deserialize)]
 #[serde(untagged)]
 pub enum Permissions {
     String(String),
-    Map(HashMap<String, String>),
+    Map(BTreeMap<String, String>),
 }
 
 /// Polymorphic `env:` block. Normally a map of name → value, but in some
@@ -3071,5 +3194,254 @@ jobs:
             consumes.is_empty(),
             "download-artifact without name: must not create a Consumes edge"
         );
+    }
+
+    // ── Regression: F1 (P1) ────────────────────────────────────────────────
+    // The legacy run-script extractor matched every literal `secrets.X`
+    // substring — comments and shell paths produced phantom Secret nodes
+    // (`json`, `conf`). The fix walks only INSIDE `${{ … }}` template spans.
+    #[test]
+    fn secret_extractor_ignores_literal_substrings_outside_template_spans() {
+        let yaml = r#"
+jobs:
+  deploy:
+    steps:
+      - name: Mixed shell + template
+        run: |
+          # loads /etc/secrets.conf
+          cp $SECRETS_DIR/secrets.json /tmp/
+          curl -H "Authorization: ${{ secrets.REAL_TOKEN }}" https://api.example.com
+"#;
+        let graph = parse(yaml);
+        let secrets: Vec<_> = graph.nodes_of_kind(NodeKind::Secret).collect();
+        assert_eq!(
+            secrets.len(),
+            1,
+            "only `REAL_TOKEN` should be a Secret node — phantoms `conf`/`json` must not appear; got: {:?}",
+            secrets.iter().map(|s| &s.name).collect::<Vec<_>>()
+        );
+        assert_eq!(secrets[0].name, "REAL_TOKEN");
+    }
+
+    // ── Regression: F2 (P1) ────────────────────────────────────────────────
+    // The previous `is_secret_reference` required the literal `${{ secrets.`
+    // (one canonical space). GHA accepts every whitespace variant. This test
+    // pins the tight, no-space form.
+    #[test]
+    fn secret_extractor_handles_tight_template_spacing() {
+        let yaml = r#"
+jobs:
+  deploy:
+    steps:
+      - name: Tight template
+        run: echo "x"
+        env:
+          TOK: "${{secrets.TIGHT}}"
+"#;
+        let graph = parse(yaml);
+        let secrets: Vec<_> = graph.nodes_of_kind(NodeKind::Secret).collect();
+        assert_eq!(secrets.len(), 1);
+        assert_eq!(secrets[0].name, "TIGHT");
+        let secret_id = secrets[0].id;
+        let edges = graph
+            .edges_to(secret_id)
+            .filter(|e| e.kind == EdgeKind::HasAccessTo)
+            .count();
+        assert_eq!(
+            edges, 1,
+            "tight `${{{{secrets.X}}}}` must produce HasAccessTo edge"
+        );
+    }
+
+    // ── Regression: F3 (P1) ────────────────────────────────────────────────
+    // The previous `extract_secret_name` returned ONLY the first secret per
+    // value. Concatenated multi-secret values silently dropped the rest.
+    #[test]
+    fn secret_extractor_finds_all_secrets_in_concatenated_value() {
+        let yaml = r#"
+jobs:
+  deploy:
+    steps:
+      - name: Concatenated
+        run: echo "x"
+        env:
+          COMBINED: "${{ secrets.A }}-${{ secrets.B }}"
+"#;
+        let graph = parse(yaml);
+        let secret_names: std::collections::BTreeSet<&str> = graph
+            .nodes_of_kind(NodeKind::Secret)
+            .map(|n| n.name.as_str())
+            .collect();
+        assert!(secret_names.contains("A"), "secret A must be detected");
+        assert!(secret_names.contains("B"), "secret B must be detected");
+        assert_eq!(
+            secret_names.len(),
+            2,
+            "exactly two secrets, got: {secret_names:?}"
+        );
+        // Both edges from the step.
+        for name in ["A", "B"] {
+            let id = graph
+                .nodes_of_kind(NodeKind::Secret)
+                .find(|n| n.name == name)
+                .expect("secret node")
+                .id;
+            let edges = graph
+                .edges_to(id)
+                .filter(|e| e.kind == EdgeKind::HasAccessTo)
+                .count();
+            assert!(edges >= 1, "missing HasAccessTo edge for secret {name}");
+        }
+    }
+
+    // ── Regression: F6 (P1) ────────────────────────────────────────────────
+    // Reusable workflow `secrets:` mapping form was silently dropped — only
+    // the literal `inherit` string was honoured.
+    #[test]
+    fn reusable_workflow_secrets_mapping_form_propagates_edges() {
+        let yaml = r#"
+jobs:
+  call:
+    uses: ./.github/workflows/reusable.yml
+    secrets:
+      CHILD: ${{ secrets.PARENT }}
+      OTHER: ${{ secrets.SECONDARY }}
+"#;
+        let graph = parse(yaml);
+        let secret_names: std::collections::BTreeSet<&str> = graph
+            .nodes_of_kind(NodeKind::Secret)
+            .map(|n| n.name.as_str())
+            .collect();
+        assert!(
+            secret_names.contains("PARENT"),
+            "secrets: mapping value `${{{{ secrets.PARENT }}}}` must produce a Secret node; got: {secret_names:?}"
+        );
+        assert!(
+            secret_names.contains("SECONDARY"),
+            "secrets: mapping must iterate ALL keys, not just the first; got: {secret_names:?}"
+        );
+        // The synthetic step (named after the job) holds the HasAccessTo edges.
+        let parent_id = graph
+            .nodes_of_kind(NodeKind::Secret)
+            .find(|n| n.name == "PARENT")
+            .unwrap()
+            .id;
+        let edges = graph
+            .edges_to(parent_id)
+            .filter(|e| e.kind == EdgeKind::HasAccessTo)
+            .count();
+        assert!(edges >= 1, "synthetic step must HasAccessTo PARENT");
+    }
+
+    // ── Regression: F13 (P2) ───────────────────────────────────────────────
+    // The synthetic step created for `job.uses:` skipped workflow-level env
+    // secret edges. workflow.env IS in scope for the caller's evaluation of
+    // a reusable-workflow call (the caller resolves `${{ secrets.X }}` /
+    // `${{ env.X }}` BEFORE handing values to the callee).
+    #[test]
+    fn reusable_workflow_synthetic_step_inherits_workflow_env_secrets() {
+        let yaml = r#"
+env:
+  GLOBAL_TOKEN: "${{ secrets.GLOBAL }}"
+jobs:
+  call:
+    uses: ./.github/workflows/reusable.yml
+"#;
+        let graph = parse(yaml);
+        let global = graph
+            .nodes_of_kind(NodeKind::Secret)
+            .find(|n| n.name == "GLOBAL");
+        assert!(
+            global.is_some(),
+            "workflow.env secret `GLOBAL` must produce a Secret node visible to the synthetic step"
+        );
+        let global_id = global.unwrap().id;
+        let edges = graph
+            .edges_to(global_id)
+            .filter(|e| e.kind == EdgeKind::HasAccessTo)
+            .count();
+        assert!(
+            edges >= 1,
+            "synthetic step for reusable workflow must inherit workflow.env HasAccessTo edge"
+        );
+    }
+
+    // ── Regression: F4 (P1) ────────────────────────────────────────────────
+    // `META_JOB_OUTPUTS` was built by iterating a HashMap — randomised order
+    // leaked into JSON / SARIF output. Multiple runs must produce a
+    // byte-identical string.
+    #[test]
+    fn gha_meta_job_outputs_is_deterministic_across_runs() {
+        let yaml = r#"
+jobs:
+  emit:
+    runs-on: ubuntu-latest
+    outputs:
+      zebra: literal-z
+      apple: literal-a
+      mango: literal-m
+      kilo: literal-k
+      foxtrot: literal-f
+    steps:
+      - run: echo hi
+"#;
+        let mut prev: Option<String> = None;
+        for i in 0..9 {
+            let graph = parse(yaml);
+            let cur = graph
+                .metadata
+                .get(META_JOB_OUTPUTS)
+                .cloned()
+                .unwrap_or_default();
+            assert!(
+                !cur.is_empty(),
+                "META_JOB_OUTPUTS must be populated on a workflow with outputs"
+            );
+            if let Some(p) = &prev {
+                assert_eq!(
+                    p, &cur,
+                    "META_JOB_OUTPUTS drifted on run {i}: {p:?} vs {cur:?}"
+                );
+            }
+            prev = Some(cur);
+        }
+    }
+
+    // ── Regression: F5 (P1) ────────────────────────────────────────────────
+    // `Permissions::Map` rendered through HashMap iteration — order leaked
+    // into META_PERMISSIONS in JSON / SARIF / `taudit map`. With a BTreeMap
+    // backing the map variant, the rendered string is now sorted by key.
+    #[test]
+    fn gha_meta_permissions_is_deterministic_across_runs() {
+        let yaml = r#"
+permissions:
+  contents: read
+  id-token: write
+  packages: write
+  actions: read
+  pull-requests: write
+jobs:
+  ci:
+    steps:
+      - run: echo hi
+"#;
+        let mut prev: Option<String> = None;
+        for i in 0..9 {
+            let graph = parse(yaml);
+            let identities: Vec<_> = graph.nodes_of_kind(NodeKind::Identity).collect();
+            assert_eq!(identities.len(), 1, "one GITHUB_TOKEN identity");
+            let cur = identities[0]
+                .metadata
+                .get(META_PERMISSIONS)
+                .cloned()
+                .expect("META_PERMISSIONS must be stamped");
+            if let Some(p) = &prev {
+                assert_eq!(
+                    p, &cur,
+                    "META_PERMISSIONS drifted on run {i}: {p:?} vs {cur:?}"
+                );
+            }
+            prev = Some(cur);
+        }
     }
 }
