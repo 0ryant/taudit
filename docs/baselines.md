@@ -9,6 +9,20 @@ The mechanism is **opt-in**, **content-hash-keyed**, and **fingerprint-stable**.
 Critical findings always count toward exit `1` unless they are explicitly
 waived with a time-bounded justification — that property is non-negotiable.
 
+## Migration: v1.1.0-beta.1 baseline hash break
+
+**v1.1.0-beta.1 changed `pipeline_identity_material_hash` to drop NodeId.**
+Existing field baselines collected on v1.0.x silently fail-open (suppressions
+disabled) until you re-baseline. To migrate:
+
+```bash
+taudit baseline init <pipeline-files> --gate-on-all
+```
+
+This re-captures the baseline against the new identity-material hash. No
+behavioural change beyond hash format. See [CHANGELOG v1.1.0-beta.1](../CHANGELOG.md#v110-beta1--2026-05-01-prerelease)
+for full context.
+
 ## Synopsis
 
 ```text

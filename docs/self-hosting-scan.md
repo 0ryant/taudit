@@ -60,7 +60,7 @@ Branch: main
 
 `taudit graph --format json ci.yml` produced valid JSON conforming to `authority-graph.v1.json`:
 - `schema_version: 1.0.0`
-- `schema_uri`: `https://github.com/0ryant/taudit/schemas/authority-graph.v1.json`
+- `schema_uri`: `https://taudit.dev/schemas/authority-graph.v1.json`
 - `completeness: complete`
 - 30 nodes, 29 edges
 - All top-level keys present: `schema_version`, `schema_uri`, `graph`

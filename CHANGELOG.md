@@ -4,7 +4,19 @@ All notable changes to this project will be documented in this file.
 
 ## Unreleased
 
-_(empty — next prerelease or stable cut accumulates here)_
+### Detection delta (read first)
+
+_(none yet — populate this paragraph when adding entries that change finding behaviour)_
+
+### Fixed
+
+### Changed
+
+### Added
+
+### Migration notes
+
+_(populate if any consumer-visible field, schema, or contract changes; remove subsection if none)_
 
 ## v1.1.0-beta.2 — 2026-05-02 (prerelease)
 

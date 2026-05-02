@@ -426,7 +426,7 @@ taudit emits four kinds of output, all backed by stable, versioned contracts:
 | Output             | Command                            | Schema / contract                                                              | Purpose |
 | ------------------ | ---------------------------------- | ------------------------------------------------------------------------------ | ------- |
 | **Findings (terminal)** | `taudit scan ... --format terminal` | colored, human-readable                                                        | day-to-day reading in shells and CI logs |
-| **Findings (JSON)**     | `taudit scan ... --format json`     | [`contracts/schemas/taudit-report.schema.json`](contracts/schemas/taudit-report.schema.json) (`schema_version: "v1"`) | full report: graph + findings + summary |
+| **Findings (JSON)**     | `taudit scan ... --format json`     | [`contracts/schemas/taudit-report.schema.json`](contracts/schemas/taudit-report.schema.json) (`schema_version: "1.0.0"`) | full report: graph + findings + summary |
 | **Findings (SARIF)**    | `taudit scan ... --format sarif`    | SARIF 2.1.0                                                                    | code-scanning ingestion (GitHub, Azure DevOps, IDE plugins) |
 | **Findings (CloudEvents)** | `taudit scan ... --format cloudevents` | [`contracts/schemas/taudit-cloudevent-finding-v1.schema.json`](contracts/schemas/taudit-cloudevent-finding-v1.schema.json) | one CloudEvent JSONL per finding for event-driven sinks |
 | **Authority graph (JSON)** | `taudit graph ... --format json`   | [`schemas/authority-graph.v1.json`](schemas/authority-graph.v1.json) (`schema_version: "1.0.0"`) | the canonical authority graph as a first-class artifact for downstream tools (tsign, axiom, runtime cells) — see [docs/authority-graph.md](docs/authority-graph.md) |
@@ -487,7 +487,7 @@ Exit codes: `0` = no findings above threshold, `1` = findings above threshold.
 
 ## Report contract
 
-The full output catalogue is in [Outputs](#outputs) above. The stable JSON report contract is currently `schema_version: "v1"` and lives at [`contracts/schemas/taudit-report.schema.json`](contracts/schemas/taudit-report.schema.json). A versioned graph schema (separate from the report contract) lands in v1.0 and will be the contract that downstream tools — tsign, axiom, anything else — depend on.
+The full output catalogue is in [Outputs](#outputs) above. The stable JSON report contract is currently `schema_version: "1.0.0"` and lives at [`contracts/schemas/taudit-report.schema.json`](contracts/schemas/taudit-report.schema.json). A versioned graph schema (separate from the report contract) lands in v1.0 and will be the contract that downstream tools — tsign, axiom, anything else — depend on.
 
 ## What taudit is not
 

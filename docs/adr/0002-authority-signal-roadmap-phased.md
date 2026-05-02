@@ -1,6 +1,7 @@
 # ADR 0002: Authority signal roadmap (phased deliverables, goals, non-goals)
 
-- **Status:** Proposed
+- **Status:** Accepted
+- **Status history:** Proposed 2026-04-27 → Accepted 2026-05-02 (all phases shipped in-tree).
 - **Date:** 2026-04-27
 - **Context:** External product feedback (authority vs YAML, privilege/trust visualization, scale), [Council synthesis on graph tooling](../research/2026-04-27-council-graph-as-product.md), follow-up council read on **risk derivation vs rendering** (2026-04-27), [ADR 0001](0001-graph-native-exports-and-leverage.md) (JSON canonical; Mermaid/DOT as projections)
 

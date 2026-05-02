@@ -54,7 +54,7 @@ commit, not the full graph. Verifiers refetch the graph on demand.
   "predicateType": "https://taudit.dev/attestations/authority-graph/v0.1",
   "predicate": {
     "graph_schema_version": "1.0.0",
-    "graph_schema_uri": "https://github.com/0ryant/taudit/schemas/authority-graph.v1.json",
+    "graph_schema_uri": "https://taudit.dev/schemas/authority-graph.v1.json",
     "taudit_version": "0.9.0",
     "source": {
       "repo": "https://github.com/acme/widgets",

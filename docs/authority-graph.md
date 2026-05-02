@@ -9,7 +9,7 @@ cells, custom auditors) can consume it without reverse-engineering
 taudit's internals.
 
 - **Schema**: [`schemas/authority-graph.v1.json`](../schemas/authority-graph.v1.json)
-- **Schema URI**: `https://github.com/0ryant/taudit/schemas/authority-graph.v1.json`
+- **Schema URI**: `https://taudit.dev/schemas/authority-graph.v1.json`
 - **Schema version**: `1.0.0` (semver — see [Versioning](#versioning))
 - **CLI**: `taudit graph <path> [--format json|dot|mermaid|summary] [--platform ...] [--rules-dir ...] [--job ...] [--rich-labels]` — JSON includes optional **`authority_summary`** on `has_access_to` → identity edges (see below). **`summary`** is a separate bounded JSON document (see [Propagation summary](#propagation-summary-format-summary)).
 
@@ -104,7 +104,7 @@ a versioned envelope:
 ```json
 {
   "schema_version": "1.0.0",
-  "schema_uri": "https://github.com/0ryant/taudit/schemas/authority-graph.v1.json",
+  "schema_uri": "https://taudit.dev/schemas/authority-graph.v1.json",
   "graph": {
     "source":   { "file": "...", "repo": "...", "git_ref": "..." },
     "nodes":    [ ... ],

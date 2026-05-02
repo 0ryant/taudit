@@ -19,7 +19,7 @@ jobs:
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
 
       - name: Install taudit (pin major.minor for reproducible CI)
-        run: cargo install taudit --version 1.0.8 --locked
+        run: cargo install taudit --version 1.0.12 --locked
 
       - name: Verify authority invariants (exit 0 = pass, 1 = violations, 2 = config/parse error)
         run: taudit verify --policy .taudit/policy/ .github/workflows/

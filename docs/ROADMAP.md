@@ -30,6 +30,8 @@ See [`positioning.md`](positioning.md) for the long-form framing and [`authority
 
 Before chasing more invariants or platforms, v1.0 turns the existing authority model into a contract. No date — this is a quality bar, not a release calendar.
 
+_(This table is the source of truth; previously a separate Visual Summary footer existed and drifted out of sync — removed in v1.1.0-beta.3.)_
+
 | # | Item | Effort | Status |
 |---|------|--------|--------|
 | **V1-1** | **Versioned graph schema** — JSON Schema for the `AuthorityGraph` (`NodeKinds`, `TrustZones`, `EdgeKinds`, completeness, metadata). **Canonical:** [`schemas/authority-graph.v1.json`](../schemas/authority-graph.v1.json) (validated in CI via report-json / CLI tests). **Also:** scan envelope in [`contracts/schemas/taudit-report.schema.json`](../contracts/schemas/taudit-report.schema.json). Optional: mirror or deep-link graph schema under `contracts/schemas/` for packaging-only consumers. | M | **Done** (iterate as additive 1.x) |
@@ -349,32 +351,3 @@ Documented incompleteness — not bugs, but places where the graph underapproxim
 **Still open:**
 - Scope propagation escalation nuance (cloud OIDC identity to pinned ThirdParty sink)
 
----
-
-## Visual Summary
-
-```
-MVP ═══════════════════════════════════════════════════════════ ✅ SHIPPED
-  AuthorityCompleteness · IdentityScope · inferred secrets
-  env inheritance · .tauditignore · --threshold
-  real-world validation · README
-
-                              ↓
-AAA ══════════════════════════╪══════════════════════ YOU ARE HERE
-  T1: noise elimination    ✅ DONE
-  T2: platform integration ✅ DONE — SARIF+fingerprint+diff+explain+stdin+omit-empty+collapse+PR-bot+GHA-action
-  T3: parser precision     ◑ reusable/matrix/container/PRT done; composite pending
-  T4: identity depth       ◑ OIDC tagging + cloud inference + container auth done; escalation nuance pending
-  T5: Azure DevOps         ✅ DONE — v0.2.0 + v0.2.3 PR-boundary rules + v0.2.6 auto-detect
-  T6: rule depth           ◑ 11 rules done (FloatingImage, PersistedCredential, TriggerCtx, CrossWorkflow, Cycle, Uplift, SelfMutating, 3 ADO PR rules, CheckoutSelfPrExposure); Egress/Audit/custom pending
-  T7: enterprise polish    ◑ completions+release+color+verbose+map-layout done
-  T8: graph power          ○ not started
-                              |
-DONE ═════════════════════════╪═════════════════════════════════ future
-  GitLab parser               |
-  governance correlation      |
-  self-hosting                |
-  policy-as-code              |
-  JetStream adapter           |
-  fuzzing + SBOM              |
-```
