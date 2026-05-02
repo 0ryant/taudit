@@ -809,4 +809,116 @@ mod tests {
 
         assert_ne!(ids[0], ids[1], "each event must have a unique ID");
     }
+
+    /// Parallel to `taudit-report-json`'s
+    /// `every_finding_category_variant_validates_against_report_schema`.
+    /// The pre-fix CloudEvent schema listed only 10 of the 63
+    /// `FindingCategory` variants in `data.properties.category.enum`. A
+    /// poisoned MR pipeline whose finding fired one of the missing 53
+    /// produced a byte-valid event that strict-validating SIEMs rejected.
+    /// Enumerate every variant, emit through the JSONL sink, and validate
+    /// against the published CloudEvent schema.
+    #[test]
+    fn every_finding_category_variant_validates_against_cloudevent_schema() {
+        use taudit_core::finding::FindingCategory as C;
+
+        let all: Vec<C> = vec![
+            C::AuthorityPropagation,
+            C::OverPrivilegedIdentity,
+            C::UnpinnedAction,
+            C::UntrustedWithAuthority,
+            C::ArtifactBoundaryCrossing,
+            C::FloatingImage,
+            C::LongLivedCredential,
+            C::PersistedCredential,
+            C::TriggerContextMismatch,
+            C::CrossWorkflowAuthorityChain,
+            C::AuthorityCycle,
+            C::UpliftWithoutAttestation,
+            C::SelfMutatingPipeline,
+            C::CheckoutSelfPrExposure,
+            C::VariableGroupInPrJob,
+            C::SelfHostedPoolPrHijack,
+            C::SharedSelfHostedPoolNoIsolation,
+            C::ServiceConnectionScopeMismatch,
+            C::TemplateExtendsUnpinnedBranch,
+            C::TemplateRepoRefIsFeatureBranch,
+            C::VmRemoteExecViaPipelineSecret,
+            C::ShortLivedSasInCommandLine,
+            C::SecretToInlineScriptEnvExport,
+            C::SecretMaterialisedToWorkspaceFile,
+            C::KeyVaultSecretToPlaintext,
+            C::TerraformAutoApproveInProd,
+            C::AddSpnWithInlineScript,
+            C::ParameterInterpolationIntoShell,
+            C::RuntimeScriptFetchedFromFloatingUrl,
+            C::PrTriggerWithFloatingActionRef,
+            C::UntrustedApiResponseToEnvSink,
+            C::PrBuildPushesImageWithFloatingCredentials,
+            C::SecretViaEnvGateToUntrustedConsumer,
+            C::NoWorkflowLevelPermissionsBlock,
+            C::ProdDeployJobNoEnvironmentGate,
+            C::LongLivedSecretWithoutOidcRecommendation,
+            C::PullRequestWorkflowInconsistentForkCheck,
+            C::GitlabDeployJobMissingProtectedBranchOnly,
+            C::TerraformOutputViaSetvariableShellExpansion,
+            C::RiskyTriggerWithAuthority,
+            C::SensitiveValueInJobOutput,
+            C::ManualDispatchInputToUrlOrCommand,
+            C::SecretsInheritOverscopedPassthrough,
+            C::UnsafePrArtifactInWorkflowRunConsumer,
+            C::ScriptInjectionViaUntrustedContext,
+            C::InteractiveDebugActionInAuthorityWorkflow,
+            C::PrSpecificCacheKeyInDefaultBranchConsumer,
+            C::GhCliWithDefaultTokenEscalating,
+            C::CiJobTokenToExternalApi,
+            C::IdTokenAudienceOverscoped,
+            C::UntrustedCiVarInShellInterpolation,
+            C::UnpinnedIncludeRemoteOrBranchRef,
+            C::DindServiceGrantsHostAuthority,
+            C::SecurityJobSilentlySkipped,
+            C::ChildPipelineTriggerInheritsAuthority,
+            C::CacheKeyCrossesTrustBoundary,
+            C::PatEmbeddedInGitRemoteUrl,
+            C::CiTokenTriggersDownstreamWithVariablePassthrough,
+            C::DotenvArtifactFlowsToPrivilegedDeployment,
+            C::SetvariableIssecretFalse,
+            C::HomoglyphInActionRef,
+            C::EgressBlindspot,
+            C::MissingAuditTrail,
+        ];
+
+        assert_eq!(
+            all.len(),
+            63,
+            "FindingCategory enumeration is out of sync with the schema generator (expected 63, got {})",
+            all.len()
+        );
+
+        let schema = read_json("contracts/schemas/taudit-cloudevent-finding-v1.schema.json");
+        let validator =
+            jsonschema::validator_for(&schema).expect("cloudevent schema should compile");
+
+        for category in all {
+            let graph = AuthorityGraph::new(test_source());
+            let findings = vec![test_finding(category, Severity::Medium)];
+
+            let mut buf = Vec::new();
+            CloudEventsJsonlSink::default()
+                .emit(&mut buf, &graph, &findings)
+                .expect("sink emits");
+            let output = String::from_utf8(buf).expect("output is UTF-8");
+            let event: serde_json::Value = serde_json::from_str(output.lines().next().unwrap())
+                .expect("emitted line is valid JSON");
+            let errors: Vec<String> = validator
+                .iter_errors(&event)
+                .map(|err| err.to_string())
+                .collect();
+            assert!(
+                errors.is_empty(),
+                "category {category:?} produced an event that fails the published CloudEvent schema:\n{}",
+                errors.join("\n")
+            );
+        }
+    }
 }

@@ -852,6 +852,82 @@ match:
         let _ = fs::remove_dir_all(&tmp);
     }
 
+    /// `EgressBlindspot` and `MissingAuditTrail` carry
+    /// `#[serde(skip_deserializing)]` because they cannot be detected from
+    /// pipeline YAML alone — they need runtime telemetry / external audit
+    /// configuration. A custom-rule YAML that names either of those
+    /// categories must therefore fail to load with a clear `unknown variant`
+    /// error from serde, even though the variants still serialise normally
+    /// and remain valid in OUTPUT schemas.
+    #[test]
+    fn reserved_categories_rejected_by_custom_rule_loader() {
+        let tmp = std::env::temp_dir().join(format!(
+            "taudit-custom-rules-reserved-{}",
+            std::process::id()
+        ));
+        fs::create_dir_all(&tmp).unwrap();
+        let reserved_path = tmp.join("reserved.yml");
+        fs::write(
+            &reserved_path,
+            "id: r\nname: r\nseverity: high\ncategory: egress_blindspot\n",
+        )
+        .unwrap();
+
+        let errs = load_rules_dir(&tmp).expect_err("reserved category must be rejected");
+        assert_eq!(errs.len(), 1);
+        let msg = errs[0].to_string();
+        assert!(
+            msg.contains("unknown variant") && msg.contains("egress_blindspot"),
+            "expected an `unknown variant `egress_blindspot`` error, got: {msg}"
+        );
+
+        // Same for the second reserved variant.
+        let other_path = tmp.join("reserved2.yml");
+        fs::write(
+            &other_path,
+            "id: r2\nname: r2\nseverity: high\ncategory: missing_audit_trail\n",
+        )
+        .unwrap();
+        let errs2 = load_rules_dir(&tmp).expect_err("second reserved category must be rejected");
+        // Both files are bad now — each surfaces its own error.
+        assert!(errs2.iter().any(|e| {
+            let m = e.to_string();
+            m.contains("unknown variant") && m.contains("missing_audit_trail")
+        }));
+
+        let _ = fs::remove_dir_all(&tmp);
+    }
+
+    /// Constructive seal contract: even though serde refuses to
+    /// deserialise the reserved variants, the Rust enum can still
+    /// construct them (e.g. for runtime-enrichment paths) and they MUST
+    /// serialise verbatim to their snake_case form. This is what makes
+    /// it correct for the OUTPUT schemas to advertise them.
+    #[test]
+    fn reserved_categories_still_serialize_when_constructed_in_rust() {
+        let f = Finding {
+            severity: Severity::Medium,
+            category: FindingCategory::EgressBlindspot,
+            path: None,
+            nodes_involved: vec![],
+            message: "runtime-enriched".into(),
+            recommendation: Recommendation::Manual {
+                action: "investigate".into(),
+            },
+            source: FindingSource::BuiltIn,
+            extras: FindingExtras::default(),
+        };
+        let json = serde_json::to_value(&f).expect("serialises fine");
+        assert_eq!(json["category"], "egress_blindspot");
+
+        let g = Finding {
+            category: FindingCategory::MissingAuditTrail,
+            ..f
+        };
+        let json2 = serde_json::to_value(&g).expect("serialises fine");
+        assert_eq!(json2["category"], "missing_audit_trail");
+    }
+
     // ── v0.6 grammar additions: negation + typed metadata predicates ─────
 
     /// Build a graph with one secret in first_party reaching one untrusted

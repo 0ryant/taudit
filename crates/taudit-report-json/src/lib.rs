@@ -588,4 +588,154 @@ mod tests {
             errors.join("\n")
         );
     }
+
+    /// Regression for the P0 schema-drift class (Agent-10 Findings 2 + 3
+    /// of the v1.1.0-beta.2 deep-audit synthesis). The published
+    /// `taudit-report.schema.json` previously listed only 10 of the 63
+    /// `FindingCategory` variants in `Finding/properties/category/enum`.
+    /// With `additionalProperties: false`, a finding emitted by 53 of 63
+    /// rules was byte-valid but schema-invalid against the contract the
+    /// README publishes — strict-validating consumers rejected the output.
+    /// CI was blind because every prior schema test fired
+    /// `UnpinnedAction` or `AuthorityPropagation`, both inside the
+    /// stale 10-item subset.
+    ///
+    /// This test enumerates every variant — including the two reserved
+    /// ones, which are valid in OUTPUT — emits each through the JSON
+    /// sink, and validates the resulting report against the published
+    /// schema. Adding a new `FindingCategory` variant without updating
+    /// the schema generator (`scripts/generate-authority-invariant-schema.py`)
+    /// trips this test in addition to the CI `--check` step.
+    ///
+    /// Variants are hand-listed (no `strum`) — the workspace deliberately
+    /// avoids that dependency for one test. Removing a variant fails to
+    /// compile, which is a stronger signal than a missing-from-list bug.
+    #[test]
+    fn every_finding_category_variant_validates_against_report_schema() {
+        use taudit_core::finding::FindingCategory as C;
+
+        // Hand-listed enumeration of every FindingCategory variant. If a
+        // variant is added/removed in `crates/taudit-core/src/finding.rs`,
+        // this list MUST be updated in lock-step with the schema
+        // generator. The schema `--check` CI gate catches the schema half;
+        // this test catches the test-coverage half.
+        let all: Vec<C> = vec![
+            C::AuthorityPropagation,
+            C::OverPrivilegedIdentity,
+            C::UnpinnedAction,
+            C::UntrustedWithAuthority,
+            C::ArtifactBoundaryCrossing,
+            C::FloatingImage,
+            C::LongLivedCredential,
+            C::PersistedCredential,
+            C::TriggerContextMismatch,
+            C::CrossWorkflowAuthorityChain,
+            C::AuthorityCycle,
+            C::UpliftWithoutAttestation,
+            C::SelfMutatingPipeline,
+            C::CheckoutSelfPrExposure,
+            C::VariableGroupInPrJob,
+            C::SelfHostedPoolPrHijack,
+            C::SharedSelfHostedPoolNoIsolation,
+            C::ServiceConnectionScopeMismatch,
+            C::TemplateExtendsUnpinnedBranch,
+            C::TemplateRepoRefIsFeatureBranch,
+            C::VmRemoteExecViaPipelineSecret,
+            C::ShortLivedSasInCommandLine,
+            C::SecretToInlineScriptEnvExport,
+            C::SecretMaterialisedToWorkspaceFile,
+            C::KeyVaultSecretToPlaintext,
+            C::TerraformAutoApproveInProd,
+            C::AddSpnWithInlineScript,
+            C::ParameterInterpolationIntoShell,
+            C::RuntimeScriptFetchedFromFloatingUrl,
+            C::PrTriggerWithFloatingActionRef,
+            C::UntrustedApiResponseToEnvSink,
+            C::PrBuildPushesImageWithFloatingCredentials,
+            C::SecretViaEnvGateToUntrustedConsumer,
+            C::NoWorkflowLevelPermissionsBlock,
+            C::ProdDeployJobNoEnvironmentGate,
+            C::LongLivedSecretWithoutOidcRecommendation,
+            C::PullRequestWorkflowInconsistentForkCheck,
+            C::GitlabDeployJobMissingProtectedBranchOnly,
+            C::TerraformOutputViaSetvariableShellExpansion,
+            C::RiskyTriggerWithAuthority,
+            C::SensitiveValueInJobOutput,
+            C::ManualDispatchInputToUrlOrCommand,
+            C::SecretsInheritOverscopedPassthrough,
+            C::UnsafePrArtifactInWorkflowRunConsumer,
+            C::ScriptInjectionViaUntrustedContext,
+            C::InteractiveDebugActionInAuthorityWorkflow,
+            C::PrSpecificCacheKeyInDefaultBranchConsumer,
+            C::GhCliWithDefaultTokenEscalating,
+            C::CiJobTokenToExternalApi,
+            C::IdTokenAudienceOverscoped,
+            C::UntrustedCiVarInShellInterpolation,
+            C::UnpinnedIncludeRemoteOrBranchRef,
+            C::DindServiceGrantsHostAuthority,
+            C::SecurityJobSilentlySkipped,
+            C::ChildPipelineTriggerInheritsAuthority,
+            C::CacheKeyCrossesTrustBoundary,
+            C::PatEmbeddedInGitRemoteUrl,
+            C::CiTokenTriggersDownstreamWithVariablePassthrough,
+            C::DotenvArtifactFlowsToPrivilegedDeployment,
+            C::SetvariableIssecretFalse,
+            C::HomoglyphInActionRef,
+            // Reserved categories — valid in OUTPUT (the Rust enum can
+            // construct them); rejected in custom-rule YAML INPUT via
+            // `#[serde(skip_deserializing)]`.
+            C::EgressBlindspot,
+            C::MissingAuditTrail,
+        ];
+
+        // Sanity guard: 63 is the wire-contract count the schema
+        // generator emits. A drift between this list and the enum is the
+        // exact failure class this test exists to catch.
+        assert_eq!(
+            all.len(),
+            63,
+            "FindingCategory enumeration is out of sync with the schema generator (expected 63, got {})",
+            all.len()
+        );
+
+        let schema = read_json("contracts/schemas/taudit-report.schema.json");
+        let validator = jsonschema::validator_for(&schema).expect("report schema should compile");
+
+        for category in all {
+            let graph = taudit_core::graph::AuthorityGraph::new(PipelineSource {
+                file: ".github/workflows/ci.yml".into(),
+                repo: None,
+                git_ref: None,
+                commit_sha: None,
+            });
+            let findings = vec![Finding {
+                severity: Severity::Medium,
+                category,
+                path: None,
+                nodes_involved: vec![],
+                message: "category coverage probe".into(),
+                recommendation: Recommendation::Manual {
+                    action: "noop".into(),
+                },
+                source: taudit_core::finding::FindingSource::BuiltIn,
+                extras: FindingExtras::default(),
+            }];
+
+            let mut buf = Vec::new();
+            JsonReportSink
+                .emit(&mut buf, &graph, &findings)
+                .expect("sink emits");
+            let report: serde_json::Value =
+                serde_json::from_slice(&buf).expect("output is valid JSON");
+            let errors: Vec<String> = validator
+                .iter_errors(&report)
+                .map(|err| err.to_string())
+                .collect();
+            assert!(
+                errors.is_empty(),
+                "category {category:?} produced a report that fails the published schema:\n{}",
+                errors.join("\n")
+            );
+        }
+    }
 }

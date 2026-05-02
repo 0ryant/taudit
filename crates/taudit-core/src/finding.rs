@@ -376,11 +376,18 @@ pub enum FindingCategory {
     /// action (e.g. Cyrillic `a` instead of Latin `a`, or U+2215
     /// DIVISION SLASH instead of U+002F SOLIDUS).
     HomoglyphInActionRef,
-    // Reserved — requires ADO/GH API enrichment beyond pipeline YAML
+    // Reserved — requires ADO/GH API enrichment beyond pipeline YAML.
+    // Sealed against deserialisation: a custom-rule YAML using these
+    // categories errors out with `unknown variant` at load time, because
+    // they cannot be detected from pipeline YAML alone. They still
+    // serialise normally so future runtime-enrichment paths inside the
+    // taudit binary can emit them, and the output schemas advertise them.
     /// Requires runtime network telemetry or policy enrichment — not detectable from YAML alone.
+    #[serde(skip_deserializing)]
     #[doc(hidden)]
     EgressBlindspot,
     /// Requires external audit-sink configuration data — not detectable from YAML alone.
+    #[serde(skip_deserializing)]
     #[doc(hidden)]
     MissingAuditTrail,
 }
