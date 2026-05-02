@@ -4,8 +4,8 @@ expression: json
 ---
 findings:
   - category: authority_propagation
-    finding_group_id: 34e05532-cb8e-5859-a01f-da1552c57997
-    fingerprint: 0da8c80421a0b537
+    finding_group_id: 58af3d8a-8e02-5d29-8a35-013ac5b8ddc2
+    fingerprint: 2c001aeeb933afb192cc1af87babdff9
     message: GITHUB_TOKEN propagated to actions/checkout@a5ac7e51b41094c92402da3b24376905380afc29 across trust boundary
     nodes_involved:
       - 0

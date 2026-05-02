@@ -11,10 +11,10 @@ expression: results
   message:
     text: "API_SECRET_KEY propagated to alpine:latest across trust boundary"
   partialFingerprints:
-    primaryLocationLineHash: 7849ccce90a9affb
-    taudit/v1: 7849ccce90a9affb
+    primaryLocationLineHash: d180931e883fe7d08a9ac19952c50b9d
+    taudit/v1: d180931e883fe7d08a9ac19952c50b9d
   properties:
-    findingGroupId: cb5eefd6-bd71-549b-957b-0850fc777097
+    findingGroupId: 3e1ce5ac-d8de-5111-85c0-c961f1bfea37
     security-severity: "9.0"
     taudit-source: built-in
   ruleId: authority_propagation
@@ -27,10 +27,10 @@ expression: results
   message:
     text: "CI_JOB_TOKEN propagated to alpine:latest across trust boundary"
   partialFingerprints:
-    primaryLocationLineHash: 1da7e65c2ff977aa
-    taudit/v1: 1da7e65c2ff977aa
+    primaryLocationLineHash: f310333c07ac5116f7733626d44cb753
+    taudit/v1: f310333c07ac5116f7733626d44cb753
   properties:
-    findingGroupId: 23936b25-cf39-5a35-af07-2189903b1067
+    findingGroupId: 661d0527-036b-5986-a564-a1d93afd8748
     security-severity: "9.0"
     taudit-source: built-in
   ruleId: authority_propagation
@@ -43,10 +43,10 @@ expression: results
   message:
     text: "DATABASE_PASSWORD propagated to alpine:latest across trust boundary"
   partialFingerprints:
-    primaryLocationLineHash: 63d395dd2a2674d3
-    taudit/v1: 63d395dd2a2674d3
+    primaryLocationLineHash: a8e0befc7144da9fb4e5ef763fcc1fc5
+    taudit/v1: a8e0befc7144da9fb4e5ef763fcc1fc5
   properties:
-    findingGroupId: 23aefb82-189d-5fc2-8861-759c3278dbec
+    findingGroupId: 0e309759-d91b-5d41-b2d7-b7ffeec7377c
     security-severity: "9.0"
     taudit-source: built-in
   ruleId: authority_propagation
@@ -59,10 +59,10 @@ expression: results
   message:
     text: "DEPLOY_TOKEN propagated to alpine:latest across trust boundary"
   partialFingerprints:
-    primaryLocationLineHash: e9a285367946aec8
-    taudit/v1: e9a285367946aec8
+    primaryLocationLineHash: 1464f3114a20b17016c1f4a4fac39c16
+    taudit/v1: 1464f3114a20b17016c1f4a4fac39c16
   properties:
-    findingGroupId: 89b56659-76e2-5da1-ac8f-194ff0779677
+    findingGroupId: f529a601-9f35-545c-8e7e-74c2442a6908
     security-severity: "9.0"
     taudit-source: built-in
   ruleId: authority_propagation
@@ -75,10 +75,10 @@ expression: results
   message:
     text: "'API_SECRET_KEY' looks like a long-lived static credential"
   partialFingerprints:
-    primaryLocationLineHash: 5c1be269511d1b57
-    taudit/v1: 5c1be269511d1b57
+    primaryLocationLineHash: d2405dfb12dabdf464262a499c87ba54
+    taudit/v1: d2405dfb12dabdf464262a499c87ba54
   properties:
-    findingGroupId: d6cc214c-5fee-519d-88da-09a6fe21b157
+    findingGroupId: c494fbb4-778f-5822-8dad-6f8e82c5921b
     security-severity: "2.0"
     taudit-source: built-in
     timeToFix: large
@@ -92,10 +92,10 @@ expression: results
   message:
     text: "'DATABASE_PASSWORD' looks like a long-lived static credential"
   partialFingerprints:
-    primaryLocationLineHash: f6d67b78eaa7525d
-    taudit/v1: f6d67b78eaa7525d
+    primaryLocationLineHash: a04b0fa8ff833821d59f9caa45266717
+    taudit/v1: a04b0fa8ff833821d59f9caa45266717
   properties:
-    findingGroupId: 0668de89-ebb3-5eda-bcf2-e103cbdc8966
+    findingGroupId: 6fdceba6-6f33-58fe-95bf-927f469b15ec
     security-severity: "2.0"
     taudit-source: built-in
     timeToFix: large
@@ -109,10 +109,10 @@ expression: results
   message:
     text: "CI_JOB_TOKEN has broad scope (permissions: '') — likely broader than needed"
   partialFingerprints:
-    primaryLocationLineHash: 0f0242611c8820c9
-    taudit/v1: 0f0242611c8820c9
+    primaryLocationLineHash: 1ff9918fc8f89331c28c5c87af76f8ff
+    taudit/v1: 1ff9918fc8f89331c28c5c87af76f8ff
   properties:
-    findingGroupId: c6f2525f-850a-5b5a-bc1b-26f18de73730
+    findingGroupId: 00262520-9062-589a-8cfd-399be5d1a0b9
     security-severity: "7.5"
     taudit-source: built-in
     timeToFix: small
@@ -126,10 +126,10 @@ expression: results
   message:
     text: "alpine:latest is not pinned to a SHA digest"
   partialFingerprints:
-    primaryLocationLineHash: b3489f0390e803b0
-    taudit/v1: b3489f0390e803b0
+    primaryLocationLineHash: 73aefa946595cc3323a3711d1b09f744
+    taudit/v1: 73aefa946595cc3323a3711d1b09f744
   properties:
-    findingGroupId: 6a77aadd-f782-5155-b751-6b6697977ae5
+    findingGroupId: e9073e12-4672-5c3b-a881-79b1abc87da9
     security-severity: "7.5"
     taudit-source: built-in
     timeToFix: trivial

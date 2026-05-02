@@ -11,10 +11,10 @@ expression: results
   message:
     text: DEPLOY_TOKEN propagated to some-org/deploy-action@main across trust boundary
   partialFingerprints:
-    primaryLocationLineHash: e901cfa0c754946c
-    taudit/v1: e901cfa0c754946c
+    primaryLocationLineHash: 9d041f143c8a77486348a9574b8a4298
+    taudit/v1: 9d041f143c8a77486348a9574b8a4298
   properties:
-    findingGroupId: 2ef519a9-1670-5213-aa79-0f5996b79a28
+    findingGroupId: 19ee4c2e-a538-5bdb-adc2-8f789fcb6206
     security-severity: "9.0"
     taudit-source: built-in
   ruleId: authority_propagation
@@ -27,10 +27,10 @@ expression: results
   message:
     text: "GITHUB_TOKEN reaches 2 sinks via authority propagation: [actions/checkout@v4, some-org/deploy-action@main]"
   partialFingerprints:
-    primaryLocationLineHash: 386c5fb6035fcee1
-    taudit/v1: 386c5fb6035fcee1
+    primaryLocationLineHash: 34dfeec1b30291318a55b11421fbac7b
+    taudit/v1: 34dfeec1b30291318a55b11421fbac7b
   properties:
-    findingGroupId: c8e7bc78-520c-5da5-b2d5-ec56fb6e0f8a
+    findingGroupId: be66107e-37fd-5dbf-9330-11b1a3a4fd7b
     security-severity: "9.0"
     taudit-source: built-in
   ruleId: authority_propagation
@@ -43,10 +43,10 @@ expression: results
   message:
     text: "'AWS_ACCESS_KEY_ID' looks like a long-lived static credential"
   partialFingerprints:
-    primaryLocationLineHash: f8e7c6d27fb9c502
-    taudit/v1: f8e7c6d27fb9c502
+    primaryLocationLineHash: 778504a98a278328ffbfc4ba18a0c14e
+    taudit/v1: 778504a98a278328ffbfc4ba18a0c14e
   properties:
-    findingGroupId: 4be6bde9-2138-5c69-b0b9-049cccb310ed
+    findingGroupId: 51fcc990-5084-59e3-a731-9c560c54d0ba
     security-severity: "2.0"
     taudit-source: built-in
     timeToFix: large
@@ -60,10 +60,10 @@ expression: results
   message:
     text: "'AWS_SECRET_ACCESS_KEY' looks like a long-lived static credential"
   partialFingerprints:
-    primaryLocationLineHash: 4bfa8377963396f3
-    taudit/v1: 4bfa8377963396f3
+    primaryLocationLineHash: 8d56a5877d83d06dfd8503de6a61fe94
+    taudit/v1: 8d56a5877d83d06dfd8503de6a61fe94
   properties:
-    findingGroupId: d683298a-7b9d-581e-9d39-753e4eb760b3
+    findingGroupId: 07e0de9b-04b5-5411-9c3b-bbf91d12002a
     security-severity: "2.0"
     taudit-source: built-in
     timeToFix: large
@@ -77,10 +77,10 @@ expression: results
   message:
     text: "GITHUB_TOKEN has broad scope (permissions: 'write-all') — likely broader than needed"
   partialFingerprints:
-    primaryLocationLineHash: 8da052f076b32aa4
-    taudit/v1: 8da052f076b32aa4
+    primaryLocationLineHash: 1fbb9cf89e16b2623ad236fcace90316
+    taudit/v1: 1fbb9cf89e16b2623ad236fcace90316
   properties:
-    findingGroupId: e5f1bb57-bcce-5a20-9521-5539e98de5a8
+    findingGroupId: 61e587be-3ab9-585f-a534-4308d9267ffa
     security-severity: "7.5"
     taudit-source: built-in
     timeToFix: small
@@ -94,10 +94,10 @@ expression: results
   message:
     text: actions/checkout@v4 is not pinned to a SHA digest
   partialFingerprints:
-    primaryLocationLineHash: 7d0c4b89e87f4eb1
-    taudit/v1: 7d0c4b89e87f4eb1
+    primaryLocationLineHash: 31ceeca3145a97625dfd847a040bbc26
+    taudit/v1: 31ceeca3145a97625dfd847a040bbc26
   properties:
-    findingGroupId: 0106c620-6518-5ffc-b0a3-1729c9af2d7d
+    findingGroupId: f4ab4e0a-cd93-56c6-a534-12aec7befcff
     security-severity: "5.0"
     taudit-source: built-in
     timeToFix: trivial
@@ -111,10 +111,10 @@ expression: results
   message:
     text: some-org/deploy-action@main is not pinned to a SHA digest
   partialFingerprints:
-    primaryLocationLineHash: edd2103ad9feff6e
-    taudit/v1: edd2103ad9feff6e
+    primaryLocationLineHash: 15293f46f1061fc8b1d4c710dca0aa52
+    taudit/v1: 15293f46f1061fc8b1d4c710dca0aa52
   properties:
-    findingGroupId: e473bd0d-ba51-5a9f-b505-c23a3d48c303
+    findingGroupId: aaddbe52-28d1-5412-8441-5d9ae95ecf85
     security-severity: "7.5"
     taudit-source: built-in
     timeToFix: trivial
@@ -128,10 +128,10 @@ expression: results
   message:
     text: "Untrusted step 'build[0]' has direct access to identity 'GITHUB_TOKEN'"
   partialFingerprints:
-    primaryLocationLineHash: f1ecc83632f1ea02
-    taudit/v1: f1ecc83632f1ea02
+    primaryLocationLineHash: 4cc63211c9299f9f5965da1d71e83023
+    taudit/v1: 4cc63211c9299f9f5965da1d71e83023
   properties:
-    findingGroupId: a1cbac10-b734-5880-8ccd-435a8995a15c
+    findingGroupId: 8134004c-cfe9-54e3-8ac4-1099db4b20dc
     security-severity: "9.0"
     taudit-source: built-in
   ruleId: untrusted_with_authority
@@ -144,10 +144,10 @@ expression: results
   message:
     text: "Untrusted step 'deploy[0]' has direct access to identity 'GITHUB_TOKEN'"
   partialFingerprints:
-    primaryLocationLineHash: 295e6dbee6d98391
-    taudit/v1: 295e6dbee6d98391
+    primaryLocationLineHash: b3aac2a7d760a06fdde4c9231697db3d
+    taudit/v1: b3aac2a7d760a06fdde4c9231697db3d
   properties:
-    findingGroupId: a8715616-b2b7-5db2-b67c-02b1a930c2bd
+    findingGroupId: 26a1ad7d-a283-5a77-9c6c-f33833a25f7c
     security-severity: "9.0"
     taudit-source: built-in
   ruleId: untrusted_with_authority
@@ -160,10 +160,10 @@ expression: results
   message:
     text: "Untrusted step 'deploy[0]' has direct access to secret 'DEPLOY_TOKEN'"
   partialFingerprints:
-    primaryLocationLineHash: 14b09cd62355460f
-    taudit/v1: 14b09cd62355460f
+    primaryLocationLineHash: ccaf29551b139fb5d5c271a9c47d62de
+    taudit/v1: ccaf29551b139fb5d5c271a9c47d62de
   properties:
-    findingGroupId: c2a96a98-db35-51dd-b96c-36647c50b13a
+    findingGroupId: 5bb4e538-2f11-5dc2-949f-da1d8b6a37e2
     security-severity: "9.0"
     taudit-source: built-in
   ruleId: untrusted_with_authority
@@ -176,10 +176,10 @@ expression: results
   message:
     text: 3 step(s) use OIDC/federated identity but no provenance attestation step was detected — artifact integrity cannot be verified
   partialFingerprints:
-    primaryLocationLineHash: ef4a4a9247eed1d3
-    taudit/v1: ef4a4a9247eed1d3
+    primaryLocationLineHash: 72c99cb062f0e9061b7bd3063a3387ca
+    taudit/v1: 72c99cb062f0e9061b7bd3063a3387ca
   properties:
-    findingGroupId: 68540b5a-2257-5a3e-9b30-179f65dacf77
+    findingGroupId: bb6d77e7-d049-593d-8e10-f5d12d9b7b20
     security-severity: "0.1"
     taudit-source: built-in
   ruleId: uplift_without_attestation

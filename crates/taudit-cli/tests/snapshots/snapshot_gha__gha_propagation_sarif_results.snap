@@ -11,10 +11,10 @@ expression: results
   message:
     text: "GITHUB_TOKEN reaches 5 sinks via authority propagation: [actions/checkout@a5ac7e51b41094c92402da3b24376905380afc29, actions/upload-artifact@v4, release-bundle, actions/download-artifact@v4, untrusted-org/publish-action@main]"
   partialFingerprints:
-    primaryLocationLineHash: 25d85ae2f2132cc2
-    taudit/v1: 25d85ae2f2132cc2
+    primaryLocationLineHash: 4c049f68139514095dad695181c62c92
+    taudit/v1: 4c049f68139514095dad695181c62c92
   properties:
-    findingGroupId: ed0f643a-a9ea-520a-81a1-e7a12728d90c
+    findingGroupId: 8b13aa4e-7e99-5faa-968a-b0ef649d5564
     security-severity: "9.0"
     taudit-source: built-in
   ruleId: authority_propagation
@@ -27,10 +27,10 @@ expression: results
   message:
     text: PUBLISH_API_KEY propagated to untrusted-org/publish-action@main across trust boundary
   partialFingerprints:
-    primaryLocationLineHash: 91ac6ab9aaa28a0f
-    taudit/v1: 91ac6ab9aaa28a0f
+    primaryLocationLineHash: 3491ce71198b1b56a1020418f6b6428e
+    taudit/v1: 3491ce71198b1b56a1020418f6b6428e
   properties:
-    findingGroupId: 24c51300-c14b-5a97-a43f-e30abbefbc2b
+    findingGroupId: ba41b317-cbc5-5930-8db1-5d32206f77cf
     security-severity: "9.0"
     taudit-source: built-in
   ruleId: authority_propagation
@@ -43,10 +43,10 @@ expression: results
   message:
     text: "'PUBLISH_API_KEY' looks like a long-lived static credential"
   partialFingerprints:
-    primaryLocationLineHash: 1a4ce732917ed202
-    taudit/v1: 1a4ce732917ed202
+    primaryLocationLineHash: 3c05dbb7db29cbc62510bd07234bd8b3
+    taudit/v1: 3c05dbb7db29cbc62510bd07234bd8b3
   properties:
-    findingGroupId: e28fbf47-5ca1-5582-973f-7eec51c73172
+    findingGroupId: 6426415f-731a-53a8-b2e4-59bf5baccb9b
     security-severity: "2.0"
     taudit-source: built-in
     timeToFix: large
@@ -60,10 +60,10 @@ expression: results
   message:
     text: "GITHUB_TOKEN has broad scope (permissions: 'write-all') — likely broader than needed"
   partialFingerprints:
-    primaryLocationLineHash: 636c27a5cf951c53
-    taudit/v1: 636c27a5cf951c53
+    primaryLocationLineHash: f40be29c0ec732f891a8b218b539588e
+    taudit/v1: f40be29c0ec732f891a8b218b539588e
   properties:
-    findingGroupId: 969b593c-6068-549b-a5d8-dcd88d0c507d
+    findingGroupId: c629fa7f-412c-5537-83e3-f9598919f901
     security-severity: "7.5"
     taudit-source: built-in
     timeToFix: small
@@ -77,10 +77,10 @@ expression: results
   message:
     text: actions/download-artifact@v4 is not pinned to a SHA digest
   partialFingerprints:
-    primaryLocationLineHash: 1e92e25d58a4ad8b
-    taudit/v1: 1e92e25d58a4ad8b
+    primaryLocationLineHash: c3afb6b577929fd0032c301d0bedb071
+    taudit/v1: c3afb6b577929fd0032c301d0bedb071
   properties:
-    findingGroupId: 08ba96be-eccf-5dd8-9270-bed15c1cc1c5
+    findingGroupId: 84413533-33fe-5b90-8720-964551200e36
     security-severity: "5.0"
     taudit-source: built-in
     timeToFix: trivial
@@ -94,10 +94,10 @@ expression: results
   message:
     text: actions/upload-artifact@v4 is not pinned to a SHA digest
   partialFingerprints:
-    primaryLocationLineHash: f93d2d4fd21f4d5f
-    taudit/v1: f93d2d4fd21f4d5f
+    primaryLocationLineHash: 78bff5f6e502269cc980f4ad23d62ba3
+    taudit/v1: 78bff5f6e502269cc980f4ad23d62ba3
   properties:
-    findingGroupId: 21593e0b-1b13-5f55-adcc-f124433bc303
+    findingGroupId: bca918de-19f7-58da-ae2e-61f12191a56b
     security-severity: "5.0"
     taudit-source: built-in
     timeToFix: trivial
@@ -111,10 +111,10 @@ expression: results
   message:
     text: untrusted-org/publish-action@main is not pinned to a SHA digest
   partialFingerprints:
-    primaryLocationLineHash: 6151d535a577635f
-    taudit/v1: 6151d535a577635f
+    primaryLocationLineHash: a87f5766f57accf0393176d72eb23f86
+    taudit/v1: a87f5766f57accf0393176d72eb23f86
   properties:
-    findingGroupId: 80cdea3d-fd33-5af7-aa5a-a04dff642752
+    findingGroupId: 261a4277-eaf7-511e-9c1c-f47fdd7bd620
     security-severity: "7.5"
     taudit-source: built-in
     timeToFix: trivial
@@ -128,10 +128,10 @@ expression: results
   message:
     text: "Untrusted step 'build[2]' has direct access to identity 'GITHUB_TOKEN'"
   partialFingerprints:
-    primaryLocationLineHash: 6b95d9d1d1c36415
-    taudit/v1: 6b95d9d1d1c36415
+    primaryLocationLineHash: c86dc7d595e4239cd2ed6ea9deafa290
+    taudit/v1: c86dc7d595e4239cd2ed6ea9deafa290
   properties:
-    findingGroupId: c490b0e3-517c-5ae8-81e5-653e03ec1464
+    findingGroupId: 5e958af4-f19d-5ac6-be09-2305f0d9b95f
     security-severity: "9.0"
     taudit-source: built-in
   ruleId: untrusted_with_authority
@@ -144,10 +144,10 @@ expression: results
   message:
     text: "Untrusted step 'publish[0]' has direct access to identity 'GITHUB_TOKEN'"
   partialFingerprints:
-    primaryLocationLineHash: d3c9a69c3a369468
-    taudit/v1: d3c9a69c3a369468
+    primaryLocationLineHash: 5ed638c8ae853fe1fdb2f25c3dc36429
+    taudit/v1: 5ed638c8ae853fe1fdb2f25c3dc36429
   properties:
-    findingGroupId: f68529c1-b97f-5ec6-9f88-3094f0021c59
+    findingGroupId: b7e5793c-2947-56b9-bedf-cd675c8ec420
     security-severity: "9.0"
     taudit-source: built-in
   ruleId: untrusted_with_authority
@@ -160,10 +160,10 @@ expression: results
   message:
     text: "Untrusted step 'publish[1]' has direct access to identity 'GITHUB_TOKEN'"
   partialFingerprints:
-    primaryLocationLineHash: aaddb0f9f646e259
-    taudit/v1: aaddb0f9f646e259
+    primaryLocationLineHash: 9b5a3597ba20260b9b44b003091941a8
+    taudit/v1: 9b5a3597ba20260b9b44b003091941a8
   properties:
-    findingGroupId: 861e7c28-4959-582a-af3d-0b1c306bccac
+    findingGroupId: 13b169f7-d22b-595c-86ce-7907ca3e6781
     security-severity: "9.0"
     taudit-source: built-in
   ruleId: untrusted_with_authority
@@ -176,10 +176,10 @@ expression: results
   message:
     text: "Untrusted step 'publish[1]' has direct access to secret 'PUBLISH_API_KEY'"
   partialFingerprints:
-    primaryLocationLineHash: 991aaae346669a99
-    taudit/v1: 991aaae346669a99
+    primaryLocationLineHash: 576c2dd5a7622210fdb7f2220518b0aa
+    taudit/v1: 576c2dd5a7622210fdb7f2220518b0aa
   properties:
-    findingGroupId: f13e083f-58da-5acd-b9f1-ee307db69685
+    findingGroupId: 1c27d04f-2dbc-5865-a0ac-48c941d4c6f8
     security-severity: "9.0"
     taudit-source: built-in
   ruleId: untrusted_with_authority
@@ -192,10 +192,10 @@ expression: results
   message:
     text: 5 step(s) use OIDC/federated identity but no provenance attestation step was detected — artifact integrity cannot be verified
   partialFingerprints:
-    primaryLocationLineHash: 94d7dcd0a7b65a6a
-    taudit/v1: 94d7dcd0a7b65a6a
+    primaryLocationLineHash: 808fed89037072f475af655be504c6fa
+    taudit/v1: 808fed89037072f475af655be504c6fa
   properties:
-    findingGroupId: 19195dad-8fa3-5308-b863-575664b482f9
+    findingGroupId: a1606386-f469-5376-a699-23801a687970
     security-severity: "0.1"
     taudit-source: built-in
   ruleId: uplift_without_attestation

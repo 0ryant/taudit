@@ -524,6 +524,35 @@ pub struct FindingExtras {
     /// entry. `None` when no suppression applies.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub suppression_reason: Option<String>,
+
+    /// Per-finding stable anchor mixed into the fingerprint canonical
+    /// string. Populated by rules that have no natural graph node to
+    /// place in `nodes_involved` (e.g. ADO `resources.repositories[]`
+    /// aliases, GitLab `include:` entries, workflow-level invariants).
+    /// When two findings of the same rule fire in the same file, their
+    /// anchors must differ for the fingerprints to differ.
+    ///
+    /// Round-trips through JSON so external tools that recompute
+    /// fingerprints from loaded findings get the same value as the
+    /// emitting taudit run. `None` (the default) and `Some("")` are the
+    /// same equivalence class — both contribute the empty marker to the
+    /// canonical string.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub fingerprint_anchor: Option<String>,
+}
+
+impl FindingExtras {
+    /// Convenience constructor for the common case of "default extras
+    /// plus a per-finding fingerprint anchor". Used by rules whose
+    /// emission sites have no natural graph-node anchor and need the
+    /// anchor to discriminate multiple findings of the same rule in one
+    /// file (see `compute_fingerprint` v3 contract).
+    pub fn with_anchor(anchor: impl Into<String>) -> Self {
+        Self {
+            fingerprint_anchor: Some(anchor.into()),
+            ..Self::default()
+        }
+    }
 }
 
 #[allow(clippy::trivially_copy_pass_by_ref)]
@@ -579,6 +608,10 @@ impl Finding {
 /// Move severity one rank toward `Info` (Critical -> High -> ... -> Info).
 /// `Info` stays `Info`. Used by both the suppression applicator and
 /// compensating-control detectors.
+///
+/// **API stability:** marked `#[doc(hidden)]` because `taudit-core` is a
+/// workspace-internal library. See `crates/taudit-core/src/lib.rs`.
+#[doc(hidden)]
 pub fn downgrade_severity(s: Severity) -> Severity {
     match s {
         Severity::Critical => Severity::High,
@@ -598,6 +631,11 @@ pub fn downgrade_severity(s: Severity) -> Severity {
 /// here. Treating the namespace as load-bearing is intentional: any
 /// future change here would break every consumer that has stored a
 /// `finding_group_id`. Bump only at a major version.
+///
+/// **API stability:** marked `#[doc(hidden)]` because `taudit-core` is a
+/// workspace-internal library. External consumers should read the
+/// `finding_group_id` field from the JSON / SARIF / CloudEvents output.
+#[doc(hidden)]
 pub fn compute_finding_group_id(fingerprint: &str) -> String {
     // UUID v5 = SHA-1(namespace || name), with version + variant bits set.
     // Implemented inline so taudit-core stays free of the `uuid` crate
@@ -645,45 +683,168 @@ pub fn compute_finding_group_id(fingerprint: &str) -> String {
 
 /// Pull a custom-rule id out of a finding message of the form
 /// `[<id>] rest of message`. Returns `None` if the message does not start
-/// with a bracketed id. Mirrors the matching helper in
-/// `taudit-report-sarif`; kept private so the surface stays minimal.
-fn extract_custom_rule_id(message: &str) -> Option<&str> {
+/// with a bracketed id, or if the bracketed token is not a valid
+/// snake_case identifier (`^[a-z][a-z0-9_]*$`).
+///
+/// **Why strict shape?** Built-in rule messages occasionally start with
+/// `[high]` / `[critical]` for emphasis, or `[high blast-radius]` for
+/// human-readable severity tags. Without a regex check those would
+/// silently re-attribute the finding's `rule_id` away from its category
+/// and into a phantom custom rule. Only the canonical custom-rule-id
+/// shape (lowercase letter, then lowercase / digit / underscore) is
+/// honoured.
+pub(crate) fn extract_custom_rule_id(message: &str) -> Option<&str> {
     if !message.starts_with('[') {
         return None;
     }
     let end = message.find(']')?;
     let id = &message[1..end];
     if id.is_empty() {
-        None
-    } else {
-        Some(id)
+        return None;
+    }
+    let mut chars = id.chars();
+    let first = chars.next()?;
+    if !first.is_ascii_lowercase() {
+        return None;
+    }
+    if !chars.all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '_') {
+        return None;
+    }
+    Some(id)
+}
+
+/// Snake-case rule id derived from a `FindingCategory`. Explicit match —
+/// NOT a serde round-trip — so a future `#[serde(tag)]` change cannot
+/// silently reword every fingerprint in the wild. The
+/// `every_category_returns_non_unknown_rule_id` test asserts every
+/// variant returns a non-`"unknown"` snake_case id.
+fn category_rule_id(category: &FindingCategory) -> &'static str {
+    match category {
+        FindingCategory::AuthorityPropagation => "authority_propagation",
+        FindingCategory::OverPrivilegedIdentity => "over_privileged_identity",
+        FindingCategory::UnpinnedAction => "unpinned_action",
+        FindingCategory::UntrustedWithAuthority => "untrusted_with_authority",
+        FindingCategory::ArtifactBoundaryCrossing => "artifact_boundary_crossing",
+        FindingCategory::FloatingImage => "floating_image",
+        FindingCategory::LongLivedCredential => "long_lived_credential",
+        FindingCategory::PersistedCredential => "persisted_credential",
+        FindingCategory::TriggerContextMismatch => "trigger_context_mismatch",
+        FindingCategory::CrossWorkflowAuthorityChain => "cross_workflow_authority_chain",
+        FindingCategory::AuthorityCycle => "authority_cycle",
+        FindingCategory::UpliftWithoutAttestation => "uplift_without_attestation",
+        FindingCategory::SelfMutatingPipeline => "self_mutating_pipeline",
+        FindingCategory::CheckoutSelfPrExposure => "checkout_self_pr_exposure",
+        FindingCategory::VariableGroupInPrJob => "variable_group_in_pr_job",
+        FindingCategory::SelfHostedPoolPrHijack => "self_hosted_pool_pr_hijack",
+        FindingCategory::SharedSelfHostedPoolNoIsolation => "shared_self_hosted_pool_no_isolation",
+        FindingCategory::ServiceConnectionScopeMismatch => "service_connection_scope_mismatch",
+        FindingCategory::TemplateExtendsUnpinnedBranch => "template_extends_unpinned_branch",
+        FindingCategory::TemplateRepoRefIsFeatureBranch => "template_repo_ref_is_feature_branch",
+        FindingCategory::VmRemoteExecViaPipelineSecret => "vm_remote_exec_via_pipeline_secret",
+        FindingCategory::ShortLivedSasInCommandLine => "short_lived_sas_in_command_line",
+        FindingCategory::SecretToInlineScriptEnvExport => "secret_to_inline_script_env_export",
+        FindingCategory::SecretMaterialisedToWorkspaceFile => {
+            "secret_materialised_to_workspace_file"
+        }
+        // Note: this variant carries `#[serde(rename = "keyvault_secret_to_plaintext")]` —
+        // the serde-rename target is the rule id, not the snake_case derivation.
+        FindingCategory::KeyVaultSecretToPlaintext => "keyvault_secret_to_plaintext",
+        FindingCategory::TerraformAutoApproveInProd => "terraform_auto_approve_in_prod",
+        FindingCategory::AddSpnWithInlineScript => "add_spn_with_inline_script",
+        FindingCategory::ParameterInterpolationIntoShell => "parameter_interpolation_into_shell",
+        FindingCategory::RuntimeScriptFetchedFromFloatingUrl => {
+            "runtime_script_fetched_from_floating_url"
+        }
+        FindingCategory::PrTriggerWithFloatingActionRef => "pr_trigger_with_floating_action_ref",
+        FindingCategory::UntrustedApiResponseToEnvSink => "untrusted_api_response_to_env_sink",
+        FindingCategory::PrBuildPushesImageWithFloatingCredentials => {
+            "pr_build_pushes_image_with_floating_credentials"
+        }
+        FindingCategory::SecretViaEnvGateToUntrustedConsumer => {
+            "secret_via_env_gate_to_untrusted_consumer"
+        }
+        FindingCategory::NoWorkflowLevelPermissionsBlock => "no_workflow_level_permissions_block",
+        FindingCategory::ProdDeployJobNoEnvironmentGate => "prod_deploy_job_no_environment_gate",
+        FindingCategory::LongLivedSecretWithoutOidcRecommendation => {
+            "long_lived_secret_without_oidc_recommendation"
+        }
+        FindingCategory::PullRequestWorkflowInconsistentForkCheck => {
+            "pull_request_workflow_inconsistent_fork_check"
+        }
+        FindingCategory::GitlabDeployJobMissingProtectedBranchOnly => {
+            "gitlab_deploy_job_missing_protected_branch_only"
+        }
+        FindingCategory::TerraformOutputViaSetvariableShellExpansion => {
+            "terraform_output_via_setvariable_shell_expansion"
+        }
+        FindingCategory::RiskyTriggerWithAuthority => "risky_trigger_with_authority",
+        FindingCategory::SensitiveValueInJobOutput => "sensitive_value_in_job_output",
+        FindingCategory::ManualDispatchInputToUrlOrCommand => {
+            "manual_dispatch_input_to_url_or_command"
+        }
+        FindingCategory::SecretsInheritOverscopedPassthrough => {
+            "secrets_inherit_overscoped_passthrough"
+        }
+        FindingCategory::UnsafePrArtifactInWorkflowRunConsumer => {
+            "unsafe_pr_artifact_in_workflow_run_consumer"
+        }
+        FindingCategory::ScriptInjectionViaUntrustedContext => {
+            "script_injection_via_untrusted_context"
+        }
+        FindingCategory::InteractiveDebugActionInAuthorityWorkflow => {
+            "interactive_debug_action_in_authority_workflow"
+        }
+        FindingCategory::PrSpecificCacheKeyInDefaultBranchConsumer => {
+            "pr_specific_cache_key_in_default_branch_consumer"
+        }
+        FindingCategory::GhCliWithDefaultTokenEscalating => "gh_cli_with_default_token_escalating",
+        FindingCategory::CiJobTokenToExternalApi => "ci_job_token_to_external_api",
+        FindingCategory::IdTokenAudienceOverscoped => "id_token_audience_overscoped",
+        FindingCategory::UntrustedCiVarInShellInterpolation => {
+            "untrusted_ci_var_in_shell_interpolation"
+        }
+        FindingCategory::UnpinnedIncludeRemoteOrBranchRef => {
+            "unpinned_include_remote_or_branch_ref"
+        }
+        FindingCategory::DindServiceGrantsHostAuthority => "dind_service_grants_host_authority",
+        FindingCategory::SecurityJobSilentlySkipped => "security_job_silently_skipped",
+        FindingCategory::ChildPipelineTriggerInheritsAuthority => {
+            "child_pipeline_trigger_inherits_authority"
+        }
+        FindingCategory::CacheKeyCrossesTrustBoundary => "cache_key_crosses_trust_boundary",
+        FindingCategory::PatEmbeddedInGitRemoteUrl => "pat_embedded_in_git_remote_url",
+        FindingCategory::CiTokenTriggersDownstreamWithVariablePassthrough => {
+            "ci_token_triggers_downstream_with_variable_passthrough"
+        }
+        FindingCategory::DotenvArtifactFlowsToPrivilegedDeployment => {
+            "dotenv_artifact_flows_to_privileged_deployment"
+        }
+        FindingCategory::SetvariableIssecretFalse => "setvariable_issecret_false",
+        FindingCategory::HomoglyphInActionRef => "homoglyph_in_action_ref",
+        FindingCategory::EgressBlindspot => "egress_blindspot",
+        FindingCategory::MissingAuditTrail => "missing_audit_trail",
     }
 }
 
-/// Snake-case rule id derived from a `FindingCategory`. Delegates to
-/// serde so the value tracks the serialized form across renames.
-fn category_rule_id(category: &FindingCategory) -> String {
-    serde_json::to_value(category)
-        .ok()
-        .and_then(|v| v.as_str().map(str::to_string))
-        .unwrap_or_else(|| "unknown".to_string())
-}
-
-/// Public, stable rule-id resolver for a finding.
+/// Workspace-internal rule-id resolver for a finding. Single source of
+/// truth used by JSON, SARIF, CloudEvents, and baseline sinks.
 ///
 /// Returns the snake_case rule id reported alongside this finding. When the
-/// finding's message starts with a bracketed custom-rule prefix
+/// finding's message starts with a bracketed snake_case identifier
 /// (`[my_rule] ...`), the bracketed id wins so custom YAML rules surface
 /// their declared id. Otherwise the rule id is the snake_case form of the
 /// finding's `category` (the same string serde uses to serialize the
 /// category enum).
 ///
-/// JSON, SARIF, and CloudEvents emitters all share this helper to ensure
-/// the `rule_id` field is identical across the three sinks.
+/// **API stability:** marked `#[doc(hidden)]` because `taudit-core` is a
+/// workspace-internal library — see the module-level docstring on
+/// `crates/taudit-core/src/lib.rs`. External consumers should read the
+/// `rule_id` field from the JSON / SARIF / CloudEvents output instead.
+#[doc(hidden)]
 pub fn rule_id_for(finding: &Finding) -> String {
     extract_custom_rule_id(&finding.message)
         .map(str::to_string)
-        .unwrap_or_else(|| category_rule_id(&finding.category))
+        .unwrap_or_else(|| category_rule_id(&finding.category).to_string())
 }
 
 /// Compute a stable cross-run fingerprint for a finding.
@@ -694,51 +855,81 @@ pub fn rule_id_for(finding: &Finding) -> String {
 /// underlying issue makes the fingerprint disappear; a tweak to the
 /// finding's user-facing message does NOT change the fingerprint.
 ///
-/// **Algorithm version `v2`** (replaces v1 from v0.9.1).
+/// **Algorithm version `v3`** (replaces v2 from v0.9.1, in turn replacing
+/// v1 from earlier).
 ///
-/// v1 collapsed every per-hop finding against the same root Secret/Identity
-/// onto a single fingerprint. That hides genuinely distinct issues — two
-/// untrusted steps reaching the same secret are two separate
-/// remediation-distinct findings, not one. v2 makes every component of the
-/// finding contribute to the hash so unrelated findings cannot alias.
+/// v3 changes vs v2:
+///   1. Output truncated to 16 bytes (32 hex chars / 128 bits) instead of
+///      8 bytes (16 hex chars / 64 bits). v2's 64-bit truncation gave a
+///      ~2³² birthday-collision frontier — single-digit hours of laptop
+///      compute. An attacker who can read `.taudit-suppressions.yml`
+///      (public on every OSS repo) could craft a Critical finding whose
+///      fingerprint matched a benign waiver and ship unreviewed code. v3
+///      raises the work factor to ~2⁶⁴, well past any practical attack.
+///   2. `graph.source.file` is normalised to forward-slash form before
+///      hashing. A Windows scan emitting `workflows\ci.yml` and a Linux
+///      baseline scanning `workflows/ci.yml` now produce identical
+///      fingerprints for the same logical issue.
+///   3. Out-of-range `NodeId` values in `nodes_involved` emit a
+///      `<missing:N>` sentinel instead of being silently dropped. Two
+///      findings whose `nodes_involved` differ only by elided positions
+///      produce different fingerprints rather than aliasing.
+///   4. `extras.fingerprint_anchor` mixes a per-finding stable token into
+///      the canonical string. Rules whose findings carry no graph-node
+///      anchor (workflow-level invariants, repository-alias rules) set
+///      this to a discriminating string (alias name, identity name) so
+///      multiple instances within one file produce distinct fingerprints.
 ///
 /// **Inputs (sensitive to):**
 ///   * Rule id — either a custom rule id parsed from a `[id] …` message
-///     prefix, or the snake_case form of `finding.category`
-///   * Source file path (`graph.source.file`) — verbatim, never normalised
-///     to a basename, so two pipelines named the same file in different
-///     directories never collide
+///     prefix (only when the bracketed token matches `^[a-z][a-z0-9_]*$`),
+///     or the snake_case form of `finding.category`
+///   * Source file path (`graph.source.file`) — normalised to forward-slash
+///     so cross-platform scans agree, but never collapsed to a basename
 ///   * Finding category (snake_case)
 ///   * Root-authority node name — Secret/Identity name when one is
-///     involved, empty string otherwise. Surfaces the credential identity
-///     in the SIEM context column without being the only differentiator.
-///   * Ordered involved-node names — every node in `nodes_involved`,
-///     joined in original order (preserves caller intent so per-hop
-///     findings against the same secret produce distinct fingerprints).
+///     involved, empty string otherwise
+///   * Ordered involved-node names — every node in `nodes_involved`;
+///     out-of-range ids surface as `<missing:N>` sentinels rather than
+///     silently disappearing
+///   * `extras.fingerprint_anchor` — per-finding discriminator for rules
+///     without a natural graph-node anchor
 ///
 /// **Inputs (insensitive to):**
 ///   * Wall-clock time
 ///   * The finding's `message` text — operators tweak phrasing without
-///     wanting suppressions to break
+///     wanting suppressions to break (custom-rule-id prefix is read out
+///     of the message, but only if it is a valid snake_case identifier)
 ///   * `taudit` version string
 ///   * Environment / host / cwd
 ///   * Pipeline file content hash — only the path matters
 ///
-/// Stability guarantee: the v2 algorithm is stable for the v0.10+ line.
-/// Pre-v0.10 (v1 algorithm) suppressions DO NOT carry forward — a one-time
-/// re-baselining is required when upgrading. CHANGELOG and
-/// `docs/finding-fingerprint.md` flag the break explicitly.
+/// Stability guarantee: the v3 algorithm is stable for the v1.1+ line.
+/// v2 (16-hex) suppressions DO NOT carry forward — a one-time
+/// re-baselining is required when upgrading from any v0.x or v1.0 release.
+/// CHANGELOG and `docs/finding-fingerprint.md` flag the break explicitly.
 ///
 /// Output: SHA-256 of the canonical input string, truncated to the first
-/// 16 hex characters (64 bits — collision-resistant enough for finding
-/// dedup, short enough to be human-glanceable in a SIEM table).
+/// 32 hex characters (128 bits — far past collision-attack feasibility,
+/// still short enough to be glanceable in a SIEM table).
+///
+/// **API stability:** marked `#[doc(hidden)]` because `taudit-core` is a
+/// workspace-internal library — see `crates/taudit-core/src/lib.rs`.
+/// External consumers should read the `fingerprint` field from the JSON /
+/// SARIF / CloudEvents output instead.
+#[doc(hidden)]
 pub fn compute_fingerprint(finding: &Finding, graph: &AuthorityGraph) -> String {
     let rule_id = extract_custom_rule_id(&finding.message)
         .map(str::to_string)
-        .unwrap_or_else(|| category_rule_id(&finding.category));
+        .unwrap_or_else(|| category_rule_id(&finding.category).to_string());
 
     let category = category_rule_id(&finding.category);
-    let file = graph.source.file.as_str();
+
+    // v3 normalisation: collapse `\` to `/` so a Windows scan and a Linux
+    // baseline of the same logical pipeline produce identical fingerprints.
+    // Documented in the docstring above; tested by
+    // `fingerprint_is_stable_across_path_separator_styles`.
+    let file_normalised: String = graph.source.file.replace('\\', "/");
 
     // Root authority name (if any) — always emitted as its own component,
     // empty string when no Secret/Identity is involved. Distinct field so
@@ -757,14 +948,24 @@ pub fn compute_fingerprint(finding: &Finding, graph: &AuthorityGraph) -> String 
     // authority_propagation findings the convention is `[source, sink]`,
     // so two findings hitting the same secret but reaching different
     // untrusted steps produce different fingerprints (the v1 collision
-    // class). Empty string when no nodes are involved.
+    // class). Out-of-range NodeId surfaces as `<missing:N>` so two
+    // findings whose `nodes_involved` differ only by elided positions do
+    // not alias.
     let nodes_ordered: String = finding
         .nodes_involved
         .iter()
-        .filter_map(|id| graph.node(*id))
-        .map(|n| n.name.as_str())
+        .map(|id| match graph.node(*id) {
+            Some(n) => n.name.as_str().to_string(),
+            None => format!("<missing:{id}>"),
+        })
         .collect::<Vec<_>>()
         .join(",");
+
+    let anchor = finding
+        .extras
+        .fingerprint_anchor
+        .as_deref()
+        .unwrap_or_default();
 
     // Canonical encoding: every component prefixed with a tag and joined
     // by `\x1f` (ASCII unit separator) so component boundaries cannot
@@ -772,14 +973,14 @@ pub fn compute_fingerprint(finding: &Finding, graph: &AuthorityGraph) -> String 
     // future change to the contract is detectable from the canonical
     // string alone.
     let canonical = format!(
-        "v2\x1frule={rule_id}\x1ffile={file}\x1fcategory={category}\x1froot={root_authority}\x1fnodes={nodes_ordered}"
+        "v3\x1frule={rule_id}\x1ffile={file_normalised}\x1fcategory={category}\x1froot={root_authority}\x1fnodes={nodes_ordered}\x1fanchor={anchor}"
     );
 
     let digest = Sha256::digest(canonical.as_bytes());
-    let mut out = String::with_capacity(16);
-    for byte in &digest[..8] {
+    let mut out = String::with_capacity(32);
+    for byte in &digest[..16] {
         use std::fmt::Write;
-        // 8 bytes -> 16 hex chars
+        // 16 bytes -> 32 hex chars (128-bit truncation)
         let _ = write!(&mut out, "{byte:02x}");
     }
     out
@@ -826,7 +1027,7 @@ mod fingerprint_tests {
         let a = compute_fingerprint(&f, &graph);
         let b = compute_fingerprint(&f, &graph);
         assert_eq!(a, b, "same finding must hash identically across calls");
-        assert_eq!(a.len(), 16, "fingerprint is 16 hex chars");
+        assert_eq!(a.len(), 32, "fingerprint is 32 hex chars (v3 = 128-bit)");
         assert!(a.chars().all(|c| c.is_ascii_hexdigit()));
     }
 
@@ -982,8 +1183,8 @@ mod fingerprint_tests {
             fp_a, fp_b,
             "two distinct floating-image findings must not collide"
         );
-        assert_eq!(fp_a.len(), 16);
-        assert_eq!(fp_b.len(), 16);
+        assert_eq!(fp_a.len(), 32);
+        assert_eq!(fp_b.len(), 32);
     }
 
     #[test]
@@ -1076,8 +1277,258 @@ mod fingerprint_tests {
         let graph = AuthorityGraph::new(source(".github/workflows/ci.yml"));
         let f = make_finding(FindingCategory::UnpinnedAction, "no nodes here", vec![]);
         let fp = compute_fingerprint(&f, &graph);
-        assert_eq!(fp.len(), 16);
+        assert_eq!(fp.len(), 32);
         assert!(fp.chars().all(|c| c.is_ascii_hexdigit()));
+    }
+
+    // ── v3 hardening: 128-bit, path normalisation, sentinel, anchor ─────
+
+    #[test]
+    fn fingerprint_is_32_hex_chars() {
+        // v3 truncates SHA-256 to 16 bytes (128 bits) so the
+        // birthday-collision frontier moves from ~2³² (single-digit hours
+        // on a laptop, the v2 attack surface) to ~2⁶⁴ (impractical).
+        let mut graph = AuthorityGraph::new(source(".github/workflows/ci.yml"));
+        let s = graph.add_node(NodeKind::Secret, "AWS_KEY", TrustZone::FirstParty);
+        let f = make_finding(FindingCategory::AuthorityPropagation, "msg", vec![s]);
+        let fp = compute_fingerprint(&f, &graph);
+        assert_eq!(fp.len(), 32, "v3 fingerprint is 32 lowercase hex chars");
+        assert!(
+            fp.chars()
+                .all(|c| c.is_ascii_hexdigit() && !c.is_ascii_uppercase()),
+            "fingerprint must be lowercase hex: {fp}"
+        );
+    }
+
+    #[test]
+    fn fingerprint_is_stable_across_path_separator_styles() {
+        // A Windows scan emits `workflows\ci.yml`; a Linux baseline
+        // catalogues the same file as `workflows/ci.yml`. v3 normalises
+        // separators before hashing so the two fingerprints match.
+        let mut g_win = AuthorityGraph::new(source("workflows\\ci.yml"));
+        let mut g_lin = AuthorityGraph::new(source("workflows/ci.yml"));
+        let s_win = g_win.add_node(NodeKind::Secret, "TOKEN", TrustZone::FirstParty);
+        let s_lin = g_lin.add_node(NodeKind::Secret, "TOKEN", TrustZone::FirstParty);
+        let f_win = make_finding(FindingCategory::AuthorityPropagation, "msg", vec![s_win]);
+        let f_lin = make_finding(FindingCategory::AuthorityPropagation, "msg", vec![s_lin]);
+        assert_eq!(
+            compute_fingerprint(&f_win, &g_win),
+            compute_fingerprint(&f_lin, &g_lin),
+            "Windows-separator and POSIX-separator paths must produce identical fingerprints"
+        );
+    }
+
+    #[test]
+    fn every_category_returns_non_unknown_rule_id() {
+        // Hand-list every variant. If a new variant is added without
+        // updating `category_rule_id`, the explicit match above will not
+        // compile — this test then catches any drift.
+        let all = [
+            FindingCategory::AuthorityPropagation,
+            FindingCategory::OverPrivilegedIdentity,
+            FindingCategory::UnpinnedAction,
+            FindingCategory::UntrustedWithAuthority,
+            FindingCategory::ArtifactBoundaryCrossing,
+            FindingCategory::FloatingImage,
+            FindingCategory::LongLivedCredential,
+            FindingCategory::PersistedCredential,
+            FindingCategory::TriggerContextMismatch,
+            FindingCategory::CrossWorkflowAuthorityChain,
+            FindingCategory::AuthorityCycle,
+            FindingCategory::UpliftWithoutAttestation,
+            FindingCategory::SelfMutatingPipeline,
+            FindingCategory::CheckoutSelfPrExposure,
+            FindingCategory::VariableGroupInPrJob,
+            FindingCategory::SelfHostedPoolPrHijack,
+            FindingCategory::SharedSelfHostedPoolNoIsolation,
+            FindingCategory::ServiceConnectionScopeMismatch,
+            FindingCategory::TemplateExtendsUnpinnedBranch,
+            FindingCategory::TemplateRepoRefIsFeatureBranch,
+            FindingCategory::VmRemoteExecViaPipelineSecret,
+            FindingCategory::ShortLivedSasInCommandLine,
+            FindingCategory::SecretToInlineScriptEnvExport,
+            FindingCategory::SecretMaterialisedToWorkspaceFile,
+            FindingCategory::KeyVaultSecretToPlaintext,
+            FindingCategory::TerraformAutoApproveInProd,
+            FindingCategory::AddSpnWithInlineScript,
+            FindingCategory::ParameterInterpolationIntoShell,
+            FindingCategory::RuntimeScriptFetchedFromFloatingUrl,
+            FindingCategory::PrTriggerWithFloatingActionRef,
+            FindingCategory::UntrustedApiResponseToEnvSink,
+            FindingCategory::PrBuildPushesImageWithFloatingCredentials,
+            FindingCategory::SecretViaEnvGateToUntrustedConsumer,
+            FindingCategory::NoWorkflowLevelPermissionsBlock,
+            FindingCategory::ProdDeployJobNoEnvironmentGate,
+            FindingCategory::LongLivedSecretWithoutOidcRecommendation,
+            FindingCategory::PullRequestWorkflowInconsistentForkCheck,
+            FindingCategory::GitlabDeployJobMissingProtectedBranchOnly,
+            FindingCategory::TerraformOutputViaSetvariableShellExpansion,
+            FindingCategory::RiskyTriggerWithAuthority,
+            FindingCategory::SensitiveValueInJobOutput,
+            FindingCategory::ManualDispatchInputToUrlOrCommand,
+            FindingCategory::SecretsInheritOverscopedPassthrough,
+            FindingCategory::UnsafePrArtifactInWorkflowRunConsumer,
+            FindingCategory::ScriptInjectionViaUntrustedContext,
+            FindingCategory::InteractiveDebugActionInAuthorityWorkflow,
+            FindingCategory::PrSpecificCacheKeyInDefaultBranchConsumer,
+            FindingCategory::GhCliWithDefaultTokenEscalating,
+            FindingCategory::CiJobTokenToExternalApi,
+            FindingCategory::IdTokenAudienceOverscoped,
+            FindingCategory::UntrustedCiVarInShellInterpolation,
+            FindingCategory::UnpinnedIncludeRemoteOrBranchRef,
+            FindingCategory::DindServiceGrantsHostAuthority,
+            FindingCategory::SecurityJobSilentlySkipped,
+            FindingCategory::ChildPipelineTriggerInheritsAuthority,
+            FindingCategory::CacheKeyCrossesTrustBoundary,
+            FindingCategory::PatEmbeddedInGitRemoteUrl,
+            FindingCategory::CiTokenTriggersDownstreamWithVariablePassthrough,
+            FindingCategory::DotenvArtifactFlowsToPrivilegedDeployment,
+            FindingCategory::SetvariableIssecretFalse,
+            FindingCategory::HomoglyphInActionRef,
+            FindingCategory::EgressBlindspot,
+            FindingCategory::MissingAuditTrail,
+        ];
+        for cat in all {
+            let id = category_rule_id(&cat);
+            assert_ne!(id, "unknown", "category {cat:?} returned `unknown` rule id");
+            assert!(
+                !id.is_empty() && id.chars().next().is_some_and(|c| c.is_ascii_lowercase()),
+                "category {cat:?} returned non-snake_case id: {id}"
+            );
+            for c in id.chars() {
+                assert!(
+                    c.is_ascii_lowercase() || c.is_ascii_digit() || c == '_',
+                    "category {cat:?} returned id with non-snake_case char: {id}"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn extract_custom_rule_id_rejects_emphasis_phrases() {
+        // Built-in messages may be prefixed with `[high blast-radius]` or
+        // `[Critical]` for emphasis. The strict shape filter must NOT
+        // attribute those to a phantom custom rule.
+        assert_eq!(extract_custom_rule_id("[high blast-radius] message"), None);
+        assert_eq!(extract_custom_rule_id("[Critical] message"), None);
+        assert_eq!(extract_custom_rule_id("[my-rule] message"), None); // dash
+        assert_eq!(extract_custom_rule_id("[1pass] message"), None); // leading digit
+        assert_eq!(extract_custom_rule_id("[] message"), None);
+        assert_eq!(extract_custom_rule_id("no bracket"), None);
+
+        // Canonical custom-rule ids ARE accepted.
+        assert_eq!(extract_custom_rule_id("[my_rule] message"), Some("my_rule"));
+        assert_eq!(
+            extract_custom_rule_id("[r2_attack3] message"),
+            Some("r2_attack3")
+        );
+        assert_eq!(extract_custom_rule_id("[v3check] message"), Some("v3check"));
+        assert_eq!(
+            extract_custom_rule_id("[no_prod_pat] hit"),
+            Some("no_prod_pat")
+        );
+    }
+
+    #[test]
+    fn out_of_range_nodeid_does_not_collide() {
+        // Two findings whose `nodes_involved` differ only by
+        // out-of-range NodeId positions must NOT alias. Pre-v3 the
+        // `filter_map(graph.node)` silently elided missing ids; v3
+        // emits a `<missing:N>` sentinel.
+        let graph = AuthorityGraph::new(source(".github/workflows/ci.yml"));
+        // No nodes added — every NodeId we pass below is out of range.
+        let f_a = make_finding(FindingCategory::AuthorityCycle, "msg", vec![999_001]);
+        let f_b = make_finding(FindingCategory::AuthorityCycle, "msg", vec![999_002]);
+        let fp_a = compute_fingerprint(&f_a, &graph);
+        let fp_b = compute_fingerprint(&f_b, &graph);
+        assert_ne!(
+            fp_a, fp_b,
+            "out-of-range NodeId must NOT silently elide; sentinel must \
+             differ across distinct ids"
+        );
+    }
+
+    #[test]
+    fn fingerprint_anchor_distinguishes_otherwise_identical_findings() {
+        // Two findings of the same rule in the same file with NO graph
+        // nodes — pre-v3 they collided. The v3 anchor field gives rules
+        // with no natural graph node a per-finding discriminator.
+        let graph = AuthorityGraph::new(source("azure-pipelines.yml"));
+        let mut f_a = make_finding(
+            FindingCategory::TemplateExtendsUnpinnedBranch,
+            "ADO repo alias 'platform' resolves to mutable branch",
+            vec![],
+        );
+        f_a.extras.fingerprint_anchor = Some("platform".to_string());
+        let mut f_b = make_finding(
+            FindingCategory::TemplateExtendsUnpinnedBranch,
+            "ADO repo alias 'security-scan' resolves to mutable branch",
+            vec![],
+        );
+        f_b.extras.fingerprint_anchor = Some("security-scan".to_string());
+        assert_ne!(
+            compute_fingerprint(&f_a, &graph),
+            compute_fingerprint(&f_b, &graph),
+            "same rule, same file, different anchor must produce distinct \
+             fingerprints"
+        );
+    }
+
+    // ── Golden fingerprints (pin the v3 algorithm contract) ─────────────
+    //
+    // Hand-computed v3 fingerprints for three (FindingCategory, graph
+    // fixture) combinations. Any change to the algorithm — input set,
+    // tag prefixes, separator, version label, truncation length — flips
+    // these literals and forces a deliberate update + a CHANGELOG entry.
+    // Do NOT update these literals casually.
+
+    #[test]
+    fn golden_authority_propagation_fingerprint() {
+        let mut graph = AuthorityGraph::new(source(".github/workflows/ci.yml"));
+        let secret = graph.add_node(NodeKind::Secret, "AWS_KEY", TrustZone::FirstParty);
+        let step = graph.add_node(NodeKind::Step, "deploy[0]", TrustZone::Untrusted);
+        let f = make_finding(
+            FindingCategory::AuthorityPropagation,
+            "AWS_KEY reaches deploy[0]",
+            vec![secret, step],
+        );
+        let fp = compute_fingerprint(&f, &graph);
+        assert_eq!(
+            fp, "19cfd717b43ce7d3de5d6292eed1f635",
+            "v3 golden authority_propagation fingerprint changed — update CHANGELOG and re-baseline downstream consumers before changing this literal"
+        );
+    }
+
+    #[test]
+    fn golden_floating_image_fingerprint() {
+        let mut g = AuthorityGraph::new(source(".github/workflows/ci.yml"));
+        let img = g.add_node(NodeKind::Image, "alpine:latest", TrustZone::ThirdParty);
+        let f = make_finding(FindingCategory::FloatingImage, "msg-a", vec![img]);
+        let fp = compute_fingerprint(&f, &g);
+        assert_eq!(
+            fp, "ceacd10b83991a7b4d607643f68d5131",
+            "v3 golden floating_image fingerprint changed — update CHANGELOG \
+             and re-baseline downstream consumers before changing this literal"
+        );
+    }
+
+    #[test]
+    fn golden_template_extends_unpinned_branch_fingerprint() {
+        // Anchor-bearing finding (no graph nodes); pins the
+        // `\x1fanchor=` segment behaviour.
+        let graph = AuthorityGraph::new(source("azure-pipelines.yml"));
+        let mut f = make_finding(
+            FindingCategory::TemplateExtendsUnpinnedBranch,
+            "ADO repo alias 'platform' resolves to mutable branch",
+            vec![],
+        );
+        f.extras.fingerprint_anchor = Some("platform".to_string());
+        let fp = compute_fingerprint(&f, &graph);
+        assert_eq!(
+            fp, "7ef16fae1dd4aff3986fe61b9903a186",
+            "v3 golden template_extends_unpinned_branch fingerprint changed \
+             — update CHANGELOG and re-baseline before changing this literal"
+        );
     }
 }
 

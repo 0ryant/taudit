@@ -4,8 +4,8 @@ expression: json
 ---
 findings:
   - category: authority_propagation
-    finding_group_id: ed0f643a-a9ea-520a-81a1-e7a12728d90c
-    fingerprint: 25d85ae2f2132cc2
+    finding_group_id: 8b13aa4e-7e99-5faa-968a-b0ef649d5564
+    fingerprint: 4c049f68139514095dad695181c62c92
     message: "GITHUB_TOKEN reaches 5 sinks via authority propagation: [actions/checkout@a5ac7e51b41094c92402da3b24376905380afc29, actions/upload-artifact@v4, release-bundle, actions/download-artifact@v4, untrusted-org/publish-action@main]"
     nodes_involved:
       - 0
@@ -31,8 +31,8 @@ findings:
     severity: critical
     source: built-in
   - category: authority_propagation
-    finding_group_id: 24c51300-c14b-5a97-a43f-e30abbefbc2b
-    fingerprint: 91ac6ab9aaa28a0f
+    finding_group_id: ba41b317-cbc5-5930-8db1-5d32206f77cf
+    fingerprint: 3491ce71198b1b56a1020418f6b6428e
     message: PUBLISH_API_KEY propagated to untrusted-org/publish-action@main across trust boundary
     nodes_involved:
       - 12
@@ -54,8 +54,8 @@ findings:
     severity: critical
     source: built-in
   - category: long_lived_credential
-    finding_group_id: e28fbf47-5ca1-5582-973f-7eec51c73172
-    fingerprint: 1a4ce732917ed202
+    finding_group_id: 6426415f-731a-53a8-b2e4-59bf5baccb9b
+    fingerprint: 3c05dbb7db29cbc62510bd07234bd8b3
     message: "'PUBLISH_API_KEY' looks like a long-lived static credential"
     nodes_involved:
       - 12
@@ -68,8 +68,8 @@ findings:
     source: built-in
     time_to_fix: large
   - category: over_privileged_identity
-    finding_group_id: 969b593c-6068-549b-a5d8-dcd88d0c507d
-    fingerprint: 636c27a5cf951c53
+    finding_group_id: c629fa7f-412c-5537-83e3-f9598919f901
+    fingerprint: f40be29c0ec732f891a8b218b539588e
     message: "GITHUB_TOKEN has broad scope (permissions: 'write-all') — likely broader than needed"
     nodes_involved:
       - 0
@@ -87,8 +87,8 @@ findings:
     source: built-in
     time_to_fix: small
   - category: unpinned_action
-    finding_group_id: 08ba96be-eccf-5dd8-9270-bed15c1cc1c5
-    fingerprint: 1e92e25d58a4ad8b
+    finding_group_id: 84413533-33fe-5b90-8720-964551200e36
+    fingerprint: c3afb6b577929fd0032c301d0bedb071
     message: actions/download-artifact@v4 is not pinned to a SHA digest
     nodes_involved:
       - 8
@@ -101,8 +101,8 @@ findings:
     source: built-in
     time_to_fix: trivial
   - category: unpinned_action
-    finding_group_id: 21593e0b-1b13-5f55-adcc-f124433bc303
-    fingerprint: f93d2d4fd21f4d5f
+    finding_group_id: bca918de-19f7-58da-ae2e-61f12191a56b
+    fingerprint: 78bff5f6e502269cc980f4ad23d62ba3
     message: actions/upload-artifact@v4 is not pinned to a SHA digest
     nodes_involved:
       - 5
@@ -115,8 +115,8 @@ findings:
     source: built-in
     time_to_fix: trivial
   - category: unpinned_action
-    finding_group_id: 80cdea3d-fd33-5af7-aa5a-a04dff642752
-    fingerprint: 6151d535a577635f
+    finding_group_id: 261a4277-eaf7-511e-9c1c-f47fdd7bd620
+    fingerprint: a87f5766f57accf0393176d72eb23f86
     message: untrusted-org/publish-action@main is not pinned to a SHA digest
     nodes_involved:
       - 10
@@ -129,8 +129,8 @@ findings:
     source: built-in
     time_to_fix: trivial
   - category: untrusted_with_authority
-    finding_group_id: c490b0e3-517c-5ae8-81e5-653e03ec1464
-    fingerprint: 6b95d9d1d1c36415
+    finding_group_id: 5e958af4-f19d-5ac6-be09-2305f0d9b95f
+    fingerprint: c86dc7d595e4239cd2ed6ea9deafa290
     message: "Untrusted step 'build[2]' has direct access to identity 'GITHUB_TOKEN'"
     nodes_involved:
       - 6
@@ -143,8 +143,8 @@ findings:
     severity: critical
     source: built-in
   - category: untrusted_with_authority
-    finding_group_id: f68529c1-b97f-5ec6-9f88-3094f0021c59
-    fingerprint: d3c9a69c3a369468
+    finding_group_id: b7e5793c-2947-56b9-bedf-cd675c8ec420
+    fingerprint: 5ed638c8ae853fe1fdb2f25c3dc36429
     message: "Untrusted step 'publish[0]' has direct access to identity 'GITHUB_TOKEN'"
     nodes_involved:
       - 9
@@ -157,8 +157,8 @@ findings:
     severity: critical
     source: built-in
   - category: untrusted_with_authority
-    finding_group_id: 861e7c28-4959-582a-af3d-0b1c306bccac
-    fingerprint: aaddb0f9f646e259
+    finding_group_id: 13b169f7-d22b-595c-86ce-7907ca3e6781
+    fingerprint: 9b5a3597ba20260b9b44b003091941a8
     message: "Untrusted step 'publish[1]' has direct access to identity 'GITHUB_TOKEN'"
     nodes_involved:
       - 11
@@ -171,8 +171,8 @@ findings:
     severity: critical
     source: built-in
   - category: untrusted_with_authority
-    finding_group_id: f13e083f-58da-5acd-b9f1-ee307db69685
-    fingerprint: 991aaae346669a99
+    finding_group_id: 1c27d04f-2dbc-5865-a0ac-48c941d4c6f8
+    fingerprint: 576c2dd5a7622210fdb7f2220518b0aa
     message: "Untrusted step 'publish[1]' has direct access to secret 'PUBLISH_API_KEY'"
     nodes_involved:
       - 11
@@ -185,8 +185,8 @@ findings:
     severity: critical
     source: built-in
   - category: uplift_without_attestation
-    finding_group_id: 19195dad-8fa3-5308-b863-575664b482f9
-    fingerprint: 94d7dcd0a7b65a6a
+    finding_group_id: a1606386-f469-5376-a699-23801a687970
+    fingerprint: 808fed89037072f475af655be504c6fa
     message: 5 step(s) use OIDC/federated identity but no provenance attestation step was detected — artifact integrity cannot be verified
     nodes_involved:
       - 2

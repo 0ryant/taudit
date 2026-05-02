@@ -73,8 +73,8 @@
       "properties": {
         "fingerprint": {
           "type": "string",
-          "pattern": "^[0-9a-f]{16}$",
-          "description": "16-hex SHA-256 fingerprint matching the SARIF `partialFingerprints.primaryLocationLineHash`, the JSON `findings[].fingerprint`, and the CloudEvents `tauditfindingfingerprint` extension. The shared test `baseline_fingerprint_matches_sarif_fingerprint` enforces byte-equality across formats."
+          "pattern": "^[0-9a-f]{32}$",
+          "description": "32-hex SHA-256-truncated-to-128-bit fingerprint (v3 algorithm) matching the SARIF `partialFingerprints.primaryLocationLineHash`, the JSON `findings[].fingerprint`, and the CloudEvents `tauditfindingfingerprint` extension. The shared test `baseline_fingerprint_matches_sarif_fingerprint` enforces byte-equality across formats. Widened from 16 hex (64-bit) in v1.1.0-beta.3 to close a birthday-collision attack against `.taudit-suppressions.yml`."
         },
         "rule_id": {
           "type": "string",

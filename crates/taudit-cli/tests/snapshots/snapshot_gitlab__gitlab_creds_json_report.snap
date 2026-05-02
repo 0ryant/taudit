@@ -1,12 +1,11 @@
 ---
 source: crates/taudit-cli/tests/snapshot_gitlab.rs
-assertion_line: 52
 expression: json
 ---
 findings:
   - category: authority_propagation
-    finding_group_id: cb5eefd6-bd71-549b-957b-0850fc777097
-    fingerprint: 7849ccce90a9affb
+    finding_group_id: 3e1ce5ac-d8de-5111-85c0-c961f1bfea37
+    fingerprint: d180931e883fe7d08a9ac19952c50b9d
     message: "API_SECRET_KEY propagated to alpine:latest across trust boundary"
     nodes_involved:
       - 1
@@ -28,8 +27,8 @@ findings:
     severity: critical
     source: built-in
   - category: authority_propagation
-    finding_group_id: 23936b25-cf39-5a35-af07-2189903b1067
-    fingerprint: 1da7e65c2ff977aa
+    finding_group_id: 661d0527-036b-5986-a564-a1d93afd8748
+    fingerprint: f310333c07ac5116f7733626d44cb753
     message: "CI_JOB_TOKEN propagated to alpine:latest across trust boundary"
     nodes_involved:
       - 0
@@ -51,8 +50,8 @@ findings:
     severity: critical
     source: built-in
   - category: authority_propagation
-    finding_group_id: 23aefb82-189d-5fc2-8861-759c3278dbec
-    fingerprint: 63d395dd2a2674d3
+    finding_group_id: 0e309759-d91b-5d41-b2d7-b7ffeec7377c
+    fingerprint: a8e0befc7144da9fb4e5ef763fcc1fc5
     message: "DATABASE_PASSWORD propagated to alpine:latest across trust boundary"
     nodes_involved:
       - 2
@@ -74,8 +73,8 @@ findings:
     severity: critical
     source: built-in
   - category: authority_propagation
-    finding_group_id: 89b56659-76e2-5da1-ac8f-194ff0779677
-    fingerprint: e9a285367946aec8
+    finding_group_id: f529a601-9f35-545c-8e7e-74c2442a6908
+    fingerprint: 1464f3114a20b17016c1f4a4fac39c16
     message: "DEPLOY_TOKEN propagated to alpine:latest across trust boundary"
     nodes_involved:
       - 3
@@ -97,8 +96,8 @@ findings:
     severity: critical
     source: built-in
   - category: long_lived_credential
-    finding_group_id: d6cc214c-5fee-519d-88da-09a6fe21b157
-    fingerprint: 5c1be269511d1b57
+    finding_group_id: c494fbb4-778f-5822-8dad-6f8e82c5921b
+    fingerprint: d2405dfb12dabdf464262a499c87ba54
     message: "'API_SECRET_KEY' looks like a long-lived static credential"
     nodes_involved:
       - 1
@@ -111,8 +110,8 @@ findings:
     source: built-in
     time_to_fix: large
   - category: long_lived_credential
-    finding_group_id: 0668de89-ebb3-5eda-bcf2-e103cbdc8966
-    fingerprint: f6d67b78eaa7525d
+    finding_group_id: 6fdceba6-6f33-58fe-95bf-927f469b15ec
+    fingerprint: a04b0fa8ff833821d59f9caa45266717
     message: "'DATABASE_PASSWORD' looks like a long-lived static credential"
     nodes_involved:
       - 2
@@ -125,8 +124,8 @@ findings:
     source: built-in
     time_to_fix: large
   - category: over_privileged_identity
-    finding_group_id: c6f2525f-850a-5b5a-bc1b-26f18de73730
-    fingerprint: 0f0242611c8820c9
+    finding_group_id: 00262520-9062-589a-8cfd-399be5d1a0b9
+    fingerprint: 1ff9918fc8f89331c28c5c87af76f8ff
     message: "CI_JOB_TOKEN has broad scope (permissions: '') — likely broader than needed"
     nodes_involved:
       - 0
@@ -140,8 +139,8 @@ findings:
     source: built-in
     time_to_fix: small
   - category: unpinned_action
-    finding_group_id: 6a77aadd-f782-5155-b751-6b6697977ae5
-    fingerprint: b3489f0390e803b0
+    finding_group_id: e9073e12-4672-5c3b-a881-79b1abc87da9
+    fingerprint: 73aefa946595cc3323a3711d1b09f744
     message: "alpine:latest is not pinned to a SHA digest"
     nodes_involved:
       - 4

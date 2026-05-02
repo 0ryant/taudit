@@ -11,10 +11,10 @@ expression: results
   message:
     text: "PR-triggered pipeline checks out the repository at step 'pipeline[0]' — attacker-controlled code from the fork lands on the runner and is readable by all subsequent steps"
   partialFingerprints:
-    primaryLocationLineHash: 54ae1136cbaafd93
-    taudit/v1: 54ae1136cbaafd93
+    primaryLocationLineHash: 481eb03db2f3c50620aead82178810b4
+    taudit/v1: 481eb03db2f3c50620aead82178810b4
   properties:
-    findingGroupId: 1fd18bf0-de37-5a37-bbd3-374094ede65a
+    findingGroupId: 07f2e7cf-9646-51fd-acf3-0bebfad3ad2e
     security-severity: "7.5"
     taudit-source: built-in
     timeToFix: medium
@@ -28,10 +28,10 @@ expression: results
   message:
     text: "System.AccessToken has broad scope (permissions: '') — likely broader than needed"
   partialFingerprints:
-    primaryLocationLineHash: 7c26a645de21270f
-    taudit/v1: 7c26a645de21270f
+    primaryLocationLineHash: fd6a9adae7376318838370392ea657ca
+    taudit/v1: fd6a9adae7376318838370392ea657ca
   properties:
-    findingGroupId: 93e42f6b-6b91-5954-b127-41c8527d6cc1
+    findingGroupId: 5f27c90f-6130-57b7-931c-7e756722e388
     security-severity: "7.5"
     taudit-source: built-in
     timeToFix: small
@@ -45,10 +45,10 @@ expression: results
   message:
     text: "PR-triggered pipeline uses self-hosted agent pool with checkout:self — enables git hook injection persisting across pipeline runs on the shared runner"
   partialFingerprints:
-    primaryLocationLineHash: 9618c476c7c31ada
-    taudit/v1: 9618c476c7c31ada
+    primaryLocationLineHash: 0647fb972a184c014fd376364580225d
+    taudit/v1: 0647fb972a184c014fd376364580225d
   properties:
-    findingGroupId: 712486ed-dda5-5597-a00a-650b29fb6c24
+    findingGroupId: 0953b31e-364f-5f21-89a6-a7ae6a1310bb
     security-severity: "9.0"
     taudit-source: built-in
   ruleId: self_hosted_pool_pr_hijack
@@ -61,10 +61,10 @@ expression: results
   message:
     text: "Self-hosted pool 'SharedBuildAgents' has no workspace isolation (workspace: {clean: all/true} not set); a previous pipeline run can pollute the workspace for the next — including privileged deployment jobs"
   partialFingerprints:
-    primaryLocationLineHash: c02d22ffa1414429
-    taudit/v1: c02d22ffa1414429
+    primaryLocationLineHash: 4873e5775b5e271f363374e5b504aca1
+    taudit/v1: 4873e5775b5e271f363374e5b504aca1
   properties:
-    findingGroupId: e65fdf1c-0fe1-5119-8b5d-60cca9f04f12
+    findingGroupId: 82f6a179-d521-5cd9-bdaa-09de04bfcb42
     security-severity: "7.5"
     taudit-source: built-in
   ruleId: shared_self_hosted_pool_no_isolation
@@ -77,10 +77,10 @@ expression: results
   message:
     text: Workflow triggered by pr with secret/identity access — 2 step(s) hold authority that attacker-controlled code could reach
   partialFingerprints:
-    primaryLocationLineHash: 4daf34cdda9433fd
-    taudit/v1: 4daf34cdda9433fd
+    primaryLocationLineHash: b6c2dbaccfb85fcc54955524d5539caa
+    taudit/v1: b6c2dbaccfb85fcc54955524d5539caa
   properties:
-    findingGroupId: e70373ea-e2d8-5317-b67f-332e34e9f3b1
+    findingGroupId: 113dc5b4-ddf6-5be7-aca2-4eddf0a8f032
     security-severity: "7.5"
     taudit-source: built-in
   ruleId: trigger_context_mismatch

@@ -4,8 +4,8 @@ expression: json
 ---
 findings:
   - category: authority_propagation
-    finding_group_id: 2ef519a9-1670-5213-aa79-0f5996b79a28
-    fingerprint: e901cfa0c754946c
+    finding_group_id: 19ee4c2e-a538-5bdb-adc2-8f789fcb6206
+    fingerprint: 9d041f143c8a77486348a9574b8a4298
     message: DEPLOY_TOKEN propagated to some-org/deploy-action@main across trust boundary
     nodes_involved:
       - 9
@@ -27,8 +27,8 @@ findings:
     severity: critical
     source: built-in
   - category: authority_propagation
-    finding_group_id: c8e7bc78-520c-5da5-b2d5-ec56fb6e0f8a
-    fingerprint: 386c5fb6035fcee1
+    finding_group_id: be66107e-37fd-5dbf-9330-11b1a3a4fd7b
+    fingerprint: 34dfeec1b30291318a55b11421fbac7b
     message: "GITHUB_TOKEN reaches 2 sinks via authority propagation: [actions/checkout@v4, some-org/deploy-action@main]"
     nodes_involved:
       - 0
@@ -51,8 +51,8 @@ findings:
     severity: critical
     source: built-in
   - category: long_lived_credential
-    finding_group_id: 4be6bde9-2138-5c69-b0b9-049cccb310ed
-    fingerprint: f8e7c6d27fb9c502
+    finding_group_id: 51fcc990-5084-59e3-a731-9c560c54d0ba
+    fingerprint: 778504a98a278328ffbfc4ba18a0c14e
     message: "'AWS_ACCESS_KEY_ID' looks like a long-lived static credential"
     nodes_involved:
       - 4
@@ -65,8 +65,8 @@ findings:
     source: built-in
     time_to_fix: large
   - category: long_lived_credential
-    finding_group_id: d683298a-7b9d-581e-9d39-753e4eb760b3
-    fingerprint: 4bfa8377963396f3
+    finding_group_id: 07e0de9b-04b5-5411-9c3b-bbf91d12002a
+    fingerprint: 8d56a5877d83d06dfd8503de6a61fe94
     message: "'AWS_SECRET_ACCESS_KEY' looks like a long-lived static credential"
     nodes_involved:
       - 5
@@ -79,8 +79,8 @@ findings:
     source: built-in
     time_to_fix: large
   - category: over_privileged_identity
-    finding_group_id: e5f1bb57-bcce-5a20-9521-5539e98de5a8
-    fingerprint: 8da052f076b32aa4
+    finding_group_id: 61e587be-3ab9-585f-a534-4308d9267ffa
+    fingerprint: 1fbb9cf89e16b2623ad236fcace90316
     message: "GITHUB_TOKEN has broad scope (permissions: 'write-all') — likely broader than needed"
     nodes_involved:
       - 0
@@ -96,8 +96,8 @@ findings:
     source: built-in
     time_to_fix: small
   - category: unpinned_action
-    finding_group_id: 0106c620-6518-5ffc-b0a3-1729c9af2d7d
-    fingerprint: 7d0c4b89e87f4eb1
+    finding_group_id: f4ab4e0a-cd93-56c6-a534-12aec7befcff
+    fingerprint: 31ceeca3145a97625dfd847a040bbc26
     message: actions/checkout@v4 is not pinned to a SHA digest
     nodes_involved:
       - 1
@@ -110,8 +110,8 @@ findings:
     source: built-in
     time_to_fix: trivial
   - category: unpinned_action
-    finding_group_id: e473bd0d-ba51-5a9f-b505-c23a3d48c303
-    fingerprint: edd2103ad9feff6e
+    finding_group_id: aaddbe52-28d1-5412-8441-5d9ae95ecf85
+    fingerprint: 15293f46f1061fc8b1d4c710dca0aa52
     message: some-org/deploy-action@main is not pinned to a SHA digest
     nodes_involved:
       - 7
@@ -124,8 +124,8 @@ findings:
     source: built-in
     time_to_fix: trivial
   - category: untrusted_with_authority
-    finding_group_id: a1cbac10-b734-5880-8ccd-435a8995a15c
-    fingerprint: f1ecc83632f1ea02
+    finding_group_id: 8134004c-cfe9-54e3-8ac4-1099db4b20dc
+    fingerprint: 4cc63211c9299f9f5965da1d71e83023
     message: "Untrusted step 'build[0]' has direct access to identity 'GITHUB_TOKEN'"
     nodes_involved:
       - 2
@@ -138,8 +138,8 @@ findings:
     severity: critical
     source: built-in
   - category: untrusted_with_authority
-    finding_group_id: a8715616-b2b7-5db2-b67c-02b1a930c2bd
-    fingerprint: 295e6dbee6d98391
+    finding_group_id: 26a1ad7d-a283-5a77-9c6c-f33833a25f7c
+    fingerprint: b3aac2a7d760a06fdde4c9231697db3d
     message: "Untrusted step 'deploy[0]' has direct access to identity 'GITHUB_TOKEN'"
     nodes_involved:
       - 8
@@ -152,8 +152,8 @@ findings:
     severity: critical
     source: built-in
   - category: untrusted_with_authority
-    finding_group_id: c2a96a98-db35-51dd-b96c-36647c50b13a
-    fingerprint: 14b09cd62355460f
+    finding_group_id: 5bb4e538-2f11-5dc2-949f-da1d8b6a37e2
+    fingerprint: ccaf29551b139fb5d5c271a9c47d62de
     message: "Untrusted step 'deploy[0]' has direct access to secret 'DEPLOY_TOKEN'"
     nodes_involved:
       - 8
@@ -166,8 +166,8 @@ findings:
     severity: critical
     source: built-in
   - category: uplift_without_attestation
-    finding_group_id: 68540b5a-2257-5a3e-9b30-179f65dacf77
-    fingerprint: ef4a4a9247eed1d3
+    finding_group_id: bb6d77e7-d049-593d-8e10-f5d12d9b7b20
+    fingerprint: 72c99cb062f0e9061b7bd3063a3387ca
     message: 3 step(s) use OIDC/federated identity but no provenance attestation step was detected — artifact integrity cannot be verified
     nodes_involved:
       - 2

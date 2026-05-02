@@ -4,8 +4,8 @@ expression: json
 ---
 findings:
   - category: over_privileged_identity
-    finding_group_id: e7f1a86f-1dec-5427-a8f0-7a3659b72dd8
-    fingerprint: fa5e3d886e2fabbb
+    finding_group_id: 7aba0f67-2e57-5ce8-ae96-ebb114102c7d
+    fingerprint: 3f548f2bfdbb2270ced9c06d4ac73cea
     message: "System.AccessToken has broad scope (permissions: '') — likely broader than needed"
     nodes_involved:
       - 0
@@ -20,8 +20,8 @@ findings:
     source: built-in
     time_to_fix: small
   - category: self_mutating_pipeline
-    finding_group_id: b4b2c6b3-800c-5822-a67e-a1bdb5e8088c
-    fingerprint: 661220dcddaaa28c
+    finding_group_id: a01ab427-afa1-5688-b2be-efa8eca2df6c
+    fingerprint: 4464ed1f70695745708b1d6a25d0af30
     message: "Step 'Expose secrets as plain variables' writes to the environment gate while holding authority (System.AccessToken, API_KEY_SECRET) — secrets may leak into pipeline environment"
     nodes_involved:
       - 2
@@ -34,8 +34,8 @@ findings:
     severity: high
     source: built-in
   - category: setvariable_issecret_false
-    finding_group_id: e3f7744e-42de-5ff0-84ab-0f70e58d59dd
-    fingerprint: 1c19c0c1edc4fcf4
+    finding_group_id: 89d948f5-12e9-5a29-b5c4-8dfded86a74a
+    fingerprint: 791dec6711c3ef285ab5fd8aa3cf3b65
     message: "ADO setvariable with sensitive name 'API_KEY' uses issecret=false or omits issecret flag, value printed in plaintext logs"
     nodes_involved:
       - 2
@@ -46,8 +46,8 @@ findings:
     severity: high
     source: built-in
   - category: setvariable_issecret_false
-    finding_group_id: e3f7744e-42de-5ff0-84ab-0f70e58d59dd
-    fingerprint: 1c19c0c1edc4fcf4
+    finding_group_id: 89d948f5-12e9-5a29-b5c4-8dfded86a74a
+    fingerprint: 791dec6711c3ef285ab5fd8aa3cf3b65
     message: "ADO setvariable with sensitive name 'MY_TOKEN' uses issecret=false or omits issecret flag, value printed in plaintext logs"
     nodes_involved:
       - 2

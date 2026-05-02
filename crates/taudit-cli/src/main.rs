@@ -3189,10 +3189,10 @@ fn load_dedupe_fingerprints(path: &PathBuf) -> Result<HashSet<String>> {
             .get("tauditfindingfingerprint")
             .and_then(|v| v.as_str())
         {
-            // Accept only the documented shape (16 lowercase hex chars).
-            // Anything else is silently ignored to avoid a malformed prior
-            // file polluting the current run.
-            if fp.len() == 16 && fp.chars().all(|c| c.is_ascii_hexdigit()) {
+            // Accept only the documented shape (32 lowercase hex chars,
+            // v3 algorithm). Anything else is silently ignored to avoid
+            // a malformed prior file polluting the current run.
+            if fp.len() == 32 && fp.chars().all(|c| c.is_ascii_hexdigit()) {
                 out.insert(fp.to_string());
             }
         }

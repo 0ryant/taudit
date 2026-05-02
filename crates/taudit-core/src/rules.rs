@@ -1566,6 +1566,12 @@ pub fn template_extends_unpinned_branch(graph: &AuthorityGraph) -> Vec<Finding> 
         };
 
         let pinned_example = format!("ref: <40-char-sha>  # commit on {name}");
+        // Per-finding fingerprint anchor: the alias is the natural
+        // discriminator between two `resources.repositories[]` entries
+        // declared in one pipeline file. Without this anchor, all
+        // unpinned-template findings on a single file would collapse to
+        // one fingerprint (v3 collision class). See
+        // `compute_fingerprint` and ISC-16.
         findings.push(Finding {
             severity: Severity::High,
             category: FindingCategory::TemplateExtendsUnpinnedBranch,
@@ -1580,8 +1586,8 @@ pub fn template_extends_unpinned_branch(graph: &AuthorityGraph) -> Vec<Finding> 
                 pinned: pinned_example,
             },
             source: FindingSource::BuiltIn,
-                extras: FindingExtras::default(),
-});
+            extras: FindingExtras::with_anchor(format!("alias={alias}")),
+        });
     }
 
     findings
@@ -1653,6 +1659,7 @@ pub fn template_repo_ref_is_feature_branch(graph: &AuthorityGraph) -> Vec<Findin
         }
 
         let pinned_example = format!("ref: <40-char-sha>  # commit on {name}");
+        // Per-finding fingerprint anchor — see ISC-17 / sibling rule.
         findings.push(Finding {
             severity: Severity::High,
             category: FindingCategory::TemplateRepoRefIsFeatureBranch,
@@ -1667,8 +1674,8 @@ pub fn template_repo_ref_is_feature_branch(graph: &AuthorityGraph) -> Vec<Findin
                 pinned: pinned_example,
             },
             source: FindingSource::BuiltIn,
-                extras: FindingExtras::default(),
-});
+            extras: FindingExtras::with_anchor(format!("alias={alias},branch={branch}")),
+        });
     }
 
     findings
@@ -3917,6 +3924,11 @@ pub fn sensitive_value_in_job_output(graph: &AuthorityGraph) -> Vec<Finding> {
             _ => continue,
         };
 
+        // Anchor on `<job>.<output>.<source>` so two outputs in one job,
+        // or the same output name in different jobs, do not collide
+        // (ISC-18). Source is included to keep e.g. a "secret"-sourced
+        // and a "step_output"-sourced output with the same name in the
+        // same job distinct.
         findings.push(Finding {
             severity,
             category: FindingCategory::SensitiveValueInJobOutput,
@@ -3929,7 +3941,7 @@ pub fn sensitive_value_in_job_output(graph: &AuthorityGraph) -> Vec<Finding> {
                 action: "Do not expose secrets, OIDC tokens, or credential-shaped values via `jobs.<id>.outputs.*`. Pass them between steps within a single job using `env:` (which honors masking) or write them to a secure file consumed only by a downstream step. If a downstream job needs to act on a credential, fetch it directly from the secret store inside that job instead of inheriting it through outputs.".into(),
             },
             source: FindingSource::BuiltIn,
-            extras: FindingExtras::default(),
+            extras: FindingExtras::with_anchor(format!("{job}.{name}:{source}")),
         });
     }
 
@@ -5140,6 +5152,9 @@ pub fn unpinned_include_remote_or_branch_ref(graph: &AuthorityGraph) -> Vec<Find
             "local" | "template" => continue,
             "component" => {
                 if git_ref.is_empty() {
+                    // Anchor: kind + target — distinguishes multiple
+                    // unpinned `component:` includes in one .gitlab-ci.yml
+                    // (ISC-19).
                     findings.push(Finding {
                         severity: Severity::High,
                         category: FindingCategory::UnpinnedIncludeRemoteOrBranchRef,
@@ -5153,7 +5168,7 @@ pub fn unpinned_include_remote_or_branch_ref(graph: &AuthorityGraph) -> Vec<Find
                             pinned: format!("{target}@<sha-or-tag>"),
                         },
                         source: FindingSource::BuiltIn,
-                        extras: FindingExtras::default(),
+                        extras: FindingExtras::with_anchor(format!("component:{target}")),
                     });
                 }
             }
@@ -5176,7 +5191,7 @@ pub fn unpinned_include_remote_or_branch_ref(graph: &AuthorityGraph) -> Vec<Find
                             ),
                         },
                         source: FindingSource::BuiltIn,
-                        extras: FindingExtras::default(),
+                        extras: FindingExtras::with_anchor(format!("remote:{target}#{branch}")),
                     });
                 }
             }
@@ -5213,7 +5228,7 @@ pub fn unpinned_include_remote_or_branch_ref(graph: &AuthorityGraph) -> Vec<Find
                             pinned: format!("project: {target}, ref: <full-commit-sha>"),
                         },
                         source: FindingSource::BuiltIn,
-                        extras: FindingExtras::default(),
+                        extras: FindingExtras::with_anchor(format!("project:{target}@{git_ref}")),
                     });
                 }
             }
@@ -6224,11 +6239,21 @@ pub fn no_workflow_level_permissions_block(graph: &AuthorityGraph) -> Vec<Findin
     if has_job_level_perms {
         return Vec::new();
     }
+    // ISC-20: anchor the per-workflow finding on the GITHUB_TOKEN
+    // Identity node when present (the natural authority surface of the
+    // missing permissions block); fall back to a literal anchor string
+    // so single-finding-per-file rules still produce stable fingerprints
+    // when the parser hasn't synthesised a token node.
+    let token_node: Vec<NodeId> = graph
+        .nodes_of_kind(NodeKind::Identity)
+        .find(|n| n.name == "GITHUB_TOKEN" || n.name.starts_with("GITHUB_TOKEN"))
+        .map(|n| vec![n.id])
+        .unwrap_or_default();
     vec![Finding {
         severity: Severity::Medium,
         category: FindingCategory::NoWorkflowLevelPermissionsBlock,
         path: None,
-        nodes_involved: Vec::new(),
+        nodes_involved: token_node,
         message: "Workflow declares no top-level or per-job `permissions:` block — GITHUB_TOKEN \
              falls back to the broad platform default (contents: write, packages: write, …) \
              on every trigger. Explicit permissions make the blast radius legible to triage."
@@ -6240,7 +6265,7 @@ pub fn no_workflow_level_permissions_block(graph: &AuthorityGraph) -> Vec<Findin
                 .into(),
         },
         source: FindingSource::BuiltIn,
-        extras: FindingExtras::default(),
+        extras: FindingExtras::with_anchor("workflow_default_permissions"),
     }]
 }
 
@@ -6497,6 +6522,10 @@ pub fn pull_request_workflow_inconsistent_fork_check(graph: &AuthorityGraph) -> 
         .map(|s| s.as_str())
         .collect::<Vec<_>>()
         .join(", ");
+    // ISC-21: anchor the workflow-level inconsistency finding on the
+    // canonical guarded/unguarded job-name pair so a future split into
+    // per-job findings keeps fingerprints stable per emission site.
+    let anchor = format!("guarded=[{guarded_label}];unguarded=[{unguarded_label}]");
     vec![Finding {
         severity,
         category: FindingCategory::PullRequestWorkflowInconsistentForkCheck,
@@ -6517,7 +6546,7 @@ pub fn pull_request_workflow_inconsistent_fork_check(graph: &AuthorityGraph) -> 
             ),
         },
         source: FindingSource::BuiltIn,
-        extras: FindingExtras::default(),
+        extras: FindingExtras::with_anchor(anchor),
     }]
 }
 
@@ -10431,6 +10460,88 @@ mod tests {
         assert!(
             findings.is_empty(),
             "non-GHA platform must not fire; got: {findings:#?}"
+        );
+    }
+
+    // ── v3 fingerprint hardening: per-rule distinct-fingerprint coverage ─
+    //
+    // Rules that historically emitted `nodes_involved: vec![]` collapsed
+    // multiple findings of the same rule in one file to a single
+    // fingerprint under the v2 algorithm. v3 mixes
+    // `extras.fingerprint_anchor` into the canonical input string. These
+    // tests guard against regressions where a rule forgets to set the
+    // anchor.
+
+    #[test]
+    fn v3_template_extends_unpinned_branch_two_aliases_distinct_fingerprints() {
+        // Two `resources.repositories[]` entries in one ADO pipeline that
+        // both fire `template_extends_unpinned_branch`. Pre-v3 the two
+        // findings collided.
+        let mut g = AuthorityGraph::new(source("azure-pipelines.yml"));
+        let entries = serde_json::json!([
+            {"alias": "platform", "repo_type": "git", "name": "org/platform", "used": true},
+            {"alias": "scanners", "repo_type": "git", "name": "org/scanners", "used": true},
+        ]);
+        g.metadata.insert(
+            META_REPOSITORIES.into(),
+            serde_json::to_string(&entries).unwrap(),
+        );
+        let findings = template_extends_unpinned_branch(&g);
+        assert_eq!(findings.len(), 2);
+        let fp_a = crate::finding::compute_fingerprint(&findings[0], &g);
+        let fp_b = crate::finding::compute_fingerprint(&findings[1], &g);
+        assert_ne!(
+            fp_a, fp_b,
+            "two unpinned-template findings on different aliases must produce distinct \
+             fingerprints (v3 anchor contract)"
+        );
+    }
+
+    #[test]
+    fn v3_unpinned_include_two_components_distinct_fingerprints() {
+        // Two `component:` includes without `@version` — same rule fires
+        // twice, anchors differ on `target`.
+        let mut g = AuthorityGraph::new(source(".gitlab-ci.yml"));
+        g.metadata.insert(META_PLATFORM.into(), "gitlab".into());
+        let entries = serde_json::json!([
+            {"kind": "component", "target": "gitlab.com/group/comp-a", "git_ref": ""},
+            {"kind": "component", "target": "gitlab.com/group/comp-b", "git_ref": ""},
+        ]);
+        g.metadata.insert(
+            META_GITLAB_INCLUDES.into(),
+            serde_json::to_string(&entries).unwrap(),
+        );
+        let findings = unpinned_include_remote_or_branch_ref(&g);
+        assert_eq!(findings.len(), 2);
+        let fp_a = crate::finding::compute_fingerprint(&findings[0], &g);
+        let fp_b = crate::finding::compute_fingerprint(&findings[1], &g);
+        assert_ne!(
+            fp_a, fp_b,
+            "two unpinned-include component findings must produce distinct fingerprints"
+        );
+    }
+
+    #[test]
+    fn v3_sensitive_value_in_job_output_two_outputs_distinct_fingerprints() {
+        // Same job declares two credential-shaped outputs; both fire,
+        // anchors differ on `<job>.<name>:<source>`.
+        use crate::graph::META_JOB_OUTPUTS;
+        let mut g = AuthorityGraph::new(source(".github/workflows/ci.yml"));
+        g.metadata
+            .insert(META_PLATFORM.into(), "github-actions".into());
+        // Format is `<job>\t<name>\t<source>` joined by `|`.
+        g.metadata.insert(
+            META_JOB_OUTPUTS.into(),
+            "build\tdeploy_token\tsecret|build\tapi_key\toidc".to_string(),
+        );
+        let findings = sensitive_value_in_job_output(&g);
+        assert_eq!(findings.len(), 2);
+        let fp_a = crate::finding::compute_fingerprint(&findings[0], &g);
+        let fp_b = crate::finding::compute_fingerprint(&findings[1], &g);
+        assert_ne!(
+            fp_a, fp_b,
+            "two sensitive-value-in-job-output findings on the same job must produce \
+             distinct fingerprints (v3 anchor contract)"
         );
     }
 }

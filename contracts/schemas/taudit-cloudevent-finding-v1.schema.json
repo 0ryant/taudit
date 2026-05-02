@@ -54,8 +54,8 @@
     },
     "tauditfindingfingerprint": {
       "type": "string",
-      "pattern": "^[0-9a-f]{16}$",
-      "description": "Stable cross-run finding fingerprint (16 hex chars, SHA-256-derived). Byte-identical to SARIF `partialFingerprints[primaryLocationLineHash]` and JSON `findings[].fingerprint`. Use for SIEM dedup. Optional in v1 for backward-compat; always emitted by current taudit. See docs/finding-fingerprint.md."
+      "pattern": "^[0-9a-f]{32}$",
+      "description": "Stable cross-run finding fingerprint (32 hex chars, v3 algorithm: SHA-256 truncated to 128 bits). Byte-identical to SARIF `partialFingerprints[primaryLocationLineHash]` and JSON `findings[].fingerprint`. Use for SIEM dedup. Widened from 16 hex (64-bit) in v1.1.0-beta.3 to close a birthday-collision attack against `.taudit-suppressions.yml`. Optional in v1 for backward-compat; always emitted by current taudit. See docs/finding-fingerprint.md."
     },
     "tauditplatform": {
       "type": "string",

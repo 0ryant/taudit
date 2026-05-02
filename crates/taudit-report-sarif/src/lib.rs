@@ -2,8 +2,8 @@ use serde::Serialize;
 use taudit_core::custom_rules::CustomRule;
 use taudit_core::error::TauditError;
 use taudit_core::finding::{
-    compute_finding_group_id, compute_fingerprint, Finding, FindingCategory, FindingSource,
-    FixEffort, Severity,
+    compute_finding_group_id, compute_fingerprint, rule_id_for, Finding, FindingSource, FixEffort,
+    Severity,
 };
 use taudit_core::graph::AuthorityGraph;
 use taudit_core::ports::ReportSink;
@@ -1356,18 +1356,20 @@ fn build_custom_rules(rules: &[CustomRule]) -> Vec<SarifRule> {
 }
 
 /// Map a `Finding` to a SARIF `result` object. Custom-rule findings carry
-/// their rule id in the message as `[<id>] ...`; if `<id>` matches a known
-/// custom rule, the SARIF result uses the custom id so it links to the
-/// injected `rules[]` entry rather than the built-in category.
+/// their rule id in the message as `[<id>] ...`; the rule-id resolver
+/// shared with JSON, baseline, and CloudEvents lifts the custom id when
+/// the bracketed token is a valid snake_case identifier. Unlike the
+/// pre-v1.1 SARIF emitter, custom ids are NOT filtered through
+/// `custom_ids.contains(...)` — JSON does not filter either, and silent
+/// re-categorisation is worse than a SARIF viewer rendering "unknown
+/// rule" for an unregistered custom rule. The two emitters now agree.
 fn finding_to_result(
     finding: &Finding,
     source_file: &str,
     graph: &AuthorityGraph,
-    custom_ids: &std::collections::HashSet<&str>,
+    _custom_ids: &std::collections::HashSet<&str>,
 ) -> SarifResult {
-    let rule_id = extract_custom_rule_id(&finding.message)
-        .filter(|id| custom_ids.contains(id.as_str()))
-        .unwrap_or_else(|| category_to_rule_id(&finding.category));
+    let rule_id = rule_id_for(finding);
     let level = severity_to_level(&finding.severity);
     let security_severity = severity_to_security_severity(&finding.severity);
 
@@ -1431,28 +1433,11 @@ fn finding_to_result(
     }
 }
 
-/// Pull a custom rule id out of a finding message of the form `[id] rest`.
-/// Returns None if the message does not start with a bracketed id.
-fn extract_custom_rule_id(message: &str) -> Option<String> {
-    if !message.starts_with('[') {
-        return None;
-    }
-    let end = message.find(']')?;
-    let id = &message[1..end];
-    if id.is_empty() {
-        None
-    } else {
-        Some(id.to_string())
-    }
-}
-
-fn category_to_rule_id(category: &FindingCategory) -> String {
-    // Delegate to serde to stay in sync with the serialized form (snake_case).
-    serde_json::to_value(category)
-        .ok()
-        .and_then(|v| v.as_str().map(str::to_string))
-        .unwrap_or_else(|| "unknown".to_string())
-}
+// `extract_custom_rule_id` and `category_to_rule_id` were workspace
+// duplicates of helpers that now live as `taudit_core::finding::rule_id_for`.
+// Removed in v1.1.0-beta.3 so JSON, SARIF, baseline, and CloudEvents
+// agree on rule-id resolution byte-for-byte. See
+// `crates/taudit-core/src/finding.rs::rule_id_for`.
 
 fn severity_to_level(severity: &Severity) -> &'static str {
     match severity {
@@ -1477,7 +1462,7 @@ fn severity_to_security_severity(severity: &Severity) -> &'static str {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use taudit_core::finding::{FindingExtras, Recommendation, Severity};
+    use taudit_core::finding::{FindingCategory, FindingExtras, Recommendation, Severity};
     use taudit_core::graph::{AuthorityGraph, PipelineSource};
     use taudit_core::ports::ReportSink;
 
@@ -1619,7 +1604,11 @@ mod tests {
         let fp = r["partialFingerprints"]["primaryLocationLineHash"]
             .as_str()
             .unwrap();
-        assert_eq!(fp.len(), 16, "fingerprint should be 16 hex chars");
+        assert_eq!(
+            fp.len(),
+            32,
+            "fingerprint should be 32 hex chars (v3 = 128-bit)"
+        );
         assert!(fp.chars().all(|c| c.is_ascii_hexdigit()));
 
         // The tool-namespaced `taudit/v1` key MUST also be present and
@@ -1634,7 +1623,7 @@ mod tests {
             tv1, fp,
             "taudit/v1 must be byte-identical to primaryLocationLineHash within the v1 major"
         );
-        assert_eq!(tv1.len(), 16);
+        assert_eq!(tv1.len(), 32);
         assert!(tv1.chars().all(|c| c.is_ascii_hexdigit()));
     }
 
@@ -1700,7 +1689,23 @@ mod tests {
         ];
 
         for cat in categories {
-            let id = category_to_rule_id(&cat);
+            // Build a synthetic finding so we can route through the
+            // workspace-canonical rule-id resolver. Using `rule_id_for`
+            // instead of a now-deleted local `category_to_rule_id` keeps
+            // JSON / SARIF / CloudEvents on the same code path.
+            let synthetic = Finding {
+                severity: Severity::High,
+                category: cat,
+                path: None,
+                nodes_involved: vec![],
+                message: String::new(),
+                recommendation: taudit_core::finding::Recommendation::Manual {
+                    action: "n/a".into(),
+                },
+                source: FindingSource::BuiltIn,
+                extras: FindingExtras::default(),
+            };
+            let id = rule_id_for(&synthetic);
             assert!(
                 RULE_DEFS.iter().any(|r| r.id == id),
                 "category {cat:?} -> rule id {id:?} has no RuleDef entry"

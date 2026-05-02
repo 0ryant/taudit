@@ -221,9 +221,10 @@ fn fingerprint_is_identical_across_sarif_json_and_cloudevents() {
         "JSON and CloudEvents fingerprints must match per finding (in order)"
     );
 
-    // Sanity: every fingerprint is the canonical 16-hex form.
+    // Sanity: every fingerprint is the canonical 32-hex form (v3 algorithm,
+    // 128-bit truncation; widened from 16-hex/64-bit in v1.1.0-beta.3).
     for fp in &sarif_fps {
-        assert_eq!(fp.len(), 16);
+        assert_eq!(fp.len(), 32);
         assert!(fp.chars().all(|c| c.is_ascii_hexdigit()));
     }
 }

@@ -25,7 +25,7 @@
 //!
 //! See `docs/baselines.md` for the full workflow and security guarantees.
 
-use crate::finding::{compute_fingerprint, Finding, Severity};
+use crate::finding::{compute_fingerprint, rule_id_for, Finding, Severity};
 use crate::graph::{
     AuthorityGraph, EdgeKind, NodeKind, META_GITLAB_EXTENDS, META_GITLAB_INCLUDES, META_NEEDS,
     META_REPOSITORIES,
@@ -286,7 +286,12 @@ impl Baseline {
 
         Baseline {
             schema_version: BASELINE_SCHEMA_VERSION.to_string(),
-            pipeline_path: pipeline_path.to_string(),
+            // v3 fingerprint contract: paths are stored in the baseline
+            // with forward-slash separators so a Windows-captured baseline
+            // and a Linux-captured baseline of the same logical pipeline
+            // are byte-identical. Same normalisation applied in
+            // `compute_fingerprint`.
+            pipeline_path: pipeline_path.replace('\\', "/"),
             pipeline_content_hash: compute_pipeline_hash(content),
             pipeline_identity_material_hash: Some(compute_pipeline_identity_material_hash(graph)),
             captured_at: now,
@@ -585,23 +590,6 @@ pub fn baseline_path_for(root: &Path, pipeline_content_hash: &str) -> PathBuf {
 /// byte-equal forever.
 pub fn compute_finding_fingerprint(finding: &Finding, graph: &AuthorityGraph) -> String {
     compute_fingerprint(finding, graph)
-}
-
-/// Snake-case rule id for `f`. Mirrors the same logic the SARIF reporter
-/// uses (custom rule id from `[id] message` prefix wins over category).
-fn rule_id_for(f: &Finding) -> String {
-    if let Some(id) = f.message.strip_prefix('[') {
-        if let Some(end) = id.find(']') {
-            let candidate = &id[..end];
-            if !candidate.is_empty() {
-                return candidate.to_string();
-            }
-        }
-    }
-    serde_json::to_value(f.category)
-        .ok()
-        .and_then(|v| v.as_str().map(str::to_string))
-        .unwrap_or_else(|| "unknown".to_string())
 }
 
 // ── Tests ───────────────────────────────────────────────────

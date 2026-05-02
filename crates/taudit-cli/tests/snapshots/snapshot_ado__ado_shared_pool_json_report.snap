@@ -4,8 +4,8 @@ expression: json
 ---
 findings:
   - category: checkout_self_pr_exposure
-    finding_group_id: 1fd18bf0-de37-5a37-bbd3-374094ede65a
-    fingerprint: 54ae1136cbaafd93
+    finding_group_id: 07f2e7cf-9646-51fd-acf3-0bebfad3ad2e
+    fingerprint: 481eb03db2f3c50620aead82178810b4
     message: "PR-triggered pipeline checks out the repository at step 'pipeline[0]' — attacker-controlled code from the fork lands on the runner and is readable by all subsequent steps"
     nodes_involved:
       - 2
@@ -17,8 +17,8 @@ findings:
     source: built-in
     time_to_fix: medium
   - category: over_privileged_identity
-    finding_group_id: 93e42f6b-6b91-5954-b127-41c8527d6cc1
-    fingerprint: 7c26a645de21270f
+    finding_group_id: 5f27c90f-6130-57b7-931c-7e756722e388
+    fingerprint: fd6a9adae7376318838370392ea657ca
     message: "System.AccessToken has broad scope (permissions: '') — likely broader than needed"
     nodes_involved:
       - 0
@@ -33,8 +33,8 @@ findings:
     source: built-in
     time_to_fix: small
   - category: self_hosted_pool_pr_hijack
-    finding_group_id: 712486ed-dda5-5597-a00a-650b29fb6c24
-    fingerprint: 9618c476c7c31ada
+    finding_group_id: 0953b31e-364f-5f21-89a6-a7ae6a1310bb
+    fingerprint: 0647fb972a184c014fd376364580225d
     message: "PR-triggered pipeline uses self-hosted agent pool with checkout:self — enables git hook injection persisting across pipeline runs on the shared runner"
     nodes_involved:
       - 1
@@ -46,8 +46,8 @@ findings:
     severity: critical
     source: built-in
   - category: shared_self_hosted_pool_no_isolation
-    finding_group_id: e65fdf1c-0fe1-5119-8b5d-60cca9f04f12
-    fingerprint: c02d22ffa1414429
+    finding_group_id: 82f6a179-d521-5cd9-bdaa-09de04bfcb42
+    fingerprint: 4873e5775b5e271f363374e5b504aca1
     message: "Self-hosted pool 'SharedBuildAgents' has no workspace isolation (workspace: {clean: all/true} not set); a previous pipeline run can pollute the workspace for the next — including privileged deployment jobs"
     nodes_involved:
       - 1
@@ -58,8 +58,8 @@ findings:
     severity: high
     source: built-in
   - category: trigger_context_mismatch
-    finding_group_id: e70373ea-e2d8-5317-b67f-332e34e9f3b1
-    fingerprint: 4daf34cdda9433fd
+    finding_group_id: 113dc5b4-ddf6-5be7-aca2-4eddf0a8f032
+    fingerprint: b6c2dbaccfb85fcc54955524d5539caa
     message: Workflow triggered by pr with secret/identity access — 2 step(s) hold authority that attacker-controlled code could reach
     nodes_involved:
       - 2

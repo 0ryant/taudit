@@ -11,10 +11,10 @@ expression: results
   message:
     text: GITHUB_TOKEN propagated to actions/checkout@a5ac7e51b41094c92402da3b24376905380afc29 across trust boundary
   partialFingerprints:
-    primaryLocationLineHash: 0da8c80421a0b537
-    taudit/v1: 0da8c80421a0b537
+    primaryLocationLineHash: 2c001aeeb933afb192cc1af87babdff9
+    taudit/v1: 2c001aeeb933afb192cc1af87babdff9
   properties:
-    findingGroupId: 34e05532-cb8e-5859-a01f-da1552c57997
+    findingGroupId: 58af3d8a-8e02-5d29-8a35-013ac5b8ddc2
     security-severity: "5.0"
     taudit-source: built-in
   ruleId: authority_propagation
