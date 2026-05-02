@@ -175,18 +175,18 @@ impl PipelineParser for AdoParser {
         // Pipeline-level variable groups and named secrets.
         // plain_vars tracks non-secret named variables so $(VAR) refs in scripts
         // don't generate false-positive Secret nodes for plain config values.
-        // has_variable_groups is set when any variable group is encountered so
+        // pipeline_has_variable_groups is set when any pipeline-scope group is encountered so
         // extract_dollar_paren_secrets can avoid creating per-variable Secret
         // nodes from opaque groups (BUG-3).
         let mut plain_vars: HashSet<String> = HashSet::new();
-        let mut has_variable_groups = false;
+        let mut pipeline_has_variable_groups = false;
         let pipeline_secret_ids = process_variables(
             &pipeline.variables,
             &mut graph,
             &mut secret_ids,
             "pipeline",
             &mut plain_vars,
-            &mut has_variable_groups,
+            &mut pipeline_has_variable_groups,
         );
 
         // Determine pipeline structure: stages → jobs → steps, or jobs → steps, or steps only
@@ -200,14 +200,17 @@ impl PipelineParser for AdoParser {
                 }
 
                 let stage_name = stage.stage.as_deref().unwrap_or("stage").to_string();
+                let mut stage_has_variable_groups = false;
                 let stage_secret_ids = process_variables(
                     &stage.variables,
                     &mut graph,
                     &mut secret_ids,
                     &stage_name,
                     &mut plain_vars,
-                    &mut has_variable_groups,
+                    &mut stage_has_variable_groups,
                 );
+                let stage_scope_has_variable_groups =
+                    pipeline_has_variable_groups || stage_has_variable_groups;
 
                 let stage_condition = non_empty_condition(&stage.condition);
                 if let Some(c) = stage_condition {
@@ -217,14 +220,17 @@ impl PipelineParser for AdoParser {
 
                 for job in &stage.jobs {
                     let job_name = job.effective_name();
+                    let mut job_has_variable_groups = false;
                     let job_secret_ids = process_variables(
                         &job.variables,
                         &mut graph,
                         &mut secret_ids,
                         &job_name,
                         &mut plain_vars,
-                        &mut has_variable_groups,
+                        &mut job_has_variable_groups,
                     );
+                    let step_scope_has_variable_groups =
+                        stage_scope_has_variable_groups || job_has_variable_groups;
 
                     let effective_workspace =
                         job.workspace.as_ref().or(pipeline.workspace.as_ref());
@@ -262,7 +268,7 @@ impl PipelineParser for AdoParser {
                         token_id,
                         &all_secrets,
                         &plain_vars,
-                        has_variable_groups,
+                        step_scope_has_variable_groups,
                         outer_condition.as_deref(),
                         job_depends_on.as_deref(),
                         &mut graph,
@@ -287,14 +293,17 @@ impl PipelineParser for AdoParser {
         } else if let Some(ref jobs) = pipeline.jobs {
             for job in jobs {
                 let job_name = job.effective_name();
+                let mut job_has_variable_groups = false;
                 let job_secret_ids = process_variables(
                     &job.variables,
                     &mut graph,
                     &mut secret_ids,
                     &job_name,
                     &mut plain_vars,
-                    &mut has_variable_groups,
+                    &mut job_has_variable_groups,
                 );
+                let step_scope_has_variable_groups =
+                    pipeline_has_variable_groups || job_has_variable_groups;
 
                 let effective_workspace = job.workspace.as_ref().or(pipeline.workspace.as_ref());
                 process_pool(&job.pool, &effective_workspace.cloned(), &mut graph);
@@ -320,7 +329,7 @@ impl PipelineParser for AdoParser {
                     token_id,
                     &all_secrets,
                     &plain_vars,
-                    has_variable_groups,
+                    step_scope_has_variable_groups,
                     job_condition,
                     job_depends_on.as_deref(),
                     &mut graph,
@@ -342,7 +351,7 @@ impl PipelineParser for AdoParser {
                 token_id,
                 &pipeline_secret_ids,
                 &plain_vars,
-                has_variable_groups,
+                pipeline_has_variable_groups,
                 None,
                 None,
                 &mut graph,
@@ -769,7 +778,7 @@ fn process_steps(
         }
 
         // Determine step kind and trust zone
-        let (step_name, trust_zone, mut inline_script) = classify_step(step, job_name, idx);
+        let (step_name, trust_zone, inline_script) = classify_step(step, job_name, idx);
 
         // Step-level condition: mark Partial-Expression and join with the
         // outer (stage + job) chain so the step's META_CONDITION reflects the
@@ -789,24 +798,6 @@ fn process_steps(
             .as_ref()
             .map(|d| d.as_csv())
             .or_else(|| outer_depends_on.map(|s| s.to_string()));
-
-        // For task steps (where classify_step returns None), recover an inline
-        // script body from `inputs.inlineScript` / `inputs.script` — used by
-        // AzureCLI@2, AzurePowerShell@5, Bash@3, etc. Without this fallback,
-        // rules that pattern-match script content miss every typed task.
-        if inline_script.is_none() {
-            if let Some(ref inputs) = step.inputs {
-                let candidate_keys = ["inlineScript", "script", "InlineScript", "Inline"];
-                for key in candidate_keys {
-                    if let Some(v) = inputs.get(key).and_then(yaml_value_as_str) {
-                        if !v.is_empty() {
-                            inline_script = Some(v.to_string());
-                            break;
-                        }
-                    }
-                }
-            }
-        }
 
         let step_id = graph.add_node(NodeKind::Step, &step_name, trust_zone);
 
@@ -835,25 +826,6 @@ fn process_steps(
                 if !d.is_empty() {
                     node.metadata.insert(META_DEPENDS_ON.into(), d.clone());
                 }
-            }
-        }
-
-        // Stamp inline script body so command-line-leakage rules can inspect
-        // what the step actually executes (vm_remote_exec_via_pipeline_secret,
-        // short_lived_sas_in_command_line).
-        if let Some(ref body) = inline_script {
-            if let Some(node) = graph.nodes.get_mut(step_id) {
-                node.metadata.insert(META_SCRIPT_BODY.into(), body.clone());
-            }
-        }
-
-        // Stamp the inline script body when present so rules that need to
-        // pattern-match against shell content can do so without re-parsing
-        // YAML. Bodies can be large; rules should treat META_SCRIPT_BODY as
-        // an opaque string and not assume any framing.
-        if let Some(ref body) = inline_script {
-            if let Some(node) = graph.nodes.get_mut(step_id) {
-                node.metadata.insert(META_SCRIPT_BODY.into(), body.clone());
             }
         }
 
@@ -934,7 +906,7 @@ fn process_steps(
             // (idToken, servicePrincipalKey, servicePrincipalId, tenantId)
             // to the step's inline script via env vars. Stamp the step so
             // addspn_with_inline_script can pattern-match without traversal.
-            if let Some(val) = inputs.get("addSpnToEnvironment") {
+            if let Some(val) = input_value(inputs, "addSpnToEnvironment") {
                 let truthy = match val {
                     serde_yaml::Value::Bool(b) => *b,
                     serde_yaml::Value::String(s) => s.eq_ignore_ascii_case("true"),
@@ -961,15 +933,10 @@ fn process_steps(
                 || task_lower.starts_with("terraformtask@")
                 || task_lower.starts_with("terraformtaskv");
             if is_terraform_task {
-                let cmd_lower = inputs
-                    .get("command")
-                    .and_then(yaml_value_as_str)
+                let cmd_lower = input_str(inputs, "command")
                     .map(|s| s.to_lowercase())
                     .unwrap_or_default();
-                let opts = inputs
-                    .get("commandOptions")
-                    .and_then(yaml_value_as_str)
-                    .unwrap_or("");
+                let opts = input_str(inputs, "commandOptions").unwrap_or("");
                 if cmd_lower == "apply" && opts.contains("auto-approve") {
                     if let Some(node) = graph.nodes.get_mut(step_id) {
                         node.metadata
@@ -1131,6 +1098,22 @@ fn extract_task_inline_script(
     None
 }
 
+fn input_value<'a>(
+    inputs: &'a HashMap<String, serde_yaml::Value>,
+    wanted: &str,
+) -> Option<&'a serde_yaml::Value> {
+    let mut entries: Vec<(&String, &serde_yaml::Value)> = inputs.iter().collect();
+    entries.sort_by(|a, b| a.0.cmp(b.0));
+    entries
+        .into_iter()
+        .find(|(key, _)| key.eq_ignore_ascii_case(wanted))
+        .map(|(_, value)| value)
+}
+
+fn input_str<'a>(inputs: &'a HashMap<String, serde_yaml::Value>, wanted: &str) -> Option<&'a str> {
+    input_value(inputs, wanted).and_then(yaml_value_as_str)
+}
+
 /// Add a DelegatesTo edge from a synthetic step node to a template image node.
 ///
 /// Trust zone heuristic: templates referenced with `@repository` (e.g. `steps/deploy.yml@templates`)
@@ -1183,10 +1166,26 @@ fn setvariable_value_contains_secret_ref(script: &str) -> bool {
         // The value starts after the closing `]` of the ##vso directive.
         if let Some(close_bracket) = line.find(']') {
             let value_part = &line[close_bracket + 1..];
-            if value_part.contains("$(") {
+            if contains_unescaped_variable_ref(value_part) {
                 return true;
             }
         }
+    }
+    false
+}
+
+fn contains_unescaped_variable_ref(text: &str) -> bool {
+    let bytes = text.as_bytes();
+    let mut pos = 0;
+    while pos + 1 < bytes.len() {
+        if bytes[pos] == b'$' && bytes[pos + 1] == b'(' {
+            if pos == 0 || bytes[pos - 1] != b'$' {
+                return true;
+            }
+            pos += 2;
+            continue;
+        }
+        pos += 1;
     }
     false
 }
@@ -1209,6 +1208,10 @@ fn extract_dollar_paren_secrets(
     let bytes = text.as_bytes();
     while pos < bytes.len() {
         if pos + 2 < bytes.len() && bytes[pos] == b'$' && bytes[pos + 1] == b'(' {
+            if pos > 0 && bytes[pos - 1] == b'$' {
+                pos += 2;
+                continue;
+            }
             let start = pos + 2;
             if let Some(end_offset) = text[start..].find(')') {
                 let var_name = &text[start..start + end_offset];
@@ -1243,12 +1246,33 @@ fn extract_dollar_paren_secrets(
 }
 
 /// Returns true if the `$(VAR)` at `var_pos` is inside a Terraform `-var` flag argument.
-/// Pattern: the line before `$(VAR)` contains `-var` and `=`, indicating `-var "key=$(VAR)"`.
+/// Matches `-var key=$(VAR)` and `-var=key=$(VAR)` but not `-var-file`.
 fn is_in_terraform_var_flag(text: &str, var_pos: usize) -> bool {
     let line_start = text[..var_pos].rfind('\n').map(|p| p + 1).unwrap_or(0);
     let line_before = &text[line_start..var_pos];
-    // Must contain -var (the flag) and = (the key=value assignment)
-    line_before.contains("-var") && line_before.contains('=')
+    let mut matches: Vec<(usize, &str)> = line_before.match_indices("-var").collect();
+    matches.reverse();
+    for (idx, _) in matches {
+        if idx > 0 {
+            let prev = line_before[..idx].chars().next_back();
+            if prev.is_some_and(|c| c.is_ascii_alphanumeric() || c == '_' || c == '-') {
+                continue;
+            }
+        }
+        let mut after = &line_before[idx + "-var".len()..];
+        if after.starts_with('-') {
+            continue;
+        }
+        after = after.trim_start();
+        if let Some(rest) = after.strip_prefix('=') {
+            after = rest.trim_start();
+        }
+        after = after.trim_start_matches(['"', '\'']);
+        if after.contains('=') {
+            return true;
+        }
+    }
+    false
 }
 
 /// Returns true if `name` is a valid ADO variable identifier.
@@ -3494,6 +3518,134 @@ jobs:
                 .any(|c| c.starts_with("ADO conditional gate")),
             "compensating_controls must include the ADO conditional-gate entry, got: {:?}",
             f.extras.compensating_controls
+        );
+    }
+
+    #[test]
+    fn variable_groups_are_scoped_to_their_stage_or_job() {
+        let yaml = r#"
+stages:
+  - stage: UsesGroup
+    variables:
+      - group: OpaqueGroup
+    jobs:
+      - job: A
+        steps:
+          - script: echo $(OPAQUE_VALUE)
+  - stage: NoGroup
+    jobs:
+      - job: B
+        steps:
+          - script: echo $(STAGE_TWO_SECRET)
+"#;
+        let graph = parse(yaml);
+        assert!(
+            graph
+                .nodes_of_kind(NodeKind::Secret)
+                .any(|n| n.name == "STAGE_TWO_SECRET"),
+            "variable group in first stage must not suppress secret refs in unrelated stages"
+        );
+    }
+
+    #[test]
+    fn escaped_ado_variable_refs_are_not_secret_refs() {
+        let yaml = r###"
+steps:
+  - script: |
+      echo $$(NOT_A_SECRET)
+      echo "##vso[task.setvariable variable=Count]$$(NOT_A_SECRET)"
+    displayName: Escaped
+"###;
+        let graph = parse(yaml);
+        assert!(
+            !graph
+                .nodes_of_kind(NodeKind::Secret)
+                .any(|n| n.name == "NOT_A_SECRET"),
+            "$$(VAR) is an escaped literal and must not create a Secret node"
+        );
+        let step = graph
+            .nodes_of_kind(NodeKind::Step)
+            .find(|n| n.name == "Escaped")
+            .expect("step exists");
+        assert!(
+            !step
+                .metadata
+                .contains_key(META_ENV_GATE_WRITES_SECRET_VALUE),
+            "escaped setvariable value must not be treated as secret-derived"
+        );
+    }
+
+    #[test]
+    fn terraform_var_flag_detection_ignores_var_file() {
+        let yaml = r#"
+steps:
+  - script: terraform apply -var-file=$(TFVARS_FILE)
+    displayName: Var file
+  - script: terraform apply -var "password=$(TF_PASSWORD)"
+    displayName: Var value
+"#;
+        let graph = parse(yaml);
+        let tfvars = graph
+            .nodes_of_kind(NodeKind::Secret)
+            .find(|n| n.name == "TFVARS_FILE")
+            .expect("TFVARS_FILE secret exists");
+        assert!(
+            !tfvars.metadata.contains_key(META_CLI_FLAG_EXPOSED),
+            "-var-file path should not be classified as an exposed -var value"
+        );
+        let password = graph
+            .nodes_of_kind(NodeKind::Secret)
+            .find(|n| n.name == "TF_PASSWORD")
+            .expect("TF_PASSWORD secret exists");
+        assert_eq!(
+            password
+                .metadata
+                .get(META_CLI_FLAG_EXPOSED)
+                .map(String::as_str),
+            Some("true"),
+            "-var key=$(SECRET) should still be marked as command-line exposed"
+        );
+    }
+
+    #[test]
+    fn task_input_lookup_is_case_insensitive() {
+        let yaml = r#"
+steps:
+  - task: TerraformTaskV4@4
+    displayName: Terraform
+    inputs:
+      Command: apply
+      CommandOptions: -auto-approve
+  - task: AzureCLI@2
+    displayName: SPN
+    inputs:
+      AddSpnToEnvironment: TRUE
+      InLineScRiPt: echo hi
+"#;
+        let graph = parse(yaml);
+        let terraform = graph
+            .nodes_of_kind(NodeKind::Step)
+            .find(|n| n.name == "Terraform")
+            .expect("terraform step");
+        assert_eq!(
+            terraform
+                .metadata
+                .get(META_TERRAFORM_AUTO_APPROVE)
+                .map(String::as_str),
+            Some("true")
+        );
+        let spn = graph
+            .nodes_of_kind(NodeKind::Step)
+            .find(|n| n.name == "SPN")
+            .expect("spn step");
+        assert_eq!(
+            spn.metadata.get(META_ADD_SPN_TO_ENV).map(String::as_str),
+            Some("true")
+        );
+        assert_eq!(
+            spn.metadata.get(META_SCRIPT_BODY).map(String::as_str),
+            Some("echo hi"),
+            "mixed-case inline script input key should be detected"
         );
     }
 }

@@ -34,6 +34,7 @@ use chrono::{DateTime, Duration, Utc};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::collections::BTreeMap;
+use std::io::Write;
 use std::path::{Path, PathBuf};
 
 /// Maximum lifetime allowed for a critical-severity waiver. Council's
@@ -225,7 +226,7 @@ impl Baseline {
             .sort_by(|a, b| a.fingerprint.cmp(&b.fingerprint));
         let mut bytes = serde_json::to_vec_pretty(&sorted)?;
         bytes.push(b'\n');
-        std::fs::write(path, bytes).map_err(|source| BaselineError::Write {
+        atomic_write(path, &bytes).map_err(|source| BaselineError::Write {
             path: path.to_path_buf(),
             source,
         })?;
@@ -560,6 +561,48 @@ fn format_digest(digest: impl AsRef<[u8]>) -> String {
         let _ = write!(&mut hex, "{byte:02x}");
     }
     format!("sha256:{hex}")
+}
+
+fn atomic_write(path: &Path, bytes: &[u8]) -> std::io::Result<()> {
+    let parent = path.parent().unwrap_or_else(|| Path::new("."));
+    let file_name = path
+        .file_name()
+        .and_then(|s| s.to_str())
+        .unwrap_or("baseline.json");
+    let tmp_path = parent.join(format!(
+        ".{file_name}.{}.{}.tmp",
+        std::process::id(),
+        unique_nanos()
+    ));
+
+    let mut file = std::fs::OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(&tmp_path)?;
+    if let Err(err) = file.write_all(bytes).and_then(|_| file.sync_all()) {
+        let _ = std::fs::remove_file(&tmp_path);
+        return Err(err);
+    }
+    drop(file);
+
+    if let Err(err) = std::fs::rename(&tmp_path, path) {
+        let _ = std::fs::remove_file(&tmp_path);
+        return Err(err);
+    }
+
+    // Best-effort directory sync makes the rename durable on filesystems that
+    // support syncing directories. Some platforms reject opening directories.
+    if let Ok(dir) = std::fs::File::open(parent) {
+        let _ = dir.sync_all();
+    }
+    Ok(())
+}
+
+fn unique_nanos() -> u128 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_nanos())
+        .unwrap_or(0)
 }
 
 /// Default location for per-pipeline baselines, given the working directory.

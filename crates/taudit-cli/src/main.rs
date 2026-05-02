@@ -1,6 +1,7 @@
 use anyhow::{Context, Result};
 use clap::{CommandFactory, Parser};
 use std::collections::HashSet;
+use std::io::Read;
 use std::path::{Path, PathBuf};
 use std::time::{SystemTime, UNIX_EPOCH};
 
@@ -32,6 +33,8 @@ use error_hints::{
     PATH_NOT_FOUND, PIPELINE_BASELINE_LOAD, PROMPT_EMPTY, SUPPRESSIONS_FILE, VERIFY_EMPTY_POLICY,
     VERIFY_POLICY_PATH, VERIFY_READ_PIPELINE,
 };
+
+const MAX_INPUT_BYTES: u64 = 2 * 1024 * 1024;
 
 /// Like `println!` but never panics on a closed stdout pipe (EPIPE).
 macro_rules! try_println {
@@ -1591,7 +1594,7 @@ fn cmd_diff(
     // pre-built parser to avoid extra allocations.
     let parse_one = |path: &PathBuf| -> Result<taudit_core::graph::AuthorityGraph> {
         if platform == Platform::Auto {
-            let content = std::fs::read_to_string(path)
+            let content = read_text_file_capped(path)
                 .with_context(|| format!("Failed to read {}\n{DIFF_FILES}", path.display()))?;
             let resolved_platform = resolve_platform(&platform, &content, Some(path.as_path()));
             let per_file_parser = make_parser(&resolved_platform);
@@ -1862,11 +1865,7 @@ fn cmd_scan(opts: ScanOpts) -> Result<()> {
         // stays `None` for them and the lookup is skipped.
         let mut pipeline_content: Option<String> = None;
         let graph = if path.as_os_str() == "-" {
-            let mut content = String::new();
-            use std::io::Read;
-            std::io::stdin()
-                .read_to_string(&mut content)
-                .with_context(|| "Failed to read from stdin")?;
+            let content = read_stdin_capped()?;
             // Resolve `Auto` against the stdin content; otherwise reuse the
             // pre-built parser without re-allocating. No path hint for stdin.
             if platform == Platform::Auto {
@@ -1881,7 +1880,7 @@ fn cmd_scan(opts: ScanOpts) -> Result<()> {
             // Read the file once. When auto-detecting, sniff the content to pick
             // the parser; otherwise reuse the pre-built one. We then call
             // `parse_content` directly to avoid a redundant filesystem read.
-            let content = match std::fs::read_to_string(path) {
+            let content = match read_text_file_capped(path) {
                 Ok(c) => normalise_line_endings(c),
                 Err(err) => match tagged_path {
                     ResolvedPath::Discovered(_) => {
@@ -1890,8 +1889,7 @@ fn cmd_scan(opts: ScanOpts) -> Result<()> {
                         continue;
                     }
                     ResolvedPath::Explicit(_) => {
-                        return Err(anyhow::Error::new(err)
-                            .context(format!("Failed to read {}", path.display())));
+                        return Err(err.context(format!("Failed to read {}", path.display())));
                     }
                 },
             };
@@ -2416,7 +2414,7 @@ fn run_verify_io<W: std::io::Write>(opts: &VerifyOpts, writer: &mut W) -> i32 {
     // strict mode is enabled.
     for tagged_path in &resolved {
         let path = tagged_path.path();
-        let content = match std::fs::read_to_string(path) {
+        let content = match read_text_file_capped(path) {
             Ok(c) => normalise_line_endings(c),
             Err(err) => match tagged_path {
                 ResolvedPath::Explicit(_) => {
@@ -2660,7 +2658,7 @@ fn load_policy(
     } else {
         // Single file. Supports multi-doc YAML: a file may contain one or more
         // `CustomRule` documents separated by `---`.
-        let content = std::fs::read_to_string(policy)
+        let content = read_text_file_capped(policy)
             .map_err(|err| vec![format!("failed to read policy {}: {err}", policy.display())])?;
         taudit_core::custom_rules::parse_rules_multi_doc(&content).map_err(|err| {
             vec![format!(
@@ -3081,25 +3079,20 @@ fn load_ignore_config(explicit_path: Option<PathBuf>) -> Result<IgnoreConfig> {
     };
 
     match path {
-        Some(p) => {
-            let content = std::fs::read_to_string(&p)
-                .with_context(|| format!("Failed to read ignore file: {}", p.display()))?;
-            let config: IgnoreConfig = serde_yaml::from_str(&content).with_context(|| {
-                format!(
-                    "Failed to parse ignore file: {}\n\n\
-                     Expected YAML format:\n\
-                     \n\
-                     ignore:\n\
-                     \x20 - category: unpinned_action\n\
-                     \x20   path: \".github/workflows/legacy.yml\"  # optional glob\n\
-                     \x20   reason: \"Accepted — migrating to pinned actions\"  # optional\n\
-                     \n\
-                     Valid category values: run `taudit explain` for the full list.",
-                    p.display()
-                )
-            })?;
-            Ok(config)
-        }
+        Some(p) => IgnoreConfig::load_from_path(&p).with_context(|| {
+            format!(
+                "Failed to load ignore file: {}\n\n\
+                 Expected YAML format:\n\
+                 \n\
+                 ignore:\n\
+                 \x20 - category: unpinned_action\n\
+                 \x20   path: \".github/workflows/legacy.yml\"  # optional glob\n\
+                 \x20   reason: \"Accepted — migrating to pinned actions\"  # optional\n\
+                 \n\
+                 Valid category values: run `taudit explain` for the full list.",
+                p.display()
+            )
+        }),
         None => Ok(IgnoreConfig::default()),
     }
 }
@@ -3114,7 +3107,7 @@ fn load_baseline(path: Option<PathBuf>) -> Result<BaselineSet> {
         return Ok(HashSet::new());
     };
 
-    let content = std::fs::read_to_string(&p).with_context(|| {
+    let content = read_text_file_capped(&p).with_context(|| {
         format!(
             "Failed to read baseline file: {}\n{BASELINE_JSON}",
             p.display()
@@ -3172,18 +3165,19 @@ fn load_baseline(path: Option<PathBuf>) -> Result<BaselineSet> {
 ///     break the current scan). A diagnostic is printed to stderr only
 ///     if zero fingerprints could be loaded from a non-empty file —
 ///     that's the case worth surfacing.
-fn load_dedupe_fingerprints(path: &PathBuf) -> Result<HashSet<String>> {
+fn load_dedupe_fingerprints(path: &Path) -> Result<HashSet<String>> {
     let mut out = HashSet::new();
 
-    let content = match std::fs::read_to_string(path) {
+    if !path.exists() {
+        // Treat missing prior file as "no fingerprints" rather than an
+        // error. First-time CI runs hit this path and should succeed.
+        return Ok(out);
+    }
+
+    let content = match read_text_file_capped(path) {
         Ok(c) => c,
-        Err(err) if err.kind() == std::io::ErrorKind::NotFound => {
-            // Treat missing prior file as "no fingerprints" rather than an
-            // error. First-time CI runs hit this path and should succeed.
-            return Ok(out);
-        }
         Err(err) => {
-            return Err(anyhow::Error::new(err).context(format!(
+            return Err(err.context(format!(
                 "Failed to read --dedupe-against file: {}\n{DEDUPE_FILE}",
                 path.display()
             )));
@@ -3626,7 +3620,7 @@ fn cmd_map(
         let path = tagged_path.path().clone();
         let graph = if platform == Platform::Auto {
             // Read once, sniff platform, parse with the right parser.
-            let content = match std::fs::read_to_string(&path) {
+            let content = match read_text_file_capped(&path) {
                 Ok(c) => c,
                 Err(err) => match &tagged_path {
                     ResolvedPath::Discovered(_) => {
@@ -3634,8 +3628,7 @@ fn cmd_map(
                         continue;
                     }
                     ResolvedPath::Explicit(_) => {
-                        return Err(anyhow::Error::new(err)
-                            .context(format!("Failed to read {}", path.display())));
+                        return Err(err.context(format!("Failed to read {}", path.display())));
                     }
                 },
             };
@@ -3830,7 +3823,7 @@ fn cmd_graph(
     for tagged_path in tagged_paths {
         let path = tagged_path.path().clone();
         let graph = if platform == Platform::Auto {
-            let content = match std::fs::read_to_string(&path) {
+            let content = match read_text_file_capped(&path) {
                 Ok(c) => c,
                 Err(err) => match &tagged_path {
                     ResolvedPath::Discovered(_) => {
@@ -3838,8 +3831,7 @@ fn cmd_graph(
                         continue;
                     }
                     ResolvedPath::Explicit(_) => {
-                        return Err(anyhow::Error::new(err)
-                            .context(format!("Failed to read {}", path.display())));
+                        return Err(err.context(format!("Failed to read {}", path.display())));
                     }
                 },
             };
@@ -4155,7 +4147,7 @@ fn cmd_invariants_list(invariants_dir: Option<PathBuf>) -> Result<()> {
             .collect();
         paths.sort();
         for path in paths {
-            let content = std::fs::read_to_string(&path)
+            let content = read_text_file_capped(&path)
                 .with_context(|| format!("Failed to read {}", path.display()))?;
             // Use the multi-doc parser so bundle files (multiple `---`-separated
             // invariants in one file) list every invariant, matching the engine's
@@ -4375,7 +4367,7 @@ fn cmd_suppressions_add(opts: SuppressionsAddOpts) -> Result<()> {
     if target.exists() {
         // Append to the existing `suppressions:` list. We do a simple text
         // append so operator-authored comments survive.
-        let existing = std::fs::read_to_string(&target)
+        let existing = read_text_file_capped(&target)
             .with_context(|| format!("failed to read {}", target.display()))?;
         let mut next = existing;
         if !next.ends_with('\n') {
@@ -4658,6 +4650,42 @@ fn normalise_line_endings(s: String) -> String {
     }
 }
 
+fn read_text_file_capped(path: &Path) -> Result<String> {
+    let metadata = std::fs::metadata(path)
+        .with_context(|| format!("Failed to read metadata for {}", path.display()))?;
+    if metadata.len() > MAX_INPUT_BYTES {
+        anyhow::bail!(
+            "input file {} exceeds {} byte limit ({} bytes)",
+            path.display(),
+            MAX_INPUT_BYTES,
+            metadata.len()
+        );
+    }
+    let content = std::fs::read_to_string(path)
+        .with_context(|| format!("Failed to read {}", path.display()))?;
+    if content.len() as u64 > MAX_INPUT_BYTES {
+        anyhow::bail!(
+            "input file {} exceeds {} byte limit ({} bytes)",
+            path.display(),
+            MAX_INPUT_BYTES,
+            content.len()
+        );
+    }
+    Ok(content)
+}
+
+fn read_stdin_capped() -> Result<String> {
+    let mut content = String::new();
+    let mut stdin = std::io::stdin().take(MAX_INPUT_BYTES + 1);
+    stdin
+        .read_to_string(&mut content)
+        .with_context(|| "Failed to read from stdin")?;
+    if content.len() as u64 > MAX_INPUT_BYTES {
+        anyhow::bail!("stdin exceeds {MAX_INPUT_BYTES} byte limit");
+    }
+    Ok(content)
+}
+
 fn parse_content(
     parser: &dyn taudit_core::ports::PipelineParser,
     content: String,
@@ -4681,9 +4709,9 @@ fn parse_content(
 
 fn parse_file(
     parser: &dyn taudit_core::ports::PipelineParser,
-    path: &PathBuf,
+    path: &Path,
 ) -> Result<taudit_core::graph::AuthorityGraph> {
-    let content = std::fs::read_to_string(path)
+    let content = read_text_file_capped(path)
         .with_context(|| format!("Failed to read {}\n{PATH_NOT_FOUND}", path.display()))?;
     parse_content(parser, content, path.display().to_string())
 }
@@ -4711,10 +4739,8 @@ fn resolve_paths_tagged(paths: &[PathBuf]) -> Result<Vec<ResolvedPath>> {
             result.push(ResolvedPath::Explicit(path.clone()));
         } else if path.is_dir() {
             for entry in walkdir(path)? {
-                if let Some(ext) = entry.extension() {
-                    if ext == "yml" || ext == "yaml" {
-                        result.push(ResolvedPath::Discovered(entry));
-                    }
+                if is_yaml_path(&entry) {
+                    result.push(ResolvedPath::Discovered(entry));
                 }
             }
         } else if path.is_file() {
@@ -4740,10 +4766,8 @@ fn resolve_paths(paths: &[PathBuf]) -> Result<Vec<PathBuf>> {
             result.push(path.clone());
         } else if path.is_dir() {
             for entry in walkdir(path)? {
-                if let Some(ext) = entry.extension() {
-                    if ext == "yml" || ext == "yaml" {
-                        result.push(entry);
-                    }
+                if is_yaml_path(&entry) {
+                    result.push(entry);
                 }
             }
         } else if path.is_file() {
@@ -4756,20 +4780,47 @@ fn resolve_paths(paths: &[PathBuf]) -> Result<Vec<PathBuf>> {
     Ok(result)
 }
 
-/// Simple recursive directory walker (no extra deps).
+fn is_yaml_path(path: &Path) -> bool {
+    matches!(
+        path.extension().and_then(|e| e.to_str()),
+        Some(ext) if ext.eq_ignore_ascii_case("yml") || ext.eq_ignore_ascii_case("yaml")
+    )
+}
+
+/// Recursive directory walker that never follows symlinks.
 fn walkdir(dir: &PathBuf) -> Result<Vec<PathBuf>> {
     let mut files = Vec::new();
-    for entry in std::fs::read_dir(dir)
-        .with_context(|| format!("Failed to read directory {}", dir.display()))?
-    {
-        let entry = entry?;
-        let path = entry.path();
-        if path.is_dir() {
-            files.extend(walkdir(&path)?);
-        } else {
-            files.push(path);
+    let mut stack = vec![dir.clone()];
+    let mut visited_dirs = HashSet::new();
+    if let Ok(root) = std::fs::canonicalize(dir) {
+        visited_dirs.insert(root);
+    }
+
+    while let Some(current) = stack.pop() {
+        let mut entries: Vec<_> = std::fs::read_dir(&current)
+            .with_context(|| format!("Failed to read directory {}", current.display()))?
+            .collect::<Result<Vec<_>, _>>()?;
+        entries.sort_by_key(|e| e.path());
+
+        for entry in entries {
+            let path = entry.path();
+            let meta = std::fs::symlink_metadata(&path)
+                .with_context(|| format!("Failed to read metadata {}", path.display()))?;
+            if meta.file_type().is_symlink() {
+                continue;
+            }
+            if meta.is_dir() {
+                let canonical = std::fs::canonicalize(&path)
+                    .with_context(|| format!("Failed to resolve directory {}", path.display()))?;
+                if visited_dirs.insert(canonical) {
+                    stack.push(path);
+                }
+            } else if meta.is_file() {
+                files.push(path);
+            }
         }
     }
+    files.sort();
     Ok(files)
 }
 
@@ -4916,7 +4967,7 @@ fn cmd_baseline_init(
 
     for tagged in &resolved {
         let path = tagged.path();
-        let content = match std::fs::read_to_string(path) {
+        let content = match read_text_file_capped(path) {
             Ok(c) => normalise_line_endings(c),
             Err(err) => match tagged {
                 ResolvedPath::Discovered(_) => {
@@ -4925,8 +4976,7 @@ fn cmd_baseline_init(
                     continue;
                 }
                 ResolvedPath::Explicit(_) => {
-                    return Err(anyhow::Error::new(err)
-                        .context(format!("Failed to read {}", path.display())));
+                    return Err(err.context(format!("Failed to read {}", path.display())));
                 }
             },
         };
@@ -5000,7 +5050,7 @@ fn cmd_baseline_accept(
     root: Option<PathBuf>,
 ) -> Result<()> {
     let root = baseline_root(root)?;
-    let content = std::fs::read_to_string(&pipeline)
+    let content = read_text_file_capped(&pipeline)
         .with_context(|| format!("Failed to read pipeline {}", pipeline.display()))?;
     let hash = taudit_core::baselines::compute_pipeline_hash(&content);
     let target = taudit_core::baselines::baseline_path_for(&root, &hash);
@@ -5051,7 +5101,7 @@ fn cmd_baseline_diff(
 
     for tagged in &resolved {
         let path = tagged.path();
-        let content = match std::fs::read_to_string(path) {
+        let content = match read_text_file_capped(path) {
             Ok(c) => c,
             Err(err) => match tagged {
                 ResolvedPath::Discovered(_) => {
@@ -5059,8 +5109,7 @@ fn cmd_baseline_diff(
                     continue;
                 }
                 ResolvedPath::Explicit(_) => {
-                    return Err(anyhow::Error::new(err)
-                        .context(format!("Failed to read {}", path.display())));
+                    return Err(err.context(format!("Failed to read {}", path.display())));
                 }
             },
         };
