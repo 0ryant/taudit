@@ -209,6 +209,12 @@ impl PipelineParser for AdoParser {
                     &mut has_variable_groups,
                 );
 
+                let stage_condition = non_empty_condition(&stage.condition);
+                if let Some(c) = stage_condition {
+                    mark_condition_partial(&mut graph, "stage", &stage_name, c);
+                }
+                let stage_depends_on = stage.depends_on.as_ref().map(|d| d.as_csv());
+
                 for job in &stage.jobs {
                     let job_name = job.effective_name();
                     let job_secret_ids = process_variables(
@@ -233,6 +239,22 @@ impl PipelineParser for AdoParser {
 
                     let steps_start = graph.nodes.len();
 
+                    let job_condition = non_empty_condition(&job.condition);
+                    if let Some(c) = job_condition {
+                        mark_condition_partial(&mut graph, "job", &job_name, c);
+                    }
+                    // Job's `dependsOn:` overrides any stage-level value when both
+                    // are present (job-level wins for the job's own ordering); fall
+                    // back to the stage-level value otherwise so the chain still
+                    // surfaces on the steps.
+                    let job_depends_on = job
+                        .depends_on
+                        .as_ref()
+                        .map(|d| d.as_csv())
+                        .or_else(|| stage_depends_on.clone());
+
+                    let outer_condition = join_conditions(stage_condition, job_condition);
+
                     let job_steps = job.all_steps();
                     process_steps(
                         &job_steps,
@@ -241,6 +263,8 @@ impl PipelineParser for AdoParser {
                         &all_secrets,
                         &plain_vars,
                         has_variable_groups,
+                        outer_condition.as_deref(),
+                        job_depends_on.as_deref(),
                         &mut graph,
                         &mut secret_ids,
                     );
@@ -283,6 +307,12 @@ impl PipelineParser for AdoParser {
 
                 let steps_start = graph.nodes.len();
 
+                let job_condition = non_empty_condition(&job.condition);
+                if let Some(c) = job_condition {
+                    mark_condition_partial(&mut graph, "job", &job_name, c);
+                }
+                let job_depends_on = job.depends_on.as_ref().map(|d| d.as_csv());
+
                 let job_steps = job.all_steps();
                 process_steps(
                     &job_steps,
@@ -291,6 +321,8 @@ impl PipelineParser for AdoParser {
                     &all_secrets,
                     &plain_vars,
                     has_variable_groups,
+                    job_condition,
+                    job_depends_on.as_deref(),
                     &mut graph,
                     &mut secret_ids,
                 );
@@ -311,6 +343,8 @@ impl PipelineParser for AdoParser {
                 &pipeline_secret_ids,
                 &plain_vars,
                 has_variable_groups,
+                None,
+                None,
                 &mut graph,
                 &mut secret_ids,
             );
@@ -340,6 +374,49 @@ impl PipelineParser for AdoParser {
         graph.stamp_edge_authority_summaries();
         Ok(graph)
     }
+}
+
+/// Returns `Some(trimmed)` when an ADO `condition:` value is present and
+/// carries non-whitespace content. Empty strings and pure-whitespace values
+/// (which ADO treats as "no condition", same as omitting the key) yield
+/// `None` so the parser does not mark a Partial-Expression gap for noise.
+fn non_empty_condition(c: &Option<String>) -> Option<&str> {
+    let s = c.as_deref()?.trim();
+    if s.is_empty() {
+        None
+    } else {
+        Some(s)
+    }
+}
+
+/// Join the optional outer condition chain (already AND-joined for stage and
+/// job) with this scope's condition, producing the final ` AND `-joined chain
+/// to stamp on Step nodes via `META_CONDITION`. Either side may be absent.
+fn join_conditions(outer: Option<&str>, inner: Option<&str>) -> Option<String> {
+    match (outer, inner) {
+        (None, None) => None,
+        (Some(o), None) => Some(o.to_string()),
+        (None, Some(i)) => Some(i.to_string()),
+        (Some(o), Some(i)) => Some(format!("{o} AND {i}")),
+    }
+}
+
+/// Mark the graph Partial with `GapKind::Expression` and a reason that names
+/// the scope kind ("stage" / "job" / "step"), the entity's display name, and
+/// the literal condition text — enough for an operator to grep findings
+/// against `condition:` clauses in the source pipeline.
+fn mark_condition_partial(
+    graph: &mut AuthorityGraph,
+    scope_kind: &str,
+    name: &str,
+    condition: &str,
+) {
+    graph.mark_partial(
+        GapKind::Expression,
+        format!(
+            "ADO {scope_kind} '{name}' condition: '{condition}' — runtime evaluation not modelled"
+        ),
+    );
 }
 
 /// Process an ADO `pool:` block. ADO pools come in two shapes:
@@ -654,6 +731,17 @@ fn process_variables(
 }
 
 /// Process a list of ADO steps, adding nodes and edges to the graph.
+///
+/// `outer_condition` is the AND-joined chain of stage- and job-level
+/// `condition:` expressions that gate this step's containing job at runtime.
+/// When present, it (combined with any per-step `condition:`) is stamped onto
+/// every emitted Step node via `META_CONDITION` so downstream rules can see
+/// that the step is conditionally reachable.
+///
+/// `outer_depends_on` is the comma-joined `dependsOn:` predecessor list
+/// inherited from the job (or stage). Stamped onto Step nodes via
+/// `META_DEPENDS_ON` only when non-default (the parser does not synthesise
+/// the implicit "depends on previous job/stage" link).
 #[allow(clippy::too_many_arguments)]
 fn process_steps(
     steps: &[AdoStep],
@@ -662,6 +750,8 @@ fn process_steps(
     inherited_secrets: &[NodeId],
     plain_vars: &HashSet<String>,
     has_variable_groups: bool,
+    outer_condition: Option<&str>,
+    outer_depends_on: Option<&str>,
     graph: &mut AuthorityGraph,
     cache: &mut HashMap<String, NodeId>,
 ) {
@@ -680,6 +770,25 @@ fn process_steps(
 
         // Determine step kind and trust zone
         let (step_name, trust_zone, mut inline_script) = classify_step(step, job_name, idx);
+
+        // Step-level condition: mark Partial-Expression and join with the
+        // outer (stage + job) chain so the step's META_CONDITION reflects the
+        // full ` AND `-joined gate it actually sits behind at runtime.
+        let step_condition = non_empty_condition(&step.condition);
+        if let Some(c) = step_condition {
+            mark_condition_partial(graph, "step", &step_name, c);
+        }
+        let effective_condition = join_conditions(outer_condition, step_condition);
+
+        // Step-level `dependsOn:` overrides the inherited (job-level) value
+        // when present. Default behaviour (no key) inherits from the job —
+        // and at the job level we already only stamped non-default values,
+        // so absence at both layers means we stamp nothing.
+        let effective_depends_on = step
+            .depends_on
+            .as_ref()
+            .map(|d| d.as_csv())
+            .or_else(|| outer_depends_on.map(|s| s.to_string()));
 
         // For task steps (where classify_step returns None), recover an inline
         // script body from `inputs.inlineScript` / `inputs.script` — used by
@@ -711,6 +820,21 @@ fn process_steps(
             // command text the agent will run.
             if let Some(ref body) = inline_script {
                 node.metadata.insert(META_SCRIPT_BODY.into(), body.clone());
+            }
+            // Stamp the AND-joined chain of stage/job/step `condition:`
+            // expressions that gate this step at runtime. Consumed by
+            // `apply_compensating_controls` to downgrade severity on
+            // findings whose firing step is gated behind a conditional.
+            if let Some(ref c) = effective_condition {
+                node.metadata.insert(META_CONDITION.into(), c.clone());
+            }
+            // Stamp the comma-joined non-default `dependsOn:` predecessor
+            // list. No consumer rule yet — parser-side hook for future
+            // cross-job taint analysis.
+            if let Some(ref d) = effective_depends_on {
+                if !d.is_empty() {
+                    node.metadata.insert(META_DEPENDS_ON.into(), d.clone());
+                }
             }
         }
 
@@ -1472,6 +1596,33 @@ pub struct AdoParameter {
     pub values: Option<Vec<serde_yaml::Value>>,
 }
 
+/// ADO `dependsOn:` accepts two YAML shapes — a single string
+/// (`dependsOn: my_job`) or a sequence of strings
+/// (`dependsOn: [a, b, c]`). The untagged enum normalises both at
+/// deserialization time so callers can iterate uniformly.
+#[derive(Debug, Deserialize, Clone)]
+#[serde(untagged)]
+pub enum DependsOn {
+    Single(String),
+    Multiple(Vec<String>),
+}
+
+impl DependsOn {
+    /// Comma-joined predecessor list suitable for stamping into
+    /// `META_DEPENDS_ON` on a Step node. Empty entries are dropped.
+    pub fn as_csv(&self) -> String {
+        match self {
+            DependsOn::Single(s) => s.trim().to_string(),
+            DependsOn::Multiple(v) => v
+                .iter()
+                .map(|s| s.trim())
+                .filter(|s| !s.is_empty())
+                .collect::<Vec<_>>()
+                .join(","),
+        }
+    }
+}
+
 #[derive(Debug, Deserialize)]
 pub struct AdoStage {
     /// Stage identifier. Absent when the stage entry is a template reference.
@@ -1484,6 +1635,17 @@ pub struct AdoStage {
     pub variables: Option<AdoVariables>,
     #[serde(default)]
     pub jobs: Vec<AdoJob>,
+    /// Stage-level runtime gate. ADO evaluates this expression at queue time;
+    /// when false, every job (and therefore every step) inside the stage is
+    /// skipped. The parser cannot evaluate the expression statically, so its
+    /// presence is recorded as a Partial-Expression gap and its text is stamped
+    /// onto child Step nodes via `META_CONDITION`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub condition: Option<String>,
+    /// Stage-level explicit `dependsOn:`. Default behaviour is "depends on the
+    /// previous stage" — only the explicit form is captured.
+    #[serde(rename = "dependsOn", default, skip_serializing_if = "Option::is_none")]
+    pub depends_on: Option<DependsOn>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -1525,6 +1687,16 @@ pub struct AdoJob {
     /// alone; the binding is the strongest signal available at parse time.)
     #[serde(default)]
     pub environment: Option<serde_yaml::Value>,
+    /// Job-level runtime gate. Evaluated at job-queue time; controls whether
+    /// the job's steps run. Cannot be statically evaluated — recorded as a
+    /// Partial-Expression gap and stamped onto the job's Step nodes via
+    /// `META_CONDITION` (joined with any stage-level condition).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub condition: Option<String>,
+    /// Job-level explicit `dependsOn:`. Default behaviour is "depends on the
+    /// previous job" — only the explicit form is captured.
+    #[serde(rename = "dependsOn", default, skip_serializing_if = "Option::is_none")]
+    pub depends_on: Option<DependsOn>,
 }
 
 impl AdoJob {
@@ -1690,6 +1862,17 @@ pub struct AdoStep {
     /// When true on a checkout step, writes credentials to .git/config for subsequent steps.
     #[serde(rename = "persistCredentials", default)]
     pub persist_credentials: Option<bool>,
+    /// Step-level runtime gate. Evaluated by the agent before it dispatches
+    /// the step; when false the step is skipped (status: Skipped). Cannot be
+    /// statically evaluated — recorded as a Partial-Expression gap and stamped
+    /// onto the Step node via `META_CONDITION`, joined with any
+    /// stage/job-level conditions stacked above.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub condition: Option<String>,
+    /// Step-level explicit `dependsOn:`. Rare on individual steps (more common
+    /// at job/stage level) but accepted by ADO; captured for symmetry.
+    #[serde(rename = "dependsOn", default, skip_serializing_if = "Option::is_none")]
+    pub depends_on: Option<DependsOn>,
 }
 
 /// ADO `variables:` block. Can be a sequence (list of group/name-value entries)
@@ -3093,5 +3276,224 @@ steps:
                  — ADO parser HashMap iteration is non-deterministic"
             );
         }
+    }
+
+    // ── condition: / dependsOn: modelling (RC blocker A) ─────────────────────
+    //
+    // The ADO parser previously ignored stage / job / step `condition:` and
+    // `dependsOn:` keys entirely, which made `apply_compensating_controls`
+    // unable to credit conditional runtime gates and caused
+    // `trigger_context_mismatch`-class rules to fire at full severity on
+    // jobs the runtime would never execute on a PR build (deep audit
+    // 02-ado-parser.md, finding 10).
+
+    #[test]
+    fn step_condition_marks_partial_with_expression_gap() {
+        let yaml = r#"
+steps:
+  - script: deploy.sh
+    displayName: Deploy
+    condition: eq(variables['Build.SourceBranch'], 'refs/heads/main')
+"#;
+        let graph = parse(yaml);
+        assert_eq!(graph.completeness, AuthorityCompleteness::Partial);
+        assert!(
+            graph.completeness_gap_kinds.contains(&GapKind::Expression),
+            "step condition must produce an Expression gap, got: {:?}",
+            graph.completeness_gap_kinds
+        );
+        // Reason text must cite the conditional so an operator can grep
+        // findings against the source pipeline's `condition:` clauses.
+        assert!(
+            graph.completeness_gaps.iter().any(|g| g.contains("step")
+                && g.contains("Deploy")
+                && g.contains("eq(variables['Build.SourceBranch']")),
+            "gap reason must name scope, step, and condition: {:?}",
+            graph.completeness_gaps
+        );
+    }
+
+    #[test]
+    fn job_condition_propagates_to_step_metadata() {
+        let yaml = r#"
+jobs:
+  - job: DeployProd
+    condition: eq(variables['Build.SourceBranch'], 'refs/heads/main')
+    steps:
+      - script: deploy.sh
+        displayName: Run deploy
+"#;
+        let graph = parse(yaml);
+        let step = graph
+            .nodes_of_kind(NodeKind::Step)
+            .find(|n| n.name == "Run deploy")
+            .expect("step node must exist");
+        // No step-level condition was declared, so META_CONDITION carries
+        // ONLY the job-level expression — verbatim, no ` AND ` joiner.
+        assert_eq!(
+            step.metadata.get(META_CONDITION),
+            Some(&"eq(variables['Build.SourceBranch'], 'refs/heads/main')".to_string()),
+            "job-level condition must propagate to step META_CONDITION"
+        );
+        // Job-level condition also marks the graph Partial-Expression so
+        // downstream consumers know the runtime gate is opaque.
+        assert!(graph.completeness_gap_kinds.contains(&GapKind::Expression));
+    }
+
+    #[test]
+    fn stacked_conditions_join_with_and() {
+        let yaml = r#"
+stages:
+  - stage: Deploy
+    condition: succeeded()
+    jobs:
+      - job: Prod
+        condition: eq(variables['env'], 'prod')
+        steps:
+          - script: deploy.sh
+            displayName: Deploy step
+            condition: ne(variables['Build.Reason'], 'PullRequest')
+"#;
+        let graph = parse(yaml);
+        let step = graph
+            .nodes_of_kind(NodeKind::Step)
+            .find(|n| n.name == "Deploy step")
+            .expect("step node must exist");
+        let chain = step
+            .metadata
+            .get(META_CONDITION)
+            .expect("step must carry META_CONDITION");
+        // Stage → Job → Step joined with ` AND ` in declaration order.
+        assert_eq!(
+            chain,
+            "succeeded() AND eq(variables['env'], 'prod') AND ne(variables['Build.Reason'], 'PullRequest')",
+            "stacked conditions must AND-join in stage→job→step order"
+        );
+        // Each scope's condition contributed a separate gap reason.
+        let expression_gap_count = graph
+            .completeness_gap_kinds
+            .iter()
+            .filter(|k| **k == GapKind::Expression)
+            .count();
+        assert!(
+            expression_gap_count >= 3,
+            "stage + job + step conditions must each mark Partial-Expression, got {expression_gap_count}"
+        );
+    }
+
+    #[test]
+    fn depends_on_string_form_parses() {
+        let yaml = r#"
+jobs:
+  - job: Build
+    steps:
+      - script: build.sh
+  - job: Deploy
+    dependsOn: Build
+    steps:
+      - script: deploy.sh
+        displayName: Deploy
+"#;
+        let graph = parse(yaml);
+        let step = graph
+            .nodes_of_kind(NodeKind::Step)
+            .find(|n| n.name == "Deploy")
+            .expect("Deploy step must exist");
+        assert_eq!(
+            step.metadata.get(META_DEPENDS_ON),
+            Some(&"Build".to_string()),
+            "single-string dependsOn must stamp the predecessor name verbatim"
+        );
+    }
+
+    #[test]
+    fn depends_on_sequence_form_parses() {
+        let yaml = r#"
+jobs:
+  - job: A
+    steps: [{ script: a.sh }]
+  - job: B
+    steps: [{ script: b.sh }]
+  - job: C
+    steps: [{ script: c.sh }]
+  - job: Final
+    dependsOn:
+      - A
+      - B
+      - C
+    steps:
+      - script: final.sh
+        displayName: Final step
+"#;
+        let graph = parse(yaml);
+        let step = graph
+            .nodes_of_kind(NodeKind::Step)
+            .find(|n| n.name == "Final step")
+            .expect("Final step must exist");
+        assert_eq!(
+            step.metadata.get(META_DEPENDS_ON),
+            Some(&"A,B,C".to_string()),
+            "sequence-form dependsOn must comma-join predecessors in declaration order"
+        );
+    }
+
+    #[test]
+    fn conditional_step_finding_is_downgraded_via_compensating_control() {
+        // Untrusted task step (TrustZone::Untrusted) with access to a
+        // pipeline secret would normally fire `untrusted_with_authority`
+        // at Critical. With a `condition:` gate present on the job, the
+        // Suppression-5 ADO conditional-gate CC must downgrade to High,
+        // record the original severity, and credit the gate as a CC.
+        let yaml = r#"
+variables:
+  - name: DEPLOY_KEY
+    value: $(MySecret)
+    isSecret: true
+jobs:
+  - job: ProdDeploy
+    condition: eq(variables['Build.SourceBranch'], 'refs/heads/main')
+    steps:
+      - task: AzureCLI@2
+        displayName: Deploy to prod
+        inputs:
+          azureSubscription: ProdConnection
+          scriptType: bash
+          inlineScript: |
+            echo "$(DEPLOY_KEY)" > /tmp/key
+            az login --service-principal -u $SP -p $(DEPLOY_KEY)
+"#;
+        let graph = parse(yaml);
+        let mut findings =
+            taudit_core::rules::run_all_rules(&graph, taudit_core::propagation::DEFAULT_MAX_HOPS);
+        // Find the Critical finding the rule would have emitted absent the
+        // compensating-control pass — note `run_all_rules` already applies
+        // the CC pass, so post-pass severity is what we read here.
+        let f = findings
+            .iter_mut()
+            .find(|f| {
+                f.category == taudit_core::finding::FindingCategory::UntrustedWithAuthority
+                    && f.message.contains("DEPLOY_KEY")
+            })
+            .expect(
+                "untrusted_with_authority must fire on the AzureCLI@2 step accessing DEPLOY_KEY",
+            );
+        assert_eq!(
+            f.severity,
+            taudit_core::finding::Severity::High,
+            "Critical must be downgraded one tier to High by the ADO conditional-gate CC"
+        );
+        assert_eq!(
+            f.extras.original_severity,
+            Some(taudit_core::finding::Severity::Critical),
+            "original_severity must record Critical so the audit trail survives"
+        );
+        assert!(
+            f.extras
+                .compensating_controls
+                .iter()
+                .any(|c| c.starts_with("ADO conditional gate")),
+            "compensating_controls must include the ADO conditional-gate entry, got: {:?}",
+            f.extras.compensating_controls
+        );
     }
 }

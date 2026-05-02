@@ -4,18 +4,18 @@ use crate::finding::{
 use crate::graph::{
     is_docker_digest_pinned, is_pin_semantically_valid, AuthorityGraph, EdgeKind, IdentityScope,
     NodeId, NodeKind, TrustZone, META_ADD_SPN_TO_ENV, META_ATTESTS, META_CACHE_KEY,
-    META_CHECKOUT_REF, META_CHECKOUT_SELF, META_CLI_FLAG_EXPOSED, META_CONTAINER, META_DIGEST,
-    META_DISPATCH_INPUTS, META_DOTENV_FILE, META_DOWNLOADS_ARTIFACT, META_ENVIRONMENT_NAME,
-    META_ENVIRONMENT_URL, META_ENV_APPROVAL, META_ENV_GATE_WRITES_SECRET_VALUE, META_FORK_CHECK,
-    META_GITLAB_ALLOW_FAILURE, META_GITLAB_CACHE_KEY, META_GITLAB_CACHE_POLICY,
-    META_GITLAB_DIND_SERVICE, META_GITLAB_EXTENDS, META_GITLAB_INCLUDES, META_GITLAB_TRIGGER_KIND,
-    META_IDENTITY_SCOPE, META_IMPLICIT, META_INTERACTIVE_DEBUG, META_INTERPRETS_ARTIFACT,
-    META_JOB_NAME, META_JOB_OUTPUTS, META_NEEDS, META_NO_WORKFLOW_PERMISSIONS, META_OIDC,
-    META_OIDC_AUDIENCE, META_PERMISSIONS, META_PLATFORM, META_READS_ENV, META_REPOSITORIES,
-    META_RULES_PROTECTED_ONLY, META_SCRIPT_BODY, META_SECRETS_INHERIT, META_SELF_HOSTED,
-    META_SERVICE_CONNECTION, META_SERVICE_CONNECTION_NAME, META_SETVARIABLE_ADO,
-    META_TERRAFORM_AUTO_APPROVE, META_TRIGGER, META_TRIGGERS, META_VARIABLE_GROUP,
-    META_WORKSPACE_CLEAN, META_WRITES_ENV_GATE,
+    META_CHECKOUT_REF, META_CHECKOUT_SELF, META_CLI_FLAG_EXPOSED, META_CONDITION, META_CONTAINER,
+    META_DIGEST, META_DISPATCH_INPUTS, META_DOTENV_FILE, META_DOWNLOADS_ARTIFACT,
+    META_ENVIRONMENT_NAME, META_ENVIRONMENT_URL, META_ENV_APPROVAL,
+    META_ENV_GATE_WRITES_SECRET_VALUE, META_FORK_CHECK, META_GITLAB_ALLOW_FAILURE,
+    META_GITLAB_CACHE_KEY, META_GITLAB_CACHE_POLICY, META_GITLAB_DIND_SERVICE, META_GITLAB_EXTENDS,
+    META_GITLAB_INCLUDES, META_GITLAB_TRIGGER_KIND, META_IDENTITY_SCOPE, META_IMPLICIT,
+    META_INTERACTIVE_DEBUG, META_INTERPRETS_ARTIFACT, META_JOB_NAME, META_JOB_OUTPUTS, META_NEEDS,
+    META_NO_WORKFLOW_PERMISSIONS, META_OIDC, META_OIDC_AUDIENCE, META_PERMISSIONS, META_PLATFORM,
+    META_READS_ENV, META_REPOSITORIES, META_RULES_PROTECTED_ONLY, META_SCRIPT_BODY,
+    META_SECRETS_INHERIT, META_SELF_HOSTED, META_SERVICE_CONNECTION, META_SERVICE_CONNECTION_NAME,
+    META_SETVARIABLE_ADO, META_TERRAFORM_AUTO_APPROVE, META_TRIGGER, META_TRIGGERS,
+    META_VARIABLE_GROUP, META_WORKSPACE_CLEAN, META_WRITES_ENV_GATE,
 };
 use crate::propagation;
 
@@ -6703,6 +6703,22 @@ fn apply_compensating_controls(graph: &AuthorityGraph, findings: &mut [Finding])
         .map(|n| n.name.clone())
         .collect();
 
+    // Helper for Suppression 5 — fetch a META_CONDITION (` AND `-joined chain
+    // of stage / job / step `condition:` expressions) from the *firing step*
+    // of a finding (first node in nodes_involved). The ADO parser stamps this
+    // when any of stage/job/step carries a non-empty `condition:`. Returns
+    // `None` for findings whose firing node is not a Step or whose graph
+    // doesn't carry the metadata (e.g. GHA workflows — they have no
+    // `condition:` analogue, so this CC silently no-ops on those graphs).
+    let firing_step_condition = |finding: &Finding| -> Option<String> {
+        finding
+            .nodes_involved
+            .first()
+            .and_then(|id| graph.node(*id))
+            .filter(|n| n.kind == NodeKind::Step)
+            .and_then(|n| n.metadata.get(META_CONDITION).cloned())
+    };
+
     for finding in findings.iter_mut() {
         match finding.category {
             // ── Suppression 1: checkout_self_pr_exposure
@@ -6778,6 +6794,42 @@ fn apply_compensating_controls(graph: &AuthorityGraph, findings: &mut [Finding])
             // contributors can find the suppression-pass alongside the
             // others.
             FindingCategory::TerraformAutoApproveInProd => { /* see rule body */ }
+            // ── Suppression 5: ADO conditional gate downgrade
+            //
+            // ADO `condition:` on stage / job / step gates runtime execution
+            // (`condition: eq(variables['Build.SourceBranch'], 'refs/heads/main')`
+            // is the canonical "deploy only on main" pattern). The graph still
+            // emits authority edges to those steps as if they always run, so
+            // rules like `untrusted_with_authority` and `trigger_context_mismatch`
+            // would otherwise fire at full severity on jobs the runtime would
+            // never actually execute on a PR build.
+            //
+            // When the firing step carries `META_CONDITION` (stamped by the
+            // ADO parser whenever any of stage/job/step declared a non-empty
+            // `condition:`), credit the gate as a compensating control: the
+            // pre-existing `Finding::with_compensating_control` builder
+            // appends the control description, downgrades severity by one
+            // tier, and records the original severity for the audit trail.
+            // Same composition path other CC suppressions could share.
+            //
+            // Marcus's 40%-of-ADO-estate complaint: this is the suppression
+            // that closes the false-positive class flagged in the deep audit
+            // (Finding 10, file 02-ado-parser.md). Scoped here to
+            // `UntrustedWithAuthority` — the load-bearing Critical case
+            // where a conditionally-gated step would otherwise fire at full
+            // severity. `TriggerContextMismatch` is already credited by
+            // Suppression 2 (fork-check universal); stacking a second
+            // downgrade there is intentionally NOT done — the match is
+            // single-arm and the trigger-level mitigation belongs to
+            // Suppression 2's signal (fork-check) which has no ADO analogue
+            // today. Future work: extend Suppression 2 to also credit
+            // META_CONDITION on trigger findings.
+            FindingCategory::UntrustedWithAuthority => {
+                if let Some(condition) = firing_step_condition(finding) {
+                    let control = format!("ADO conditional gate ({condition})");
+                    *finding = finding.clone().with_compensating_control(control);
+                }
+            }
             _ => {}
         }
     }

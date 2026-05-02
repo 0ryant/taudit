@@ -258,6 +258,22 @@ pub const META_NEEDS: &str = "needs";
 /// next privileged pipeline run. Absence of this key on a self-hosted Image
 /// node is the signal for `shared_self_hosted_pool_no_isolation`.
 pub const META_WORKSPACE_CLEAN: &str = "workspace_clean";
+/// Step-level metadata: the AND-joined chain of `condition:` expressions that
+/// gate this step's runtime execution (stage condition, then job condition,
+/// then step condition, joined with ` AND `). Stamped by parsers that surface
+/// runtime gating expressions — currently the ADO parser (stage / job / step
+/// `condition:`). Presence of this key means the step is NOT unconditionally
+/// reachable on every trigger; the runtime evaluator decides via expression
+/// (e.g. `eq(variables['Build.SourceBranch'], 'refs/heads/main')`). Consumed
+/// by `apply_compensating_controls` to downgrade severity on findings whose
+/// firing step is gated behind a conditional.
+pub const META_CONDITION: &str = "condition";
+/// Step-level metadata: comma-joined list of upstream stage / job names this
+/// step's container declared via a non-default `dependsOn:` value. Default ADO
+/// behaviour ("depends on the previous job/stage") is NOT stamped — only
+/// explicit overrides. Currently a parser-side hook for future cross-job
+/// taint rules; no consumer rule exists yet.
+pub const META_DEPENDS_ON: &str = "depends_on";
 
 // ── Shared helpers ─────────────────────────────────────
 
