@@ -5,16 +5,72 @@ use crate::graph::{AuthorityGraph, NodeKind, TrustZone};
 use crate::propagation::PropagationPath;
 use serde::de::{self, MapAccess, Visitor};
 use serde::{Deserialize, Deserializer};
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::fmt;
 use std::fs;
 use std::io;
 use std::path::{Path, PathBuf};
 
+/// Human-readable spelling of the `CustomRule.id` charset+length contract.
+/// Reused in every validation error so operators always see the same regex.
+const RULE_ID_REGEX: &str = "^[A-Za-z_][A-Za-z0-9_-]{0,63}$";
+
+/// Charset + length contract for `CustomRule.id`. Snake_case + kebab-case
+/// friendly, 64-char cap. Rejects empty, leading digits, brackets,
+/// whitespace, and anything that would corrupt the `[id] name: …` finding
+/// message contract or the SARIF/JSON `extract_custom_rule_id` heuristic.
+fn validate_rule_id(id: &str) -> Result<(), String> {
+    if id.is_empty() {
+        return Err(format!(
+            "rule id must be non-empty (allowed: {RULE_ID_REGEX})"
+        ));
+    }
+    if id.len() > 64 {
+        return Err(format!(
+            "rule id '{id}' exceeds 64 characters (allowed: {RULE_ID_REGEX})"
+        ));
+    }
+    let mut chars = id.chars();
+    let first = chars.next().expect("id non-empty checked above");
+    if !(first.is_ascii_alphabetic() || first == '_') {
+        return Err(format!(
+            "rule id '{id}' must start with an ASCII letter or underscore (allowed: {RULE_ID_REGEX})"
+        ));
+    }
+    for c in chars {
+        if !(c.is_ascii_alphanumeric() || c == '_' || c == '-') {
+            return Err(format!(
+                "rule id '{id}' contains invalid character '{c}' (allowed: ASCII letters, digits, underscore, hyphen — {RULE_ID_REGEX})"
+            ));
+        }
+    }
+    Ok(())
+}
+
+/// Serde shim: deserialise `CustomRule.id` as a `String`, then enforce the
+/// validation contract above. The error is surfaced via
+/// `serde::de::Error::custom` so it appears in `serde_yaml` parse errors with
+/// a path/line annotation pointing at the offending document — operators see
+/// exactly which YAML file's `id:` field is wrong.
+fn deserialize_validated_id<'de, D>(deserializer: D) -> Result<String, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    let raw = String::deserialize(deserializer)?;
+    validate_rule_id(&raw).map_err(de::Error::custom)?;
+    Ok(raw)
+}
+
 /// A user-defined rule loaded from YAML. Fires when source, sink, and path
 /// predicates all match a propagation path produced by the engine.
 #[derive(Debug, Clone, Deserialize)]
 pub struct CustomRule {
+    /// Stable identifier, embedded into every emitted finding's message and
+    /// extracted by SARIF / JSON sinks via `extract_custom_rule_id`. Validated
+    /// at deserialise time against `^[A-Za-z_][A-Za-z0-9_-]{0,63}$` so a
+    /// malicious or sloppy YAML cannot inject `]`/`[`/whitespace and corrupt
+    /// the message-encoding contract or empty out the rule attribution.
+    #[serde(deserialize_with = "deserialize_validated_id")]
     pub id: String,
     pub name: String,
     #[serde(default)]
@@ -308,6 +364,9 @@ pub fn load_rules_dir(dir: &Path) -> Result<Vec<CustomRule>, Vec<CustomRuleError
 /// Like [`load_rules_dir`] but lets the caller decide what to do with
 /// symlinks that escape the declared directory.
 ///
+/// - The loader walks `dir` **recursively** via a hand-rolled DFS, so
+///   operators can organise rules into subdirectories like
+///   `invariants/gha/`, `invariants/ado/` and have all of them load.
 /// - In-tree symlinks (canonicalized target lives under canonicalized `dir`)
 ///   are always followed; a stderr warning is emitted naming the link and
 ///   target so the user is never surprised.
@@ -317,6 +376,10 @@ pub fn load_rules_dir(dir: &Path) -> Result<Vec<CustomRule>, Vec<CustomRuleError
 ///   - Followed, with a louder stderr warning, when
 ///     `allow_external_symlinks` is `true` (caller opted in via
 ///     `--invariants-allow-external-symlinks`).
+/// - Files reached via multiple paths (e.g. `real.yml` and an `alias.yml ->
+///   ./real.yml` symlink in the same tree) are deduplicated by canonical
+///   path so the same rule never fires twice. A stderr warning is emitted
+///   when a duplicate is dropped.
 ///
 /// Why: the loader walks `--invariants-dir` recursively and previously
 /// followed every symlink without checking. A symlink under the directory
@@ -326,12 +389,6 @@ pub fn load_rules_dir_with_opts(
     dir: &Path,
     allow_external_symlinks: bool,
 ) -> Result<Vec<CustomRule>, Vec<CustomRuleError>> {
-    let mut entries: Vec<PathBuf> = Vec::new();
-    let read_dir = match fs::read_dir(dir) {
-        Ok(rd) => rd,
-        Err(err) => return Err(vec![CustomRuleError::FileRead(dir.to_path_buf(), err)]),
-    };
-
     // Canonicalize the directory once so we can compare every symlink target
     // against the same normalized prefix. If canonicalization fails (e.g. a
     // broken symlink in the path), fall back to the literal path — better to
@@ -339,20 +396,43 @@ pub fn load_rules_dir_with_opts(
     let canonical_dir = fs::canonicalize(dir).unwrap_or_else(|_| dir.to_path_buf());
 
     let mut errors: Vec<CustomRuleError> = Vec::new();
+    // Pairs of (literal_path, canonical_path) for YAML files to read.
+    // Literal path is stamped into `FindingSource::Custom.source_file` so
+    // operator-facing output retains the path as written; canonical path
+    // is the dedup key so symlink aliases collapse to a single rule load.
+    let mut files: Vec<(PathBuf, PathBuf)> = Vec::new();
+    let mut seen: HashSet<PathBuf> = HashSet::new();
+    // Visited directory canonical paths — guards against cycles introduced
+    // by directory symlinks looping back into an ancestor.
+    let mut visited_dirs: HashSet<PathBuf> = HashSet::new();
+    visited_dirs.insert(canonical_dir.clone());
 
-    for entry in read_dir.flatten() {
-        let path = entry.path();
+    let mut stack: Vec<PathBuf> = vec![dir.to_path_buf()];
 
-        // is_symlink uses symlink_metadata under the hood — does not follow.
-        let is_symlink = entry
-            .file_type()
-            .map(|ft| ft.is_symlink())
-            .unwrap_or_else(|_| path.is_symlink());
+    while let Some(current) = stack.pop() {
+        let read_dir = match fs::read_dir(&current) {
+            Ok(rd) => rd,
+            Err(err) => {
+                errors.push(CustomRuleError::FileRead(current, err));
+                continue;
+            }
+        };
 
-        if is_symlink {
-            // Resolve the symlink target. canonicalize() follows the chain.
-            // A broken symlink shows up as Err here — treat it like any other
-            // file-read error.
+        // The collected `files` vec is sorted before reading, so any
+        // intra-directory order is fine here — iterate the read_dir lazily.
+        for entry in read_dir.flatten() {
+            let path = entry.path();
+
+            // is_symlink uses symlink_metadata under the hood — does not
+            // follow. We need this BEFORE deciding whether to descend.
+            let is_symlink = entry
+                .file_type()
+                .map(|ft| ft.is_symlink())
+                .unwrap_or_else(|_| path.is_symlink());
+
+            // Resolve to a canonical target for symlinks; for regular paths
+            // the canonical path is the same as canonicalize on the literal.
+            // Either way we need the canonical for in-tree check + dedup.
             let canonical_target = match fs::canonicalize(&path) {
                 Ok(t) => t,
                 Err(err) => {
@@ -361,45 +441,79 @@ pub fn load_rules_dir_with_opts(
                 }
             };
 
-            let in_tree = canonical_target.starts_with(&canonical_dir);
-
-            if !in_tree {
-                if allow_external_symlinks {
+            // Apply the in-tree-symlink protection at every step of the
+            // recursion (lifted from the original shallow loader).
+            if is_symlink {
+                let in_tree = canonical_target.starts_with(&canonical_dir);
+                if !in_tree {
+                    if allow_external_symlinks {
+                        eprintln!(
+                            "WARNING: following external symlink {} → {} (allowed by --invariants-allow-external-symlinks)",
+                            path.display(),
+                            canonical_target.display()
+                        );
+                    } else {
+                        errors.push(CustomRuleError::SymlinkOutsideDir {
+                            link: path,
+                            target: canonical_target,
+                        });
+                        continue;
+                    }
+                } else {
                     eprintln!(
-                        "WARNING: following external symlink {} → {} (allowed by --invariants-allow-external-symlinks)",
+                        "WARNING: following symlink {} → {}",
                         path.display(),
                         canonical_target.display()
                     );
-                } else {
-                    errors.push(CustomRuleError::SymlinkOutsideDir {
-                        link: path,
-                        target: canonical_target,
-                    });
+                }
+            }
+
+            // Classify by the resolved target's metadata. `metadata()`
+            // follows symlinks, which is what we want here.
+            let meta = match fs::metadata(&path) {
+                Ok(m) => m,
+                Err(err) => {
+                    errors.push(CustomRuleError::FileRead(path.clone(), err));
                     continue;
                 }
-            } else {
-                eprintln!(
-                    "WARNING: following symlink {} → {}",
-                    path.display(),
-                    canonical_target.display()
-                );
-            }
-        }
+            };
 
-        // Use is_file (which follows symlinks) so the surviving symlinks-
-        // pointing-at-files behave the same as a regular file.
-        if !path.is_file() {
-            continue;
-        }
-        match path.extension().and_then(|e| e.to_str()) {
-            Some("yml") | Some("yaml") => entries.push(path),
-            _ => {}
+            if meta.is_dir() {
+                // Cycle protection: only descend into a directory whose
+                // canonical path we have not seen yet.
+                if visited_dirs.insert(canonical_target.clone()) {
+                    stack.push(path);
+                }
+                continue;
+            }
+
+            if !meta.is_file() {
+                continue;
+            }
+            match path.extension().and_then(|e| e.to_str()) {
+                Some("yml") | Some("yaml") => {}
+                _ => continue,
+            }
+
+            // Dedup: first sighting wins, so the literal path stamped into
+            // `source_file` is the one DFS reached first.
+            if !seen.insert(canonical_target.clone()) {
+                eprintln!(
+                    "WARNING: symlink {} resolved to the same file already loaded; skipping",
+                    path.display()
+                );
+                continue;
+            }
+            files.push((path, canonical_target));
         }
     }
-    entries.sort();
+
+    // Sort by literal path so rule order is deterministic regardless of
+    // filesystem readdir order or DFS traversal order.
+    files.sort_by(|a, b| a.0.cmp(&b.0));
 
     let mut rules = Vec::new();
-    for path in entries {
+    for (path, _canonical) in files {
         match fs::read_to_string(&path) {
             Ok(content) => match parse_rules_multi_doc_with_source(&content, Some(&path)) {
                 Ok(mut parsed) => rules.append(&mut parsed),
@@ -1732,14 +1846,19 @@ match:
         let link = tmp.join("alias.yml");
         symlink(&real, &link).unwrap();
 
-        // Default opts: in-tree symlinks are followed.
+        // Default opts: in-tree symlinks are followed BUT deduplicated by
+        // canonical path so an alias and its target collapse to a single
+        // rule load. This is the contract documented on
+        // `load_rules_dir_with_opts`: "Files reached via multiple paths …
+        // are deduplicated by canonical path so the same rule never fires
+        // twice." Pre-v1.1 behaviour double-loaded.
         let rules = load_rules_dir(&tmp).expect("in-tree symlink must be loaded");
-        // Two entries: the real file + the alias symlink (loaded twice).
         assert_eq!(
             rules.len(),
-            2,
-            "expected 2 rules (real + alias), got {rules:?}"
+            1,
+            "expected 1 rule (alias deduped against real target), got {rules:?}"
         );
+        assert_eq!(rules[0].id, "in_tree");
 
         let _ = fs::remove_dir_all(&tmp);
     }
@@ -1800,5 +1919,186 @@ match:
 
         let _ = fs::remove_dir_all(&tmp);
         let _ = fs::remove_dir_all(&outside_dir);
+    }
+
+    // ── F4: recursive directory walk ────────────────────────
+
+    #[test]
+    fn load_rules_dir_walks_subdirectories() {
+        // Operators organise rules into platform-specific subtrees like
+        // `invariants/gha/`, `invariants/ado/`. Pre-v1.1 the loader used a
+        // single `read_dir` and silently skipped every subdir. The recursive
+        // DFS must pick rules out of `<root>/sub/rule.yml`.
+        let tmp = std::env::temp_dir().join(format!(
+            "taudit-custom-rules-recursive-{}",
+            std::process::id()
+        ));
+        let sub = tmp.join("sub");
+        fs::create_dir_all(&sub).unwrap();
+
+        let nested = sub.join("rule.yml");
+        fs::write(
+            &nested,
+            "id: nested\nname: nested\nseverity: high\ncategory: authority_propagation\n",
+        )
+        .unwrap();
+
+        let rules = load_rules_dir(&tmp).expect("recursive walk must load nested rule");
+        assert_eq!(
+            rules.len(),
+            1,
+            "expected 1 rule from nested dir, got {rules:?}"
+        );
+        assert_eq!(rules[0].id, "nested");
+
+        let _ = fs::remove_dir_all(&tmp);
+    }
+
+    // ── F5: in-tree symlink dedup via canonical path ────────
+
+    #[test]
+    #[cfg(unix)]
+    fn load_rules_dir_dedupes_in_tree_symlink() {
+        use std::os::unix::fs::symlink;
+
+        let tmp = unique_tmp("dedup");
+        fs::create_dir_all(&tmp).unwrap();
+
+        let real = tmp.join("real.yml");
+        write_minimal_rule(&real, "dedup_target");
+        let alias = tmp.join("alias.yml");
+        symlink(&real, &alias).unwrap();
+
+        // The alias canonicalises to the same path as `real.yml`. Loader
+        // must collapse to ONE rule (and emit a warning to stderr — we
+        // don't capture stderr in unit tests, but we assert the visible
+        // contract of single-load).
+        let rules = load_rules_dir(&tmp).expect("alias dedup must succeed");
+        assert_eq!(rules.len(), 1, "expected 1 rule after dedup, got {rules:?}");
+        assert_eq!(rules[0].id, "dedup_target");
+
+        let _ = fs::remove_dir_all(&tmp);
+    }
+
+    // ── F6: id validation contract ──────────────────────────
+
+    #[test]
+    fn custom_rule_id_validation_rejects_empty() {
+        let yaml = r#"
+id: ""
+name: x
+severity: high
+category: authority_propagation
+"#;
+        let err = serde_yaml::from_str::<CustomRule>(yaml).expect_err("empty id must be rejected");
+        let msg = err.to_string();
+        assert!(
+            msg.contains("non-empty"),
+            "error must explain why empty fails: {msg}"
+        );
+    }
+
+    #[test]
+    fn custom_rule_id_validation_rejects_brackets() {
+        let yaml = r#"
+id: "foo] [bar"
+name: x
+severity: high
+category: authority_propagation
+"#;
+        let err =
+            serde_yaml::from_str::<CustomRule>(yaml).expect_err("bracket in id must be rejected");
+        let msg = err.to_string();
+        assert!(
+            msg.contains("foo] [bar") && msg.contains("invalid character"),
+            "error must name the offending id and the invalid character: {msg}"
+        );
+        // Specifically calls out a bracket character (could be ']' or '[' —
+        // the loop hits ']' first since it's at index 3 of `foo] [bar`).
+        assert!(
+            msg.contains("']'") || msg.contains("'['") || msg.contains("' '"),
+            "error should quote the first offending character: {msg}"
+        );
+    }
+
+    #[test]
+    fn custom_rule_id_validation_rejects_whitespace() {
+        let yaml = r#"
+id: "foo bar"
+name: x
+severity: high
+category: authority_propagation
+"#;
+        let err = serde_yaml::from_str::<CustomRule>(yaml)
+            .expect_err("whitespace in id must be rejected");
+        let msg = err.to_string();
+        assert!(
+            msg.contains("foo bar") && msg.contains("invalid character"),
+            "error must name the offending id and explain why: {msg}"
+        );
+    }
+
+    #[test]
+    fn custom_rule_id_validation_accepts_snake_case() {
+        let yaml = r#"
+id: my_rule
+name: snake-case rule
+severity: high
+category: authority_propagation
+"#;
+        let rule: CustomRule = serde_yaml::from_str(yaml).expect("snake_case id must be accepted");
+        assert_eq!(rule.id, "my_rule");
+    }
+
+    #[test]
+    fn custom_rule_id_validation_accepts_kebab_case() {
+        let yaml = r#"
+id: my-rule
+name: kebab-case rule
+severity: high
+category: authority_propagation
+"#;
+        let rule: CustomRule = serde_yaml::from_str(yaml).expect("kebab-case id must be accepted");
+        assert_eq!(rule.id, "my-rule");
+    }
+
+    #[test]
+    fn custom_rule_id_validation_rejects_64_chars_plus_one() {
+        let id = "a".repeat(65);
+        let yaml = format!("id: {id}\nname: x\nseverity: high\ncategory: authority_propagation\n");
+        let err =
+            serde_yaml::from_str::<CustomRule>(&yaml).expect_err("65-char id must be rejected");
+        let msg = err.to_string();
+        assert!(
+            msg.contains("64 characters"),
+            "error must cite the 64-char cap: {msg}"
+        );
+
+        // 64 chars exactly is fine.
+        let id_ok = "a".repeat(64);
+        let yaml_ok =
+            format!("id: {id_ok}\nname: x\nseverity: high\ncategory: authority_propagation\n");
+        let rule: CustomRule =
+            serde_yaml::from_str(&yaml_ok).expect("64-char id must be accepted (boundary case)");
+        assert_eq!(rule.id.len(), 64);
+    }
+
+    #[test]
+    fn custom_rule_id_validation_rejects_leading_digit() {
+        // Defensive — not in the explicit spec, but documents the
+        // first-character rule. Snake_case-friendly + matches the regex.
+        let yaml = r#"
+id: 1bad
+name: x
+severity: high
+category: authority_propagation
+"#;
+        let err = serde_yaml::from_str::<CustomRule>(yaml)
+            .expect_err("digit-leading id must be rejected");
+        let msg = err.to_string();
+        assert!(
+            msg.contains("must start"),
+            "error must explain the first-char rule: {msg}"
+        );
     }
 }
