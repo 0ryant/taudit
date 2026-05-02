@@ -18,6 +18,104 @@ _(none yet — populate this paragraph when adding entries that change finding b
 
 _(populate if any consumer-visible field, schema, or contract changes; remove subsection if none)_
 
+## v1.1.0-beta.3 — 2026-05-02 (prerelease)
+
+> **Prerelease.** Published to crates.io under semver pre-release identifier `1.1.0-beta.3`. Opt-in via `taudit = "=1.1.0-beta.3"` or `cargo install taudit --version 1.1.0-beta.3`. Stable consumers on v1.0.12 are unaffected per [ADR 0004](docs/adr/0004-prereleases-publish-to-crates-io.md).
+
+### Detection delta (read first)
+
+This is a substantial cut driven by a 10-agent comprehensive deep audit (`/tmp/taudit-deep-review/00-synthesis.md`). It closes 2 P0s and ~20 P1s, including a P1 security finding in the suppression contract.
+
+| Change | Direction | Affects |
+|--------|-----------|---------|
+| GHA secret extraction now scans only inside `${{ … }}` template spans (no longer matches literal `secrets.X` substrings in comments / shell paths) | **fewer findings** (FP↓) | Workflows where comments or shell paths contain `secrets.<token>` literals |
+| GHA `${{secrets.X}}` (no spaces) now recognised | **more findings** (FN↓) | Every workflow using the canonical terse form — previously **silently missed every secret edge** |
+| GHA concatenated multi-secret values now extract all secrets, not just first | **more findings** (FN↓) | Workflows using values like `"${{ secrets.A }}-${{ secrets.B }}"` |
+| GHA reusable-workflow `secrets:` map form now propagates HasAccessTo edges | **more findings** (FN↓) | Workflows calling reusable workflows with explicit `secrets: { K: ${{ secrets.X }} }` |
+| GitLab `$CI_COMMIT_REF_PROTECTED == "false"` no longer counted as protected-only | **more findings** (FN↓) | GitLab pipelines with negation-form deploy gates that previously silenced `gitlab_deploy_job_missing_protected_branch_only` |
+| Schema-validation contract: 4 schemas now enumerate all 63 `FindingCategory` variants (was 10–39); CI fails on Rust↔schema drift | **no detection delta** but **53 of 63 categories now schema-valid** | Any consumer with strict JSON-schema validation |
+| `pipeline_identity_material_hash` and `compute_fingerprint` now normalise path separators to `/` | **no detection delta** but **fingerprints stable across Windows ↔ Linux** | Cross-platform CI matrices |
+| **Fingerprint widened from 64 bits to 128 bits (16 hex → 32 hex)** | **breaking for fingerprint consumers** | All `.taudit-suppressions.yml` and per-finding baseline entries — see Migration notes |
+| 8 previously-empty `nodes_involved` rules now carry stable anchors | **no detection delta** but **per-rule findings no longer collide on fingerprint** | SIEM dedup pipelines on `unpinned_include_remote_or_branch_ref`, `template_extends_unpinned_branch`, `sensitive_value_in_job_output`, `no_workflow_level_permissions_block`, `pull_request_workflow_inconsistent_fork_check`, `template_repo_ref_is_feature_branch` |
+
+**Net FP/FN risk:** mixed but *strictly safer*. Fewer false positives on benign GHA workflows; fewer false negatives on the canonical terse-template form, multi-secret values, reusable-workflow callees, and GitLab negation-form deploy gates. **A real workflow scanned on v1.0.12 should produce a strict superset of true findings on v1.1.0-beta.3 — no genuine issue is now silently dropped.**
+
+### Fixed
+
+#### Closed P0 — schema↔Rust enum drift
+
+- **Category enum drift in 4 schemas** (`contracts/schemas/taudit-report.schema.json`, `contracts/schemas/taudit-cloudevent-finding-v1.schema.json`, `schemas/finding.v1.json`, plus the auto-generated `authority-invariant-v1.schema.json`) — they enumerated 10/39/63 of `FindingCategory`'s 63 variants. `additionalProperties: false` made findings emitted by 53 of 63 rules byte-valid but schema-invalid. Schema-validation tests were blind because every test fired `UnpinnedAction` or `AuthorityPropagation`. Extended `scripts/generate-authority-invariant-schema.py` to stamp all four schemas; the existing `--check` CI step now fails the build on any future drift. Property test `every_finding_category_variant_validates_against_report_schema` (and the parallel CloudEvents test) iterates all 63 variants. ([Agent 10](docs/adr/) Findings 2 + 3.)
+
+#### Closed P1 — GHA parser correctness (5 fixes)
+
+- **`run:` script extractor matched literal `secrets.X` substrings** outside `${{ … }}` template spans → phantom Secret nodes named `json`, `conf` from comments and shell paths. New `iter_secret_refs(s)` helper walks template spans only.
+- **`is_secret_reference` required exactly one space** → `${{secrets.X}}` (the canonical terse form, no spaces) silently missed every secret edge. The new helper is whitespace-tolerant.
+- **`extract_secret_name` found only the first `secrets.X`** per env/with value → concatenated multi-secret values lost every secret after the first. Iterator-based callers loop over every match.
+- **Reusable workflow `secrets:` map form silently dropped** — only the literal `inherit` string was inspected. Mapping form `secrets: { CHILD: ${{ secrets.PARENT }} }` now propagates `HasAccessTo` edges.
+- **Reusable-workflow synthetic step skipped workflow.env entirely** — workflow-level env IS in scope for the caller's evaluation of `secrets:` and `with:` (job.env is not). Now applied.
+
+#### Closed P1 — GHA HashMap iteration (2 fixes missed by v1.1.0-beta.1)
+
+- `META_JOB_OUTPUTS` writer iterated `job.outputs: HashMap` unsorted. Now sorted by key.
+- `Permissions::Map` `Display` impl iterated `HashMap` unsorted. Type changed to `BTreeMap<String, String>`.
+
+#### Closed P1 — GitLab parser correctness (1 + 5 P2)
+
+- **`$CI_COMMIT_REF_PROTECTED` substring match accepted the negation** (`== "false"`) → silenced `gitlab_deploy_job_missing_protected_branch_only` on the exact deploy-on-feature-branch jobs the rule was meant to catch. New `check_truthy_comparison` helper parses to operator level. Same fix class on `$CI_COMMIT_TAG` and the MR-trigger detector.
+- `id_tokens.aud` list form (multi-cloud broker) collapsed to `aud=unknown`; now stamps `META_OIDC_AUDIENCES` with the comma-joined list.
+- `is_credential_name` boundary-checked: `CERTAIN_FLAG`, `TOKENIZER_VERSION`, `UNCERTAIN`, `CERTIFICATE_PATH` no longer create phantom Secret nodes.
+- `needs.artifacts: false` now honoured (was ignored, so dotenv-flow rule reported flows GitLab won't actually create).
+- Determinism convention adopted: GitLab parser now sorts mapping iteration matching the established GHA + ADO `// determinism: sort by key` pattern.
+
+#### Closed P1 — Fingerprint contract holes
+
+- **Path-separator normalisation in fingerprint canonical input.** `compute_fingerprint` now normalises `\` → `/` in `graph.source.file` before hashing. Windows scan + Linux baseline now produce identical fingerprints for the same logical finding. Same fix in `Baseline::from_findings`'s `pipeline_path`.
+- **🔒 Fingerprint widened from 64 bits to 128 bits.** Closes a P1 security finding: birthday collision against a public `.taudit-suppressions.yml` was ~2³² trials = single-digit hours on a laptop. The 128-bit truncation moves the bound to 2⁶⁴, computationally infeasible. **Existing 16-hex baselines need re-baselining once.** Three golden fingerprints are pinned in `finding.rs` so any future algorithm change requires a deliberate update + CHANGELOG entry.
+- **DRY refactor:** `extract_custom_rule_id` and `category_rule_id` were duplicated in `finding.rs`, `baselines.rs`, and `taudit-report-sarif`. Local copies deleted; `finding::rule_id_for` is now the single source of truth. `category_rule_id` is an explicit `match` returning `&'static str` (no serde indirection — a future `#[serde(tag)]` change can no longer silently turn every rule_id into `"unknown"`). `extract_custom_rule_id` tightened to `^[a-z][a-z0-9_]*$` so emphasis phrases like `[high blast-radius]` no longer mis-attribute built-in findings.
+
+#### Closed P1 — `verify` exit code + CLI round-trip
+
+- **`verify` SARIF render error now preserves exit 1** when policy violations exist (was returning exit 2, clobbering the merge-gate signal). Documented in a comment: "policy violation outranks render error."
+- **`taudit emit-spec --platform gitlab`** round-trip fixed — `Platform::as_str()` now returns `"gitlab"` matching the clap value name (was `"gitlab-ci"` which clap rejected when the spec was replayed).
+- **`taudit completions zsh | head` no longer panics on SIGPIPE** — the single missed `SilenceBrokenPipe` site from the v1.0.5/v1.0.7 EPIPE hardening.
+
+#### Closed P1 — CloudEvents `tauditruleid` extension
+
+- CloudEvents previously emitted only `type` for rule shape; the `[id]` prefix in custom-rule messages was ignored. Now a `tauditruleid` extension attribute (lowercase, CloudEvents 1.0 §3.1) is populated from `rule_id_for(finding)`. **JSON, SARIF, and CloudEvents now agree on the rule id for every finding** — verified by the new `cross_sink_contract` integration test.
+
+#### Closed P1 — Custom-rule loader hardening
+
+- `load_rules_dir` now actually recursive (was documented "recursive" but used non-recursive `read_dir`). Subdirectory rules previously loaded as zero invariants with no diagnostic.
+- In-tree symlinks now deduplicated by canonical target (was loading the same rule twice — bug enshrined in tests; test rewritten).
+- Custom-rule `id` validated at deserialise time: `^[A-Za-z_][A-Za-z0-9_-]{0,63}$`. YAML with `id: "foo] [bar"` now errors with a clear message.
+
+#### Closed P1 — propagation summary `GapKind` taxonomy
+
+- `AuthorityPropagationSummaryDocument` now carries `completeness_gap_kinds` and a derived `worst_gap_kind: Option<GapKind>`. Schema bumped 1.0.0 → 1.1.0 (additive, non-breaking; const constraint loosened to `^1\.\d+\.\d+$` pattern). Severity ordering follows `GapKind::worst_gap_kind`'s existing impl: Opaque > Structural > Expression.
+
+### Changed
+
+- **Reserved categories sealed against custom YAML.** `EgressBlindspot` and `MissingAuditTrail` are `#[doc(hidden)]` and reserved for future runtime-enrichment detection. Custom YAML attempting to emit them now errors at deserialise time via `#[serde(skip_deserializing)]`. Built-in code that constructs these variants in Rust still serialises correctly.
+- **`taudit-core` API stability policy.** The cross-sink helpers (`compute_fingerprint`, `compute_finding_group_id`, `rule_id_for`, `downgrade_severity`) stay `pub` for inter-crate visibility but are now `#[doc(hidden)]` with a module-level docstring stating: "taudit-core is a workspace-internal library, NOT a stable public API. External consumers should consume the JSON / SARIF / CloudEvents output contracts." See ADR 0001 (graph as product) and ADR 0004. `cargo semver-checks check-release` is now a CI gate so even hidden-but-public symbols can't accidentally break between minor versions.
+- **Determinism guards extended.** `META_JOB_OUTPUTS` and `Permissions::Map` (GHA), plus all four mapping-iteration sites in the GitLab parser, now follow the explicit sort-by-key convention. New byte-determinism regression tests on SARIF, CloudEvents stable bits, and Terminal output (the JSON sink had this since v0.9.1; the other three were unguarded against the same HashMap-iteration class).
+- **Out-of-range `NodeId` in `nodes_involved`** now emits `<missing:N>` sentinel rather than silently eliding (could previously cause two distinct findings to collapse onto one fingerprint).
+
+### Added
+
+- **Cross-sink contract test** (`crates/taudit-cli/tests/cross_sink_contract.rs`) asserts JSON, SARIF, and CloudEvents emit byte-identical fingerprints AND rule ids for the same finding, including custom-rule cases. Pins the contract documented in `docs/finding-fingerprint.md`.
+- **Property test** iterating every `FindingCategory` variant against the published JSON Schema. Replaces the previous coverage gap where only `UnpinnedAction` / `AuthorityPropagation` were ever validated.
+- **Three golden fingerprint pins** in `finding.rs` to lock the v3 algorithm output: any future change forces a deliberate update + CHANGELOG entry.
+- **`cargo semver-checks check-release`** in `release.yml` (between `cargo test` and `cargo deny`) — enforces the API stability policy.
+- **Documentation refreshed** end-to-end: schema URI namespace canonicalised across all docs (4 stale references the audit didn't initially catch were also found and fixed); USERGUIDE / verify.md / man page version pins refreshed; `docs/baselines.md` gains a "Migration: v1.1.0-beta.1 baseline hash break" subsection; ROADMAP "Visual Summary" footer (which had drifted out of sync with the charter table) deleted; ADR 0002 status bumped from Proposed to Accepted (every phase is shipped in-tree).
+
+### Migration notes
+
+- **Re-baseline once after upgrading.** Fingerprints widened from 16 hex to 32 hex. Existing `.taudit/baselines/<hash>.json` files keep working at the file-discovery layer (`pipeline_content_hash` is unchanged), but per-finding entries inside them no longer match. Run `taudit baseline init <pipeline-files>` once after upgrading. Suppressions in `.taudit-suppressions.yml` need their `fingerprint:` field updated from 16-hex to the new 32-hex form — re-emit them via `taudit verify --emit-suppressions` (or hand-update from a fresh scan).
+- **Schema URI consistency.** Every taudit schema `$id` is now under `https://taudit.dev/schemas/...`. The previous mixed namespace (4 schemas under `github.com/0ryant/taudit/...`) is gone. Consumers that fetched schemas by `$id` need to update.
+- **`schema_version` field flips from `"v1"` to `"1.0.0"`** in the JSON report (this happened in v1.1.0-beta.2; mentioned again here because the doc-refresh in this cut updated stale README/USERGUIDE references).
+- **Reserved categories sealed.** Any custom YAML emitting `category: egress_blindspot` or `category: missing_audit_trail` now errors at load time. These were always documented as reserved (`#[doc(hidden)]`) but the gate wasn't serde-aware until now.
+- **No CLI flag changes that affect existing scripts.** The `Platform::as_str()` round-trip fix is internal; if a script was hand-parsing taudit's emitted CellOS spec and consuming `--platform gitlab-ci`, it now sees `--platform gitlab` (which clap accepts cleanly).
+
 ## v1.1.0-beta.2 — 2026-05-02 (prerelease)
 
 > **Prerelease.** Published to crates.io under semver pre-release identifier `1.1.0-beta.2`. Same opt-in semantics as `-beta.1`: `taudit = "=1.1.0-beta.2"` or `cargo install taudit --version 1.1.0-beta.2`. Stable consumers on v1.0.12 are unaffected. See [ADR 0004](docs/adr/0004-prereleases-publish-to-crates-io.md).

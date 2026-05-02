@@ -1,7 +1,7 @@
 [package]
 name = "taudit-parse-gitlab"
 description = "Parses GitLab CI YAML into taudit typed authority graphs for CI/CD propagation and trust-boundary analysis."
-version = "1.1.0-beta.2"
+version = "1.1.0-beta.3"
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
@@ -13,7 +13,7 @@ keywords.workspace = true
 categories.workspace = true
 
 [dependencies]
-taudit-core = { version = "1.1.0-beta.2", path = "../taudit-core" }
+taudit-core = { version = "1.1.0-beta.3", path = "../taudit-core" }
 serde = { workspace = true }
 serde_json = { workspace = true }
 serde_yaml = { workspace = true }
