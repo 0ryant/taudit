@@ -18,6 +18,70 @@ _(none yet — populate this paragraph when adding entries that change finding b
 
 _(populate if any consumer-visible field, schema, or contract changes; remove subsection if none)_
 
+## v1.1.0-rc.1 — 2026-05-02 (release candidate)
+
+> **Release candidate.** Published to crates.io under semver pre-release identifier `1.1.0-rc.1`. Opt-in via `taudit = "=1.1.0-rc.1"` or `cargo install taudit --version 1.1.0-rc.1`. Stable consumers on v1.0.12 are unaffected per [ADR 0004](docs/adr/0004-prereleases-publish-to-crates-io.md). Promotion to `v1.1.0` stable is gated by [`docs/RELEASE_GATES.md` §2.2](docs/RELEASE_GATES.md): ≥2 concurrent pilots × 14-day soak × zero new P0/P1 + ≥1 recorded buyer-side reference call.
+
+### Detection delta (read first)
+
+`v1.1.0-rc.1` is the first release candidate after the v1.1.0-beta cycle (.1, .2, .3) closed 2 P0s + ~20 P1s from the 10-agent deep audit. This RC adds **three additional fixes** identified by a structured council debate (transcript at `/tmp/taudit-deep-review/00-synthesis.md` and the post-beta.3 council exchange) as gating procurement-grade adoption. **No new finding-class additions vs `-beta.3`;** strict-superset stance vs v1.0.12 holds.
+
+| Change | Direction | Affects |
+|--------|-----------|---------|
+| ADO `condition:` and `dependsOn:` now modelled; conditional steps marked `Partial`/`Expression` and stamped with `META_CONDITION` (AND-joined chain across stage/job/step) and `META_DEPENDS_ON` (non-default only) | **fewer findings** (FP↓) | ADO pipelines using `condition: eq(variables['Build.SourceBranch'], 'refs/heads/main')` and similar gating expressions — typical enterprise ADO estates have these on 30–40% of jobs |
+| ADO conditional-gate compensating control: a Critical `untrusted_with_authority` finding on a step under `condition:` now downgrades to High via the `with_compensating_control` builder, recording `original_severity` for audit trail | **conservative downgrade** | Same population as above |
+| Terminal sink strips C0/C1 control characters + Unicode bidi/joiner steering codepoints from attacker-controllable strings (`finding.message`, `node.name`, `graph.source.file`, gap reasons, custom-rule fields) | **closes ANSI escape injection class** | All terminal-rendered output; was a P2 security blocker per Agent 9 |
+| SARIF sink Markdown-escapes `result.message.text` and custom-rule descriptors (`name`, `shortDescription.text`, `fullDescription.text`); built-in `RULE_DEFS` descriptors NOT escaped (author-controlled, intentional Markdown); rule `id` NOT escaped (charset gate enforces snake/kebab/digit) | **closes Markdown / link injection class** in GitHub Code Scanning UI rendering | All SARIF consumers; was a P2 security blocker |
+| `cross_sink_contract.rs` and `output_injection_corpus.rs` regression tests **in CI** assert byte-equal fingerprints across JSON / SARIF / CloudEvents under hostile input AND no control bytes / unescaped Markdown delimiters in attacker-controllable rendering paths | **trust-artifact integrity** | Downstream consumers (tsign, Backstage plugins, SIEMs) that re-render taudit's output |
+
+**No fingerprint format change vs `-beta.3`** — fingerprints remain 32-hex (128-bit). Sanitisation deliberately runs AT the render boundary, not at ingest, so fingerprint canonical input is unaffected. Existing baselines from `-beta.3` remain valid.
+
+### Fixed
+
+#### RC blocker A — ADO `condition:` and `dependsOn:` modelling
+
+Previously, ADO stage/job/step `condition:` was unmodelled — `condition: eq(variables['Build.SourceBranch'], 'refs/heads/main')` jobs got authority edges as if they always ran on every PR build, generating false-positive findings on the most common gating pattern in enterprise ADO estates. `crates/taudit-parse-ado/src/lib.rs` now extracts `condition:` and `dependsOn:` on the typed model (`AdoStage` / `AdoJob` / `AdoStep`); marks the graph `Partial` with `GapKind::Expression` whenever a non-empty `condition:` is encountered (gap reason cites the conditional text); stamps `META_CONDITION` on resulting Step nodes (AND-joined chain across stage/job/step); stamps `META_DEPENDS_ON` only when explicitly non-default (ADO's default chain is "depends on previous job in declaration order" — only the explicit override is captured). A new compensating-control arm in `apply_compensating_controls` reads `META_CONDITION` and downgrades severity by one tier on the firing step, routing through the public `Finding::with_compensating_control` builder so `extras.original_severity` and `extras.compensating_controls` survive the downgrade.
+
+#### RC blocker B — Output-channel injection sanitisation
+
+The deep-audit security review (Agent 9) identified two attack classes where adversary-controlled YAML or custom-rule YAML could plant payloads in fields the renderers interpret rather than display: (a) **ANSI escapes in terminal output** — `colored::ColoredString` only wraps with SGR sequences and does not sanitise inner bytes, so a payload `\x1b[2J\x1b[H\x1b[1;32m✓ no findings\x1b[0m` planted in a node name impersonates the success banner; (b) **Markdown / HTML injection in SARIF `result.message.text`** — GitHub Code Scanning UI renders Markdown links inside that field, so a payload `[Click here to remediate](https://attacker.example/?steal=1)` plants a phishing link inside an "authentic" taudit alert.
+
+Two render-boundary primitives, hand-rolled (no new dependencies), `Cow`-returning zero-alloc on clean input:
+
+- `taudit_report_terminal::strip_control_chars(&str) -> Cow<'_, str>` strips ASCII C0 (0x00..=0x1F except `\n`/`\t`), DEL (0x7F), C1 (0x80..=0x9F), Unicode bidi/joiner steering codepoints (U+200B–200F, U+202A–202E, U+2066–2069, U+FEFF). Applied at every terminal call site that renders attacker-controllable strings.
+- `taudit_report_sarif::escape_markdown(&str) -> Cow<'_, str>` escapes the exploitable set: `\ [ ] ( ) < > * ` !`. Deliberately omits `_`, `~`, `{}`, `#`, `+`, `-`, `|` to avoid noising up legitimate identifiers like `AWS_KEY`, `my-custom-rule`, `v1.2-beta`.
+
+`crates/taudit-cli/tests/output_injection_corpus.rs` is the new regression test running in CI (per `docs/RELEASE_GATES.md` §2.1). Four tests — one per attack class (raw-shipping JSON, SARIF Markdown escape, terminal control-byte strip, fingerprint stability under hostile input). Plus `cross_sink_contract.rs` extended to assert all three sinks produce byte-equal fingerprints when the input is hostile.
+
+Trust-artifact angle: tsign signs taudit's output. If an attacker controls rendered bytes, the signature attests to "this YAML produced this graph" — not "this graph is safe to display." Sanitisation closes that chain-of-custody hole.
+
+#### RC blocker C — `taudit-api` wire-types crate extracted at v0.1.0
+
+New `crates/taudit-api/` crate at version `0.1.0` owns every Rust type that appears in taudit's emitted JSON / SARIF / CloudEvents output. 76 public items: 11 enums (`Severity`, `FindingCategory`, `Recommendation`, `FindingSource`, `FixEffort`, `NodeKind`, `EdgeKind`, `TrustZone`, `AuthorityCompleteness`, `IdentityScope`, `GapKind`); 9 structs (`Finding`, `FindingExtras`, `Node`, `Edge`, `PipelineSource`, `ParamSpec`, `AuthorityEdgeSummary`, `PropagationPath`); 2 type aliases (`NodeId`, `EdgeId`); 54 constants (`AUTHORITY_EDGE_SUMMARY_FIELD_MAX` + 53 `META_*` keys); 2 `#[doc(hidden)]` helpers (`downgrade_severity`, `serialize_string_map_sorted`).
+
+Dependency direction: `taudit-core` → `taudit-api` → `{serde, serde_json}`. `taudit-api` is the leaf — zero internal deps.
+
+Backward compatibility: `taudit-core` `pub use`-re-exports every type that moved. `taudit_core::finding::Finding` and `taudit_core::graph::NodeKind` continue to compile unchanged for all in-tree sinks, parsers, rules, tests, and any out-of-tree consumer that pinned `taudit-core`. Confirmed by 715/715 tests passing and zero snapshot churn.
+
+Stability promise (see `crates/taudit-api/src/lib.rs` crate-root docstring): at `0.x` additive minor bumps may add new variants/fields; consumers should pin a minor (`taudit-api = "0.1"`) and review on each upgrade. At `1.0` the promise lifts — only a `2.0` major may break compatibility. `cargo semver-checks check-release` (already in `release.yml`) gates ABI changes.
+
+Crate-root `#![deny(missing_docs)]` enforces docstring discipline on every public name. `cargo doc -p taudit-api --no-deps` validates the lint at build time.
+
+Downstream tooling guidance (now that the contract is real): tsign, axiom, custom SIEM integrations, Backstage plugins, and any external consumer should depend on `taudit-api` directly rather than `taudit-core`. `taudit-core` is workspace-internal and may break between minors per the API stability policy ([memory: `project_api_stability_policy.md`](#)); `taudit-api` is the public contract.
+
+### Added
+
+- **`docs/RELEASE_GATES.md`** — pre-committed promotion criteria for beta → rc and rc → stable cuts, plus calendar-anchored milestones for tsign integration GA (Q1 2027) and axiom enforcement integration GA (Q3 2027). Direct outcome of the council debate at `/tmp/taudit-deep-review/00-synthesis.md`. Codifies §2.1 hard gates (fmt, clippy, test, schema-generator `--check`, `cargo semver-checks`, CHANGELOG detection-delta paragraph), §2.2 promotion gates (the 2 × 14-day × 0 P0/P1 + recorded reference call rule), §3 calendar anchors ("version-as-promise rots; quarters anchor"), and §4 three-lens framework (engineering / customer / adversary).
+- **`crates/taudit-api/`** — new leaf crate at v0.1.0; see RC blocker C above.
+- **`crates/taudit-cli/tests/output_injection_corpus.rs`** — regression test in CI for ANSI / Markdown / Unicode-RTL injection; see RC blocker B above.
+
+### Migration notes
+
+- **Downstream Rust consumers should migrate to `taudit-api` for stable wire types.** `taudit-core` re-exports keep existing imports compiling; new code should import from `taudit-api`. Add `taudit-api = "0.1"` to `Cargo.toml` and pin a minor.
+- **No fingerprint format change.** Existing `-beta.3` baselines remain valid; no re-baseline required for this RC. (The fingerprint format change happened in `-beta.3` — 16-hex → 32-hex / 64-bit → 128-bit. If you skipped `-beta.3` entirely and are upgrading directly from v1.0.12, see the `-beta.3` migration note.)
+- **ADO `condition:` modelling will change Partial/Complete classifications** for any pipeline using `condition:`. Workflows previously reported `Complete` may now report `Partial` with an Expression gap. The compensating control downgrades severity for the conditional-gate case but does not eliminate the finding — operators on heavily-conditional ADO pipelines may want to combine with `--ignore-partial` per `docs/baselines.md`.
+- **No CLI flag changes; no schema URI changes; no schema dialect changes.**
+
 ## v1.1.0-beta.3 — 2026-05-02 (prerelease)
 
 > **Prerelease.** Published to crates.io under semver pre-release identifier `1.1.0-beta.3`. Opt-in via `taudit = "=1.1.0-beta.3"` or `cargo install taudit --version 1.1.0-beta.3`. Stable consumers on v1.0.12 are unaffected per [ADR 0004](docs/adr/0004-prereleases-publish-to-crates-io.md).
