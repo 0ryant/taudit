@@ -29,5 +29,6 @@
     },
     "severity": "critical"
   },
-  "tauditcompleteness": "complete"
+  "tauditcompleteness": "complete",
+  "tauditruleid": "authority_propagation"
 }

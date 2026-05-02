@@ -685,4 +685,79 @@ mod tests {
             "Structural gap must not render [partial:opaque] under --verbose: {finding_line}"
         );
     }
+
+    /// Mirror of `taudit-report-json::tests::json_output_is_byte_deterministic_across_runs`.
+    /// The terminal renderer walks the same `AuthorityGraph` HashMaps the JSON
+    /// sink does (node metadata, edge endpoints, ordered findings) so any leak
+    /// of HashMap order would show up as text-line shuffling between runs.
+    /// Force `colored::control::set_override(false)` to drop ANSI (text colour
+    /// is process-global state — see `render` above), then emit 9× and assert
+    /// every byte matches.
+    #[test]
+    fn terminal_output_is_byte_deterministic_across_runs() {
+        use std::collections::HashMap;
+        use taudit_core::graph::{EdgeKind, NodeKind, TrustZone};
+
+        fn build_graph() -> (AuthorityGraph, Vec<Finding>) {
+            let mut graph = AuthorityGraph::new(PipelineSource {
+                file: "ci.yml".into(),
+                repo: None,
+                git_ref: None,
+                commit_sha: None,
+            });
+            let secret_a = graph.add_node(NodeKind::Secret, "AWS_KEY", TrustZone::FirstParty);
+            let secret_b = graph.add_node(NodeKind::Secret, "DEPLOY_TOKEN", TrustZone::FirstParty);
+            let step = graph.add_node(NodeKind::Step, "deploy", TrustZone::FirstParty);
+            graph.add_edge(step, secret_a, EdgeKind::HasAccessTo);
+            graph.add_edge(step, secret_b, EdgeKind::HasAccessTo);
+            if let Some(node) = graph.nodes.get_mut(step) {
+                let mut meta: HashMap<String, String> = HashMap::new();
+                meta.insert("z_field".into(), "z".into());
+                meta.insert("a_field".into(), "a".into());
+                meta.insert("m_field".into(), "m".into());
+                meta.insert("k_field".into(), "k".into());
+                meta.insert("c_field".into(), "c".into());
+                node.metadata = meta;
+            }
+            graph
+                .metadata
+                .insert("trigger".into(), "pull_request".into());
+            graph.metadata.insert("platform".into(), "github".into());
+            let findings = vec![Finding {
+                severity: Severity::High,
+                category: FindingCategory::AuthorityPropagation,
+                path: None,
+                nodes_involved: vec![secret_a, step],
+                message: "AWS_KEY reaches deploy".into(),
+                recommendation: Recommendation::Manual {
+                    action: "scope it".into(),
+                },
+                source: FindingSource::BuiltIn,
+                extras: FindingExtras::default(),
+            }];
+            (graph, findings)
+        }
+
+        // ANSI escape codes depend on a process-global flag — pin it off so
+        // a parallel test that flips it can't smuggle non-determinism in.
+        colored::control::set_override(false);
+
+        let mut runs: Vec<Vec<u8>> = Vec::with_capacity(9);
+        for _ in 0..9 {
+            let (g, f) = build_graph();
+            let mut buf: Vec<u8> = Vec::new();
+            TerminalReport { verbose: false }
+                .emit(&mut buf, &g, &f)
+                .expect("emit should succeed");
+            runs.push(buf);
+        }
+
+        let first = &runs[0];
+        for (i, run) in runs.iter().enumerate().skip(1) {
+            assert_eq!(
+                first, run,
+                "run 0 and run {i} produced byte-different terminal output (non-determinism regression)"
+            );
+        }
+    }
 }

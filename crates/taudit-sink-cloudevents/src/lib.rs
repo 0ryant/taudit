@@ -1,7 +1,7 @@
 use serde::Serialize;
 use taudit_core::error::TauditError;
 use taudit_core::finding::{
-    compute_finding_group_id, compute_fingerprint, Finding, FindingCategory,
+    compute_finding_group_id, compute_fingerprint, rule_id_for, Finding, FindingCategory,
 };
 use taudit_core::graph::AuthorityGraph;
 use taudit_core::ports::ReportSink;
@@ -47,6 +47,16 @@ pub struct CloudEventV1 {
     /// attribute names must be lowercase with no separators — hence
     /// `tauditfindingfingerprint` rather than the dashed/snaked form.
     pub tauditfindingfingerprint: String,
+    /// Canonical snake_case rule id, byte-identical to JSON
+    /// `findings[].rule_id` and SARIF `result.ruleId`. The CloudEvents
+    /// `type` field stays scoped to the `FindingCategory` (so SIEM routing
+    /// rules remain stable across rule additions); this extension exposes
+    /// the precise rule that fired so consumers can filter / suppress at
+    /// rule granularity. For custom YAML rules with a `[id] …` message
+    /// prefix the bracketed id wins, matching `taudit_core::finding::
+    /// rule_id_for`. Per CloudEvents 1.0 §3.1, extension attribute names
+    /// must be lowercase with no separators — hence `tauditruleid`.
+    pub tauditruleid: String,
     /// CI/CD platform of the underlying pipeline: `"ado"`, `"gha"`, or
     /// `"gitlab"`. Lets SIEM correlation rules route events by platform
     /// without re-parsing the `subject` (file path). Source: the resolved
@@ -249,6 +259,7 @@ fn finding_to_event(
         tauditcompleteness: Some(completeness_str.into()),
         tauditcompletenessgaps,
         tauditfindingfingerprint: compute_fingerprint(finding, graph),
+        tauditruleid: rule_id_for(finding),
         tauditplatform,
         tauditfindinggroup: finding
             .extras
@@ -783,6 +794,125 @@ mod tests {
             event.get("tauditplatform").is_none(),
             "unrecognised platform tokens must be dropped, not surfaced"
         );
+    }
+
+    /// Mirror of `taudit-report-json::tests::json_output_is_byte_deterministic_across_runs`.
+    /// CloudEvents intentionally minted a fresh `id` (UUID v4) and `time` per
+    /// event, so the envelope is non-deterministic by design on those two
+    /// keys. Everything else — `tauditfindingfingerprint`, `tauditfindinggroup`,
+    /// `tauditruleid`, `data`, `subject`, `tauditcompleteness`, etc — must be
+    /// stable across re-runs of the same scan, mirroring the JSON contract.
+    /// Strip `id` and `time` after parsing each event, then assert the
+    /// remaining JSON is byte-equal across 9 runs.
+    #[test]
+    fn cloudevents_stable_bits_are_deterministic_across_runs() {
+        use std::collections::HashMap;
+        use taudit_core::graph::{EdgeKind, NodeKind, TrustZone};
+
+        fn build_graph() -> (AuthorityGraph, Vec<Finding>) {
+            let mut graph = AuthorityGraph::new(PipelineSource {
+                file: "ci.yml".into(),
+                repo: None,
+                git_ref: None,
+                commit_sha: None,
+            });
+            let secret_a = graph.add_node(NodeKind::Secret, "AWS_KEY", TrustZone::FirstParty);
+            let secret_b = graph.add_node(NodeKind::Secret, "DEPLOY_TOKEN", TrustZone::FirstParty);
+            let step = graph.add_node(NodeKind::Step, "deploy", TrustZone::FirstParty);
+            graph.add_edge(step, secret_a, EdgeKind::HasAccessTo);
+            graph.add_edge(step, secret_b, EdgeKind::HasAccessTo);
+            if let Some(node) = graph.nodes.get_mut(step) {
+                let mut meta: HashMap<String, String> = HashMap::new();
+                meta.insert("z_field".into(), "z".into());
+                meta.insert("a_field".into(), "a".into());
+                meta.insert("m_field".into(), "m".into());
+                meta.insert("k_field".into(), "k".into());
+                meta.insert("c_field".into(), "c".into());
+                node.metadata = meta;
+            }
+            graph
+                .metadata
+                .insert("trigger".into(), "pull_request".into());
+            graph.metadata.insert("platform".into(), "gha".into());
+            let findings = vec![Finding {
+                severity: Severity::High,
+                category: FindingCategory::AuthorityPropagation,
+                path: None,
+                nodes_involved: vec![secret_a, step],
+                message: "AWS_KEY reaches deploy".into(),
+                recommendation: Recommendation::Manual {
+                    action: "scope it".into(),
+                },
+                source: taudit_core::finding::FindingSource::BuiltIn,
+                extras: FindingExtras::default(),
+            }];
+            (graph, findings)
+        }
+
+        // Pin the correlation id so the only intentionally non-deterministic
+        // bits left are `id` (UUID v4 per event) and `time` (RFC3339 now()).
+        let sink = CloudEventsJsonlSink::with_correlation_id(Some("det-test-correlation".into()));
+
+        fn emit_and_strip(sink: &CloudEventsJsonlSink) -> Vec<u8> {
+            let (g, f) = build_graph();
+            let mut buf = Vec::new();
+            sink.emit(&mut buf, &g, &f).unwrap();
+            // One JSONL line, parse → drop `id`/`time` → re-serialise canonically.
+            let line = std::str::from_utf8(&buf).unwrap().lines().next().unwrap();
+            let mut v: serde_json::Value = serde_json::from_str(line).unwrap();
+            if let Some(obj) = v.as_object_mut() {
+                obj.remove("id");
+                obj.remove("time");
+            }
+            serde_json::to_vec(&v).unwrap()
+        }
+
+        let mut runs: Vec<Vec<u8>> = Vec::with_capacity(9);
+        for _ in 0..9 {
+            runs.push(emit_and_strip(&sink));
+        }
+
+        let first = &runs[0];
+        for (i, run) in runs.iter().enumerate().skip(1) {
+            assert_eq!(
+                first, run,
+                "run 0 and run {i} produced byte-different stable CloudEvent bits (non-determinism regression)"
+            );
+        }
+    }
+
+    #[test]
+    fn rule_id_extension_matches_canonical_helper() {
+        // Built-in finding: tauditruleid mirrors `rule_id_for` (snake_case
+        // category). Custom-rule finding: the `[id]` message prefix wins.
+        // This is the per-sink half of the cross-sink equality contract
+        // covered end-to-end by `cross_sink_contract.rs`.
+        let graph = AuthorityGraph::new(test_source());
+        let mut custom = test_finding(FindingCategory::AuthorityPropagation, Severity::Critical);
+        custom.message = "[my_custom_rule] some prose".into();
+        custom.source = taudit_core::finding::FindingSource::Custom {
+            source_file: std::path::PathBuf::from("rules/my_custom_rule.yaml"),
+        };
+        let findings = vec![
+            test_finding(FindingCategory::OverPrivilegedIdentity, Severity::High),
+            custom,
+        ];
+
+        let mut buf = Vec::new();
+        CloudEventsJsonlSink::default()
+            .emit(&mut buf, &graph, &findings)
+            .unwrap();
+
+        let lines: Vec<&str> = std::str::from_utf8(&buf).unwrap().lines().collect();
+        let v0: serde_json::Value = serde_json::from_str(lines[0]).unwrap();
+        let v1: serde_json::Value = serde_json::from_str(lines[1]).unwrap();
+
+        assert_eq!(v0["tauditruleid"], "over_privileged_identity");
+        assert_eq!(v1["tauditruleid"], "my_custom_rule");
+        // `type` field stays scoped to the FindingCategory — the custom-rule
+        // finding's type is still `authority_propagation` for routing
+        // stability, while the new extension surfaces the rule-level id.
+        assert_eq!(v1["type"], "io.taudit.finding.authority_propagation");
     }
 
     #[test]

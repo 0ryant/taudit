@@ -32,6 +32,20 @@ jobs:
       - name: test
         run: cargo test --workspace
 
+      # Per the v1.1.0-beta.3 API stability policy: `taudit-core` is workspace-
+      # internal but its `pub` items are still in the technical ABI; an
+      # accidental signature change between minor versions would break any
+      # external consumer pinning a specific minor. `cargo semver-checks`
+      # guards against that. The `--baseline-rev` is omitted so the tool
+      # diffs against the latest matching version on crates.io — on the very
+      # first publish of any crate the tool reports "no baseline" and exits 0,
+      # so this step is a no-op for first releases.
+      - name: Install cargo-semver-checks
+        run: cargo install cargo-semver-checks --locked --quiet
+
+      - name: cargo semver-checks
+        run: cargo semver-checks check-release --workspace --all-features
+
       - name: Install cargo-deny
         run: cargo install cargo-deny --locked
 

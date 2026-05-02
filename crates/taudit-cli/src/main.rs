@@ -969,12 +969,19 @@ enum Platform {
 }
 
 impl Platform {
+    /// Round-trip-safe token for the `--platform` clap flag. Each arm MUST
+    /// match the `#[value(name = …)]` rename on the `Platform` enum so a spec
+    /// emitted by `taudit emit-spec` is replayable verbatim by `taudit scan`.
+    /// The legacy `"gitlab-ci"` token (used pre-v1.1.0-beta.3) was only ever
+    /// surfaced by `emit-spec` and is not documented as a stable contract,
+    /// so collapsing it to `"gitlab"` here is a no-op for any caller that
+    /// reads the spec by re-invoking taudit (the only documented flow).
     fn as_str(&self) -> &'static str {
         match self {
             Platform::Auto => "auto",
             Platform::GithubActions => "github-actions",
             Platform::AzureDevOps => "azure-devops",
-            Platform::GitLab => "gitlab-ci",
+            Platform::GitLab => "gitlab",
         }
     }
 
@@ -1315,7 +1322,16 @@ fn run() -> Result<()> {
         Cli::Completions { shell } => {
             let mut cmd = Cli::command();
             let name = cmd.get_name().to_string();
-            clap_complete::generate(shell, &mut cmd, name, &mut std::io::stdout());
+            // `clap_complete::generate` writes a multi-KB script in many small
+            // calls; piping into `head` (or any short-circuit consumer) closes
+            // stdout mid-stream. Mirror the SilenceBrokenPipe pattern used by
+            // every other CLI write site so EPIPE is silently swallowed
+            // instead of panicking with "failed printing to stdout".
+            let stdout = std::io::stdout();
+            let mut wrapped = SilenceBrokenPipe {
+                inner: stdout.lock(),
+            };
+            clap_complete::generate(shell, &mut cmd, name, &mut wrapped);
             Ok(())
         }
         Cli::Version => cmd_version(),
@@ -2607,8 +2623,13 @@ fn run_verify_io<W: std::io::Write>(opts: &VerifyOpts, writer: &mut W) -> i32 {
         }
     };
     if let Err(err) = render_result {
-        eprintln!("error: {err:#}");
-        return 2;
+        // Exit-code precedence: a policy violation (exit 1) outranks a render
+        // error (exit 2). The render error here is downstream of the
+        // already-collected `violations` list — losing the gate signal because
+        // a pipe broke (or the disk filled) would silently let bad CI through.
+        // Surface the render error on stderr but preserve the policy outcome.
+        eprintln!("warning: render error: {err:#}");
+        return if violations.is_empty() { 2 } else { 1 };
     }
 
     if violations.is_empty() {
