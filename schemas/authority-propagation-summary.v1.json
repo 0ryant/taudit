@@ -3,7 +3,7 @@
   "$id": "https://taudit.dev/schemas/authority-propagation-summary.v1.json",
   "title": "taudit authority propagation summary",
   "description": "Read-only aggregate over boundary-crossing propagation paths (same BFS as rule-engine authority_propagation). Additive 1.x; emitted by `taudit graph --format summary`. Does not replace graph JSON or verify policy.",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "type": "object",
   "required": [
     "schema_version",
@@ -20,7 +20,8 @@
   "properties": {
     "schema_version": {
       "type": "string",
-      "const": "1.0.0"
+      "description": "Semver of the emitted document. Loosened from a 1.0.0 const to a 1.x.y pattern in schema 1.1.0 so additive minor bumps remain valid under one schema file. Major bumps (2.0.0) get a new file.",
+      "pattern": "^1\\.\\d+\\.\\d+$"
     },
     "schema_uri": {
       "type": "string",
@@ -35,6 +36,19 @@
     "completeness_gaps": {
       "type": "array",
       "items": { "type": "string" }
+    },
+    "completeness_gap_kinds": {
+      "type": "array",
+      "description": "Typed gap-kind classifications, parallel to `completeness_gaps` (same length, same order). Added in schema 1.1.0; absent on documents emitted by older builds and on Complete graphs.",
+      "items": {
+        "type": "string",
+        "enum": ["expression", "structural", "opaque"]
+      }
+    },
+    "worst_gap_kind": {
+      "description": "Most severe `GapKind` present, by canonical severity ordering: opaque > structural > expression. Absent when the graph is Complete/Unknown or carries no typed gaps. Added in schema 1.1.0.",
+      "type": ["string", "null"],
+      "enum": ["expression", "structural", "opaque", null]
     },
     "max_hops": { "type": "integer", "minimum": 1 },
     "method": {

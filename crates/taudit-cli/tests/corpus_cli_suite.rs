@@ -122,7 +122,7 @@ fn assert_graph_export(v: &serde_json::Value, ctx: &str) {
 fn assert_propagation_summary(v: &serde_json::Value, ctx: &str) {
     assert_eq!(
         v.get("schema_version").and_then(|x| x.as_str()),
-        Some("1.0.0"),
+        Some("1.1.0"),
         "{ctx}: summary schema_version"
     );
     assert_eq!(
