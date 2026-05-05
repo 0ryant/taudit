@@ -2,7 +2,7 @@
 
 Observed: 2026-05-05.
 
-Binary: `target/debug/taudit` (`taudit 1.1.0-rc.3`).
+Binary: `target/debug/taudit` (`taudit 1.1.0-rc.4`).
 
 Command:
 
