@@ -1327,6 +1327,20 @@ pub const RULE_DEFS: &[RuleDef] = &[
         tags: &["security", "docker", "github-actions"],
     },
     RuleDef {
+        id: "gha_setup_go_cache_helper_path_handoff",
+        name: "GhaSetupGoCacheHelperPathHandoff",
+        short_description:
+            "setup-go cache discovery resolves Go helpers after PATH mutation.",
+        full_description:
+            "actions/setup-go cache discovery can invoke Go helper commands through \
+             PATH. When an earlier same-job step mutates GITHUB_PATH and cache mode is \
+             explicit, the cache boundary becomes a source lead for helper-resolution \
+             authority review.",
+        default_level: "warning",
+        security_severity: "5.0",
+        tags: &["security", "cache", "github-actions"],
+    },
+    RuleDef {
         id: "gha_tool_installer_then_shell_helper_authority",
         name: "GhaToolInstallerThenShellHelperAuthority",
         short_description: "Installed helper is later used from shell with deploy/signing authority.",
@@ -1353,6 +1367,72 @@ pub const RULE_DEFS: &[RuleDef] = &[
         default_level: "warning",
         security_severity: "5.0",
         tags: &["security", "workflow-shell", "github-actions"],
+    },
+    RuleDef {
+        id: "gha_create_pr_git_token_path_handoff",
+        name: "GhaCreatePrGitTokenPathHandoff",
+        short_description:
+            "create-pull-request delegates token authority to PATH-selected git.",
+        full_description:
+            "peter-evans/create-pull-request receives GitHub/App token authority or \
+             write-scoped repository permissions after an earlier same-job GITHUB_PATH \
+             mutation, then delegates repository mutation to a git helper selected \
+             through PATH. Treat this as an action-boundary authority lead.",
+        default_level: "error",
+        security_severity: "7.8",
+        tags: &["security", "credentials", "github-actions"],
+    },
+    RuleDef {
+        id: "gha_import_gpg_private_key_helper_path",
+        name: "GhaImportGpgPrivateKeyHelperPath",
+        short_description: "GPG import action delegates key material to PATH helpers.",
+        full_description:
+            "crazy-max/ghaction-import-gpg receives GPG private key or passphrase \
+             material after an earlier same-job GITHUB_PATH mutation, then invokes \
+             gpg or gpg-connect-agent by helper name. Resolve signing helpers to \
+             trusted paths before private key material is present.",
+        default_level: "error",
+        security_severity: "7.8",
+        tags: &["security", "credentials", "github-actions"],
+    },
+    RuleDef {
+        id: "gha_ssh_agent_private_key_to_path_helper",
+        name: "GhaSshAgentPrivateKeyToPathHelper",
+        short_description: "SSH agent action delegates private key material to PATH helpers.",
+        full_description:
+            "webfactory/ssh-agent receives SSH private key material after an earlier \
+             same-job GITHUB_PATH mutation, then invokes ssh-agent or ssh-add through \
+             PATH. Ensure SSH helpers resolve to trusted runner paths before key \
+             material reaches stdin or agent state.",
+        default_level: "error",
+        security_severity: "7.8",
+        tags: &["security", "credentials", "github-actions"],
+    },
+    RuleDef {
+        id: "gha_macos_codesign_cert_security_path",
+        name: "GhaMacosCodesignCertSecurityPath",
+        short_description: "macOS codesign import delegates certificate authority to security.",
+        full_description:
+            "apple-actions/import-codesign-certs receives P12, certificate password, or \
+             keychain authority after an earlier same-job GITHUB_PATH mutation, then \
+             delegates to the macOS security helper. Resolve security through a trusted \
+             absolute path before certificate material is available.",
+        default_level: "error",
+        security_severity: "7.8",
+        tags: &["security", "credentials", "github-actions"],
+    },
+    RuleDef {
+        id: "gha_pages_deploy_token_url_to_git_helper",
+        name: "GhaPagesDeployTokenUrlToGitHelper",
+        short_description: "Pages deploy action delegates token URL authority to git.",
+        full_description:
+            "Pages deploy actions such as peaceiris/actions-gh-pages or \
+             JamesIves/github-pages-deploy-action receive GitHub token, PAT, or deploy \
+             key authority after an earlier same-job GITHUB_PATH mutation, then compose \
+             Git push authority for a PATH-selected git helper.",
+        default_level: "error",
+        security_severity: "7.6",
+        tags: &["security", "credentials", "github-actions"],
     },
     RuleDef {
         id: "gha_toolcache_absolute_path_downgrade",
@@ -2167,9 +2247,15 @@ mod tests {
             FindingCategory::GhaSetupNodeCacheHelperPathHandoff,
             FindingCategory::GhaSetupPythonCacheHelperPathHandoff,
             FindingCategory::GhaSetupPythonPipInstallAuthorityEnv,
+            FindingCategory::GhaSetupGoCacheHelperPathHandoff,
             FindingCategory::GhaDockerSetupQemuPrivilegedDockerHelper,
             FindingCategory::GhaToolInstallerThenShellHelperAuthority,
             FindingCategory::GhaWorkflowShellAuthorityConcentration,
+            FindingCategory::GhaCreatePrGitTokenPathHandoff,
+            FindingCategory::GhaImportGpgPrivateKeyHelperPath,
+            FindingCategory::GhaSshAgentPrivateKeyToPathHelper,
+            FindingCategory::GhaMacosCodesignCertSecurityPath,
+            FindingCategory::GhaPagesDeployTokenUrlToGitHelper,
             FindingCategory::GhaToolcacheAbsolutePathDowngrade,
         ];
 

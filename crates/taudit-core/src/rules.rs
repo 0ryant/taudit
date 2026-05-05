@@ -4476,6 +4476,194 @@ fn gha_cache_input_is(step: &Node, values: &[&str]) -> bool {
         .unwrap_or(false)
 }
 
+fn gha_has_any_nonempty_with(step: &Node, keys: &[&str]) -> bool {
+    keys.iter().any(|key| gha_with_nonempty(step, key))
+}
+
+fn step_has_github_token_write_authority(graph: &AuthorityGraph, step_id: NodeId) -> bool {
+    graph.edges_from(step_id).any(|e| {
+        e.kind == EdgeKind::HasAccessTo
+            && graph
+                .node(e.to)
+                .filter(|n| n.kind == NodeKind::Identity && n.name.starts_with("GITHUB_TOKEN"))
+                .and_then(|n| n.metadata.get(META_PERMISSIONS))
+                .map(|perms| permissions_grant_writes(perms))
+                .unwrap_or(false)
+    })
+}
+
+fn create_pr_git_authority(graph: &AuthorityGraph, step: &Node) -> bool {
+    gha_has_any_nonempty_with(
+        step,
+        &["token", "github-token", "app-token", "branch-token"],
+    ) || step_has_sensitive_authority(graph, step.id)
+        || step_has_github_token_write_authority(graph, step.id)
+}
+
+fn import_gpg_authority(graph: &AuthorityGraph, step: &Node) -> bool {
+    gha_has_any_nonempty_with(
+        step,
+        &[
+            "gpg_private_key",
+            "gpg-private-key",
+            "passphrase",
+            "git_user_signingkey",
+        ],
+    ) || step_has_sensitive_authority(graph, step.id)
+}
+
+fn ssh_agent_authority(graph: &AuthorityGraph, step: &Node) -> bool {
+    gha_has_any_nonempty_with(step, &["ssh-private-key", "ssh_private_key"])
+        || step_has_sensitive_authority(graph, step.id)
+}
+
+fn macos_codesign_authority(graph: &AuthorityGraph, step: &Node) -> bool {
+    gha_has_any_nonempty_with(
+        step,
+        &[
+            "p12-file-base64",
+            "p12_file_base64",
+            "p12-password",
+            "p12_password",
+            "keychain-password",
+            "keychain_password",
+        ],
+    ) || step_has_sensitive_authority(graph, step.id)
+}
+
+fn pages_deploy_authority(graph: &AuthorityGraph, step: &Node) -> bool {
+    gha_has_any_nonempty_with(
+        step,
+        &[
+            "github_token",
+            "github-token",
+            "personal_token",
+            "personal-token",
+            "deploy_key",
+            "deploy-key",
+            "ssh_key",
+            "ssh-key",
+        ],
+    ) || step_has_sensitive_authority(graph, step.id)
+        || step_has_github_token_write_authority(graph, step.id)
+}
+
+#[derive(Clone, Copy)]
+struct GhaActionBoundaryRule {
+    actions: &'static [&'static str],
+    helper: &'static str,
+    authority_label: &'static str,
+    category: FindingCategory,
+    authority: fn(&AuthorityGraph, &Node) -> bool,
+    recommendation: &'static str,
+}
+
+const GHA_ACTION_BOUNDARY_RULES: &[GhaActionBoundaryRule] = &[
+    GhaActionBoundaryRule {
+        actions: &["peter-evans/create-pull-request"],
+        helper: "git",
+        authority_label: "pull-request token authority",
+        category: FindingCategory::GhaCreatePrGitTokenPathHandoff,
+        authority: create_pr_git_authority,
+        recommendation: "Run create-pull-request before mutable PATH setup, pass the Git helper through a trusted absolute path when supported, or split PATH-mutating setup into an authority-free job.",
+    },
+    GhaActionBoundaryRule {
+        actions: &["crazy-max/ghaction-import-gpg"],
+        helper: "gpg/gpg-connect-agent",
+        authority_label: "GPG private key or passphrase authority",
+        category: FindingCategory::GhaImportGpgPrivateKeyHelperPath,
+        authority: import_gpg_authority,
+        recommendation: "Import signing keys before mutable PATH setup or force GPG helper resolution to trusted runner paths before private key or passphrase material is available.",
+    },
+    GhaActionBoundaryRule {
+        actions: &["webfactory/ssh-agent"],
+        helper: "ssh-agent/ssh-add",
+        authority_label: "SSH private key authority",
+        category: FindingCategory::GhaSshAgentPrivateKeyToPathHelper,
+        authority: ssh_agent_authority,
+        recommendation: "Start the SSH agent before mutable PATH setup, or ensure ssh-agent and ssh-add resolve to trusted absolute paths before private keys are piped to helpers.",
+    },
+    GhaActionBoundaryRule {
+        actions: &["apple-actions/import-codesign-certs"],
+        helper: "security",
+        authority_label: "macOS codesigning certificate or keychain authority",
+        category: FindingCategory::GhaMacosCodesignCertSecurityPath,
+        authority: macos_codesign_authority,
+        recommendation: "Import codesigning certificates before mutable PATH setup or resolve the macOS security helper through a trusted absolute path before P12/keychain material is present.",
+    },
+    GhaActionBoundaryRule {
+        actions: &[
+            "peaceiris/actions-gh-pages",
+            "jamesives/github-pages-deploy-action",
+        ],
+        helper: "git",
+        authority_label: "Pages deploy token, PAT, or deploy-key authority",
+        category: FindingCategory::GhaPagesDeployTokenUrlToGitHelper,
+        authority: pages_deploy_authority,
+        recommendation: "Deploy Pages before mutable PATH setup, prefer least-privileged deploy keys or tokens, and ensure git resolves to a trusted absolute path before token URLs are composed.",
+    },
+];
+
+fn gha_action_boundary_findings(
+    graph: &AuthorityGraph,
+    rule: GhaActionBoundaryRule,
+) -> Vec<Finding> {
+    if !graph_is_platform(graph, "github-actions") {
+        return Vec::new();
+    }
+    let mut findings = Vec::new();
+    for step in graph.nodes_of_kind(NodeKind::Step) {
+        let Some(action) = gha_action_name(step) else {
+            continue;
+        };
+        if !rule.actions.iter().any(|wanted| action == *wanted) {
+            continue;
+        }
+        let Some(writer) = prior_github_path_writer(graph, step) else {
+            continue;
+        };
+        if !(rule.authority)(graph, step) {
+            continue;
+        }
+        findings.push(Finding {
+            severity: Severity::High,
+            category: rule.category,
+            path: None,
+            nodes_involved: helper_authority_nodes(graph, writer.id, step.id),
+            message: format!(
+                "Earlier step '{}' mutates GITHUB_PATH before '{}' receives {} and delegates to PATH-selected `{}`",
+                writer.name, step.name, rule.authority_label, rule.helper
+            ),
+            recommendation: Recommendation::Manual {
+                action: rule.recommendation.into(),
+            },
+            source: FindingSource::BuiltIn,
+            extras: FindingExtras::default(),
+        });
+    }
+    findings
+}
+
+pub fn gha_create_pr_git_token_path_handoff(graph: &AuthorityGraph) -> Vec<Finding> {
+    gha_action_boundary_findings(graph, GHA_ACTION_BOUNDARY_RULES[0])
+}
+
+pub fn gha_import_gpg_private_key_helper_path(graph: &AuthorityGraph) -> Vec<Finding> {
+    gha_action_boundary_findings(graph, GHA_ACTION_BOUNDARY_RULES[1])
+}
+
+pub fn gha_ssh_agent_private_key_to_path_helper(graph: &AuthorityGraph) -> Vec<Finding> {
+    gha_action_boundary_findings(graph, GHA_ACTION_BOUNDARY_RULES[2])
+}
+
+pub fn gha_macos_codesign_cert_security_path(graph: &AuthorityGraph) -> Vec<Finding> {
+    gha_action_boundary_findings(graph, GHA_ACTION_BOUNDARY_RULES[3])
+}
+
+pub fn gha_pages_deploy_token_url_to_git_helper(graph: &AuthorityGraph) -> Vec<Finding> {
+    gha_action_boundary_findings(graph, GHA_ACTION_BOUNDARY_RULES[4])
+}
+
 fn step_job(step: &Node) -> Option<&str> {
     step.metadata.get(META_JOB_NAME).map(String::as_str)
 }
@@ -4517,10 +4705,14 @@ pub fn gha_setup_node_cache_helper_path_handoff(graph: &AuthorityGraph) -> Vec<F
         return Vec::new();
     }
     let mut findings = Vec::new();
+    let mut emitted_jobs = std::collections::HashSet::new();
     for step in graph.nodes_of_kind(NodeKind::Step) {
         if !gha_action_is(step, "actions/setup-node") {
             continue;
         }
+        let Some(job) = step_job(step) else {
+            continue;
+        };
         let cache_enabled =
             gha_with_nonempty(step, "cache") || gha_with_truthy(step, "package-manager-cache");
         if !cache_enabled {
@@ -4529,6 +4721,9 @@ pub fn gha_setup_node_cache_helper_path_handoff(graph: &AuthorityGraph) -> Vec<F
         let Some(writer) = prior_github_path_writer(graph, step) else {
             continue;
         };
+        if !emitted_jobs.insert(job) {
+            continue;
+        }
         findings.push(Finding {
             severity: Severity::Medium,
             category: FindingCategory::GhaSetupNodeCacheHelperPathHandoff,
@@ -4553,16 +4748,23 @@ pub fn gha_setup_python_cache_helper_path_handoff(graph: &AuthorityGraph) -> Vec
         return Vec::new();
     }
     let mut findings = Vec::new();
+    let mut emitted_jobs = std::collections::HashSet::new();
     for step in graph.nodes_of_kind(NodeKind::Step) {
         if !gha_action_is(step, "actions/setup-python") {
             continue;
         }
+        let Some(job) = step_job(step) else {
+            continue;
+        };
         if !gha_cache_input_is(step, &["pip", "poetry"]) {
             continue;
         }
         let Some(writer) = prior_github_path_writer(graph, step) else {
             continue;
         };
+        if !emitted_jobs.insert(job) {
+            continue;
+        }
         findings.push(Finding {
             severity: Severity::Medium,
             category: FindingCategory::GhaSetupPythonCacheHelperPathHandoff,
@@ -4587,11 +4789,18 @@ pub fn gha_setup_python_pip_install_authority_env(graph: &AuthorityGraph) -> Vec
         return Vec::new();
     }
     let mut findings = Vec::new();
+    let mut emitted_jobs = std::collections::HashSet::new();
     for step in graph.nodes_of_kind(NodeKind::Step) {
         if !gha_action_is(step, "actions/setup-python") || !gha_with_nonempty(step, "pip-install") {
             continue;
         }
+        let Some(job) = step_job(step) else {
+            continue;
+        };
         if !job_has_sensitive_authority(graph, step) {
+            continue;
+        }
+        if !emitted_jobs.insert(job) {
             continue;
         }
         findings.push(Finding {
@@ -4605,6 +4814,49 @@ pub fn gha_setup_python_pip_install_authority_env(graph: &AuthorityGraph) -> Vec
             ),
             recommendation: Recommendation::Manual {
                 action: "Prefer a dedicated install step with explicit environment allowlist and trusted Python/pip paths; keep private index and cloud credentials out of ambient env during setup-python install mode.".into(),
+            },
+            source: FindingSource::BuiltIn,
+            extras: FindingExtras::default(),
+        });
+    }
+    findings
+}
+
+pub fn gha_setup_go_cache_helper_path_handoff(graph: &AuthorityGraph) -> Vec<Finding> {
+    if !graph_is_platform(graph, "github-actions") {
+        return Vec::new();
+    }
+    let mut findings = Vec::new();
+    let mut emitted_jobs = std::collections::HashSet::new();
+    for step in graph.nodes_of_kind(NodeKind::Step) {
+        if !gha_action_is(step, "actions/setup-go") {
+            continue;
+        }
+        let Some(job) = step_job(step) else {
+            continue;
+        };
+        let cache_enabled =
+            gha_with_truthy(step, "cache") || gha_with_nonempty(step, "cache-dependency-path");
+        if !cache_enabled {
+            continue;
+        }
+        let Some(writer) = prior_github_path_writer(graph, step) else {
+            continue;
+        };
+        if !emitted_jobs.insert(job) {
+            continue;
+        }
+        findings.push(Finding {
+            severity: Severity::Medium,
+            category: FindingCategory::GhaSetupGoCacheHelperPathHandoff,
+            path: None,
+            nodes_involved: vec![writer.id, step.id],
+            message: format!(
+                "Earlier step '{}' mutates GITHUB_PATH before actions/setup-go cache discovery resolves Go helpers through PATH",
+                writer.name
+            ),
+            recommendation: Recommendation::Manual {
+                action: "Run setup-go cache discovery before mutable PATH setup, disable setup-go cache discovery, or keep Go helper resolution on trusted runner paths.".into(),
             },
             source: FindingSource::BuiltIn,
             extras: FindingExtras::default(),
@@ -4684,6 +4936,7 @@ pub fn gha_tool_installer_then_shell_helper_authority(graph: &AuthorityGraph) ->
         return Vec::new();
     }
     let mut findings = Vec::new();
+    let mut emitted_shell_sinks = std::collections::HashSet::new();
     for installer in graph.nodes_of_kind(NodeKind::Step) {
         let Some(helper) = is_tool_installer_action(installer) else {
             continue;
@@ -4713,6 +4966,9 @@ pub fn gha_tool_installer_then_shell_helper_authority(graph: &AuthorityGraph) ->
             continue;
         };
         if !job_has_sensitive_authority(graph, shell) {
+            continue;
+        }
+        if !emitted_shell_sinks.insert((helper, shell.id)) {
             continue;
         }
         findings.push(Finding {
@@ -4761,6 +5017,9 @@ pub fn gha_workflow_shell_authority_concentration(graph: &AuthorityGraph) -> Vec
         "gh release edit",
         "gh release upload",
         "cargo publish",
+        "sentry-cli releases",
+        "sentry-cli upload",
+        "sonar-scanner",
     ];
     let mut findings = Vec::new();
     for step in graph.nodes_of_kind(NodeKind::Step) {
@@ -4853,9 +5112,15 @@ pub fn run_all_rules(graph: &AuthorityGraph, max_hops: usize) -> Vec<Finding> {
     findings.extend(gha_setup_node_cache_helper_path_handoff(graph));
     findings.extend(gha_setup_python_cache_helper_path_handoff(graph));
     findings.extend(gha_setup_python_pip_install_authority_env(graph));
+    findings.extend(gha_setup_go_cache_helper_path_handoff(graph));
     findings.extend(gha_docker_setup_qemu_privileged_docker_helper(graph));
     findings.extend(gha_tool_installer_then_shell_helper_authority(graph));
     findings.extend(gha_workflow_shell_authority_concentration(graph));
+    findings.extend(gha_create_pr_git_token_path_handoff(graph));
+    findings.extend(gha_import_gpg_private_key_helper_path(graph));
+    findings.extend(gha_ssh_agent_private_key_to_path_helper(graph));
+    findings.extend(gha_macos_codesign_cert_security_path(graph));
+    findings.extend(gha_pages_deploy_token_url_to_git_helper(graph));
     // Blue-team positive invariants (negative-space rules — fire on absence
     // of expected defenses)
     findings.extend(no_workflow_level_permissions_block(graph));
@@ -5105,7 +5370,8 @@ fn attacker_surface_kinds_for(finding: &Finding) -> std::collections::BTreeSet<S
         FindingCategory::CacheKeyCrossesTrustBoundary
         | FindingCategory::PrSpecificCacheKeyInDefaultBranchConsumer
         | FindingCategory::GhaSetupNodeCacheHelperPathHandoff
-        | FindingCategory::GhaSetupPythonCacheHelperPathHandoff => {
+        | FindingCategory::GhaSetupPythonCacheHelperPathHandoff
+        | FindingCategory::GhaSetupGoCacheHelperPathHandoff => {
             out.insert("cache".into());
         }
         FindingCategory::GhaDockerSetupQemuPrivilegedDockerHelper => {
@@ -5212,8 +5478,14 @@ fn runtime_preconditions_for(graph: &AuthorityGraph, finding: &Finding) -> Vec<&
         | FindingCategory::GhaHelperPathSensitiveEnv
         | FindingCategory::GhaActionMintedSecretToHelper
         | FindingCategory::GhaHelperUntrustedPathResolution
+        | FindingCategory::GhaCreatePrGitTokenPathHandoff
+        | FindingCategory::GhaImportGpgPrivateKeyHelperPath
+        | FindingCategory::GhaSshAgentPrivateKeyToPathHelper
+        | FindingCategory::GhaMacosCodesignCertSecurityPath
+        | FindingCategory::GhaPagesDeployTokenUrlToGitHelper
         | FindingCategory::GhaSetupNodeCacheHelperPathHandoff
         | FindingCategory::GhaSetupPythonCacheHelperPathHandoff
+        | FindingCategory::GhaSetupGoCacheHelperPathHandoff
         | FindingCategory::GhaDockerSetupQemuPrivilegedDockerHelper => {
             out.push(
                 "an earlier same-job step can influence PATH before the later helper boundary runs",
@@ -11167,6 +11439,61 @@ mod tests {
         g
     }
 
+    fn gha_action_boundary_graph(
+        action: &str,
+        with_inputs: Option<&str>,
+        include_path_writer: bool,
+        include_secret: bool,
+        github_token_permissions: Option<&str>,
+    ) -> AuthorityGraph {
+        let mut g = AuthorityGraph::new(source("ci.yml"));
+        g.metadata
+            .insert(META_PLATFORM.into(), "github-actions".into());
+        if include_path_writer {
+            let mut writer_meta = std::collections::HashMap::new();
+            writer_meta.insert(META_JOB_NAME.into(), "deploy".into());
+            writer_meta.insert(
+                META_SCRIPT_BODY.into(),
+                "echo /tmp/fake >> $GITHUB_PATH".into(),
+            );
+            g.add_node_with_metadata(
+                NodeKind::Step,
+                "path setup",
+                TrustZone::FirstParty,
+                writer_meta,
+            );
+        }
+
+        let mut action_meta = std::collections::HashMap::new();
+        action_meta.insert(META_JOB_NAME.into(), "deploy".into());
+        action_meta.insert(META_GHA_ACTION.into(), action.into());
+        if let Some(inputs) = with_inputs {
+            action_meta.insert(META_GHA_WITH_INPUTS.into(), inputs.into());
+        }
+        let step = g.add_node_with_metadata(
+            NodeKind::Step,
+            "authority action",
+            TrustZone::ThirdParty,
+            action_meta,
+        );
+        if include_secret {
+            let secret = g.add_node(NodeKind::Secret, "DEPLOY_TOKEN", TrustZone::FirstParty);
+            g.add_edge(step, secret, EdgeKind::HasAccessTo);
+        }
+        if let Some(perms) = github_token_permissions {
+            let mut token_meta = std::collections::HashMap::new();
+            token_meta.insert(META_PERMISSIONS.into(), perms.into());
+            let token = g.add_node_with_metadata(
+                NodeKind::Identity,
+                "GITHUB_TOKEN",
+                TrustZone::FirstParty,
+                token_meta,
+            );
+            g.add_edge(step, token, EdgeKind::HasAccessTo);
+        }
+        g
+    }
+
     #[test]
     fn gha_helper_path_sensitive_argv_fires_for_azure_login() {
         let g = gha_helper_graph("azure/login", None);
@@ -11313,6 +11640,33 @@ mod tests {
     }
 
     #[test]
+    fn setup_node_cache_handoff_dedupes_repeated_steps_per_job() {
+        let mut g = AuthorityGraph::new(source("ci.yml"));
+        g.metadata
+            .insert(META_PLATFORM.into(), "github-actions".into());
+        let mut writer_meta = std::collections::HashMap::new();
+        writer_meta.insert(META_JOB_NAME.into(), "frontend".into());
+        writer_meta.insert(META_SCRIPT_BODY.into(), "echo ./bin >> $GITHUB_PATH".into());
+        g.add_node_with_metadata(
+            NodeKind::Step,
+            "path setup",
+            TrustZone::FirstParty,
+            writer_meta,
+        );
+
+        for name in ["setup node deps", "setup node tests"] {
+            let mut action_meta = std::collections::HashMap::new();
+            action_meta.insert(META_JOB_NAME.into(), "frontend".into());
+            action_meta.insert(META_GHA_ACTION.into(), "actions/setup-node".into());
+            action_meta.insert(META_GHA_WITH_INPUTS.into(), "cache=pnpm".into());
+            g.add_node_with_metadata(NodeKind::Step, name, TrustZone::ThirdParty, action_meta);
+        }
+
+        let findings = gha_setup_node_cache_helper_path_handoff(&g);
+        assert_eq!(findings.len(), 1);
+    }
+
+    #[test]
     fn setup_python_cache_handoff_only_flags_helper_backed_cache_modes() {
         let pip = gha_helper_graph("actions/setup-python", Some("cache=pip"));
         assert_eq!(gha_setup_python_cache_helper_path_handoff(&pip).len(), 1);
@@ -11333,6 +11687,24 @@ mod tests {
             findings[0].category,
             FindingCategory::GhaSetupPythonPipInstallAuthorityEnv
         );
+    }
+
+    #[test]
+    fn setup_go_cache_handoff_requires_explicit_cache_and_prior_path_mutation() {
+        let g = gha_helper_graph("actions/setup-go", Some("cache=true"));
+        let findings = gha_setup_go_cache_helper_path_handoff(&g);
+        assert_eq!(findings.len(), 1);
+        assert_eq!(
+            findings[0].category,
+            FindingCategory::GhaSetupGoCacheHelperPathHandoff
+        );
+
+        let no_cache = gha_helper_graph("actions/setup-go", None);
+        assert!(gha_setup_go_cache_helper_path_handoff(&no_cache).is_empty());
+
+        let no_path =
+            gha_action_boundary_graph("actions/setup-go", Some("cache=true"), false, true, None);
+        assert!(gha_setup_go_cache_helper_path_handoff(&no_path).is_empty());
     }
 
     #[test]
@@ -11414,6 +11786,222 @@ mod tests {
         assert_eq!(findings.len(), 1);
         assert!(findings[0].message.contains("docker login"));
         assert!(findings[0].message.contains("docker push"));
+    }
+
+    #[test]
+    fn workflow_shell_authority_concentration_covers_sentry_and_sonar_sinks() {
+        for (body, authority) in [
+            (
+                "sentry-cli releases files upload-sourcemaps ./dist",
+                "SENTRY_AUTH_TOKEN",
+            ),
+            ("sonar-scanner -Dsonar.projectKey=acme", "SONAR_TOKEN"),
+        ] {
+            let mut g = AuthorityGraph::new(source("ci.yml"));
+            g.metadata
+                .insert(META_PLATFORM.into(), "github-actions".into());
+            let mut meta = std::collections::HashMap::new();
+            meta.insert(META_JOB_NAME.into(), "publish".into());
+            meta.insert(META_SCRIPT_BODY.into(), body.into());
+            let step = g.add_node_with_metadata(
+                NodeKind::Step,
+                "external quality upload",
+                TrustZone::FirstParty,
+                meta,
+            );
+            let secret = g.add_node(NodeKind::Secret, authority, TrustZone::FirstParty);
+            g.add_edge(step, secret, EdgeKind::HasAccessTo);
+
+            let findings = gha_workflow_shell_authority_concentration(&g);
+            assert_eq!(findings.len(), 1, "body should be covered: {body}");
+            assert!(findings[0]
+                .message
+                .contains(body.split(' ').next().unwrap()));
+        }
+    }
+
+    #[test]
+    fn gha_action_boundary_profiles_fire_for_specific_authority() {
+        let create_pr = gha_action_boundary_graph(
+            "peter-evans/create-pull-request",
+            Some("token=${{ secrets.APP_TOKEN }}"),
+            true,
+            false,
+            None,
+        );
+        assert_eq!(gha_create_pr_git_token_path_handoff(&create_pr).len(), 1);
+
+        let gpg = gha_action_boundary_graph(
+            "crazy-max/ghaction-import-gpg",
+            Some("gpg_private_key=${{ secrets.GPG_PRIVATE_KEY }}"),
+            true,
+            false,
+            None,
+        );
+        assert_eq!(gha_import_gpg_private_key_helper_path(&gpg).len(), 1);
+
+        let ssh = gha_action_boundary_graph(
+            "webfactory/ssh-agent",
+            Some("ssh-private-key=${{ secrets.DEPLOY_KEY }}"),
+            true,
+            false,
+            None,
+        );
+        assert_eq!(gha_ssh_agent_private_key_to_path_helper(&ssh).len(), 1);
+
+        let codesign = gha_action_boundary_graph(
+            "apple-actions/import-codesign-certs",
+            Some("p12-file-base64=${{ secrets.MACOS_CERT }}"),
+            true,
+            false,
+            None,
+        );
+        assert_eq!(gha_macos_codesign_cert_security_path(&codesign).len(), 1);
+
+        let pages = gha_action_boundary_graph(
+            "peaceiris/actions-gh-pages",
+            Some("personal_token=${{ secrets.PAGES_TOKEN }}"),
+            true,
+            false,
+            None,
+        );
+        let findings = gha_pages_deploy_token_url_to_git_helper(&pages);
+        assert_eq!(findings.len(), 1);
+        assert_eq!(
+            findings[0].category,
+            FindingCategory::GhaPagesDeployTokenUrlToGitHelper
+        );
+
+        let james_ives = gha_action_boundary_graph(
+            "JamesIves/github-pages-deploy-action",
+            Some("token=${{ secrets.GITHUB_TOKEN }}"),
+            true,
+            true,
+            None,
+        );
+        assert_eq!(
+            gha_pages_deploy_token_url_to_git_helper(&james_ives).len(),
+            1
+        );
+    }
+
+    #[test]
+    fn gha_action_boundary_profiles_require_path_and_authority() {
+        type RuleFn = fn(&AuthorityGraph) -> Vec<Finding>;
+        let cases: [(&str, &str, RuleFn); 5] = [
+            (
+                "peter-evans/create-pull-request",
+                "token=${{ secrets.APP_TOKEN }}",
+                gha_create_pr_git_token_path_handoff,
+            ),
+            (
+                "crazy-max/ghaction-import-gpg",
+                "passphrase=${{ secrets.GPG_PASSPHRASE }}",
+                gha_import_gpg_private_key_helper_path,
+            ),
+            (
+                "webfactory/ssh-agent",
+                "ssh-private-key=${{ secrets.DEPLOY_KEY }}",
+                gha_ssh_agent_private_key_to_path_helper,
+            ),
+            (
+                "apple-actions/import-codesign-certs",
+                "p12-password=${{ secrets.P12_PASSWORD }}",
+                gha_macos_codesign_cert_security_path,
+            ),
+            (
+                "peaceiris/actions-gh-pages",
+                "github_token=${{ secrets.GITHUB_TOKEN }}",
+                gha_pages_deploy_token_url_to_git_helper,
+            ),
+        ];
+
+        for (action, inputs, rule) in cases {
+            let no_path = gha_action_boundary_graph(action, Some(inputs), false, false, None);
+            assert!(
+                rule(&no_path).is_empty(),
+                "{action} must not fire without prior GITHUB_PATH mutation"
+            );
+
+            let no_authority = gha_action_boundary_graph(action, None, true, false, None);
+            assert!(
+                rule(&no_authority).is_empty(),
+                "{action} must not fire on action reference alone"
+            );
+        }
+    }
+
+    #[test]
+    fn gha_action_boundary_create_pr_accepts_write_scoped_github_token() {
+        let g = gha_action_boundary_graph(
+            "peter-evans/create-pull-request",
+            None,
+            true,
+            false,
+            Some("contents: write\npull-requests: write"),
+        );
+        assert_eq!(gha_create_pr_git_token_path_handoff(&g).len(), 1);
+
+        let read_only = gha_action_boundary_graph(
+            "peter-evans/create-pull-request",
+            None,
+            true,
+            false,
+            Some("contents: read"),
+        );
+        assert!(gha_create_pr_git_token_path_handoff(&read_only).is_empty());
+    }
+
+    #[test]
+    fn gha_action_boundary_profiles_do_not_emit_generic_path_warning() {
+        let g = gha_action_boundary_graph(
+            "peter-evans/create-pull-request",
+            Some("token=${{ secrets.APP_TOKEN }}"),
+            true,
+            true,
+            None,
+        );
+        assert_eq!(gha_create_pr_git_token_path_handoff(&g).len(), 1);
+        assert!(gha_helper_untrusted_path_resolution(&g).is_empty());
+        assert!(later_secret_materialized_after_path_mutation(&g).is_empty());
+    }
+
+    #[test]
+    fn gha_tool_installer_then_shell_dedupes_duplicate_installers_per_shell_sink() {
+        let mut g = AuthorityGraph::new(source("ci.yml"));
+        g.metadata
+            .insert(META_PLATFORM.into(), "github-actions".into());
+        for name in ["Install cosign", "Install cosign again"] {
+            let mut installer_meta = std::collections::HashMap::new();
+            installer_meta.insert(META_JOB_NAME.into(), "deploy".into());
+            installer_meta.insert(META_GHA_ACTION.into(), "sigstore/cosign-installer".into());
+            g.add_node_with_metadata(NodeKind::Step, name, TrustZone::ThirdParty, installer_meta);
+        }
+        let mut shell_meta = std::collections::HashMap::new();
+        shell_meta.insert(META_JOB_NAME.into(), "deploy".into());
+        shell_meta.insert(
+            META_SCRIPT_BODY.into(),
+            "cosign sign ghcr.io/acme/app".into(),
+        );
+        let shell = g.add_node_with_metadata(
+            NodeKind::Step,
+            "Sign regular images",
+            TrustZone::FirstParty,
+            shell_meta,
+        );
+        let mut id_meta = std::collections::HashMap::new();
+        id_meta.insert(META_OIDC.into(), "true".into());
+        let identity = g.add_node_with_metadata(
+            NodeKind::Identity,
+            "GITHUB_OIDC_TOKEN",
+            TrustZone::FirstParty,
+            id_meta,
+        );
+        g.add_edge(shell, identity, EdgeKind::HasAccessTo);
+
+        let findings = gha_tool_installer_then_shell_helper_authority(&g);
+        assert_eq!(findings.len(), 1);
+        assert_eq!(findings[0].nodes_involved[1], shell);
     }
 
     #[test]

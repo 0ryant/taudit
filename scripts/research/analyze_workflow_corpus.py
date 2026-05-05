@@ -138,6 +138,12 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--limit-per-platform", type=int)
     parser.add_argument("--jobs", type=int, default=max(2, (os.cpu_count() or 4) // 2))
     parser.add_argument("--timeout", type=int, default=20)
+    parser.add_argument(
+        "--allow-failure-substring",
+        action="append",
+        default=[],
+        help="Treat a scan failure as quarantined when the corpus path contains this substring.",
+    )
     return parser.parse_args()
 
 
@@ -155,6 +161,7 @@ def main() -> int:
         "file_count": len(corpus_files),
         "scan_ok": 0,
         "scan_failed": 0,
+        "scan_allowed_failed": 0,
         "by_platform": {},
         "completeness": {},
         "gap_kinds": {},
@@ -185,8 +192,14 @@ def main() -> int:
                 summary["slowest"].append({"path": result.path, "platform": result.platform, "elapsed_ms": result.elapsed_ms})
                 summary["slowest"] = sorted(summary["slowest"], key=lambda x: x["elapsed_ms"], reverse=True)[:20]
             else:
-                summary["scan_failed"] += 1
-                summary["by_platform"][result.platform]["failed"] += 1
+                allowed = any(s in result.path for s in args.allow_failure_substring)
+                if allowed:
+                    summary["scan_allowed_failed"] += 1
+                    summary["by_platform"][result.platform].setdefault("allowed_failed", 0)
+                    summary["by_platform"][result.platform]["allowed_failed"] += 1
+                else:
+                    summary["scan_failed"] += 1
+                    summary["by_platform"][result.platform]["failed"] += 1
                 with failures_path.open("a", encoding="utf-8") as f:
                     f.write(json.dumps(dataclasses.asdict(result), sort_keys=True) + "\n")
             if i % 100 == 0:

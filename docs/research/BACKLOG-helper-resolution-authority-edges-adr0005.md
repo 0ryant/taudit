@@ -11,7 +11,7 @@ Disclosure/CVE-oriented tooling is internal-only. Any witness-spec command, disc
 | R1 | Researcher | Catalog source anchors for initial actions: Firebase, Azure, Cloudflare, Docker login, npm publish, ECR login, setup-gcloud, GoReleaser, Codecov, Teleport. | Each action has pinned versions/SHAs, helper invocation notes, authority transport, and source/witness status. | Catalog fixture review; links or local notes under `docs/research/`. |
 | R2 | Researcher | Normalize hosted-runner witness observations into catalog fields. | `witness_status`, `observed_helper`, `observed_authority_transport`, `canary_only`, and `pinned_sha` are available for witnessed actions. | JSON/TOML catalog validates against schema. |
 | R3 | Researcher | Write internal disclosure-score factor notes for each initial action. | Each entry records why technical score and disclosure score can diverge; disclosure factors are not emitted by default reports. | Review against ADR 0005 scoring table and feature-gate checklist. |
-| R4 | Researcher | Index Algol handoff rulesets: `/Users/rytilcock/prj/algol/docs/research/taudit-authority-confusion-ruleset-handoff.md` and `/Users/rytilcock/prj/algol/docs/research/taudit-corpus-lead-hunt-ruleset.md`. | Canonical rule IDs, match shapes, evidence levels, exclusions, and candidate-specific profiles are normalized into taudit backlog/catalog entries with duplicates merged against existing rules. | Cross-check the index against the two Algol docs and this backlog; no duplicate rule IDs or alias-only tasks. |
+| R4 | Researcher | Index Algol handoff rulesets: `/Users/rytilcock/prj/algol/docs/research/taudit-authority-confusion-ruleset-handoff.md` and `/Users/rytilcock/prj/algol/docs/research/taudit-corpus-lead-hunt-ruleset.md`; current normalized output is [`2026-05-05-algol-rule-intake-index.md`](2026-05-05-algol-rule-intake-index.md). | Canonical rule IDs, match shapes, evidence levels, exclusions, and candidate-specific profiles are normalized into taudit backlog/catalog entries with duplicates merged against existing rules. | Cross-check the index against the two Algol docs and this backlog; no duplicate rule IDs or alias-only tasks. |
 | W1 | Writer | Produce customer-safe report copy templates for helper authority findings. | Templates include earlier mutable channel, later authority, helper sink, transport, why it matters, same-job caveat, and remediation without CVE/disclosure language. | Snapshot tests or docs examples. |
 | W2 | Writer | Produce internal-only disclosure/witness copy templates. | Templates include witness next action and disclosure routing only under the internal feature gate. | Feature-gated snapshot tests. |
 | W3 | Writer | Update user-facing docs after the first implementation slice. | Docs explain taudit/Algol/witness split and labels: product candidate, workflow misconfiguration, hardening, demo, suppressed expected behavior. | `docs/` link check or golden-path smoke if CLI docs change. |
@@ -41,6 +41,15 @@ Disclosure/CVE-oriented tooling is internal-only. Any witness-spec command, disc
 | A19 | P2 | Evidence tiers | Add explicit evidence-tier output for helper and shell authority classifiers. | Findings distinguish corpus signal, source lead, runner-faithful witness, hosted witness, and suppressed expected behavior; disclosure routing remains feature-gated internal output only. | Snapshot tests proving default customer output omits disclosure score, CVE language, canary details, and witness next-action fields. |
 
 ## Candidate rule intake
+
+Current normalization lives in [`2026-05-05-algol-rule-intake-index.md`](2026-05-05-algol-rule-intake-index.md). Next grouping after the already-landed helper/cache/workflow-shell rules is:
+
+- queued classifier rules with customer-safe output;
+- catalog/source-anchor work needed before rule implementation;
+- internal-only witness, disclosure, CVE, and red-team work behind feature gates.
+
+Corpus signal/noise gating for these rules lives in
+[`2026-05-05-algol-rule-corpus-signal-gate.md`](2026-05-05-algol-rule-corpus-signal-gate.md).
 
 | Candidate | Backlog item | Default label | Evidence tier | Notes |
 |-----------|--------------|---------------|---------------|-------|

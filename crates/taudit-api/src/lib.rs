@@ -447,6 +447,9 @@ pub enum FindingCategory {
     /// `actions/setup-python` pip-install mode runs pip while inheriting
     /// ambient credentials or cloud authority.
     GhaSetupPythonPipInstallAuthorityEnv,
+    /// `actions/setup-go` cache mode resolves Go helpers after an earlier
+    /// same-job `GITHUB_PATH` mutation.
+    GhaSetupGoCacheHelperPathHandoff,
     /// `docker/setup-qemu-action` invokes Docker/QEMU helper flow in a job that
     /// already has registry authority or private-image context.
     GhaDockerSetupQemuPrivilegedDockerHelper,
@@ -456,6 +459,21 @@ pub enum FindingCategory {
     /// Shell command sequence concentrates publish, deploy, signing, registry,
     /// or release authority in a workflow step.
     GhaWorkflowShellAuthorityConcentration,
+    /// `peter-evans/create-pull-request` receives PR token authority after an
+    /// earlier same-job `GITHUB_PATH` mutation and delegates to `git`.
+    GhaCreatePrGitTokenPathHandoff,
+    /// `crazy-max/ghaction-import-gpg` receives GPG private key/passphrase
+    /// material after an earlier same-job `GITHUB_PATH` mutation.
+    GhaImportGpgPrivateKeyHelperPath,
+    /// `webfactory/ssh-agent` receives SSH private key material after an
+    /// earlier same-job `GITHUB_PATH` mutation.
+    GhaSshAgentPrivateKeyToPathHelper,
+    /// `apple-actions/import-codesign-certs` receives macOS P12/keychain
+    /// material after an earlier same-job `GITHUB_PATH` mutation.
+    GhaMacosCodesignCertSecurityPath,
+    /// Pages deploy actions compose token/deploy-key Git authority after an
+    /// earlier same-job `GITHUB_PATH` mutation.
+    GhaPagesDeployTokenUrlToGitHelper,
     /// Precision guard for actions that install a helper into the toolcache
     /// and invoke that absolute path instead of resolving a bare helper from
     /// runner `PATH`.

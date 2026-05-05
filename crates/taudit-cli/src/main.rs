@@ -4919,7 +4919,7 @@ fn resolve_captured_by(supplied: Option<String>) -> String {
 fn rules_version_label(custom_count: usize) -> String {
     // Built-in rule count — kept in sync with `taudit_report_sarif::all_rules().len()`.
     // Update whenever a rule is added to or removed from the SARIF registry.
-    const BUILTIN_COUNT: usize = 82;
+    const BUILTIN_COUNT: usize = 88;
     if custom_count == 0 {
         format!("{BUILTIN_COUNT}-builtin")
     } else {

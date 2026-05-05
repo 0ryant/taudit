@@ -208,6 +208,9 @@ fn category_rule_id(category: &FindingCategory) -> &'static str {
         FindingCategory::GhaSetupPythonPipInstallAuthorityEnv => {
             "gha_setup_python_pip_install_authority_env"
         }
+        FindingCategory::GhaSetupGoCacheHelperPathHandoff => {
+            "gha_setup_go_cache_helper_path_handoff"
+        }
         FindingCategory::GhaDockerSetupQemuPrivilegedDockerHelper => {
             "gha_docker_setup_qemu_privileged_docker_helper"
         }
@@ -216,6 +219,19 @@ fn category_rule_id(category: &FindingCategory) -> &'static str {
         }
         FindingCategory::GhaWorkflowShellAuthorityConcentration => {
             "gha_workflow_shell_authority_concentration"
+        }
+        FindingCategory::GhaCreatePrGitTokenPathHandoff => "gha_create_pr_git_token_path_handoff",
+        FindingCategory::GhaImportGpgPrivateKeyHelperPath => {
+            "gha_import_gpg_private_key_helper_path"
+        }
+        FindingCategory::GhaSshAgentPrivateKeyToPathHelper => {
+            "gha_ssh_agent_private_key_to_path_helper"
+        }
+        FindingCategory::GhaMacosCodesignCertSecurityPath => {
+            "gha_macos_codesign_cert_security_path"
+        }
+        FindingCategory::GhaPagesDeployTokenUrlToGitHelper => {
+            "gha_pages_deploy_token_url_to_git_helper"
         }
         FindingCategory::GhaToolcacheAbsolutePathDowngrade => {
             "gha_toolcache_absolute_path_downgrade"
@@ -842,9 +858,15 @@ mod fingerprint_tests {
             FindingCategory::GhaSetupNodeCacheHelperPathHandoff,
             FindingCategory::GhaSetupPythonCacheHelperPathHandoff,
             FindingCategory::GhaSetupPythonPipInstallAuthorityEnv,
+            FindingCategory::GhaSetupGoCacheHelperPathHandoff,
             FindingCategory::GhaDockerSetupQemuPrivilegedDockerHelper,
             FindingCategory::GhaToolInstallerThenShellHelperAuthority,
             FindingCategory::GhaWorkflowShellAuthorityConcentration,
+            FindingCategory::GhaCreatePrGitTokenPathHandoff,
+            FindingCategory::GhaImportGpgPrivateKeyHelperPath,
+            FindingCategory::GhaSshAgentPrivateKeyToPathHelper,
+            FindingCategory::GhaMacosCodesignCertSecurityPath,
+            FindingCategory::GhaPagesDeployTokenUrlToGitHelper,
             FindingCategory::GhaToolcacheAbsolutePathDowngrade,
             FindingCategory::EgressBlindspot,
             FindingCategory::MissingAuditTrail,
