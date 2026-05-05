@@ -996,6 +996,8 @@ fn read_text_file_capped(path: &Path) -> Result<String> {
 
 fn atomic_write(path: &Path, bytes: &[u8]) -> Result<()> {
     let parent = path.parent().unwrap_or_else(|| Path::new("."));
+    fs::create_dir_all(parent)
+        .with_context(|| format!("failed creating parent directory {}", parent.display()))?;
     let file_name = path.file_name().and_then(|s| s.to_str()).unwrap_or("file");
     let tmp_path = parent.join(format!(
         ".{file_name}.{}.{}.tmp",
