@@ -7,15 +7,16 @@ use crate::graph::{
     META_CHECKOUT_REF, META_CHECKOUT_SELF, META_CLI_FLAG_EXPOSED, META_CONDITION, META_CONTAINER,
     META_DIGEST, META_DISPATCH_INPUTS, META_DOTENV_FILE, META_DOWNLOADS_ARTIFACT,
     META_ENVIRONMENT_NAME, META_ENVIRONMENT_URL, META_ENV_APPROVAL,
-    META_ENV_GATE_WRITES_SECRET_VALUE, META_FORK_CHECK, META_GITLAB_ALLOW_FAILURE,
-    META_GITLAB_CACHE_KEY, META_GITLAB_CACHE_POLICY, META_GITLAB_DIND_SERVICE, META_GITLAB_EXTENDS,
-    META_GITLAB_INCLUDES, META_GITLAB_TRIGGER_KIND, META_IDENTITY_SCOPE, META_IMPLICIT,
-    META_INTERACTIVE_DEBUG, META_INTERPRETS_ARTIFACT, META_JOB_NAME, META_JOB_OUTPUTS, META_NEEDS,
-    META_NO_WORKFLOW_PERMISSIONS, META_OIDC, META_OIDC_AUDIENCE, META_PERMISSIONS, META_PLATFORM,
-    META_READS_ENV, META_REPOSITORIES, META_RULES_PROTECTED_ONLY, META_SCRIPT_BODY,
-    META_SECRETS_INHERIT, META_SELF_HOSTED, META_SERVICE_CONNECTION, META_SERVICE_CONNECTION_NAME,
-    META_SETVARIABLE_ADO, META_TERRAFORM_AUTO_APPROVE, META_TRIGGER, META_TRIGGERS,
-    META_VARIABLE_GROUP, META_WORKSPACE_CLEAN, META_WRITES_ENV_GATE,
+    META_ENV_GATE_WRITES_SECRET_VALUE, META_FORK_CHECK, META_GHA_ACTION, META_GHA_WITH_INPUTS,
+    META_GITLAB_ALLOW_FAILURE, META_GITLAB_CACHE_KEY, META_GITLAB_CACHE_POLICY,
+    META_GITLAB_DIND_SERVICE, META_GITLAB_EXTENDS, META_GITLAB_INCLUDES, META_GITLAB_TRIGGER_KIND,
+    META_IDENTITY_SCOPE, META_IMPLICIT, META_INTERACTIVE_DEBUG, META_INTERPRETS_ARTIFACT,
+    META_JOB_NAME, META_JOB_OUTPUTS, META_NEEDS, META_NO_WORKFLOW_PERMISSIONS, META_OIDC,
+    META_OIDC_AUDIENCE, META_PERMISSIONS, META_PLATFORM, META_READS_ENV, META_REPOSITORIES,
+    META_RULES_PROTECTED_ONLY, META_SCRIPT_BODY, META_SECRETS_INHERIT, META_SELF_HOSTED,
+    META_SERVICE_CONNECTION, META_SERVICE_CONNECTION_NAME, META_SETVARIABLE_ADO,
+    META_TERRAFORM_AUTO_APPROVE, META_TRIGGER, META_TRIGGERS, META_VARIABLE_GROUP,
+    META_WORKSPACE_CLEAN, META_WRITES_ENV_GATE,
 };
 use crate::propagation;
 
@@ -3957,6 +3958,464 @@ pub fn setvariable_issecret_false(graph: &AuthorityGraph) -> Vec<Finding> {
     findings
 }
 
+#[derive(Debug, Clone, Copy)]
+struct GhaHelperProfile {
+    action: &'static str,
+    helper: &'static str,
+    path_resolved_helper: bool,
+    argv: bool,
+    stdin: bool,
+    env: bool,
+    cleanup_env: bool,
+    minted: bool,
+    output_after_login: bool,
+    requires_skip_install: bool,
+    toolcache_absolute: bool,
+}
+
+const GHA_HELPER_PROFILES: &[GhaHelperProfile] = &[
+    GhaHelperProfile {
+        action: "teleport-actions/database-tunnel",
+        helper: "tbot",
+        path_resolved_helper: true,
+        argv: false,
+        stdin: false,
+        env: true,
+        cleanup_env: false,
+        minted: true,
+        output_after_login: false,
+        requires_skip_install: false,
+        toolcache_absolute: false,
+    },
+    GhaHelperProfile {
+        action: "cloudflare/wrangler-action",
+        helper: "npx/wrangler",
+        path_resolved_helper: true,
+        argv: false,
+        stdin: true,
+        env: true,
+        cleanup_env: false,
+        minted: false,
+        output_after_login: false,
+        requires_skip_install: false,
+        toolcache_absolute: false,
+    },
+    GhaHelperProfile {
+        action: "docker/login-action",
+        helper: "docker",
+        path_resolved_helper: true,
+        argv: false,
+        stdin: true,
+        env: false,
+        cleanup_env: false,
+        minted: false,
+        output_after_login: false,
+        requires_skip_install: false,
+        toolcache_absolute: false,
+    },
+    GhaHelperProfile {
+        action: "azure/login",
+        helper: "az",
+        path_resolved_helper: true,
+        argv: true,
+        stdin: false,
+        env: false,
+        cleanup_env: false,
+        minted: false,
+        output_after_login: false,
+        requires_skip_install: false,
+        toolcache_absolute: false,
+    },
+    GhaHelperProfile {
+        action: "google-github-actions/setup-gcloud",
+        helper: "gcloud",
+        path_resolved_helper: true,
+        argv: true,
+        stdin: false,
+        env: false,
+        cleanup_env: false,
+        minted: true,
+        output_after_login: false,
+        requires_skip_install: true,
+        toolcache_absolute: false,
+    },
+    GhaHelperProfile {
+        action: "js-devtools/npm-publish",
+        helper: "npm",
+        path_resolved_helper: true,
+        argv: false,
+        stdin: false,
+        env: true,
+        cleanup_env: false,
+        minted: false,
+        output_after_login: false,
+        requires_skip_install: false,
+        toolcache_absolute: false,
+    },
+    GhaHelperProfile {
+        action: "cachix/cachix-action",
+        helper: "cachix",
+        path_resolved_helper: true,
+        argv: true,
+        stdin: false,
+        env: true,
+        cleanup_env: true,
+        minted: false,
+        output_after_login: false,
+        requires_skip_install: false,
+        toolcache_absolute: false,
+    },
+    GhaHelperProfile {
+        action: "aws-actions/amazon-ecr-login",
+        helper: "docker",
+        path_resolved_helper: true,
+        argv: true,
+        stdin: false,
+        env: false,
+        cleanup_env: false,
+        minted: true,
+        output_after_login: true,
+        requires_skip_install: false,
+        toolcache_absolute: false,
+    },
+    GhaHelperProfile {
+        action: "google-github-actions/auth",
+        helper: "post cleanup",
+        path_resolved_helper: false,
+        argv: false,
+        stdin: false,
+        env: false,
+        cleanup_env: true,
+        minted: false,
+        output_after_login: false,
+        requires_skip_install: false,
+        toolcache_absolute: false,
+    },
+    GhaHelperProfile {
+        action: "prefix-dev/setup-pixi",
+        helper: "post cleanup",
+        path_resolved_helper: false,
+        argv: false,
+        stdin: false,
+        env: false,
+        cleanup_env: true,
+        minted: false,
+        output_after_login: false,
+        requires_skip_install: false,
+        toolcache_absolute: false,
+    },
+    GhaHelperProfile {
+        action: "goreleaser/goreleaser-action",
+        helper: "goreleaser",
+        path_resolved_helper: true,
+        argv: false,
+        stdin: false,
+        env: false,
+        cleanup_env: false,
+        minted: false,
+        output_after_login: false,
+        requires_skip_install: false,
+        toolcache_absolute: true,
+    },
+];
+
+fn gha_action_name(step: &Node) -> Option<String> {
+    step.metadata
+        .get(META_GHA_ACTION)
+        .map(|s| s.to_ascii_lowercase())
+}
+
+fn gha_helper_profile(step: &Node) -> Option<GhaHelperProfile> {
+    let action = gha_action_name(step)?;
+    let profile = GHA_HELPER_PROFILES
+        .iter()
+        .copied()
+        .find(|p| p.action == action)?;
+    if profile.requires_skip_install && !gha_with_truthy(step, "skip_install") {
+        return None;
+    }
+    Some(profile)
+}
+
+fn gha_with_value<'a>(step: &'a Node, key: &str) -> Option<&'a str> {
+    let wanted = key.to_ascii_lowercase();
+    let inputs = step.metadata.get(META_GHA_WITH_INPUTS)?;
+    inputs.lines().find_map(|line| {
+        let (k, v) = line.split_once('=')?;
+        if k.eq_ignore_ascii_case(&wanted) {
+            Some(v)
+        } else {
+            None
+        }
+    })
+}
+
+fn gha_with_truthy(step: &Node, key: &str) -> bool {
+    gha_with_value(step, key)
+        .map(|v| matches!(v.trim().to_ascii_lowercase().as_str(), "true" | "yes" | "1"))
+        .unwrap_or(false)
+}
+
+fn gha_with_false(step: &Node, key: &str) -> bool {
+    gha_with_value(step, key)
+        .map(|v| matches!(v.trim().to_ascii_lowercase().as_str(), "false" | "no" | "0"))
+        .unwrap_or(false)
+}
+
+fn step_has_sensitive_authority(graph: &AuthorityGraph, step_id: NodeId) -> bool {
+    graph.edges_from(step_id).any(|e| {
+        e.kind == EdgeKind::HasAccessTo
+            && graph
+                .node(e.to)
+                .map(|n| match n.kind {
+                    NodeKind::Secret => true,
+                    NodeKind::Identity => {
+                        n.metadata
+                            .get(META_OIDC)
+                            .map(|v| v == "true")
+                            .unwrap_or(false)
+                            || n.name != "GITHUB_TOKEN"
+                    }
+                    _ => false,
+                })
+                .unwrap_or(false)
+    })
+}
+
+fn prior_github_path_writer<'a>(graph: &'a AuthorityGraph, step: &Node) -> Option<&'a Node> {
+    let job = step.metadata.get(META_JOB_NAME)?;
+    let mut found = None;
+    for candidate in graph
+        .nodes_of_kind(NodeKind::Step)
+        .filter(|candidate| candidate.id < step.id)
+        .filter(|candidate| candidate.metadata.get(META_JOB_NAME) == Some(job))
+        .filter(|candidate| {
+            candidate
+                .metadata
+                .get(META_SCRIPT_BODY)
+                .map(|body| body.contains("GITHUB_PATH"))
+                .unwrap_or(false)
+        })
+    {
+        found = Some(candidate);
+    }
+    found
+}
+
+fn later_github_env_writer<'a>(graph: &'a AuthorityGraph, step: &Node) -> Option<&'a Node> {
+    let job = step.metadata.get(META_JOB_NAME)?;
+    graph
+        .nodes_of_kind(NodeKind::Step)
+        .filter(|candidate| candidate.id > step.id)
+        .filter(|candidate| candidate.metadata.get(META_JOB_NAME) == Some(job))
+        .find(|candidate| {
+            candidate
+                .metadata
+                .get(META_SCRIPT_BODY)
+                .map(|body| body.contains("GITHUB_ENV"))
+                .unwrap_or(false)
+        })
+}
+
+fn helper_authority_nodes(graph: &AuthorityGraph, writer: NodeId, step: NodeId) -> Vec<NodeId> {
+    let mut nodes = vec![writer, step];
+    let authority_ids: Vec<NodeId> = graph
+        .edges_from(step)
+        .filter(|e| e.kind == EdgeKind::HasAccessTo)
+        .filter_map(|e| graph.node(e.to).map(|n| n.id))
+        .collect();
+    for id in authority_ids {
+        if !nodes.contains(&id) {
+            nodes.push(id);
+        }
+    }
+    nodes
+}
+
+fn gha_helper_sensitive_findings(
+    graph: &AuthorityGraph,
+    mode: &str,
+    category: FindingCategory,
+    predicate: impl Fn(GhaHelperProfile) -> bool,
+) -> Vec<Finding> {
+    if !graph_is_platform(graph, "github-actions") {
+        return Vec::new();
+    }
+    let mut findings = Vec::new();
+    for step in graph.nodes_of_kind(NodeKind::Step) {
+        let Some(profile) = gha_helper_profile(step) else {
+            continue;
+        };
+        if profile.toolcache_absolute || !predicate(profile) {
+            continue;
+        }
+        let Some(writer) = prior_github_path_writer(graph, step) else {
+            continue;
+        };
+        let has_sensitive = step_has_sensitive_authority(graph, step.id) || profile.minted;
+        if !has_sensitive {
+            continue;
+        }
+        findings.push(Finding {
+            severity: Severity::High,
+            category,
+            path: None,
+            nodes_involved: helper_authority_nodes(graph, writer.id, step.id),
+            message: format!(
+                "Earlier step '{}' mutates GITHUB_PATH before '{}' runs {} via PATH and passes sensitive authority through {mode}",
+                writer.name, step.name, profile.helper
+            ),
+            recommendation: Recommendation::Manual {
+                action: format!(
+                    "Resolve `{}` to a trusted absolute path before secrets are materialized, reject helpers under workspace/temp paths, or split the PATH-mutating step into a separate job.",
+                    profile.helper
+                ),
+            },
+            source: FindingSource::BuiltIn,
+            extras: FindingExtras::default(),
+        });
+    }
+    findings
+}
+
+pub fn gha_helper_path_sensitive_argv(graph: &AuthorityGraph) -> Vec<Finding> {
+    gha_helper_sensitive_findings(
+        graph,
+        "argv",
+        FindingCategory::GhaHelperPathSensitiveArgv,
+        |profile| profile.argv,
+    )
+}
+
+pub fn gha_helper_path_sensitive_stdin(graph: &AuthorityGraph) -> Vec<Finding> {
+    gha_helper_sensitive_findings(
+        graph,
+        "stdin",
+        FindingCategory::GhaHelperPathSensitiveStdin,
+        |profile| profile.stdin,
+    )
+}
+
+pub fn gha_helper_path_sensitive_env(graph: &AuthorityGraph) -> Vec<Finding> {
+    gha_helper_sensitive_findings(
+        graph,
+        "environment variables",
+        FindingCategory::GhaHelperPathSensitiveEnv,
+        |profile| profile.env,
+    )
+}
+
+pub fn gha_helper_untrusted_path_resolution(graph: &AuthorityGraph) -> Vec<Finding> {
+    if !graph_is_platform(graph, "github-actions") {
+        return Vec::new();
+    }
+    let mut findings = Vec::new();
+    for step in graph.nodes_of_kind(NodeKind::Step) {
+        let Some(profile) = gha_helper_profile(step) else {
+            continue;
+        };
+        if profile.toolcache_absolute || !profile.path_resolved_helper {
+            continue;
+        }
+        let Some(writer) = prior_github_path_writer(graph, step) else {
+            continue;
+        };
+        findings.push(Finding {
+            severity: Severity::Medium,
+            category: FindingCategory::GhaHelperUntrustedPathResolution,
+            path: None,
+            nodes_involved: vec![writer.id, step.id],
+            message: format!(
+                "Earlier step '{}' mutates GITHUB_PATH before '{}' resolves security-sensitive helper `{}` by name",
+                writer.name, step.name, profile.helper
+            ),
+            recommendation: Recommendation::Manual {
+                action: format!(
+                    "Pin `{}` to an action-owned or runner-toolcache absolute path before invoking it with credentials.",
+                    profile.helper
+                ),
+            },
+            source: FindingSource::BuiltIn,
+            extras: FindingExtras::default(),
+        });
+    }
+    findings
+}
+
+pub fn gha_action_minted_secret_to_helper(graph: &AuthorityGraph) -> Vec<Finding> {
+    gha_helper_sensitive_findings(
+        graph,
+        "minted credential handoff",
+        FindingCategory::GhaActionMintedSecretToHelper,
+        |profile| profile.minted,
+    )
+}
+
+pub fn gha_post_ambient_env_cleanup_path(graph: &AuthorityGraph) -> Vec<Finding> {
+    if !graph_is_platform(graph, "github-actions") {
+        return Vec::new();
+    }
+    let mut findings = Vec::new();
+    for step in graph.nodes_of_kind(NodeKind::Step) {
+        let Some(profile) = gha_helper_profile(step) else {
+            continue;
+        };
+        if !profile.cleanup_env {
+            continue;
+        }
+        let Some(writer) = later_github_env_writer(graph, step) else {
+            continue;
+        };
+        findings.push(Finding {
+            severity: Severity::Medium,
+            category: FindingCategory::GhaPostAmbientEnvCleanupPath,
+            path: None,
+            nodes_involved: vec![step.id, writer.id],
+            message: format!(
+                "Action '{}' has post-cleanup state that can be influenced by later GITHUB_ENV writer '{}'",
+                step.name, writer.name
+            ),
+            recommendation: Recommendation::Manual {
+                action: "Store cleanup paths in GITHUB_STATE/core.saveState and ignore ambient env values during post cleanup; keep later env mutation in a separate job when possible.".into(),
+            },
+            source: FindingSource::BuiltIn,
+            extras: FindingExtras::default(),
+        });
+    }
+    findings
+}
+
+pub fn gha_secret_output_after_helper_login(graph: &AuthorityGraph) -> Vec<Finding> {
+    if !graph_is_platform(graph, "github-actions") {
+        return Vec::new();
+    }
+    let mut findings = Vec::new();
+    for step in graph.nodes_of_kind(NodeKind::Step) {
+        let Some(profile) = gha_helper_profile(step) else {
+            continue;
+        };
+        if !profile.output_after_login || !gha_with_false(step, "mask-password") {
+            continue;
+        }
+        findings.push(Finding {
+            severity: Severity::High,
+            category: FindingCategory::GhaSecretOutputAfterHelperLogin,
+            path: None,
+            nodes_involved: vec![step.id],
+            message: format!(
+                "Login action '{}' exposes helper login credential material as outputs because `mask-password` is false",
+                step.name
+            ),
+            recommendation: Recommendation::Manual {
+                action: "Keep password masking enabled and avoid forwarding login credentials through step/job outputs; prefer scoped credentials consumed only by the login step.".into(),
+            },
+            source: FindingSource::BuiltIn,
+            extras: FindingExtras::default(),
+        });
+    }
+    findings
+}
+
 pub fn run_all_rules(graph: &AuthorityGraph, max_hops: usize) -> Vec<Finding> {
     let mut findings = Vec::new();
     // MVP rules
@@ -4003,6 +4462,14 @@ pub fn run_all_rules(graph: &AuthorityGraph, max_hops: usize) -> Vec<Finding> {
     findings.extend(untrusted_api_response_to_env_sink(graph));
     findings.extend(pr_build_pushes_image_with_floating_credentials(graph));
     findings.extend(secret_via_env_gate_to_untrusted_consumer(graph));
+    // GHA helper-authority rules from Algol authority-confusion research
+    findings.extend(gha_helper_path_sensitive_argv(graph));
+    findings.extend(gha_helper_path_sensitive_stdin(graph));
+    findings.extend(gha_helper_path_sensitive_env(graph));
+    findings.extend(gha_post_ambient_env_cleanup_path(graph));
+    findings.extend(gha_action_minted_secret_to_helper(graph));
+    findings.extend(gha_helper_untrusted_path_resolution(graph));
+    findings.extend(gha_secret_output_after_helper_login(graph));
     // Blue-team positive invariants (negative-space rules — fire on absence
     // of expected defenses)
     findings.extend(no_workflow_level_permissions_block(graph));
@@ -10251,6 +10718,153 @@ mod tests {
             step_ids.push(id);
         }
         (g, step_ids)
+    }
+
+    fn gha_helper_graph(action: &str, with_inputs: Option<&str>) -> AuthorityGraph {
+        let mut g = AuthorityGraph::new(source("ci.yml"));
+        g.metadata
+            .insert(META_PLATFORM.into(), "github-actions".into());
+        let mut writer_meta = std::collections::HashMap::new();
+        writer_meta.insert(META_JOB_NAME.into(), "deploy".into());
+        writer_meta.insert(
+            META_SCRIPT_BODY.into(),
+            "echo /tmp/fake >> $GITHUB_PATH".into(),
+        );
+        g.add_node_with_metadata(
+            NodeKind::Step,
+            "path setup",
+            TrustZone::FirstParty,
+            writer_meta,
+        );
+
+        let mut action_meta = std::collections::HashMap::new();
+        action_meta.insert(META_JOB_NAME.into(), "deploy".into());
+        action_meta.insert(META_GHA_ACTION.into(), action.into());
+        if let Some(inputs) = with_inputs {
+            action_meta.insert(META_GHA_WITH_INPUTS.into(), inputs.into());
+        }
+        let step = g.add_node_with_metadata(
+            NodeKind::Step,
+            "sensitive action",
+            TrustZone::ThirdParty,
+            action_meta,
+        );
+        let secret = g.add_node(NodeKind::Secret, "DEPLOY_TOKEN", TrustZone::FirstParty);
+        g.add_edge(step, secret, EdgeKind::HasAccessTo);
+        g
+    }
+
+    #[test]
+    fn gha_helper_path_sensitive_argv_fires_for_azure_login() {
+        let g = gha_helper_graph("azure/login", None);
+        let findings = gha_helper_path_sensitive_argv(&g);
+        assert_eq!(findings.len(), 1);
+        assert_eq!(
+            findings[0].category,
+            FindingCategory::GhaHelperPathSensitiveArgv
+        );
+        assert!(findings[0].message.contains("argv"));
+    }
+
+    #[test]
+    fn gha_helper_path_sensitive_stdin_fires_for_docker_login() {
+        let g = gha_helper_graph("docker/login-action", None);
+        let findings = gha_helper_path_sensitive_stdin(&g);
+        assert_eq!(findings.len(), 1);
+        assert_eq!(
+            findings[0].category,
+            FindingCategory::GhaHelperPathSensitiveStdin
+        );
+        assert!(findings[0].message.contains("stdin"));
+    }
+
+    #[test]
+    fn gha_helper_path_sensitive_env_fires_for_npm_publish() {
+        let g = gha_helper_graph("JS-DevTools/npm-publish", None);
+        let findings = gha_helper_path_sensitive_env(&g);
+        assert_eq!(findings.len(), 1);
+        assert_eq!(
+            findings[0].category,
+            FindingCategory::GhaHelperPathSensitiveEnv
+        );
+    }
+
+    #[test]
+    fn gha_setup_gcloud_requires_skip_install_for_path_rule() {
+        let without_skip = gha_helper_graph("google-github-actions/setup-gcloud", None);
+        assert!(gha_helper_untrusted_path_resolution(&without_skip).is_empty());
+
+        let with_skip = gha_helper_graph(
+            "google-github-actions/setup-gcloud",
+            Some("skip_install=true"),
+        );
+        assert_eq!(gha_helper_untrusted_path_resolution(&with_skip).len(), 1);
+    }
+
+    #[test]
+    fn gha_post_cleanup_fires_when_later_step_writes_github_env() {
+        let mut g = AuthorityGraph::new(source("ci.yml"));
+        g.metadata
+            .insert(META_PLATFORM.into(), "github-actions".into());
+        let mut path_meta = std::collections::HashMap::new();
+        path_meta.insert(META_JOB_NAME.into(), "deploy".into());
+        path_meta.insert(
+            META_SCRIPT_BODY.into(),
+            "echo /tmp/bin >> $GITHUB_PATH".into(),
+        );
+        g.add_node_with_metadata(
+            NodeKind::Step,
+            "earlier path",
+            TrustZone::FirstParty,
+            path_meta,
+        );
+        let mut action_meta = std::collections::HashMap::new();
+        action_meta.insert(META_JOB_NAME.into(), "deploy".into());
+        action_meta.insert(META_GHA_ACTION.into(), "google-github-actions/auth".into());
+        g.add_node_with_metadata(NodeKind::Step, "auth", TrustZone::ThirdParty, action_meta);
+        let mut writer_meta = std::collections::HashMap::new();
+        writer_meta.insert(META_JOB_NAME.into(), "deploy".into());
+        writer_meta.insert(
+            META_SCRIPT_BODY.into(),
+            "echo GOOGLE_GHA_CREDS_PATH=/tmp/x >> $GITHUB_ENV".into(),
+        );
+        g.add_node_with_metadata(
+            NodeKind::Step,
+            "later env",
+            TrustZone::FirstParty,
+            writer_meta,
+        );
+
+        let findings = gha_post_ambient_env_cleanup_path(&g);
+        assert_eq!(findings.len(), 1);
+        assert_eq!(
+            findings[0].category,
+            FindingCategory::GhaPostAmbientEnvCleanupPath
+        );
+        assert!(
+            gha_helper_untrusted_path_resolution(&g).is_empty(),
+            "cleanup-only profiles must not be reported as PATH-resolved helpers"
+        );
+    }
+
+    #[test]
+    fn gha_ecr_mask_password_false_flags_secret_output() {
+        let g = gha_helper_graph("aws-actions/amazon-ecr-login", Some("mask-password=false"));
+        let findings = gha_secret_output_after_helper_login(&g);
+        assert_eq!(findings.len(), 1);
+        assert_eq!(
+            findings[0].category,
+            FindingCategory::GhaSecretOutputAfterHelperLogin
+        );
+    }
+
+    #[test]
+    fn gha_toolcache_action_does_not_fire_helper_path_rules() {
+        let g = gha_helper_graph("goreleaser/goreleaser-action", None);
+        assert!(gha_helper_untrusted_path_resolution(&g).is_empty());
+        assert!(gha_helper_path_sensitive_argv(&g).is_empty());
+        assert!(gha_helper_path_sensitive_stdin(&g).is_empty());
+        assert!(gha_helper_path_sensitive_env(&g).is_empty());
     }
 
     #[test]

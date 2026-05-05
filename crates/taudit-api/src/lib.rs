@@ -408,6 +408,36 @@ pub enum FindingCategory {
     /// action (e.g. Cyrillic `a` instead of Latin `a`, or U+2215
     /// DIVISION SLASH instead of U+002F SOLIDUS).
     HomoglyphInActionRef,
+    /// A GitHub Actions step mutates `GITHUB_PATH` before a later known
+    /// helper-delegating action passes sensitive material to a bare helper via
+    /// command-line arguments. The prior step can select the helper that
+    /// receives later action-only authority.
+    GhaHelperPathSensitiveArgv,
+    /// A GitHub Actions step mutates `GITHUB_PATH` before a later known
+    /// helper-delegating action passes sensitive material to a bare helper over
+    /// stdin, such as Docker login passwords or Wrangler secret payloads.
+    GhaHelperPathSensitiveStdin,
+    /// A GitHub Actions step mutates `GITHUB_PATH` before a later known
+    /// helper-delegating action runs a bare helper with sensitive environment
+    /// values in scope.
+    GhaHelperPathSensitiveEnv,
+    /// A GitHub Actions post action recomputes cleanup targets from ambient
+    /// environment rather than an action-owned state channel, allowing later
+    /// `GITHUB_ENV` writes to retarget cleanup.
+    GhaPostAmbientEnvCleanupPath,
+    /// A GitHub Actions action mints or exchanges later credentials and then
+    /// delegates them to a PATH-resolved helper.
+    GhaActionMintedSecretToHelper,
+    /// A GitHub Actions action invokes a security-sensitive helper by bare
+    /// name after an earlier same-job `GITHUB_PATH` mutation.
+    GhaHelperUntrustedPathResolution,
+    /// A GitHub Actions login action exposes credential material as step
+    /// outputs after helper login, making cross-job propagation easy to miss.
+    GhaSecretOutputAfterHelperLogin,
+    /// Precision guard for actions that install a helper into the toolcache
+    /// and invoke that absolute path instead of resolving a bare helper from
+    /// runner `PATH`.
+    GhaToolcacheAbsolutePathDowngrade,
     // Reserved — requires ADO/GH API enrichment beyond pipeline YAML.
     // Sealed against deserialisation: a custom-rule YAML using these
     // categories errors out with `unknown variant` at load time, because
@@ -783,6 +813,15 @@ pub const META_ENV_APPROVAL: &str = "env_approval";
 /// need to attribute steps back to their containing job. Set by both the GHA
 /// and ADO parsers on every Step they create within a job's scope.
 pub const META_JOB_NAME: &str = "job_name";
+/// Step-level metadata: normalized GitHub Actions `uses:` action name without
+/// its `@ref` suffix, for example `docker/login-action`. Set only by the GHA
+/// parser on `uses:` steps.
+pub const META_GHA_ACTION: &str = "gha_action";
+/// Step-level metadata: sorted scalar `with:` inputs for a GHA `uses:` step,
+/// encoded as newline-delimited `key=value` records. Non-scalar inputs are
+/// omitted. Consumed by action-specific rules that need precision controls
+/// such as `mask-password: false` or `skip_install: true`.
+pub const META_GHA_WITH_INPUTS: &str = "gha_with_inputs";
 /// Graph-level metadata: JSON-encoded array of `resources.repositories[]`
 /// entries declared by the pipeline. Each entry is an object with fields
 /// `alias`, `repo_type`, `name`, optional `ref`, and `used` (true when the

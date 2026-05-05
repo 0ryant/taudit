@@ -1175,6 +1175,103 @@ pub const RULE_DEFS: &[RuleDef] = &[
         security_severity: "9.0",
         tags: &["security", "supply-chain", "github-actions"],
     },
+    RuleDef {
+        id: "gha_helper_path_sensitive_argv",
+        name: "GhaHelperPathSensitiveArgv",
+        short_description: "PATH-selected GHA helper receives sensitive argv.",
+        full_description:
+            "A prior same-job step mutates GITHUB_PATH before a known helper-delegating \
+             GitHub Action passes sensitive material to a bare helper through process \
+             arguments. Resolve the helper to a trusted absolute path before credentials \
+             are materialized.",
+        default_level: "error",
+        security_severity: "7.8",
+        tags: &["security", "credentials", "github-actions"],
+    },
+    RuleDef {
+        id: "gha_helper_path_sensitive_stdin",
+        name: "GhaHelperPathSensitiveStdin",
+        short_description: "PATH-selected GHA helper receives sensitive stdin.",
+        full_description:
+            "A prior same-job step mutates GITHUB_PATH before a known helper-delegating \
+             GitHub Action pipes secret material to a bare helper over stdin. Keep the \
+             stdin handoff, but ensure it targets a trusted absolute helper path.",
+        default_level: "error",
+        security_severity: "7.8",
+        tags: &["security", "credentials", "github-actions"],
+    },
+    RuleDef {
+        id: "gha_helper_path_sensitive_env",
+        name: "GhaHelperPathSensitiveEnv",
+        short_description: "PATH-selected GHA helper inherits sensitive env.",
+        full_description:
+            "A prior same-job step mutates GITHUB_PATH before a known helper-delegating \
+             GitHub Action invokes a bare helper while sensitive environment authority is \
+             in scope. Validate the resolved helper path and reduce inherited env.",
+        default_level: "error",
+        security_severity: "7.4",
+        tags: &["security", "credentials", "github-actions"],
+    },
+    RuleDef {
+        id: "gha_post_ambient_env_cleanup_path",
+        name: "GhaPostAmbientEnvCleanupPath",
+        short_description: "GHA post cleanup can be retargeted by later env writes.",
+        full_description:
+            "A known GitHub Action post hook recomputes cleanup paths from ambient \
+             environment and a later same-job step writes to GITHUB_ENV. Store cleanup \
+             targets in GITHUB_STATE/core.saveState instead of ambient env.",
+        default_level: "warning",
+        security_severity: "5.8",
+        tags: &["security", "cleanup", "github-actions"],
+    },
+    RuleDef {
+        id: "gha_action_minted_secret_to_helper",
+        name: "GhaActionMintedSecretToHelper",
+        short_description: "GHA action mints a credential then hands it to PATH helper.",
+        full_description:
+            "A known GitHub Action mints or exchanges credentials and then delegates the \
+             resulting authority to a helper selected through mutable PATH. Resolve helper \
+             paths before minting credentials or reject workspace/temp helpers.",
+        default_level: "error",
+        security_severity: "8.0",
+        tags: &["security", "credentials", "github-actions"],
+    },
+    RuleDef {
+        id: "gha_helper_untrusted_path_resolution",
+        name: "GhaHelperUntrustedPathResolution",
+        short_description: "GHA action resolves a sensitive helper after GITHUB_PATH mutation.",
+        full_description:
+            "A prior same-job step mutates GITHUB_PATH before a known action invokes a \
+             security-sensitive helper by bare name. Pin helper execution to a trusted \
+             absolute path or move the PATH mutation into a separate job.",
+        default_level: "warning",
+        security_severity: "6.2",
+        tags: &["security", "supply-chain", "github-actions"],
+    },
+    RuleDef {
+        id: "gha_secret_output_after_helper_login",
+        name: "GhaSecretOutputAfterHelperLogin",
+        short_description: "GHA login action exposes helper credentials as outputs.",
+        full_description:
+            "A known login action is configured to expose credential material as step \
+             outputs after helper login. Keep masking enabled and avoid forwarding login \
+             credentials through step or job outputs.",
+        default_level: "error",
+        security_severity: "7.5",
+        tags: &["security", "credentials", "github-actions"],
+    },
+    RuleDef {
+        id: "gha_toolcache_absolute_path_downgrade",
+        name: "GhaToolcacheAbsolutePathDowngrade",
+        short_description: "Precision guard for toolcache absolute helper execution.",
+        full_description:
+            "Precision guard for GitHub Actions that install helpers into the runner \
+             toolcache and invoke an absolute path. This rule id documents the negative \
+             control used to avoid helper-PATH false positives.",
+        default_level: "note",
+        security_severity: "0.0",
+        tags: &["security", "precision", "github-actions"],
+    },
 ];
 
 // ── SARIF 2.1.0 schema structs ──────────────────────────
@@ -1965,6 +2062,14 @@ mod tests {
             FindingCategory::DotenvArtifactFlowsToPrivilegedDeployment,
             FindingCategory::SetvariableIssecretFalse,
             FindingCategory::HomoglyphInActionRef,
+            FindingCategory::GhaHelperPathSensitiveArgv,
+            FindingCategory::GhaHelperPathSensitiveStdin,
+            FindingCategory::GhaHelperPathSensitiveEnv,
+            FindingCategory::GhaPostAmbientEnvCleanupPath,
+            FindingCategory::GhaActionMintedSecretToHelper,
+            FindingCategory::GhaHelperUntrustedPathResolution,
+            FindingCategory::GhaSecretOutputAfterHelperLogin,
+            FindingCategory::GhaToolcacheAbsolutePathDowngrade,
         ];
 
         for cat in categories {

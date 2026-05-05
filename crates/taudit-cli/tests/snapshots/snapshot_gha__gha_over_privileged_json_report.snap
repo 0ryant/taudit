@@ -323,6 +323,7 @@ graph:
       kind: step
       metadata:
         checkout_self: "true"
+        gha_action: actions/checkout
         job_name: build
       name: "build[0]"
       trust_zone: untrusted
@@ -356,6 +357,8 @@ graph:
     - id: 8
       kind: step
       metadata:
+        gha_action: some-org/deploy-action
+        gha_with_inputs: "token=${{ secrets.DEPLOY_TOKEN }}"
         job_name: deploy
       name: "deploy[0]"
       trust_zone: untrusted

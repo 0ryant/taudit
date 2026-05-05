@@ -1,12 +1,12 @@
 # taudit Rule Reference
 
-61 built-in rules. Run `taudit explain <rule-id>` for a description in the terminal.
+69 rule definitions. 68 emit findings from YAML today; `gha_toolcache_absolute_path_downgrade` is a precision guard documented so helper-PATH findings do not over-fire. Run `taudit explain <rule-id>` for a description in the terminal.
 
 ## Top-level commands
 
 | Command | Purpose |
 |---------|---------|
-| `taudit scan` | Run the 61 built-in rules (and optional custom rules via `--rules-dir`); produces a report. |
+| `taudit scan` | Run the emitting built-in rules (and optional custom rules via `--rules-dir`); produces a report. |
 | [`taudit verify`](../verify.md) | Policy-driven enforcement entrypoint for CI gates. Exit 0 = clean, 1 = violation, 2 = config error. Runs only `--policy` invariants by default. |
 | `taudit map` | Render the authority graph (text table or DOT). |
 | `taudit diff` | Compare findings between two pipeline versions. |
@@ -57,6 +57,14 @@ Platforms: **GHA** = GitHub Actions · **ADO** = Azure DevOps · **GL** = GitLab
 | [pr_trigger_with_floating_action_ref](pr_trigger_with_floating_action_ref.md) | Critical | Privilege / Supply Chain | GHA |
 | [untrusted_api_response_to_env_sink](untrusted_api_response_to_env_sink.md) | High | Injection | GHA |
 | [pr_build_pushes_image_with_floating_credentials](pr_build_pushes_image_with_floating_credentials.md) | High | Supply Chain / Credentials | GHA |
+| [gha_helper_path_sensitive_argv](gha_helper_path_sensitive_argv.md) | High | Credentials | GHA |
+| [gha_helper_path_sensitive_stdin](gha_helper_path_sensitive_stdin.md) | High | Credentials | GHA |
+| [gha_helper_path_sensitive_env](gha_helper_path_sensitive_env.md) | High | Credentials | GHA |
+| [gha_post_ambient_env_cleanup_path](gha_post_ambient_env_cleanup_path.md) | Medium | Cleanup | GHA |
+| [gha_action_minted_secret_to_helper](gha_action_minted_secret_to_helper.md) | High | Credentials | GHA |
+| [gha_helper_untrusted_path_resolution](gha_helper_untrusted_path_resolution.md) | Medium | Supply Chain | GHA |
+| [gha_secret_output_after_helper_login](gha_secret_output_after_helper_login.md) | High | Credentials | GHA |
+| [gha_toolcache_absolute_path_downgrade](gha_toolcache_absolute_path_downgrade.md) | Info | Precision | GHA |
 | [risky_trigger_with_authority](risky_trigger_with_authority.md) | High | Privilege | GHA |
 | [sensitive_value_in_job_output](sensitive_value_in_job_output.md) | Critical / High | Credentials | GHA |
 | [manual_dispatch_input_to_url_or_command](manual_dispatch_input_to_url_or_command.md) | High | Injection | GHA |
@@ -110,7 +118,7 @@ Several rules graduate severity based on context rather than emitting a fixed le
 
 ## Authority invariants
 
-The 61 rules above are taudit's **built-in authority invariants** —
+The rule definitions above are taudit's **built-in authority invariants** —
 declarative properties the authority graph must satisfy. You can extend
 this set with **custom authority invariants**: YAML files loaded with
 `taudit scan --invariants-dir <path>` that evaluate against the same

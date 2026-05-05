@@ -193,6 +193,16 @@ fn event_type(category: FindingCategory) -> String {
         FindingCategory::SharedSelfHostedPoolNoIsolation => "shared_self_hosted_pool_no_isolation",
         FindingCategory::SetvariableIssecretFalse => "setvariable_issecret_false",
         FindingCategory::HomoglyphInActionRef => "homoglyph_in_action_ref",
+        FindingCategory::GhaHelperPathSensitiveArgv => "gha_helper_path_sensitive_argv",
+        FindingCategory::GhaHelperPathSensitiveStdin => "gha_helper_path_sensitive_stdin",
+        FindingCategory::GhaHelperPathSensitiveEnv => "gha_helper_path_sensitive_env",
+        FindingCategory::GhaPostAmbientEnvCleanupPath => "gha_post_ambient_env_cleanup_path",
+        FindingCategory::GhaActionMintedSecretToHelper => "gha_action_minted_secret_to_helper",
+        FindingCategory::GhaHelperUntrustedPathResolution => "gha_helper_untrusted_path_resolution",
+        FindingCategory::GhaSecretOutputAfterHelperLogin => "gha_secret_output_after_helper_login",
+        FindingCategory::GhaToolcacheAbsolutePathDowngrade => {
+            "gha_toolcache_absolute_path_downgrade"
+        }
         #[allow(deprecated)]
         FindingCategory::EgressBlindspot => "egress_blindspot",
         #[allow(deprecated)]

@@ -74,6 +74,7 @@ graph:
       kind: step
       metadata:
         checkout_self: "true"
+        gha_action: actions/checkout
         job_name: test
       name: "test[0]"
       trust_zone: third_party

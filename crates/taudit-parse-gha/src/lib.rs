@@ -362,6 +362,25 @@ impl PipelineParser for GhaParser {
                 // the actual command text the runner will execute.
                 if let Some(node) = graph.nodes.get_mut(step_id) {
                     node.metadata.insert(META_JOB_NAME.into(), job_name.clone());
+                    if let Some(ref uses) = step.uses {
+                        let action = uses.split('@').next().unwrap_or(uses);
+                        node.metadata.insert(META_GHA_ACTION.into(), action.into());
+                        if let Some(with) = step.with.as_ref() {
+                            let mut entries: Vec<(&String, &serde_yaml::Value)> =
+                                with.iter().collect();
+                            entries.sort_by(|a, b| a.0.cmp(b.0));
+                            let mut rendered = Vec::new();
+                            for (key, value) in entries {
+                                if let Some(scalar) = yaml_scalar_to_string(value) {
+                                    rendered.push(format!("{key}={scalar}"));
+                                }
+                            }
+                            if !rendered.is_empty() {
+                                node.metadata
+                                    .insert(META_GHA_WITH_INPUTS.into(), rendered.join("\n"));
+                            }
+                        }
+                    }
                     if let Some(ref body) = step.run {
                         if !body.is_empty() {
                             node.metadata.insert(META_SCRIPT_BODY.into(), body.clone());
@@ -1676,6 +1695,34 @@ jobs:
         let secrets: Vec<_> = graph.nodes_of_kind(NodeKind::Secret).collect();
         assert_eq!(secrets.len(), 1);
         assert_eq!(secrets[0].name, "NPM_TOKEN");
+    }
+
+    #[test]
+    fn uses_step_records_action_and_scalar_with_inputs() {
+        let yaml = r#"
+jobs:
+  deploy:
+    steps:
+      - uses: aws-actions/amazon-ecr-login@v2
+        with:
+          mask-password: false
+          registries: "123456789012"
+"#;
+        let graph = parse(yaml);
+        let step = graph
+            .nodes_of_kind(NodeKind::Step)
+            .find(|n| n.name == "deploy[0]")
+            .expect("uses step");
+        assert_eq!(
+            step.metadata.get(META_GHA_ACTION).map(String::as_str),
+            Some("aws-actions/amazon-ecr-login")
+        );
+        let inputs = step
+            .metadata
+            .get(META_GHA_WITH_INPUTS)
+            .expect("with inputs");
+        assert!(inputs.contains("mask-password=false"));
+        assert!(inputs.contains("registries=123456789012"));
     }
 
     #[test]
