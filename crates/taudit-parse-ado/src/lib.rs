@@ -1182,6 +1182,9 @@ fn add_template_delegation(
 /// an ADO `$(secretRef)` expression — i.e., the step is writing a secret-derived
 /// value into the environment gate (BUG-4: plain integers and PowerShell vars
 /// like `$psVar` should not fire the secret-exfiltration rule).
+///
+/// `$$(VAR)` is the documented ADO escape (literal output, not substitution)
+/// and is intentionally NOT treated as a secret reference.
 fn setvariable_value_contains_secret_ref(script: &str) -> bool {
     for line in script.lines() {
         let lower = line.to_lowercase();
@@ -1191,7 +1194,7 @@ fn setvariable_value_contains_secret_ref(script: &str) -> bool {
         // The value starts after the closing `]` of the ##vso directive.
         if let Some(close_bracket) = line.find(']') {
             let value_part = &line[close_bracket + 1..];
-            if contains_unescaped_variable_ref(value_part) {
+            if contains_unescaped_dollar_paren(value_part) {
                 return true;
             }
         }
@@ -1199,18 +1202,28 @@ fn setvariable_value_contains_secret_ref(script: &str) -> bool {
     false
 }
 
-fn contains_unescaped_variable_ref(text: &str) -> bool {
-    let bytes = text.as_bytes();
-    let mut pos = 0;
-    while pos + 1 < bytes.len() {
-        if bytes[pos] == b'$' && bytes[pos + 1] == b'(' {
-            if pos == 0 || bytes[pos - 1] != b'$' {
-                return true;
+/// True iff `s` contains a `$(` substitution that is NOT preceded by another
+/// `$` (the `$$(VAR)` escape form is rejected). Used by both the setvariable
+/// secret-ref detector and any future caller that needs the same semantics
+/// without going through the full Secret-node creation path.
+fn contains_unescaped_dollar_paren(s: &str) -> bool {
+    let bytes = s.as_bytes();
+    let mut i = 0;
+    while i + 1 < bytes.len() {
+        if bytes[i] == b'$' && bytes[i + 1] == b'(' {
+            if i > 0 && bytes[i - 1] == b'$' {
+                // Escaped — skip to end of the (...) group and continue.
+                let after_open = i + 2;
+                if let Some(end_offset) = s[after_open..].find(')') {
+                    i = after_open + end_offset + 1;
+                    continue;
+                }
+                i += 2;
+                continue;
             }
-            pos += 2;
-            continue;
+            return true;
         }
-        pos += 1;
+        i += 1;
     }
     false
 }
@@ -1221,6 +1234,11 @@ fn contains_unescaped_variable_ref(text: &str) -> bool {
 /// is treated as a variable reference. This rejects PowerShell sub-expressions
 /// (`$($var)`), ADO template expressions (`${{ ... }}`), shell commands (`$(date)`),
 /// and anything with spaces or special characters.
+///
+/// `$$(VAR)` is the documented ADO escape — it renders as a literal `$(VAR)`
+/// in output and is **not** a substitution. We skip these without creating a
+/// Secret node so that documentation strings like `echo "use $$(BUILD_BUILDID)"`
+/// don't manufacture phantom HasAccessTo edges (BUG-4).
 fn extract_dollar_paren_secrets(
     text: &str,
     step_id: NodeId,
@@ -1233,17 +1251,26 @@ fn extract_dollar_paren_secrets(
     let bytes = text.as_bytes();
     while pos < bytes.len() {
         if pos + 2 < bytes.len() && bytes[pos] == b'$' && bytes[pos + 1] == b'(' {
+            // Honour the `$$(VAR)` escape — second `$` makes the whole token a
+            // literal in ADO's output, not a substitution. Skip past the
+            // closing `)` without creating a Secret node.
             if pos > 0 && bytes[pos - 1] == b'$' {
-                pos += 2;
+                let start = pos + 2;
+                if let Some(end_offset) = text[start..].find(')') {
+                    pos = start + end_offset + 1;
+                    continue;
+                }
+                pos += 1;
                 continue;
             }
             let start = pos + 2;
             if let Some(end_offset) = text[start..].find(')') {
                 let var_name = &text[start..start + end_offset];
-                // BUG-3: when variable groups are present the group is opaque —
-                // any $(VAR) could be a plain config value from the group.
-                // Only create a Secret node if the var was explicitly declared
-                // as a secret (is already in cache) or there are no groups.
+                // BUG-3: when variable groups are present in this scope (or an
+                // ancestor scope) the group is opaque — any $(VAR) could be a
+                // plain config value from the group. Only create a Secret node
+                // if the var was explicitly declared as a secret (is already
+                // in cache) or there are no groups *along the inheritance chain*.
                 let already_declared_secret = cache.contains_key(var_name);
                 if is_valid_ado_identifier(var_name)
                     && !is_predefined_ado_var(var_name)
@@ -1270,32 +1297,58 @@ fn extract_dollar_paren_secrets(
     }
 }
 
-/// Returns true if the `$(VAR)` at `var_pos` is inside a Terraform `-var` flag argument.
-/// Matches `-var key=$(VAR)` and `-var=key=$(VAR)` but not `-var-file`.
+/// Returns true if the `$(VAR)` at `var_pos` is inside a Terraform `-var` flag
+/// argument. Two requirements (BUG-3 — the previous heuristic just checked
+/// `line_before.contains("-var") && line_before.contains('=')`, which matched
+/// `--var-file=`, `extra-vars=`, `-vargs=`, anything-with-`-var`-and-`=`):
+///
+/// 1. The case-insensitive token `terraform` must appear earlier on the same
+///    line, OR on a prior line that is connected to the current line via a
+///    shell continuation chain (trailing `\` for POSIX, trailing `` ` `` for
+///    PowerShell). This admits `terraform.exe`, `tfwrapper terraform`,
+///    `aws-vault exec ... terraform`, and the common heredoc shape:
+///    `terraform apply \`
+///    `  -var "db=$(secret)"`
+///
+/// 2. Immediately before the `$(VAR)` substitution position there must be a
+///    `-var ` (with a trailing space) or `-var=` literal. This rejects
+///    `-var-file=`, `--var-file=`, `extra-vars=`, `-vargs=`, etc., where the
+///    character following the literal `-var` is not space or `=`.
 fn is_in_terraform_var_flag(text: &str, var_pos: usize) -> bool {
     let line_start = text[..var_pos].rfind('\n').map(|p| p + 1).unwrap_or(0);
     let line_before = &text[line_start..var_pos];
-    let mut matches: Vec<(usize, &str)> = line_before.match_indices("-var").collect();
-    matches.reverse();
-    for (idx, _) in matches {
-        if idx > 0 {
-            let prev = line_before[..idx].chars().next_back();
-            if prev.is_some_and(|c| c.is_ascii_alphanumeric() || c == '_' || c == '-') {
-                continue;
-            }
+
+    // (2) `-var ` (space) or `-var=` immediately within line_before.
+    let has_var_flag = line_before.contains("-var ") || line_before.contains("-var=");
+    if !has_var_flag {
+        return false;
+    }
+
+    // (1) `terraform` appears earlier on the same line — fast path.
+    let lower_line = line_before.to_lowercase();
+    if lower_line.contains("terraform") {
+        return true;
+    }
+
+    // (1, fallback) Walk backwards through continuation chain. The previous
+    // line must end in a continuation character for it to extend onto our
+    // line; once we hit a non-continuing line we stop.
+    let mut cursor_end = line_start; // exclusive of '\n' separator
+    while cursor_end > 0 {
+        // The byte at cursor_end-1 is `\n`; the prior line spans from the
+        // previous `\n` (exclusive) to cursor_end-1.
+        let nl_idx = cursor_end.saturating_sub(1);
+        let prev_line_start = text[..nl_idx].rfind('\n').map(|p| p + 1).unwrap_or(0);
+        let prev_line = &text[prev_line_start..nl_idx];
+        let trimmed = prev_line.trim_end();
+        let continues = trimmed.ends_with('\\') || trimmed.ends_with('`');
+        if !continues {
+            return false;
         }
-        let mut after = &line_before[idx + "-var".len()..];
-        if after.starts_with('-') {
-            continue;
-        }
-        after = after.trim_start();
-        if let Some(rest) = after.strip_prefix('=') {
-            after = rest.trim_start();
-        }
-        after = after.trim_start_matches(['"', '\'']);
-        if after.contains('=') {
+        if prev_line.to_lowercase().contains("terraform") {
             return true;
         }
+        cursor_end = prev_line_start;
     }
     false
 }
