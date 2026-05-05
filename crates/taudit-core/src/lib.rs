@@ -63,3 +63,98 @@ pub mod propagation;
 pub mod rules;
 pub mod summary;
 pub mod suppressions;
+
+// ── Defense-in-depth caps for adversarial config files ────────────────
+//
+// taudit ingests YAML from PRs (pipeline files, custom-rule files,
+// suppressions, .tauditignore). Without caps, a hostile contributor can
+// allocate hundreds of MiB by submitting a single file and DoS the CI
+// runner before any rule logic runs. The caps below bound that surface.
+//
+// They are deliberately *constants*, not flags: every realistic CI YAML
+// is well under these limits, and a flag would just be another lever
+// for an attacker who has already convinced you to merge their PR. If
+// a legitimate use case for a larger file emerges we can revisit; for
+// now the council prefers a hard ceiling.
+
+/// Maximum size in bytes of any single pipeline / config / invariant YAML
+/// taudit will read.
+///
+/// Files above this size are rejected with a clear error before any
+/// allocation for `serde_yaml`. 2 MiB is well above the largest realistic
+/// CI YAML; the largest legitimate workflow in the existing
+/// `corpus/` is under 100 KiB.
+pub const MAX_INPUT_FILE_BYTES: u64 = 2 * 1024 * 1024;
+
+/// Read `path` to a `String`, but refuse files larger than
+/// [`MAX_INPUT_FILE_BYTES`].
+///
+/// Why this exists: a 50 MiB hostile YAML allocates ~150 MiB peak inside
+/// `serde_yaml` (triple-parse + a `serde_yaml::Value` for every node).
+/// Capping at the filesystem boundary keeps that allocation pre-empted —
+/// we never even hand the bytes to the YAML parser.
+///
+/// `metadata` follows symlinks; that is fine *here* because callers that
+/// need an explicit symlink fence call [`read_capped_with_symlink_fence`]
+/// instead, which canonicalises before calling this.
+///
+/// Returned [`io::Error`]s use `InvalidData` for the size-cap rejection so
+/// callers can distinguish IO failure from cap rejection if they want.
+pub fn read_capped(path: &std::path::Path) -> std::io::Result<String> {
+    let meta = std::fs::metadata(path)?;
+    if meta.len() > MAX_INPUT_FILE_BYTES {
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::InvalidData,
+            format!(
+                "taudit refuses files larger than {} bytes ({} MiB). {} is {} bytes. \
+                 If you have a legitimate use case for a larger file, please file an issue.",
+                MAX_INPUT_FILE_BYTES,
+                MAX_INPUT_FILE_BYTES / (1024 * 1024),
+                path.display(),
+                meta.len(),
+            ),
+        ));
+    }
+    std::fs::read_to_string(path)
+}
+
+/// Read `path` to a `String`, but only if it is either (a) not a symlink
+/// or (b) a symlink whose canonical target is a descendant of
+/// `cwd_canonical`. Also enforces [`MAX_INPUT_FILE_BYTES`].
+///
+/// Used for ambient config files that live at the repo root and that an
+/// adversarial PR could plant as a symlink — `.taudit-suppressions.yml`
+/// and `.tauditignore`. A symlink to `/etc/passwd` plus a YAML parse
+/// failure was previously a content-leak channel via stderr; this helper
+/// closes that.
+///
+/// `cwd_canonical` should be `std::env::current_dir()?.canonicalize()?`.
+/// Pass it in (rather than computing it here) so callers can canonicalise
+/// once per scan and so tests can fence against a temporary working
+/// directory.
+///
+/// On macOS, both `cwd_canonical` and the symlink target resolve through
+/// `/private/tmp` so the descendant check stays correct under the OS's
+/// hidden symlink-prefix.
+pub fn read_capped_with_symlink_fence(
+    path: &std::path::Path,
+    cwd_canonical: &std::path::Path,
+) -> std::io::Result<String> {
+    let meta = std::fs::symlink_metadata(path)?;
+    if meta.file_type().is_symlink() {
+        // canonicalize follows the chain; a broken symlink errors here,
+        // which is the right answer (we are not going to read it).
+        let target = std::fs::canonicalize(path)?;
+        if !target.starts_with(cwd_canonical) {
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::PermissionDenied,
+                format!(
+                    "refusing to read symlinked {} pointing to {} outside the working directory",
+                    path.display(),
+                    target.display(),
+                ),
+            ));
+        }
+    }
+    read_capped(path)
+}

@@ -115,14 +115,116 @@ pub struct MatchSpec {
     pub standalone: Option<NodeMatcher>,
 }
 
+/// Maximum number of elements allowed in a single `Vec<T>` deserialised
+/// from a custom-rule YAML field. A hostile YAML with
+/// `node_type: [secret, secret, … 10M times …]` would otherwise allocate
+/// hundreds of MiB before any rule logic runs (multiple such fields per
+/// rule, multiple rules per file = linear amplification). 1024 is well
+/// above any realistic rule (the largest rule in the existing tree
+/// names ~6 node kinds) and an obvious operator-actionable cap.
+pub const MAX_RULE_VEC_LEN: usize = 1024;
+
 /// A scalar-or-list helper. Lets YAML write `node_type: secret` (single value)
 /// or `node_type: [secret, identity]` (any-of). Single form preserved for
 /// backward compatibility with v0.4.x rule files.
-#[derive(Debug, Clone, Deserialize)]
-#[serde(untagged)]
+///
+/// The `Many` variant is capped at [`MAX_RULE_VEC_LEN`] elements at
+/// deserialisation time — see the custom `Deserialize` impl below.
+#[derive(Debug, Clone)]
 pub enum OneOrMany<T> {
     One(T),
     Many(Vec<T>),
+}
+
+// Custom Deserialize so we can enforce `MAX_RULE_VEC_LEN` *during* the
+// sequence visit, before serde allocates a full Vec for an attacker.
+//
+// Behaviour matches the previous `#[serde(untagged)]` derive:
+//   * a YAML scalar deserialises to `OneOrMany::One(t)`
+//   * a YAML sequence deserialises to `OneOrMany::Many(vec)`
+//   * any other shape errors via the standard serde error path
+//
+// A cap violation surfaces as a serde error referencing the field, so
+// the resulting `serde_yaml::Error` already carries a path/line annotation
+// pointing operators at the offending document.
+impl<'de, T> Deserialize<'de> for OneOrMany<T>
+where
+    T: Deserialize<'de>,
+{
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        struct OneOrManyVisitor<T> {
+            _phantom: std::marker::PhantomData<T>,
+        }
+
+        impl<'de, T> Visitor<'de> for OneOrManyVisitor<T>
+        where
+            T: Deserialize<'de>,
+        {
+            type Value = OneOrMany<T>;
+
+            fn expecting(&self, f: &mut fmt::Formatter) -> fmt::Result {
+                f.write_str("a single value or a sequence (max 1024 elements)")
+            }
+
+            // Forward every scalar shape to T's Deserialize via
+            // `deserialize_any` on a tiny wrapper. We can't call T's
+            // Deserialize directly here without a deserializer; instead
+            // route through `IntoDeserializer` for the supported scalar
+            // types serde_yaml emits.
+            fn visit_bool<E: de::Error>(self, v: bool) -> Result<Self::Value, E> {
+                T::deserialize(serde::de::value::BoolDeserializer::new(v)).map(OneOrMany::One)
+            }
+            fn visit_i64<E: de::Error>(self, v: i64) -> Result<Self::Value, E> {
+                T::deserialize(serde::de::value::I64Deserializer::new(v)).map(OneOrMany::One)
+            }
+            fn visit_u64<E: de::Error>(self, v: u64) -> Result<Self::Value, E> {
+                T::deserialize(serde::de::value::U64Deserializer::new(v)).map(OneOrMany::One)
+            }
+            fn visit_f64<E: de::Error>(self, v: f64) -> Result<Self::Value, E> {
+                T::deserialize(serde::de::value::F64Deserializer::new(v)).map(OneOrMany::One)
+            }
+            fn visit_str<E: de::Error>(self, v: &str) -> Result<Self::Value, E> {
+                T::deserialize(serde::de::value::StrDeserializer::new(v)).map(OneOrMany::One)
+            }
+            fn visit_string<E: de::Error>(self, v: String) -> Result<Self::Value, E> {
+                T::deserialize(serde::de::value::StringDeserializer::new(v)).map(OneOrMany::One)
+            }
+            fn visit_unit<E: de::Error>(self) -> Result<Self::Value, E> {
+                T::deserialize(serde::de::value::UnitDeserializer::new()).map(OneOrMany::One)
+            }
+
+            fn visit_seq<A>(self, mut seq: A) -> Result<Self::Value, A::Error>
+            where
+                A: de::SeqAccess<'de>,
+            {
+                // Pre-size with a hint capped at MAX_RULE_VEC_LEN so a
+                // hostile size_hint (e.g. usize::MAX) cannot trick us into
+                // a giant up-front allocation either.
+                let cap_hint = seq
+                    .size_hint()
+                    .map(|h| h.min(MAX_RULE_VEC_LEN))
+                    .unwrap_or(0);
+                let mut out: Vec<T> = Vec::with_capacity(cap_hint);
+                while let Some(item) = seq.next_element::<T>()? {
+                    if out.len() >= MAX_RULE_VEC_LEN {
+                        return Err(de::Error::custom(format!(
+                            "list field exceeds maximum of {MAX_RULE_VEC_LEN} elements; \
+                             split into multiple rules instead"
+                        )));
+                    }
+                    out.push(item);
+                }
+                Ok(OneOrMany::Many(out))
+            }
+        }
+
+        deserializer.deserialize_any(OneOrManyVisitor::<T> {
+            _phantom: std::marker::PhantomData,
+        })
+    }
 }
 
 impl<T: PartialEq> OneOrMany<T> {
@@ -156,8 +258,74 @@ pub struct MetadataOp {
     /// Substring match on the string-valued metadata field.
     #[serde(default)]
     pub contains: Option<String>,
-    #[serde(default, rename = "in")]
+    /// Any-of allowed values. Capped at [`MAX_RULE_VEC_LEN`] elements at
+    /// deserialise time so a hostile YAML cannot allocate an unbounded
+    /// `Vec<String>` before any rule logic runs.
+    #[serde(
+        default,
+        rename = "in",
+        deserialize_with = "deserialize_capped_opt_vec_string"
+    )]
     pub in_: Option<Vec<String>>,
+}
+
+/// Deserialize `Option<Vec<String>>` while enforcing
+/// [`MAX_RULE_VEC_LEN`] inside the sequence visitor. The error message
+/// names the cap and recommends splitting the rule, matching the
+/// `OneOrMany` cap diagnostic so operators see consistent guidance.
+fn deserialize_capped_opt_vec_string<'de, D>(
+    deserializer: D,
+) -> Result<Option<Vec<String>>, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    struct CappedVecStringVisitor;
+
+    impl<'de> Visitor<'de> for CappedVecStringVisitor {
+        type Value = Option<Vec<String>>;
+
+        fn expecting(&self, f: &mut fmt::Formatter) -> fmt::Result {
+            f.write_str("a sequence of strings (max 1024 elements) or null")
+        }
+
+        fn visit_unit<E: de::Error>(self) -> Result<Self::Value, E> {
+            Ok(None)
+        }
+
+        fn visit_none<E: de::Error>(self) -> Result<Self::Value, E> {
+            Ok(None)
+        }
+
+        fn visit_some<D>(self, deserializer: D) -> Result<Self::Value, D::Error>
+        where
+            D: Deserializer<'de>,
+        {
+            deserializer.deserialize_seq(self)
+        }
+
+        fn visit_seq<A>(self, mut seq: A) -> Result<Self::Value, A::Error>
+        where
+            A: de::SeqAccess<'de>,
+        {
+            let cap_hint = seq
+                .size_hint()
+                .map(|h| h.min(MAX_RULE_VEC_LEN))
+                .unwrap_or(0);
+            let mut out: Vec<String> = Vec::with_capacity(cap_hint);
+            while let Some(item) = seq.next_element::<String>()? {
+                if out.len() >= MAX_RULE_VEC_LEN {
+                    return Err(de::Error::custom(format!(
+                        "metadata `in:` list exceeds maximum of {MAX_RULE_VEC_LEN} \
+                         elements; split into multiple rules instead"
+                    )));
+                }
+                out.push(item);
+            }
+            Ok(Some(out))
+        }
+    }
+
+    deserializer.deserialize_option(CappedVecStringVisitor)
 }
 
 impl MetadataOp {
@@ -514,7 +682,10 @@ pub fn load_rules_dir_with_opts(
 
     let mut rules = Vec::new();
     for (path, _canonical) in files {
-        match fs::read_to_string(&path) {
+        // Size-cap before handing bytes to serde_yaml. A hostile multi-MiB
+        // YAML inside an --invariants-dir is otherwise the same DoS surface
+        // as a hostile pipeline file (see crate::MAX_INPUT_FILE_BYTES).
+        match crate::read_capped(&path) {
             Ok(content) => match parse_rules_multi_doc_with_source(&content, Some(&path)) {
                 Ok(mut parsed) => rules.append(&mut parsed),
                 Err(err) => errors.push(CustomRuleError::YamlParse(path, err)),
