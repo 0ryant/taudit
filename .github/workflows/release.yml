@@ -262,10 +262,50 @@ jobs:
         uses: dtolnay/rust-toolchain@98e1b82157cd469e843cb7f524c1313b4ad9492c # 1.88
 
       - name: Publish to crates.io
-        # `--workspace` (stable since cargo 1.86) publishes every workspace
-        # member in dependency-topological order, with built-in registry-index
-        # propagation waits between crates. Replaces the previous
-        # virtual-manifest-incompatible `cargo publish` invocation. Works
-        # identically for stable and prerelease tags — crates.io accepts both;
-        # Cargo's resolver gates consumption downstream per ADR 0004.
-        run: cargo publish --workspace --token "${{ secrets.CARGO_REGISTRY_TOKEN }}"
+        # Cargo 1.88 still keeps `cargo publish --workspace` unstable, so
+        # publish explicitly in dependency order and wait briefly for registry
+        # index propagation between workspace crates. The existence check makes
+        # reruns safe after a partial publish.
+        env:
+          CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
+        run: |
+          set -euo pipefail
+          : "${CARGO_REGISTRY_TOKEN:?GitHub secret CARGO_REGISTRY_TOKEN is required}"
+
+          version_for() {
+            cargo metadata --no-deps --format-version 1 |
+              python3 -c '
+          import json, sys
+          crate = sys.argv[1]
+          data = json.load(sys.stdin)
+          for package in data["packages"]:
+              if package["name"] == crate:
+                  print(package["version"])
+                  break
+          else:
+              raise SystemExit(f"crate not found in workspace: {crate}")
+          ' "$1"
+          }
+
+          publish_one() {
+            crate="$1"
+            version="$(version_for "$crate")"
+            if cargo info "${crate}@${version}" --registry crates-io >/dev/null 2>&1; then
+              echo "${crate}@${version} already exists on crates.io; skipping"
+              return
+            fi
+            cargo publish -p "$crate" --token "$CARGO_REGISTRY_TOKEN"
+            sleep 60
+          }
+
+          publish_one taudit-api
+          publish_one taudit-core
+          publish_one taudit-parse-ado
+          publish_one taudit-parse-bitbucket
+          publish_one taudit-parse-gha
+          publish_one taudit-parse-gitlab
+          publish_one taudit-report-json
+          publish_one taudit-report-sarif
+          publish_one taudit-report-terminal
+          publish_one taudit-sink-cloudevents
+          publish_one taudit
