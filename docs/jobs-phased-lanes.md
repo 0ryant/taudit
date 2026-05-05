@@ -193,8 +193,9 @@ Disclosure/CVE-oriented tooling is internal signal. Witness-spec emission, discl
 | **5R** | **Research catalog anchors** | `docs/research/`, action catalog fixtures | - | Initial catalog entries have pinned versions/SHAs, helper invocation notes, authority transport, authority origin, witness status, and internal disclosure-score notes. |
 | **5W** | **Report writing and caveats** | `docs/`, terminal/SARIF/report snapshots after code lands | 5R helpful | Customer-safe templates explain earlier mutable channel, later authority, helper sink, transport, same-job caveat, remediation, and no CVE/disclosure wording by default. |
 | **5A** | **Timing + metadata schema** | `crates/taudit-core/src/graph.rs`, finding/report schemas, contracts | 5R input | Authority timing, helper resolution, transport, and origin are modeled without ad hoc strings. |
-| **5B** | **Rules + downgrades** | `crates/taudit-core/src/rules.rs`, `docs/rules/`, sink mappings | 5A | `GHA_HELPER_PATH_LATER_AUTHORITY` and transport-specific rules require ordered authority timing; absolute/toolcache/action-owned/explicit-mode cases downgrade or suppress. |
+| **5B** | **Rules + downgrades** | `crates/taudit-core/src/rules.rs`, `docs/rules/`, sink mappings | 5A | `GHA_HELPER_PATH_LATER_AUTHORITY`, setup-node/setup-python/Docker-QEMU helper handoffs, installer-then-shell advisories, and transport-specific rules require ordered authority timing; absolute/toolcache/action-owned/explicit-mode cases downgrade or suppress. |
 | **5C** | **Witness spec + scoring** | `crates/taudit-cli/`, report schemas, docs | 5A, 5B | `taudit witness-spec` and `disclosure_score` are feature-gated; default findings expose customer-safe authority classification, `technical_score`, confidence, witness status, and product labels. |
+| **5D** | **Corpus authority mining** | `crates/taudit-core/src/rules.rs`, corpus fixtures, report labels | 5A | Shell authority concentration rules identify publish/deploy/sign/release hotspots as corpus signal or workflow hardening, not disclosure candidates by default. |
 
 **Researcher prompt:**
 
