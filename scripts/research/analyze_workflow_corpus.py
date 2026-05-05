@@ -6,12 +6,14 @@ This is a dogfood harness, not a benchmark harness. It looks for:
   - invalid JSON output
   - graph completeness gap distribution
   - rule/finding distribution
+  - explicit-platform failures that reclassify under --platform auto
   - coarse missing-rule candidate patterns in YAML text
   - currently unsupported platform buckets
 
 Output:
   corpus/workflow-yaml-testbed/analysis/summary.json
   corpus/workflow-yaml-testbed/analysis/failures.jsonl
+  corpus/workflow-yaml-testbed/analysis/reclassified.jsonl
   corpus/workflow-yaml-testbed/analysis/rule_counts.json
   corpus/workflow-yaml-testbed/analysis/missing_rule_candidates.json
 """
@@ -66,6 +68,8 @@ class ScanResult:
     completeness: str | None
     gaps: list[dict]
     error: str | None = None
+    failure_kind: str | None = None
+    reclassified_platform: str | None = None
 
 
 def files_for(root: Path, platforms: list[str], limit_per_platform: int | None) -> list[tuple[str, Path]]:
@@ -78,23 +82,91 @@ def files_for(root: Path, platforms: list[str], limit_per_platform: int | None) 
     return out
 
 
-def scan_one(binary: Path, platform: str, path: Path, timeout: int) -> ScanResult:
+def failure_kind(error: str) -> str:
+    if "YAML parse error:" in error:
+        return "yaml_parse"
+    if "root must be a mapping" in error:
+        return "root_not_mapping"
+    if "json error:" in error:
+        return "json_output"
+    if error == "timeout":
+        return "timeout"
+    return "scan_failure"
+
+
+def scan_one(binary: Path, platform: str, path: Path, timeout: int, auto_reclassify: bool) -> ScanResult:
     flag = PLATFORM_FLAGS.get(platform)
     if flag is None:
-        return ScanResult(platform, str(path), False, 0, [], None, [], "unsupported platform")
+        return ScanResult(
+            platform,
+            str(path),
+            False,
+            0,
+            [],
+            None,
+            [],
+            "unsupported platform",
+            "unsupported_platform",
+        )
     started = time.time()
     cmd = [str(binary), "scan", str(path), "--platform", flag, "--format", "json", "--no-color"]
     try:
         proc = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout)
     except subprocess.TimeoutExpired:
-        return ScanResult(platform, str(path), False, int((time.time() - started) * 1000), [], None, [], "timeout")
+        return ScanResult(
+            platform,
+            str(path),
+            False,
+            int((time.time() - started) * 1000),
+            [],
+            None,
+            [],
+            "timeout",
+            "timeout",
+        )
     elapsed = int((time.time() - started) * 1000)
     if proc.returncode != 0:
-        return ScanResult(platform, str(path), False, elapsed, [], None, [], f"exit={proc.returncode}: {proc.stderr[:2000]}")
+        error = f"exit={proc.returncode}: {proc.stderr[:2000]}"
+        if auto_reclassify:
+            retry_cmd = [
+                str(binary),
+                "scan",
+                str(path),
+                "--platform",
+                "auto",
+                "--format",
+                "json",
+                "--no-color",
+            ]
+            try:
+                retry = subprocess.run(retry_cmd, capture_output=True, text=True, timeout=timeout)
+            except subprocess.TimeoutExpired:
+                retry = None
+            if retry is not None and retry.returncode == 0:
+                try:
+                    retry_doc = json.loads(retry.stdout)
+                except json.JSONDecodeError:
+                    retry_doc = None
+                if retry_doc is not None:
+                    metadata = retry_doc.get("graph", {}).get("metadata", {})
+                    return ScanResult(
+                        platform,
+                        str(path),
+                        False,
+                        elapsed,
+                        retry_doc.get("findings", []),
+                        retry_doc.get("summary", {}).get("completeness"),
+                        retry_doc.get("summary", {}).get("completeness_gaps", []),
+                        error,
+                        "platform_mismatch",
+                        str(metadata.get("platform", "auto")),
+                    )
+        return ScanResult(platform, str(path), False, elapsed, [], None, [], error, failure_kind(error))
     try:
         doc = json.loads(proc.stdout)
     except json.JSONDecodeError as err:
-        return ScanResult(platform, str(path), False, elapsed, [], None, [], f"json error: {err}: {proc.stdout[:500]}")
+        error = f"json error: {err}: {proc.stdout[:500]}"
+        return ScanResult(platform, str(path), False, elapsed, [], None, [], error, "json_output")
     summary = doc.get("summary", {})
     return ScanResult(
         platform=platform,
@@ -144,6 +216,11 @@ def parse_args() -> argparse.Namespace:
         default=[],
         help="Treat a scan failure as quarantined when the corpus path contains this substring.",
     )
+    parser.add_argument(
+        "--auto-reclassify-failures",
+        action="store_true",
+        help="Retry explicit-platform failures with --platform auto and count successful retries as platform mismatches.",
+    )
     return parser.parse_args()
 
 
@@ -162,19 +239,35 @@ def main() -> int:
         "scan_ok": 0,
         "scan_failed": 0,
         "scan_allowed_failed": 0,
+        "scan_reclassified": 0,
         "by_platform": {},
         "completeness": {},
         "gap_kinds": {},
+        "failure_kinds": {},
+        "reclassified_platforms": {},
         "slowest": [],
     }
     rule_counts: collections.Counter[str] = collections.Counter()
     category_counts: collections.Counter[str] = collections.Counter()
     failures_path = analysis_dir / "failures.jsonl"
+    reclassified_path = analysis_dir / "reclassified.jsonl"
     if failures_path.exists():
         failures_path.unlink()
+    if reclassified_path.exists():
+        reclassified_path.unlink()
 
     with concurrent.futures.ThreadPoolExecutor(max_workers=args.jobs) as ex:
-        futs = [ex.submit(scan_one, args.binary, platform, path, args.timeout) for platform, path in corpus_files]
+        futs = [
+            ex.submit(
+                scan_one,
+                args.binary,
+                platform,
+                path,
+                args.timeout,
+                args.auto_reclassify_failures,
+            )
+            for platform, path in corpus_files
+        ]
         for i, fut in enumerate(concurrent.futures.as_completed(futs), 1):
             result = fut.result()
             summary["by_platform"].setdefault(result.platform, {"ok": 0, "failed": 0, "files": 0})
@@ -191,6 +284,17 @@ def main() -> int:
                     category_counts[str(finding.get("category", "unknown"))] += 1
                 summary["slowest"].append({"path": result.path, "platform": result.platform, "elapsed_ms": result.elapsed_ms})
                 summary["slowest"] = sorted(summary["slowest"], key=lambda x: x["elapsed_ms"], reverse=True)[:20]
+            elif result.failure_kind == "platform_mismatch":
+                summary["scan_reclassified"] += 1
+                summary["by_platform"][result.platform].setdefault("reclassified", 0)
+                summary["by_platform"][result.platform]["reclassified"] += 1
+                resolved = result.reclassified_platform or "auto"
+                summary["reclassified_platforms"][resolved] = summary["reclassified_platforms"].get(resolved, 0) + 1
+                for finding in result.findings:
+                    rule_counts[str(finding.get("rule_id", "unknown"))] += 1
+                    category_counts[str(finding.get("category", "unknown"))] += 1
+                with reclassified_path.open("a", encoding="utf-8") as f:
+                    f.write(json.dumps(dataclasses.asdict(result), sort_keys=True) + "\n")
             else:
                 allowed = any(s in result.path for s in args.allow_failure_substring)
                 if allowed:
@@ -200,10 +304,16 @@ def main() -> int:
                 else:
                     summary["scan_failed"] += 1
                     summary["by_platform"][result.platform]["failed"] += 1
+                kind = result.failure_kind or "unknown"
+                summary["failure_kinds"][kind] = summary["failure_kinds"].get(kind, 0) + 1
                 with failures_path.open("a", encoding="utf-8") as f:
                     f.write(json.dumps(dataclasses.asdict(result), sort_keys=True) + "\n")
             if i % 100 == 0:
-                print(f"scanned {i}/{len(corpus_files)} ok={summary['scan_ok']} failed={summary['scan_failed']}", flush=True)
+                print(
+                    f"scanned {i}/{len(corpus_files)} ok={summary['scan_ok']} "
+                    f"failed={summary['scan_failed']} reclassified={summary['scan_reclassified']}",
+                    flush=True,
+                )
 
     missing_rule_candidates = text_patterns(corpus_files)
     write_json(analysis_dir / "summary.json", summary)
