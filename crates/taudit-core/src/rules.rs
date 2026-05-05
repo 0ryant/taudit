@@ -4416,6 +4416,385 @@ pub fn gha_secret_output_after_helper_login(graph: &AuthorityGraph) -> Vec<Findi
     findings
 }
 
+pub fn later_secret_materialized_after_path_mutation(graph: &AuthorityGraph) -> Vec<Finding> {
+    if !graph_is_platform(graph, "github-actions") {
+        return Vec::new();
+    }
+    let mut findings = Vec::new();
+    for step in graph.nodes_of_kind(NodeKind::Step) {
+        let Some(profile) = gha_helper_profile(step) else {
+            continue;
+        };
+        if profile.toolcache_absolute || !profile.path_resolved_helper {
+            continue;
+        }
+        let Some(writer) = prior_github_path_writer(graph, step) else {
+            continue;
+        };
+        let has_sensitive = step_has_sensitive_authority(graph, step.id) || profile.minted;
+        if !has_sensitive {
+            continue;
+        }
+        findings.push(Finding {
+            severity: Severity::High,
+            category: FindingCategory::LaterSecretMaterializedAfterPathMutation,
+            path: None,
+            nodes_involved: helper_authority_nodes(graph, writer.id, step.id),
+            message: format!(
+                "Earlier step '{}' mutates GITHUB_PATH before later action '{}' materializes authority and resolves helper `{}` through PATH",
+                writer.name, step.name, profile.helper
+            ),
+            recommendation: Recommendation::Manual {
+                action: "Treat this as an authority-edge lead: resolve helpers to trusted absolute paths before credentials are materialized, or split mutable PATH setup into an authority-free job.".into(),
+            },
+            source: FindingSource::BuiltIn,
+            extras: FindingExtras::default(),
+        });
+    }
+    findings
+}
+
+fn gha_action_is(step: &Node, action: &str) -> bool {
+    gha_action_name(step).as_deref() == Some(action)
+}
+
+fn gha_with_nonempty(step: &Node, key: &str) -> bool {
+    gha_with_value(step, key)
+        .map(|v| {
+            let value = v.trim().to_ascii_lowercase();
+            !value.is_empty() && !matches!(value.as_str(), "false" | "no" | "0")
+        })
+        .unwrap_or(false)
+}
+
+fn gha_cache_input_is(step: &Node, values: &[&str]) -> bool {
+    gha_with_value(step, "cache")
+        .map(|v| {
+            let value = v.trim().to_ascii_lowercase();
+            values.iter().any(|wanted| value == *wanted)
+        })
+        .unwrap_or(false)
+}
+
+fn step_job(step: &Node) -> Option<&str> {
+    step.metadata.get(META_JOB_NAME).map(String::as_str)
+}
+
+fn same_job_steps_before<'a>(
+    graph: &'a AuthorityGraph,
+    step: &'a Node,
+) -> impl Iterator<Item = &'a Node> {
+    let job = step_job(step);
+    graph
+        .nodes_of_kind(NodeKind::Step)
+        .filter(move |candidate| candidate.id < step.id)
+        .filter(move |candidate| step_job(candidate) == job)
+}
+
+fn same_job_steps_after<'a>(
+    graph: &'a AuthorityGraph,
+    step: &'a Node,
+) -> impl Iterator<Item = &'a Node> {
+    let job = step_job(step);
+    graph
+        .nodes_of_kind(NodeKind::Step)
+        .filter(move |candidate| candidate.id > step.id)
+        .filter(move |candidate| step_job(candidate) == job)
+}
+
+fn job_has_sensitive_authority(graph: &AuthorityGraph, step: &Node) -> bool {
+    let Some(job) = step_job(step) else {
+        return step_has_sensitive_authority(graph, step.id);
+    };
+    graph
+        .nodes_of_kind(NodeKind::Step)
+        .filter(|candidate| step_job(candidate) == Some(job))
+        .any(|candidate| step_has_sensitive_authority(graph, candidate.id))
+}
+
+pub fn gha_setup_node_cache_helper_path_handoff(graph: &AuthorityGraph) -> Vec<Finding> {
+    if !graph_is_platform(graph, "github-actions") {
+        return Vec::new();
+    }
+    let mut findings = Vec::new();
+    for step in graph.nodes_of_kind(NodeKind::Step) {
+        if !gha_action_is(step, "actions/setup-node") {
+            continue;
+        }
+        let cache_enabled =
+            gha_with_nonempty(step, "cache") || gha_with_truthy(step, "package-manager-cache");
+        if !cache_enabled {
+            continue;
+        }
+        let Some(writer) = prior_github_path_writer(graph, step) else {
+            continue;
+        };
+        findings.push(Finding {
+            severity: Severity::Medium,
+            category: FindingCategory::GhaSetupNodeCacheHelperPathHandoff,
+            path: None,
+            nodes_involved: vec![writer.id, step.id],
+            message: format!(
+                "Earlier step '{}' mutates GITHUB_PATH before actions/setup-node cache discovery invokes package-manager helpers through PATH",
+                writer.name
+            ),
+            recommendation: Recommendation::Manual {
+                action: "Run setup-node cache discovery before mutable PATH setup, disable package-manager cache discovery, or pin npm/pnpm/yarn helper resolution to trusted toolcache paths.".into(),
+            },
+            source: FindingSource::BuiltIn,
+            extras: FindingExtras::default(),
+        });
+    }
+    findings
+}
+
+pub fn gha_setup_python_cache_helper_path_handoff(graph: &AuthorityGraph) -> Vec<Finding> {
+    if !graph_is_platform(graph, "github-actions") {
+        return Vec::new();
+    }
+    let mut findings = Vec::new();
+    for step in graph.nodes_of_kind(NodeKind::Step) {
+        if !gha_action_is(step, "actions/setup-python") {
+            continue;
+        }
+        if !gha_cache_input_is(step, &["pip", "poetry"]) {
+            continue;
+        }
+        let Some(writer) = prior_github_path_writer(graph, step) else {
+            continue;
+        };
+        findings.push(Finding {
+            severity: Severity::Medium,
+            category: FindingCategory::GhaSetupPythonCacheHelperPathHandoff,
+            path: None,
+            nodes_involved: vec![writer.id, step.id],
+            message: format!(
+                "Earlier step '{}' mutates GITHUB_PATH before actions/setup-python cache discovery invokes pip/poetry helpers through PATH",
+                writer.name
+            ),
+            recommendation: Recommendation::Manual {
+                action: "Run Python cache discovery before mutable PATH setup, or use a cache mode that does not resolve package-manager helpers from mutable PATH.".into(),
+            },
+            source: FindingSource::BuiltIn,
+            extras: FindingExtras::default(),
+        });
+    }
+    findings
+}
+
+pub fn gha_setup_python_pip_install_authority_env(graph: &AuthorityGraph) -> Vec<Finding> {
+    if !graph_is_platform(graph, "github-actions") {
+        return Vec::new();
+    }
+    let mut findings = Vec::new();
+    for step in graph.nodes_of_kind(NodeKind::Step) {
+        if !gha_action_is(step, "actions/setup-python") || !gha_with_nonempty(step, "pip-install") {
+            continue;
+        }
+        if !job_has_sensitive_authority(graph, step) {
+            continue;
+        }
+        findings.push(Finding {
+            severity: Severity::Medium,
+            category: FindingCategory::GhaSetupPythonPipInstallAuthorityEnv,
+            path: None,
+            nodes_involved: vec![step.id],
+            message: format!(
+                "actions/setup-python step '{}' uses pip-install mode while the job has token, package-index, cloud, or identity authority in scope",
+                step.name
+            ),
+            recommendation: Recommendation::Manual {
+                action: "Prefer a dedicated install step with explicit environment allowlist and trusted Python/pip paths; keep private index and cloud credentials out of ambient env during setup-python install mode.".into(),
+            },
+            source: FindingSource::BuiltIn,
+            extras: FindingExtras::default(),
+        });
+    }
+    findings
+}
+
+fn script_contains_any(body: &str, needles: &[&str]) -> bool {
+    let lower = body.to_ascii_lowercase();
+    needles.iter().any(|needle| lower.contains(needle))
+}
+
+fn step_script_contains_any(step: &Node, needles: &[&str]) -> bool {
+    step.metadata
+        .get(META_SCRIPT_BODY)
+        .map(|body| script_contains_any(body, needles))
+        .unwrap_or(false)
+}
+
+pub fn gha_docker_setup_qemu_privileged_docker_helper(graph: &AuthorityGraph) -> Vec<Finding> {
+    if !graph_is_platform(graph, "github-actions") {
+        return Vec::new();
+    }
+    let mut findings = Vec::new();
+    for step in graph.nodes_of_kind(NodeKind::Step) {
+        if !gha_action_is(step, "docker/setup-qemu-action") {
+            continue;
+        }
+        let prior_docker_auth = same_job_steps_before(graph, step).any(|candidate| {
+            gha_action_is(candidate, "docker/login-action")
+                || step_script_contains_any(candidate, &["docker login"])
+        });
+        let private_image_mode = gha_with_value(step, "image")
+            .map(|v| {
+                let image = v.trim().to_ascii_lowercase();
+                !image.is_empty() && !image.starts_with("tonistiigi/binfmt")
+            })
+            .unwrap_or(false);
+        if !(prior_docker_auth || private_image_mode) {
+            continue;
+        }
+        let Some(writer) = prior_github_path_writer(graph, step) else {
+            continue;
+        };
+        findings.push(Finding {
+            severity: Severity::High,
+            category: FindingCategory::GhaDockerSetupQemuPrivilegedDockerHelper,
+            path: None,
+            nodes_involved: vec![writer.id, step.id],
+            message: format!(
+                "Earlier step '{}' mutates GITHUB_PATH before docker/setup-qemu-action runs privileged Docker helper operations after registry auth or with a private image",
+                writer.name
+            ),
+            recommendation: Recommendation::Manual {
+                action: "Run QEMU setup before registry login/private image pulls, resolve Docker through a trusted absolute path, and keep privileged Docker helper execution out of mutable PATH contexts.".into(),
+            },
+            source: FindingSource::BuiltIn,
+            extras: FindingExtras::default(),
+        });
+    }
+    findings
+}
+
+fn is_tool_installer_action(step: &Node) -> Option<&'static str> {
+    let action = gha_action_name(step)?;
+    match action.as_str() {
+        "azure/setup-helm" => Some("helm"),
+        "azure/setup-kubectl" => Some("kubectl"),
+        "sigstore/cosign-installer" => Some("cosign"),
+        _ => None,
+    }
+}
+
+pub fn gha_tool_installer_then_shell_helper_authority(graph: &AuthorityGraph) -> Vec<Finding> {
+    if !graph_is_platform(graph, "github-actions") {
+        return Vec::new();
+    }
+    let mut findings = Vec::new();
+    for installer in graph.nodes_of_kind(NodeKind::Step) {
+        let Some(helper) = is_tool_installer_action(installer) else {
+            continue;
+        };
+        let Some(shell) = same_job_steps_after(graph, installer).find(|candidate| match helper {
+            "helm" => step_script_contains_any(
+                candidate,
+                &[
+                    "helm registry login",
+                    "helm push",
+                    "helm upgrade",
+                    "helm install",
+                ],
+            ),
+            "kubectl" => step_script_contains_any(
+                candidate,
+                &[
+                    "kubectl apply",
+                    "kubectl create secret",
+                    "kubectl rollout",
+                    "kubectl set image",
+                ],
+            ),
+            "cosign" => step_script_contains_any(candidate, &["cosign sign", "cosign attest"]),
+            _ => false,
+        }) else {
+            continue;
+        };
+        if !job_has_sensitive_authority(graph, shell) {
+            continue;
+        }
+        findings.push(Finding {
+            severity: Severity::Medium,
+            category: FindingCategory::GhaToolInstallerThenShellHelperAuthority,
+            path: None,
+            nodes_involved: vec![installer.id, shell.id],
+            message: format!(
+                "Installer step '{}' prepares `{helper}` and later shell step '{}' uses it while deploy, signing, cloud, or token authority is in scope",
+                installer.name, shell.name
+            ),
+            recommendation: Recommendation::Manual {
+                action: format!(
+                    "Treat this as a workflow-shell authority lead: call `{helper}` through the installer-owned absolute path when possible and avoid mutable PATH setup between install and privileged use."
+                ),
+            },
+            source: FindingSource::BuiltIn,
+            extras: FindingExtras::default(),
+        });
+    }
+    findings
+}
+
+pub fn gha_workflow_shell_authority_concentration(graph: &AuthorityGraph) -> Vec<Finding> {
+    if !graph_is_platform(graph, "github-actions") {
+        return Vec::new();
+    }
+    const SHELL_SINKS: &[&str] = &[
+        "docker login",
+        "docker push",
+        "docker buildx build --push",
+        "npm publish",
+        "pnpm publish",
+        "yarn npm publish",
+        "twine upload",
+        "maturin publish",
+        "terraform apply",
+        "terraform output",
+        "helm registry login",
+        "helm push",
+        "kubectl apply -f http://",
+        "kubectl apply -f https://",
+        "cosign sign",
+        "cosign attest",
+        "gh release create",
+        "gh release edit",
+        "gh release upload",
+        "cargo publish",
+    ];
+    let mut findings = Vec::new();
+    for step in graph.nodes_of_kind(NodeKind::Step) {
+        let Some(body) = step.metadata.get(META_SCRIPT_BODY) else {
+            continue;
+        };
+        let matched: Vec<&str> = SHELL_SINKS
+            .iter()
+            .copied()
+            .filter(|sink| script_contains_any(body, &[*sink]))
+            .collect();
+        if matched.is_empty() || !job_has_sensitive_authority(graph, step) {
+            continue;
+        }
+        findings.push(Finding {
+            severity: Severity::Medium,
+            category: FindingCategory::GhaWorkflowShellAuthorityConcentration,
+            path: None,
+            nodes_involved: vec![step.id],
+            message: format!(
+                "Workflow shell step '{}' runs authority-bearing sink(s) [{}] while token, cloud, registry, package, or signing authority is in scope",
+                step.name,
+                matched.join(", ")
+            ),
+            recommendation: Recommendation::Manual {
+                action: "Classify this as workflow hardening unless source or witness evidence identifies an action-owned boundary. Keep publish/deploy/sign/release helpers on trusted paths and use explicit env allowlists around the sink step.".into(),
+            },
+            source: FindingSource::BuiltIn,
+            extras: FindingExtras::default(),
+        });
+    }
+    findings
+}
+
 pub fn run_all_rules(graph: &AuthorityGraph, max_hops: usize) -> Vec<Finding> {
     let mut findings = Vec::new();
     // MVP rules
@@ -4470,6 +4849,13 @@ pub fn run_all_rules(graph: &AuthorityGraph, max_hops: usize) -> Vec<Finding> {
     findings.extend(gha_action_minted_secret_to_helper(graph));
     findings.extend(gha_helper_untrusted_path_resolution(graph));
     findings.extend(gha_secret_output_after_helper_login(graph));
+    findings.extend(later_secret_materialized_after_path_mutation(graph));
+    findings.extend(gha_setup_node_cache_helper_path_handoff(graph));
+    findings.extend(gha_setup_python_cache_helper_path_handoff(graph));
+    findings.extend(gha_setup_python_pip_install_authority_env(graph));
+    findings.extend(gha_docker_setup_qemu_privileged_docker_helper(graph));
+    findings.extend(gha_tool_installer_then_shell_helper_authority(graph));
+    findings.extend(gha_workflow_shell_authority_concentration(graph));
     // Blue-team positive invariants (negative-space rules — fire on absence
     // of expected defenses)
     findings.extend(no_workflow_level_permissions_block(graph));
@@ -4681,7 +5067,9 @@ fn attacker_surface_kinds_for(finding: &Finding) -> std::collections::BTreeSet<S
         | FindingCategory::ParameterInterpolationIntoShell
         | FindingCategory::UntrustedCiVarInShellInterpolation
         | FindingCategory::SetvariableIssecretFalse
-        | FindingCategory::TerraformOutputViaSetvariableShellExpansion => {
+        | FindingCategory::TerraformOutputViaSetvariableShellExpansion
+        | FindingCategory::GhaToolInstallerThenShellHelperAuthority
+        | FindingCategory::GhaWorkflowShellAuthorityConcentration => {
             out.insert("script_sink".into());
         }
         FindingCategory::UnpinnedAction
@@ -4715,8 +5103,13 @@ fn attacker_surface_kinds_for(finding: &Finding) -> std::collections::BTreeSet<S
             out.insert("self_hosted_runner".into());
         }
         FindingCategory::CacheKeyCrossesTrustBoundary
-        | FindingCategory::PrSpecificCacheKeyInDefaultBranchConsumer => {
+        | FindingCategory::PrSpecificCacheKeyInDefaultBranchConsumer
+        | FindingCategory::GhaSetupNodeCacheHelperPathHandoff
+        | FindingCategory::GhaSetupPythonCacheHelperPathHandoff => {
             out.insert("cache".into());
+        }
+        FindingCategory::GhaDockerSetupQemuPrivilegedDockerHelper => {
+            out.insert("privileged_container".into());
         }
         FindingCategory::DotenvArtifactFlowsToPrivilegedDeployment => {
             out.insert("dotenv_artifact".into());
@@ -4812,6 +5205,26 @@ fn runtime_preconditions_for(graph: &AuthorityGraph, finding: &Finding) -> Vec<&
         | FindingCategory::TemplateRepoRefIsFeatureBranch
         | FindingCategory::FloatingImage => {
             out.push("the referenced mutable branch, tag, include, or image can change independently of this repository");
+        }
+        FindingCategory::LaterSecretMaterializedAfterPathMutation
+        | FindingCategory::GhaHelperPathSensitiveArgv
+        | FindingCategory::GhaHelperPathSensitiveStdin
+        | FindingCategory::GhaHelperPathSensitiveEnv
+        | FindingCategory::GhaActionMintedSecretToHelper
+        | FindingCategory::GhaHelperUntrustedPathResolution
+        | FindingCategory::GhaSetupNodeCacheHelperPathHandoff
+        | FindingCategory::GhaSetupPythonCacheHelperPathHandoff
+        | FindingCategory::GhaDockerSetupQemuPrivilegedDockerHelper => {
+            out.push(
+                "an earlier same-job step can influence PATH before the later helper boundary runs",
+            );
+            out.push("the later action or helper boundary receives authority at runtime");
+        }
+        FindingCategory::GhaSetupPythonPipInstallAuthorityEnv
+        | FindingCategory::GhaToolInstallerThenShellHelperAuthority
+        | FindingCategory::GhaWorkflowShellAuthorityConcentration => {
+            out.push("token, cloud, registry, package, or signing authority is present in the job environment");
+            out.push("the workflow-authored helper command runs on the hosted runner");
         }
         FindingCategory::ManualDispatchInputToUrlOrCommand
         | FindingCategory::ParameterInterpolationIntoShell => {
@@ -10865,6 +11278,142 @@ mod tests {
         assert!(gha_helper_path_sensitive_argv(&g).is_empty());
         assert!(gha_helper_path_sensitive_stdin(&g).is_empty());
         assert!(gha_helper_path_sensitive_env(&g).is_empty());
+    }
+
+    #[test]
+    fn later_secret_materialized_after_path_mutation_fires_once_for_helper_edge() {
+        let g = gha_helper_graph("azure/login", None);
+        let findings = later_secret_materialized_after_path_mutation(&g);
+        assert_eq!(findings.len(), 1);
+        assert_eq!(
+            findings[0].category,
+            FindingCategory::LaterSecretMaterializedAfterPathMutation
+        );
+        assert!(findings[0].message.contains("materializes authority"));
+    }
+
+    #[test]
+    fn setup_node_cache_handoff_requires_cache_and_prior_path_mutation() {
+        let g = gha_helper_graph("actions/setup-node", Some("cache=npm"));
+        let findings = gha_setup_node_cache_helper_path_handoff(&g);
+        assert_eq!(findings.len(), 1);
+        assert_eq!(
+            findings[0].category,
+            FindingCategory::GhaSetupNodeCacheHelperPathHandoff
+        );
+
+        let disabled = gha_helper_graph("actions/setup-node", Some("package-manager-cache=false"));
+        assert!(gha_setup_node_cache_helper_path_handoff(&disabled).is_empty());
+
+        let implicit = gha_helper_graph("actions/setup-node", None);
+        assert!(
+            gha_setup_node_cache_helper_path_handoff(&implicit).is_empty(),
+            "YAML alone cannot prove package-manager auto-cache metadata, so no-input setup-node must not fire"
+        );
+    }
+
+    #[test]
+    fn setup_python_cache_handoff_only_flags_helper_backed_cache_modes() {
+        let pip = gha_helper_graph("actions/setup-python", Some("cache=pip"));
+        assert_eq!(gha_setup_python_cache_helper_path_handoff(&pip).len(), 1);
+
+        let pipenv = gha_helper_graph("actions/setup-python", Some("cache=pipenv"));
+        assert!(gha_setup_python_cache_helper_path_handoff(&pipenv).is_empty());
+    }
+
+    #[test]
+    fn setup_python_pip_install_flags_when_authority_in_scope() {
+        let g = gha_helper_graph(
+            "actions/setup-python",
+            Some("pip-install=-r requirements.txt"),
+        );
+        let findings = gha_setup_python_pip_install_authority_env(&g);
+        assert_eq!(findings.len(), 1);
+        assert_eq!(
+            findings[0].category,
+            FindingCategory::GhaSetupPythonPipInstallAuthorityEnv
+        );
+    }
+
+    #[test]
+    fn docker_setup_qemu_flags_prior_path_plus_private_image_context() {
+        let g = gha_helper_graph(
+            "docker/setup-qemu-action",
+            Some("image=ghcr.io/example/private-binfmt:latest"),
+        );
+        let findings = gha_docker_setup_qemu_privileged_docker_helper(&g);
+        assert_eq!(findings.len(), 1);
+        assert_eq!(
+            findings[0].category,
+            FindingCategory::GhaDockerSetupQemuPrivilegedDockerHelper
+        );
+    }
+
+    #[test]
+    fn installer_then_shell_helper_authority_flags_downstream_shell_use() {
+        let mut g = AuthorityGraph::new(source("ci.yml"));
+        g.metadata
+            .insert(META_PLATFORM.into(), "github-actions".into());
+        let mut installer_meta = std::collections::HashMap::new();
+        installer_meta.insert(META_JOB_NAME.into(), "deploy".into());
+        installer_meta.insert(META_GHA_ACTION.into(), "sigstore/cosign-installer".into());
+        let installer = g.add_node_with_metadata(
+            NodeKind::Step,
+            "install cosign",
+            TrustZone::ThirdParty,
+            installer_meta,
+        );
+        let mut shell_meta = std::collections::HashMap::new();
+        shell_meta.insert(META_JOB_NAME.into(), "deploy".into());
+        shell_meta.insert(
+            META_SCRIPT_BODY.into(),
+            "cosign sign ghcr.io/acme/app".into(),
+        );
+        let shell = g.add_node_with_metadata(
+            NodeKind::Step,
+            "sign image",
+            TrustZone::FirstParty,
+            shell_meta,
+        );
+        let mut id_meta = std::collections::HashMap::new();
+        id_meta.insert(META_OIDC.into(), "true".into());
+        let identity = g.add_node_with_metadata(
+            NodeKind::Identity,
+            "GITHUB_OIDC_TOKEN",
+            TrustZone::FirstParty,
+            id_meta,
+        );
+        g.add_edge(shell, identity, EdgeKind::HasAccessTo);
+
+        let findings = gha_tool_installer_then_shell_helper_authority(&g);
+        assert_eq!(findings.len(), 1);
+        assert_eq!(
+            findings[0].nodes_involved,
+            vec![installer, shell],
+            "installer and downstream shell sink should be the stable dedupe anchor"
+        );
+    }
+
+    #[test]
+    fn workflow_shell_authority_concentration_normalizes_multiple_sinks_to_one_finding() {
+        let mut g = AuthorityGraph::new(source("ci.yml"));
+        g.metadata
+            .insert(META_PLATFORM.into(), "github-actions".into());
+        let mut meta = std::collections::HashMap::new();
+        meta.insert(META_JOB_NAME.into(), "publish".into());
+        meta.insert(
+            META_SCRIPT_BODY.into(),
+            "docker login --password-stdin\ndocker push ghcr.io/acme/app".into(),
+        );
+        let step =
+            g.add_node_with_metadata(NodeKind::Step, "publish image", TrustZone::FirstParty, meta);
+        let secret = g.add_node(NodeKind::Secret, "REGISTRY_TOKEN", TrustZone::FirstParty);
+        g.add_edge(step, secret, EdgeKind::HasAccessTo);
+
+        let findings = gha_workflow_shell_authority_concentration(&g);
+        assert_eq!(findings.len(), 1);
+        assert!(findings[0].message.contains("docker login"));
+        assert!(findings[0].message.contains("docker push"));
     }
 
     #[test]

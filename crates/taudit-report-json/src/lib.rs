@@ -780,6 +780,21 @@ mod tests {
             C::DotenvArtifactFlowsToPrivilegedDeployment,
             C::SetvariableIssecretFalse,
             C::HomoglyphInActionRef,
+            C::GhaHelperPathSensitiveArgv,
+            C::GhaHelperPathSensitiveStdin,
+            C::GhaHelperPathSensitiveEnv,
+            C::GhaPostAmbientEnvCleanupPath,
+            C::GhaActionMintedSecretToHelper,
+            C::GhaHelperUntrustedPathResolution,
+            C::GhaSecretOutputAfterHelperLogin,
+            C::LaterSecretMaterializedAfterPathMutation,
+            C::GhaSetupNodeCacheHelperPathHandoff,
+            C::GhaSetupPythonCacheHelperPathHandoff,
+            C::GhaSetupPythonPipInstallAuthorityEnv,
+            C::GhaDockerSetupQemuPrivilegedDockerHelper,
+            C::GhaToolInstallerThenShellHelperAuthority,
+            C::GhaWorkflowShellAuthorityConcentration,
+            C::GhaToolcacheAbsolutePathDowngrade,
             // Reserved categories — valid in OUTPUT (the Rust enum can
             // construct them); rejected in custom-rule YAML INPUT via
             // `#[serde(skip_deserializing)]`.
@@ -787,13 +802,13 @@ mod tests {
             C::MissingAuditTrail,
         ];
 
-        // Sanity guard: 63 is the wire-contract count the schema
+        // Sanity guard: 78 is the wire-contract count the schema
         // generator emits. A drift between this list and the enum is the
         // exact failure class this test exists to catch.
         assert_eq!(
             all.len(),
-            63,
-            "FindingCategory enumeration is out of sync with the schema generator (expected 63, got {})",
+            78,
+            "FindingCategory enumeration is out of sync with the schema generator (expected 78, got {})",
             all.len()
         );
 

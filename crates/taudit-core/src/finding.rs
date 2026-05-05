@@ -196,6 +196,27 @@ fn category_rule_id(category: &FindingCategory) -> &'static str {
         FindingCategory::GhaActionMintedSecretToHelper => "gha_action_minted_secret_to_helper",
         FindingCategory::GhaHelperUntrustedPathResolution => "gha_helper_untrusted_path_resolution",
         FindingCategory::GhaSecretOutputAfterHelperLogin => "gha_secret_output_after_helper_login",
+        FindingCategory::LaterSecretMaterializedAfterPathMutation => {
+            "later_secret_materialized_after_path_mutation"
+        }
+        FindingCategory::GhaSetupNodeCacheHelperPathHandoff => {
+            "gha_setup_node_cache_helper_path_handoff"
+        }
+        FindingCategory::GhaSetupPythonCacheHelperPathHandoff => {
+            "gha_setup_python_cache_helper_path_handoff"
+        }
+        FindingCategory::GhaSetupPythonPipInstallAuthorityEnv => {
+            "gha_setup_python_pip_install_authority_env"
+        }
+        FindingCategory::GhaDockerSetupQemuPrivilegedDockerHelper => {
+            "gha_docker_setup_qemu_privileged_docker_helper"
+        }
+        FindingCategory::GhaToolInstallerThenShellHelperAuthority => {
+            "gha_tool_installer_then_shell_helper_authority"
+        }
+        FindingCategory::GhaWorkflowShellAuthorityConcentration => {
+            "gha_workflow_shell_authority_concentration"
+        }
         FindingCategory::GhaToolcacheAbsolutePathDowngrade => {
             "gha_toolcache_absolute_path_downgrade"
         }
@@ -817,6 +838,13 @@ mod fingerprint_tests {
             FindingCategory::GhaActionMintedSecretToHelper,
             FindingCategory::GhaHelperUntrustedPathResolution,
             FindingCategory::GhaSecretOutputAfterHelperLogin,
+            FindingCategory::LaterSecretMaterializedAfterPathMutation,
+            FindingCategory::GhaSetupNodeCacheHelperPathHandoff,
+            FindingCategory::GhaSetupPythonCacheHelperPathHandoff,
+            FindingCategory::GhaSetupPythonPipInstallAuthorityEnv,
+            FindingCategory::GhaDockerSetupQemuPrivilegedDockerHelper,
+            FindingCategory::GhaToolInstallerThenShellHelperAuthority,
+            FindingCategory::GhaWorkflowShellAuthorityConcentration,
             FindingCategory::GhaToolcacheAbsolutePathDowngrade,
             FindingCategory::EgressBlindspot,
             FindingCategory::MissingAuditTrail,

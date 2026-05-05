@@ -434,6 +434,28 @@ pub enum FindingCategory {
     /// A GitHub Actions login action exposes credential material as step
     /// outputs after helper login, making cross-job propagation easy to miss.
     GhaSecretOutputAfterHelperLogin,
+    /// Umbrella GHA authority-confusion classifier: an earlier same-job
+    /// `GITHUB_PATH` mutation precedes a later helper action that receives or
+    /// mints sensitive authority.
+    LaterSecretMaterializedAfterPathMutation,
+    /// `actions/setup-node` cache mode resolves npm/pnpm/yarn helpers after an
+    /// earlier same-job `GITHUB_PATH` mutation.
+    GhaSetupNodeCacheHelperPathHandoff,
+    /// `actions/setup-python` cache mode resolves pip/pipenv/poetry helpers
+    /// after an earlier same-job `GITHUB_PATH` mutation.
+    GhaSetupPythonCacheHelperPathHandoff,
+    /// `actions/setup-python` pip-install mode runs pip while inheriting
+    /// ambient credentials or cloud authority.
+    GhaSetupPythonPipInstallAuthorityEnv,
+    /// `docker/setup-qemu-action` invokes Docker/QEMU helper flow in a job that
+    /// already has registry authority or private-image context.
+    GhaDockerSetupQemuPrivilegedDockerHelper,
+    /// Tool-installer action is followed by shell use of the installed helper
+    /// while deploy/signing authority is in scope.
+    GhaToolInstallerThenShellHelperAuthority,
+    /// Shell command sequence concentrates publish, deploy, signing, registry,
+    /// or release authority in a workflow step.
+    GhaWorkflowShellAuthorityConcentration,
     /// Precision guard for actions that install a helper into the toolcache
     /// and invoke that absolute path instead of resolving a bare helper from
     /// runner `PATH`.

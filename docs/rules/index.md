@@ -1,6 +1,6 @@
 # taudit Rule Reference
 
-69 rule definitions. 68 emit findings from YAML today; `gha_toolcache_absolute_path_downgrade` is a precision guard documented so helper-PATH findings do not over-fire. Run `taudit explain <rule-id>` for a description in the terminal.
+82 built-in rule definitions are registered for `taudit explain`. The table below is the customer-facing rule catalogue; `gha_toolcache_absolute_path_downgrade` is a precision guard documented so helper-PATH findings do not over-fire. Run `taudit explain <rule-id>` for a description in the terminal.
 
 ## Top-level commands
 
@@ -64,6 +64,13 @@ Platforms: **GHA** = GitHub Actions · **ADO** = Azure DevOps · **GL** = GitLab
 | [gha_action_minted_secret_to_helper](gha_action_minted_secret_to_helper.md) | High | Credentials | GHA |
 | [gha_helper_untrusted_path_resolution](gha_helper_untrusted_path_resolution.md) | Medium | Supply Chain | GHA |
 | [gha_secret_output_after_helper_login](gha_secret_output_after_helper_login.md) | High | Credentials | GHA |
+| [later_secret_materialized_after_path_mutation](later_secret_materialized_after_path_mutation.md) | High | Credentials | GHA |
+| [gha_setup_node_cache_helper_path_handoff](gha_setup_node_cache_helper_path_handoff.md) | Medium | Cache | GHA |
+| [gha_setup_python_cache_helper_path_handoff](gha_setup_python_cache_helper_path_handoff.md) | Medium | Cache | GHA |
+| [gha_setup_python_pip_install_authority_env](gha_setup_python_pip_install_authority_env.md) | Medium | Credentials | GHA |
+| [gha_docker_setup_qemu_privileged_docker_helper](gha_docker_setup_qemu_privileged_docker_helper.md) | High | Docker | GHA |
+| [gha_tool_installer_then_shell_helper_authority](gha_tool_installer_then_shell_helper_authority.md) | Medium | Workflow Shell | GHA |
+| [gha_workflow_shell_authority_concentration](gha_workflow_shell_authority_concentration.md) | Medium | Workflow Shell | GHA |
 | [gha_toolcache_absolute_path_downgrade](gha_toolcache_absolute_path_downgrade.md) | Info | Precision | GHA |
 | [risky_trigger_with_authority](risky_trigger_with_authority.md) | High | Privilege | GHA |
 | [sensitive_value_in_job_output](sensitive_value_in_job_output.md) | Critical / High | Credentials | GHA |

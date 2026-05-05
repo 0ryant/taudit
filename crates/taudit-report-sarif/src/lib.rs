@@ -1261,6 +1261,100 @@ pub const RULE_DEFS: &[RuleDef] = &[
         tags: &["security", "credentials", "github-actions"],
     },
     RuleDef {
+        id: "later_secret_materialized_after_path_mutation",
+        name: "LaterSecretMaterializedAfterPathMutation",
+        short_description: "Later action authority reaches helper after earlier PATH mutation.",
+        full_description:
+            "An earlier same-job step mutates GITHUB_PATH, then a later known helper \
+             action receives or mints sensitive authority and resolves a bare helper \
+             through PATH. This is the normalized authority-edge classifier that keeps \
+             generic PATH edits from becoming findings unless later authority reaches \
+             the selected helper.",
+        default_level: "error",
+        security_severity: "7.8",
+        tags: &["security", "credentials", "github-actions"],
+    },
+    RuleDef {
+        id: "gha_setup_node_cache_helper_path_handoff",
+        name: "GhaSetupNodeCacheHelperPathHandoff",
+        short_description: "setup-node cache discovery resolves package-manager helpers after PATH mutation.",
+        full_description:
+            "actions/setup-node cache discovery invokes npm, pnpm, or yarn helpers through \
+             PATH. When an earlier same-job step mutates GITHUB_PATH, the cache helper \
+             selection becomes a useful authority-confusion lead rather than a generic \
+             PATH warning.",
+        default_level: "warning",
+        security_severity: "5.8",
+        tags: &["security", "cache", "github-actions"],
+    },
+    RuleDef {
+        id: "gha_setup_python_cache_helper_path_handoff",
+        name: "GhaSetupPythonCacheHelperPathHandoff",
+        short_description: "setup-python cache discovery resolves pip/poetry helpers after PATH mutation.",
+        full_description:
+            "actions/setup-python cache modes for pip and poetry invoke package-manager \
+             helpers through PATH. When an earlier same-job step mutates GITHUB_PATH, \
+             the cache discovery boundary becomes a source lead for helper-resolution \
+             authority review.",
+        default_level: "warning",
+        security_severity: "5.8",
+        tags: &["security", "cache", "github-actions"],
+    },
+    RuleDef {
+        id: "gha_setup_python_pip_install_authority_env",
+        name: "GhaSetupPythonPipInstallAuthorityEnv",
+        short_description: "setup-python pip-install mode inherits ambient authority.",
+        full_description:
+            "actions/setup-python pip-install mode invokes python -m pip install while the \
+             job has token, package-index, cloud, or identity authority in scope. Treat \
+             this as a hardening lead for explicit environment allowlisting around \
+             package installation.",
+        default_level: "warning",
+        security_severity: "5.4",
+        tags: &["security", "credentials", "github-actions"],
+    },
+    RuleDef {
+        id: "gha_docker_setup_qemu_privileged_docker_helper",
+        name: "GhaDockerSetupQemuPrivilegedDockerHelper",
+        short_description: "setup-qemu runs privileged Docker helper after registry authority.",
+        full_description:
+            "docker/setup-qemu-action delegates to Docker helper operations including \
+             privileged container execution. The rule fires when earlier registry login \
+             or private image context exists and an earlier GITHUB_PATH mutation may \
+             influence Docker helper resolution.",
+        default_level: "error",
+        security_severity: "7.2",
+        tags: &["security", "docker", "github-actions"],
+    },
+    RuleDef {
+        id: "gha_tool_installer_then_shell_helper_authority",
+        name: "GhaToolInstallerThenShellHelperAuthority",
+        short_description: "Installed helper is later used from shell with deploy/signing authority.",
+        full_description:
+            "A tool installer such as setup-helm, setup-kubectl, or cosign-installer is \
+             followed by workflow-authored shell use of that helper while deploy, \
+             Kubernetes, registry, signing, token, or cloud authority is in scope. This \
+             is an advisory workflow-shell classifier unless source or witness evidence \
+             identifies an action-owned helper boundary.",
+        default_level: "warning",
+        security_severity: "5.2",
+        tags: &["security", "workflow-shell", "github-actions"],
+    },
+    RuleDef {
+        id: "gha_workflow_shell_authority_concentration",
+        name: "GhaWorkflowShellAuthorityConcentration",
+        short_description: "Workflow shell step concentrates publish, deploy, signing, or release authority.",
+        full_description:
+            "A workflow-authored shell step invokes a known authority-bearing sink such \
+             as docker push, npm publish, twine upload, terraform apply/output, helm \
+             push, kubectl remote apply, cosign sign/attest, gh release, or cargo \
+             publish while token, cloud, registry, package, or signing authority is in \
+             scope. This is a corpus and hardening classifier, not a vulnerability claim.",
+        default_level: "warning",
+        security_severity: "5.0",
+        tags: &["security", "workflow-shell", "github-actions"],
+    },
+    RuleDef {
         id: "gha_toolcache_absolute_path_downgrade",
         name: "GhaToolcacheAbsolutePathDowngrade",
         short_description: "Precision guard for toolcache absolute helper execution.",
@@ -2069,6 +2163,13 @@ mod tests {
             FindingCategory::GhaActionMintedSecretToHelper,
             FindingCategory::GhaHelperUntrustedPathResolution,
             FindingCategory::GhaSecretOutputAfterHelperLogin,
+            FindingCategory::LaterSecretMaterializedAfterPathMutation,
+            FindingCategory::GhaSetupNodeCacheHelperPathHandoff,
+            FindingCategory::GhaSetupPythonCacheHelperPathHandoff,
+            FindingCategory::GhaSetupPythonPipInstallAuthorityEnv,
+            FindingCategory::GhaDockerSetupQemuPrivilegedDockerHelper,
+            FindingCategory::GhaToolInstallerThenShellHelperAuthority,
+            FindingCategory::GhaWorkflowShellAuthorityConcentration,
             FindingCategory::GhaToolcacheAbsolutePathDowngrade,
         ];
 
