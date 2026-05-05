@@ -127,6 +127,14 @@ pub struct SuppressionConfig {
 
 /// Errors raised by the loader. `Parse` is the YAML-syntax case;
 /// `MissingExpiryForCritical` is the hard-rule violation.
+///
+/// `Parse` deliberately omits the underlying `serde_yaml::Error`'s message
+/// from the user-facing `Display` impl. That message can include a
+/// fragment of the parsed content, and a hostile contributor who plants
+/// `.taudit-suppressions.yml` as a symlink to e.g. `/etc/hostname`
+/// would otherwise leak that content into CI logs via the failed parse.
+/// The full error is still available via `source()` if a caller wants
+/// it for trace-level logging.
 #[derive(Debug, thiserror::Error)]
 pub enum SuppressionError {
     #[error("failed to read suppression file {path}: {source}")]
@@ -135,7 +143,7 @@ pub enum SuppressionError {
         #[source]
         source: std::io::Error,
     },
-    #[error("failed to parse suppression file {path}: {source}")]
+    #[error("failed to parse {path} as YAML")]
     Parse {
         path: String,
         #[source]
