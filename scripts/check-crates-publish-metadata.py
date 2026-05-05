@@ -51,6 +51,15 @@ def expected_from_env() -> str | None:
     return None
 
 
+def compatible_workspace_api_requirement(api_version: str) -> str:
+    parts = api_version.split(".")
+    if len(parts) < 2:
+        return api_version
+    if parts[0] == "0":
+        return ".".join(parts[:2])
+    return parts[0]
+
+
 def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument(
@@ -86,6 +95,21 @@ def main() -> int:
         for _, package in packages
         if package.get("name") != API_CRATE
     }
+    api_versions = {
+        package["name"]: package["version"]
+        for _, package in packages
+        if package.get("name") == API_CRATE
+    }
+    api_version = api_versions.get(API_CRATE)
+    workspace_api_dep = root_manifest.get("workspace", {}).get("dependencies", {}).get(API_CRATE)
+    if api_version and isinstance(workspace_api_dep, dict):
+        expected_api_req = compatible_workspace_api_requirement(api_version)
+        api_dep_version = workspace_api_dep.get("version")
+        if api_dep_version != expected_api_req:
+            errors.append(
+                f"workspace.dependencies.{API_CRATE} has version {api_dep_version!r}; "
+                f"expected {expected_api_req!r} for local {API_CRATE}@{api_version}"
+            )
     if args.expected_release_version:
         for name, version in sorted(release_versions.items()):
             if version != args.expected_release_version:
@@ -110,6 +134,16 @@ def main() -> int:
         for section_name in ("dependencies", "dev-dependencies", "build-dependencies"):
             for dep_name, dep in manifest.get(section_name, {}).items():
                 if dep_name == API_CRATE:
+                    if isinstance(dep, dict) and "path" in dep:
+                        if dep.get("workspace") is True:
+                            continue
+                        dep_version = dep.get("version")
+                        expected_api_req = compatible_workspace_api_requirement(api_version or "")
+                        if api_version and dep_version != expected_api_req:
+                            errors.append(
+                                f"{manifest_path}: {name} {section_name}.{API_CRATE} has version "
+                                f"{dep_version!r}; expected {expected_api_req!r}"
+                            )
                     continue
                 if dep_name in release_versions and isinstance(dep, dict) and "path" in dep:
                     dep_version = dep.get("version")

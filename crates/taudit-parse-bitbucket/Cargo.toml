@@ -1,7 +1,7 @@
 [package]
 name = "taudit-parse-bitbucket"
 description = "Parses Bitbucket Pipelines YAML into taudit typed authority graphs for CI/CD propagation and trust-boundary analysis."
-version = "1.1.0-rc.5"
+version = "1.1.0-rc.6"
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
@@ -11,6 +11,6 @@ homepage.workspace = true
 documentation.workspace = true
 
 [dependencies]
-taudit-core = { version = "1.1.0-rc.5", path = "../taudit-core" }
+taudit-core = { version = "1.1.0-rc.6", path = "../taudit-core" }
 serde = { workspace = true }
 serde_yaml = { workspace = true }
