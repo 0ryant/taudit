@@ -13,3 +13,8 @@ recommendation:
   pinned: "alpine:latest@<sha256-digest>"
 source: built-in
 time_to_fix: trivial
+confidence_scope: yaml_only
+runtime_preconditions:
+  - "the referenced mutable branch, tag, include, or image can change independently of this repository"
+attacker_surface_kinds:
+  - mutable_dependency_ref

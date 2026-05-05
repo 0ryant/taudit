@@ -15,6 +15,10 @@ expression: findings
     minimum: "{ contents: read }"
   source: built-in
   time_to_fix: small
+  confidence_scope: yaml_only
+  portal_control_dependency: true
+  authority_kinds:
+    - job_token
 - severity: high
   category: self_mutating_pipeline
   nodes_involved:
@@ -26,6 +30,14 @@ expression: findings
     type: manual
     action: Avoid writing secrets or attacker-controlled values to $GITHUB_ENV / $GITHUB_PATH / pipeline variables. Use explicit step outputs with narrow scoping instead.
   source: built-in
+  confidence_scope: yaml_only
+  portal_control_dependency: true
+  authority_kinds:
+    - credential_named_variable
+    - job_token
+  attacker_surface_kinds:
+    - script_sink
+  cve_relationship: analogue_only
 - severity: high
   category: setvariable_issecret_false
   nodes_involved:
@@ -35,6 +47,10 @@ expression: findings
     type: manual
     action: "Add `issecret=true` to the setvariable directive: `##vso[task.setvariable variable=API_KEY;issecret=true]`"
   source: built-in
+  confidence_scope: yaml_only
+  portal_control_dependency: true
+  attacker_surface_kinds:
+    - script_sink
 - severity: high
   category: setvariable_issecret_false
   nodes_involved:
@@ -44,3 +60,7 @@ expression: findings
     type: manual
     action: "Add `issecret=true` to the setvariable directive: `##vso[task.setvariable variable=MY_TOKEN;issecret=true]`"
   source: built-in
+  confidence_scope: yaml_only
+  portal_control_dependency: true
+  attacker_surface_kinds:
+    - script_sink

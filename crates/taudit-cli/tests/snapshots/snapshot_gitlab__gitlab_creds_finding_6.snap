@@ -14,3 +14,6 @@ recommendation:
   minimum: "{ contents: read }"
 source: built-in
 time_to_fix: small
+confidence_scope: yaml_only
+authority_kinds:
+  - job_token

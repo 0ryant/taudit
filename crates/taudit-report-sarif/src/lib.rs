@@ -144,6 +144,44 @@ pub const RULE_DEFS: &[RuleDef] = &[
         tags: &["security", "supply-chain"],
     },
     RuleDef {
+        id: "oidc_identity_in_untrusted_context",
+        name: "OidcIdentityInUntrustedContext",
+        short_description: "An untrusted trigger context can mint an OIDC identity.",
+        full_description:
+            "A pull request, merge request, workflow_run, issue/comment, or equivalent \
+             untrusted trigger context can reach an OIDC-capable identity. OIDC avoids \
+             long-lived secrets but still needs provider-side subject and audience \
+             constraints, protected refs, or environment gates.",
+        default_level: "error",
+        security_severity: "8.0",
+        tags: &["security", "oidc", "privilege-escalation"],
+    },
+    RuleDef {
+        id: "action_major_version_pin_without_sha",
+        name: "ActionMajorVersionPinWithoutSha",
+        short_description: "An action is pinned only to a mutable major-version tag.",
+        full_description:
+            "A GitHub Actions `uses:` reference is pinned only to a moving major tag such \
+             as `@v1` or `@v2`. Major tags can be retargeted by the action maintainer; pin \
+             the action to a full commit SHA for reproducible supply-chain evidence.",
+        default_level: "warning",
+        security_severity: "5.0",
+        tags: &["security", "supply-chain", "github-actions"],
+    },
+    RuleDef {
+        id: "known_compromised_action_ref",
+        name: "KnownCompromisedActionRef",
+        short_description: "An action reference matches a public compromise advisory family.",
+        full_description:
+            "A workflow references a GitHub Action family with a public compromise advisory. \
+             Static YAML cannot prove a historical run executed an affected SHA; correlate \
+             the workflow run timestamp and resolved action ref with the advisory window, \
+             then rotate any secrets reachable by the job.",
+        default_level: "error",
+        security_severity: "9.0",
+        tags: &["security", "supply-chain", "github-actions", "advisory"],
+    },
+    RuleDef {
         id: "untrusted_with_authority",
         name: "UntrustedWithAuthority",
         short_description:
@@ -568,6 +606,31 @@ pub const RULE_DEFS: &[RuleDef] = &[
         default_level: "error",
         security_severity: "7.5",
         tags: &["security", "injection", "supply-chain", "github-actions"],
+    },
+    RuleDef {
+        id: "docker_socket_exposed_to_ci_step",
+        name: "DockerSocketExposedToCiStep",
+        short_description: "A CI step exposes the host Docker socket.",
+        full_description:
+            "A CI step references or mounts `/var/run/docker.sock`. Docker socket access is \
+             effectively runner-host authority because the step can start containers with \
+             arbitrary bind mounts and read host filesystem state. Prefer rootless builders \
+             or a dedicated isolated runner with no shared workspace and no secrets.",
+        default_level: "error",
+        security_severity: "9.0",
+        tags: &["security", "isolation", "containers"],
+    },
+    RuleDef {
+        id: "privileged_container_in_ci_step",
+        name: "PrivilegedContainerInCiStep",
+        short_description: "A CI step starts a privileged container.",
+        full_description:
+            "A CI step runs Docker, Podman, or Buildah with `--privileged`. Privileged \
+             containers remove normal kernel isolation and can become runner-host compromise \
+             primitives when combined with bind mounts, cached workspaces, or secrets.",
+        default_level: "error",
+        security_severity: "7.5",
+        tags: &["security", "isolation", "containers"],
     },
     RuleDef {
         id: "pr_trigger_with_floating_action_ref",
@@ -1227,6 +1290,36 @@ struct SarifResultProperties {
     /// want to render "downgraded from Critical" badges.
     #[serde(rename = "originalSeverity", skip_serializing_if = "Option::is_none")]
     original_severity: Option<&'static str>,
+    /// Confidence boundary for the finding, currently `yaml_only` for
+    /// built-in static analysis findings.
+    #[serde(rename = "confidenceScope", skip_serializing_if = "Option::is_none")]
+    confidence_scope: Option<String>,
+    /// Runtime or provider-side preconditions that must be verified before
+    /// claiming live exploitability from the static SARIF result.
+    #[serde(rename = "runtimePreconditions", skip_serializing_if = "Vec::is_empty")]
+    runtime_preconditions: Vec<String>,
+    /// True when exploitability depends on provider control-plane settings
+    /// outside the scanned YAML artifact.
+    #[serde(
+        rename = "portalControlDependency",
+        skip_serializing_if = "is_false_ref"
+    )]
+    portal_control_dependency: bool,
+    /// Coarse authority kinds involved in the result.
+    #[serde(rename = "authorityKinds", skip_serializing_if = "Vec::is_empty")]
+    authority_kinds: Vec<String>,
+    /// Coarse attacker-influenced surfaces involved in the result.
+    #[serde(rename = "attackerSurfaceKinds", skip_serializing_if = "Vec::is_empty")]
+    attacker_surface_kinds: Vec<String>,
+    /// Resolution strength for template/reusable-workflow delegation results.
+    #[serde(
+        rename = "templateResolutionStrength",
+        skip_serializing_if = "Option::is_none"
+    )]
+    template_resolution_strength: Option<String>,
+    /// Relationship to cited CVE/advisory classes.
+    #[serde(rename = "cveRelationship", skip_serializing_if = "Option::is_none")]
+    cve_relationship: Option<String>,
 }
 
 #[allow(clippy::trivially_copy_pass_by_ref)]
@@ -1488,6 +1581,13 @@ fn finding_to_result(
     let compensating_controls = finding.extras.compensating_controls.clone();
     let suppressed = finding.extras.suppressed;
     let original_severity = finding.extras.original_severity.map(severity_to_str);
+    let confidence_scope = finding.extras.confidence_scope.clone();
+    let runtime_preconditions = finding.extras.runtime_preconditions.clone();
+    let portal_control_dependency = finding.extras.portal_control_dependency;
+    let authority_kinds = finding.extras.authority_kinds.clone();
+    let attacker_surface_kinds = finding.extras.attacker_surface_kinds.clone();
+    let template_resolution_strength = finding.extras.template_resolution_strength.clone();
+    let cve_relationship = finding.extras.cve_relationship.clone();
 
     // SECURITY: GitHub Code Scanning renders Markdown links in
     // `result.message.text`. `finding.message` is composed from
@@ -1520,6 +1620,13 @@ fn finding_to_result(
             compensating_controls,
             suppressed,
             original_severity,
+            confidence_scope,
+            runtime_preconditions,
+            portal_control_dependency,
+            authority_kinds,
+            attacker_surface_kinds,
+            template_resolution_strength,
+            cve_relationship,
         },
         partial_fingerprints: SarifPartialFingerprints {
             // Both keys carry the SAME 16-hex value today. They diverge only

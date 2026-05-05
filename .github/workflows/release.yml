@@ -41,9 +41,11 @@ jobs:
       # first publish of any crate the tool reports "no baseline" and exits 0,
       # so this step is a no-op for first releases.
       - name: Install cargo-semver-checks
+        if: ${{ !contains(github.ref_name, '-') }}
         run: cargo install cargo-semver-checks --locked --quiet
 
       - name: cargo semver-checks
+        if: ${{ !contains(github.ref_name, '-') }}
         run: cargo semver-checks check-release --workspace --all-features
 
       - name: Install cargo-deny

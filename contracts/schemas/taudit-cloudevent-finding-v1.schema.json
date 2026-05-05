@@ -64,7 +64,7 @@
     },
     "tauditplatform": {
       "type": "string",
-      "enum": ["ado", "gha", "gitlab"],
+      "enum": ["ado", "bb", "bitbucket", "gha", "gitlab"],
       "description": "CI/CD platform of the underlying pipeline. SIEM correlation rules use this to route events to per-platform remediation runbooks without re-parsing the `subject` (file path). Source: `graph.metadata[\"platform\"]`, populated from the resolved `Platform` variant during scan. Optional in v1 for backward-compat; always emitted by current taudit when the parser stamped the metadata key."
     },
     "tauditfindinggroup": {

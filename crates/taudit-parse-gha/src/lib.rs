@@ -115,7 +115,10 @@ impl PipelineParser for GhaParser {
             }
         }
 
-        // Workflow-level permissions -> GITHUB_TOKEN identity node
+        // Workflow-level permissions -> GITHUB_TOKEN identity node. When the
+        // workflow omits `permissions:`, the token still exists; its actual
+        // scope is inherited from enterprise/org/repo defaults, which are
+        // outside the YAML. Model it as unknown authority instead of absent.
         let token_id = if let Some(ref perms) = workflow.permissions {
             let perm_string = perms.to_string();
             let scope = IdentityScope::from_permissions(&perm_string);
@@ -138,7 +141,15 @@ impl PipelineParser for GhaParser {
                 meta,
             ))
         } else {
-            None
+            let mut meta = HashMap::new();
+            meta.insert(META_IDENTITY_SCOPE.into(), "unknown".into());
+            meta.insert(META_IMPLICIT.into(), "true".into());
+            Some(graph.add_node_with_metadata(
+                NodeKind::Identity,
+                "GITHUB_TOKEN",
+                TrustZone::FirstParty,
+                meta,
+            ))
         };
 
         // Accumulator for `jobs.<id>.outputs.*` records across every job.
@@ -470,8 +481,8 @@ impl PipelineParser for GhaParser {
                             // taint rules (R6) can see whether dispatch input
                             // flows into a checkout ref.
                             if let Some(with) = step.with.as_ref() {
-                                if let Some(r) = with.get("ref") {
-                                    node.metadata.insert(META_CHECKOUT_REF.into(), r.clone());
+                                if let Some(r) = with.get("ref").and_then(yaml_scalar_to_string) {
+                                    node.metadata.insert(META_CHECKOUT_REF.into(), r);
                                 }
                             }
                         }
@@ -521,7 +532,7 @@ impl PipelineParser for GhaParser {
                             .with
                             .as_ref()
                             .and_then(|w| w.get("name"))
-                            .map(|s| s.as_str())
+                            .and_then(yaml_scalar_to_string)
                         {
                             // Artifact inherits the producer step's trust zone so
                             // future rules checking the artifact node see the right
@@ -529,7 +540,7 @@ impl PipelineParser for GhaParser {
                             let art_id = find_or_create_artifact(
                                 &mut graph,
                                 &mut artifact_ids,
-                                artifact_name,
+                                &artifact_name,
                                 trust_zone,
                             );
                             graph.add_edge(step_id, art_id, EdgeKind::Produces);
@@ -546,7 +557,7 @@ impl PipelineParser for GhaParser {
                             .with
                             .as_ref()
                             .and_then(|w| w.get("name"))
-                            .map(|s| s.as_str())
+                            .and_then(yaml_scalar_to_string)
                         {
                             // If the upload step hasn't been seen yet, use Untrusted
                             // as a conservative default. The zone will be correct when
@@ -554,7 +565,7 @@ impl PipelineParser for GhaParser {
                             let art_id = find_or_create_artifact(
                                 &mut graph,
                                 &mut artifact_ids,
-                                artifact_name,
+                                &artifact_name,
                                 TrustZone::Untrusted,
                             );
                             graph.add_edge(art_id, step_id, EdgeKind::Consumes);
@@ -594,7 +605,8 @@ impl PipelineParser for GhaParser {
                     let action = uses.split('@').next().unwrap_or(uses);
                     if action == "actions/github-script" {
                         if let Some(with) = step.with.as_ref() {
-                            if let Some(script) = with.get("script") {
+                            if let Some(script) = with.get("script").and_then(yaml_scalar_to_string)
+                            {
                                 let posts_comment = script.contains("createComment")
                                     || script.contains("updateComment")
                                     || script.contains("createCommitComment")
@@ -685,18 +697,20 @@ impl PipelineParser for GhaParser {
                 // across runs.
                 if let Some(ref with) = step.with {
                     let mut reads_env = false;
-                    let mut entries: Vec<(&String, &String)> = with.iter().collect();
+                    let mut entries: Vec<(&String, &serde_yaml::Value)> = with.iter().collect();
                     entries.sort_by(|a, b| a.0.cmp(b.0));
                     for (_k, val) in entries {
                         // Multi-secret-aware: a single `with:` value may
                         // concatenate several secrets (`${{ secrets.A }}-${{ secrets.B }}`).
-                        for secret_name in iter_secret_refs(val) {
-                            let secret_id =
-                                find_or_create_secret(&mut graph, &mut secret_ids, secret_name);
-                            graph.add_edge(step_id, secret_id, EdgeKind::HasAccessTo);
-                        }
-                        if is_env_reference(val) {
-                            reads_env = true;
+                        for scalar in yaml_scalar_strings(val) {
+                            for secret_name in iter_secret_refs(&scalar) {
+                                let secret_id =
+                                    find_or_create_secret(&mut graph, &mut secret_ids, secret_name);
+                                graph.add_edge(step_id, secret_id, EdgeKind::HasAccessTo);
+                            }
+                            if is_env_reference(&scalar) {
+                                reads_env = true;
+                            }
                         }
                     }
                     if reads_env {
@@ -724,11 +738,11 @@ impl PipelineParser for GhaParser {
                     let action = uses.split('@').next().unwrap_or(uses);
                     if action == "actions/github-script" {
                         if let Some(with) = step.with.as_ref() {
-                            if let Some(script) = with.get("script") {
+                            if let Some(script) = with.get("script").and_then(yaml_scalar_to_string)
+                            {
                                 if !script.is_empty() {
                                     if let Some(node) = graph.nodes.get_mut(step_id) {
-                                        node.metadata
-                                            .insert(META_SCRIPT_BODY.into(), script.clone());
+                                        node.metadata.insert(META_SCRIPT_BODY.into(), script);
                                     }
                                 }
                             }
@@ -769,10 +783,10 @@ impl PipelineParser for GhaParser {
                     );
                     if is_cache {
                         if let Some(with) = step.with.as_ref() {
-                            if let Some(key) = with.get("key") {
+                            if let Some(key) = with.get("key").and_then(yaml_scalar_to_string) {
                                 if !key.is_empty() {
                                     if let Some(node) = graph.nodes.get_mut(step_id) {
-                                        node.metadata.insert(META_CACHE_KEY.into(), key.clone());
+                                        node.metadata.insert(META_CACHE_KEY.into(), key);
                                     }
                                 }
                             }
@@ -1262,7 +1276,7 @@ fn find_or_create_artifact(
 /// Returns `Some(NodeId)` of the created Identity, or `None` if not recognized.
 fn classify_cloud_auth(
     uses: &str,
-    with: Option<&HashMap<String, String>>,
+    with: Option<&HashMap<String, serde_yaml::Value>>,
     graph: &mut AuthorityGraph,
 ) -> Option<NodeId> {
     // Strip `@version` — match any version of the action
@@ -1272,7 +1286,7 @@ fn classify_cloud_auth(
         "aws-actions/configure-aws-credentials" => {
             // OIDC path: role-to-assume present (no static access key needed)
             let w = with?;
-            let role = w.get("role-to-assume")?;
+            let role = w.get("role-to-assume").and_then(yaml_scalar_to_string)?;
             // ARN format: arn:aws:iam::123456789012:role/my-role
             // Split on '/' to get the role name; fall back to the full value.
             let short = role.split('/').next_back().unwrap_or(role.as_str());
@@ -1290,7 +1304,9 @@ fn classify_cloud_auth(
         "google-github-actions/auth" => {
             // OIDC path: workload_identity_provider present
             let w = with?;
-            let provider = w.get("workload_identity_provider")?;
+            let provider = w
+                .get("workload_identity_provider")
+                .and_then(yaml_scalar_to_string)?;
             let short = provider.split('/').next_back().unwrap_or(provider.as_str());
             let mut meta = HashMap::new();
             meta.insert(META_OIDC.into(), "true".into());
@@ -1309,7 +1325,7 @@ fn classify_cloud_auth(
         "azure/login" => {
             // OIDC path: client-id present without client-secret
             let w = with?;
-            let client_id = w.get("client-id")?;
+            let client_id = w.get("client-id").and_then(yaml_scalar_to_string)?;
             // Only treat as OIDC if no static client-secret is provided
             if w.contains_key("client-secret") {
                 return None; // static SP creds captured by with: secret scanning
@@ -1403,6 +1419,24 @@ where
         out.insert(k, s);
     }
     Ok(out)
+}
+
+fn yaml_scalar_to_string(value: &serde_yaml::Value) -> Option<String> {
+    match value {
+        serde_yaml::Value::String(s) => Some(s.clone()),
+        serde_yaml::Value::Bool(b) => Some(b.to_string()),
+        serde_yaml::Value::Number(n) => Some(n.to_string()),
+        serde_yaml::Value::Null => Some(String::new()),
+        _ => None,
+    }
+}
+
+fn yaml_scalar_strings(value: &serde_yaml::Value) -> Vec<String> {
+    match value {
+        serde_yaml::Value::Sequence(seq) => seq.iter().filter_map(yaml_scalar_to_string).collect(),
+        serde_yaml::Value::Mapping(map) => map.values().filter_map(yaml_scalar_to_string).collect(),
+        scalar => yaml_scalar_to_string(scalar).into_iter().collect(),
+    }
 }
 
 impl EnvSpec {
@@ -1530,7 +1564,7 @@ pub struct GhaStep {
     #[serde(default)]
     pub env: Option<EnvSpec>,
     #[serde(rename = "with", default)]
-    pub with: Option<HashMap<String, String>>,
+    pub with: Option<HashMap<String, serde_yaml::Value>>,
     /// Step-level `if:` condition. Captured verbatim so rules can detect
     /// the standard fork-check pattern.
     #[serde(rename = "if", default)]
@@ -1642,6 +1676,30 @@ jobs:
         let secrets: Vec<_> = graph.nodes_of_kind(NodeKind::Secret).collect();
         assert_eq!(secrets.len(), 1);
         assert_eq!(secrets[0].name, "NPM_TOKEN");
+    }
+
+    #[test]
+    fn with_non_scalar_values_do_not_fail_parse() {
+        let yaml = r#"
+jobs:
+  check:
+    steps:
+      - name: Label
+        uses: actions/github-script@v7
+        with:
+          script: |
+            core.info("ok")
+          labels:
+            - bug
+            - ci
+          token: "${{ secrets.GITHUB_TOKEN }}"
+"#;
+        let graph = parse(yaml);
+        let secrets: Vec<_> = graph.nodes_of_kind(NodeKind::Secret).collect();
+        assert!(
+            secrets.iter().any(|s| s.name == "GITHUB_TOKEN"),
+            "scalar values inside with: must still be scanned for secrets"
+        );
     }
 
     #[test]
@@ -2120,7 +2178,10 @@ jobs:
           aws-region: us-east-1
 "#;
         let graph = parse(yaml);
-        let identities: Vec<_> = graph.nodes_of_kind(NodeKind::Identity).collect();
+        let identities: Vec<_> = graph
+            .nodes_of_kind(NodeKind::Identity)
+            .filter(|n| n.name != "GITHUB_TOKEN")
+            .collect();
         assert_eq!(identities.len(), 1);
         // ARN arn:aws:iam::123456789012:role/my-deploy-role → last '/' segment
         assert_eq!(identities[0].name, "AWS/my-deploy-role");
@@ -2147,7 +2208,10 @@ jobs:
           service_account: my-sa@my-project.iam.gserviceaccount.com
 "#;
         let graph = parse(yaml);
-        let identities: Vec<_> = graph.nodes_of_kind(NodeKind::Identity).collect();
+        let identities: Vec<_> = graph
+            .nodes_of_kind(NodeKind::Identity)
+            .filter(|n| n.name != "GITHUB_TOKEN")
+            .collect();
         assert_eq!(identities.len(), 1);
         assert!(identities[0].name.starts_with("GCP/"));
         assert_eq!(
@@ -2170,7 +2234,10 @@ jobs:
           subscription-id: ${{ vars.AZURE_SUBSCRIPTION_ID }}
 "#;
         let graph = parse(yaml);
-        let identities: Vec<_> = graph.nodes_of_kind(NodeKind::Identity).collect();
+        let identities: Vec<_> = graph
+            .nodes_of_kind(NodeKind::Identity)
+            .filter(|n| n.name != "GITHUB_TOKEN")
+            .collect();
         assert_eq!(identities.len(), 1);
         assert!(identities[0].name.starts_with("Azure/"));
         assert_eq!(
@@ -2196,7 +2263,10 @@ jobs:
 "#;
         let graph = parse(yaml);
         // Identity node should NOT be created by cloud auth inference
-        let identities: Vec<_> = graph.nodes_of_kind(NodeKind::Identity).collect();
+        let identities: Vec<_> = graph
+            .nodes_of_kind(NodeKind::Identity)
+            .filter(|n| n.name != "GITHUB_TOKEN")
+            .collect();
         assert!(
             identities.is_empty(),
             "static SP should not create an OIDC Identity node"
@@ -2222,7 +2292,10 @@ jobs:
           aws-region: us-east-1
 "#;
         let graph = parse(yaml);
-        let identities: Vec<_> = graph.nodes_of_kind(NodeKind::Identity).collect();
+        let identities: Vec<_> = graph
+            .nodes_of_kind(NodeKind::Identity)
+            .filter(|n| n.name != "GITHUB_TOKEN")
+            .collect();
         assert!(
             identities.is_empty(),
             "static AWS creds must not create Identity node"
@@ -2815,6 +2888,25 @@ jobs:
             identities[0].metadata.get(META_PERMISSIONS).unwrap(),
             "write-all"
         );
+    }
+
+    #[test]
+    fn omitted_workflow_permissions_create_unknown_implicit_identity() {
+        let yaml = r#"
+jobs:
+  ci:
+    steps:
+      - run: echo hi
+"#;
+        let graph = parse(yaml);
+        let identities: Vec<_> = graph.nodes_of_kind(NodeKind::Identity).collect();
+        assert_eq!(identities.len(), 1);
+        assert_eq!(identities[0].name, "GITHUB_TOKEN");
+        assert_eq!(
+            identities[0].metadata.get(META_IDENTITY_SCOPE).unwrap(),
+            "unknown"
+        );
+        assert_eq!(identities[0].metadata.get(META_IMPLICIT).unwrap(), "true");
     }
 
     #[test]

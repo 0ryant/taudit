@@ -1,0 +1,15 @@
+[package]
+name = "taudit-parse-bitbucket"
+version = "1.1.0-rc.2"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+homepage.workspace = true
+documentation.workspace = true
+
+[dependencies]
+taudit-core = { version = "1.1.0-rc.2", path = "../taudit-core" }
+serde = { workspace = true }
+serde_yaml = { workspace = true }

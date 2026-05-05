@@ -11,3 +11,7 @@ recommendation:
   type: manual
   action: "Add `issecret=true` to the setvariable directive: `##vso[task.setvariable variable=API_KEY;issecret=true]`"
 source: built-in
+confidence_scope: yaml_only
+portal_control_dependency: true
+attacker_surface_kinds:
+  - script_sink

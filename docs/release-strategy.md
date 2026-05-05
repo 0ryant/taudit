@@ -120,7 +120,9 @@ The workflow detects prerelease by checking for a hyphen in the tag name and pas
 
 ### Pre-flight quality applies to both lanes
 
-A `-beta.N` tag triggers the same fmt / clippy / test / `cargo deny` / `cargo audit` gates as a stable tag. A failing prerelease is not "fix it on the next beta" — fix it before the tag. Once a version number is consumed on crates.io, it cannot be reused (only yanked).
+A `-beta.N` or `-rc.N` tag triggers the same fmt / clippy / test / `cargo deny` / `cargo audit` gates as a stable tag. A failing prerelease is not "fix it on the next beta" — fix it before the tag. Once a version number is consumed on crates.io, it cannot be reused (only yanked).
+
+The one lane-specific exception is `cargo semver-checks`: it runs for stable tags, but prerelease tags skip it in CI. Cargo's registry baseline lookup compares a prerelease against the latest stable line, which is exactly the API churn prereleases exist to soak. For prereleases, the required artifact is an explicit CHANGELOG detection/migration note; stable promotion re-enables the semver gate.
 
 ---
 

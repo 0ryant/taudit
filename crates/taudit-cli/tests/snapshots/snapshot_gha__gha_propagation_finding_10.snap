@@ -5,11 +5,16 @@ expression: finding
 severity: critical
 category: untrusted_with_authority
 nodes_involved:
-  - 11
-  - 12
-message: "Untrusted step 'publish[1]' has direct access to secret 'PUBLISH_API_KEY'"
+  - 9
+  - 0
+message: "Untrusted step 'publish[0]' has direct access to identity 'GITHUB_TOKEN'"
 recommendation:
-  type: cellos_remediation
-  reason: "Untrusted step 'publish[1]' has direct access to secret 'PUBLISH_API_KEY'"
-  spec_hint: "cellos run --network deny-all --broker env:PUBLISH_API_KEY"
+  type: reduce_permissions
+  current: write-all
+  minimum: minimal required scope
 source: built-in
+confidence_scope: yaml_only
+authority_kinds:
+  - oidc_identity
+attacker_surface_kinds:
+  - untrusted_step

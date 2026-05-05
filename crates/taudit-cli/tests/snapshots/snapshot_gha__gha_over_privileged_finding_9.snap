@@ -6,10 +6,15 @@ severity: critical
 category: untrusted_with_authority
 nodes_involved:
   - 8
-  - 9
-message: "Untrusted step 'deploy[0]' has direct access to secret 'DEPLOY_TOKEN'"
+  - 0
+message: "Untrusted step 'deploy[0]' has direct access to identity 'GITHUB_TOKEN'"
 recommendation:
-  type: cellos_remediation
-  reason: "Untrusted step 'deploy[0]' has direct access to secret 'DEPLOY_TOKEN'"
-  spec_hint: "cellos run --network deny-all --broker env:DEPLOY_TOKEN"
+  type: reduce_permissions
+  current: write-all
+  minimum: minimal required scope
 source: built-in
+confidence_scope: yaml_only
+authority_kinds:
+  - oidc_identity
+attacker_surface_kinds:
+  - untrusted_step

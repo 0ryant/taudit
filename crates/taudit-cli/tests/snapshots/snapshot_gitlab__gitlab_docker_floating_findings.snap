@@ -23,6 +23,9 @@ expression: findings
     command: tsafe exec --ns <scoped-namespace> -- <command>
     explanation: Scope CI_JOB_TOKEN to only the steps that need it
   source: built-in
+  confidence_scope: yaml_only
+  authority_kinds:
+    - job_token
 - severity: critical
   category: authority_propagation
   path:
@@ -44,6 +47,9 @@ expression: findings
     command: tsafe exec --ns <scoped-namespace> -- <command>
     explanation: Scope REGISTRY_TOKEN to only the steps that need it
   source: built-in
+  confidence_scope: yaml_only
+  authority_kinds:
+    - credential_named_variable
 - severity: high
   category: dind_service_grants_host_authority
   nodes_involved:
@@ -53,6 +59,9 @@ expression: findings
     type: manual
     action: "Replace docker-in-docker with kaniko / buildah / img for image builds (no privileged sidecar required), OR isolate the dind job to a dedicated runner pool with no shared workspace and no other secrets in scope."
   source: built-in
+  confidence_scope: yaml_only
+  attacker_surface_kinds:
+    - script_sink
 - severity: high
   category: over_privileged_identity
   nodes_involved:
@@ -65,6 +74,9 @@ expression: findings
     minimum: "{ contents: read }"
   source: built-in
   time_to_fix: small
+  confidence_scope: yaml_only
+  authority_kinds:
+    - job_token
 - severity: high
   category: unpinned_action
   nodes_involved:
@@ -76,6 +88,11 @@ expression: findings
     pinned: "docker:dind@<sha256-digest>"
   source: built-in
   time_to_fix: trivial
+  confidence_scope: yaml_only
+  runtime_preconditions:
+    - "the referenced mutable branch, tag, include, or image can change independently of this repository"
+  attacker_surface_kinds:
+    - mutable_dependency_ref
 - severity: high
   category: unpinned_action
   nodes_involved:
@@ -87,3 +104,8 @@ expression: findings
     pinned: "docker:latest@<sha256-digest>"
   source: built-in
   time_to_fix: trivial
+  confidence_scope: yaml_only
+  runtime_preconditions:
+    - "the referenced mutable branch, tag, include, or image can change independently of this repository"
+  attacker_surface_kinds:
+    - mutable_dependency_ref

@@ -3,7 +3,10 @@ source: crates/taudit-cli/tests/snapshot_gitlab.rs
 expression: json
 ---
 findings:
-  - category: authority_propagation
+  - authority_kinds:
+      - credential_named_variable
+    category: authority_propagation
+    confidence_scope: yaml_only
     finding_group_id: 3e1ce5ac-d8de-5111-85c0-c961f1bfea37
     fingerprint: d180931e883fe7d08a9ac19952c50b9d
     message: "API_SECRET_KEY propagated to alpine:latest across trust boundary"
@@ -26,7 +29,10 @@ findings:
     rule_id: authority_propagation
     severity: critical
     source: built-in
-  - category: authority_propagation
+  - authority_kinds:
+      - job_token
+    category: authority_propagation
+    confidence_scope: yaml_only
     finding_group_id: 661d0527-036b-5986-a564-a1d93afd8748
     fingerprint: f310333c07ac5116f7733626d44cb753
     message: "CI_JOB_TOKEN propagated to alpine:latest across trust boundary"
@@ -49,7 +55,10 @@ findings:
     rule_id: authority_propagation
     severity: critical
     source: built-in
-  - category: authority_propagation
+  - authority_kinds:
+      - credential_named_variable
+    category: authority_propagation
+    confidence_scope: yaml_only
     finding_group_id: 0e309759-d91b-5d41-b2d7-b7ffeec7377c
     fingerprint: a8e0befc7144da9fb4e5ef763fcc1fc5
     message: "DATABASE_PASSWORD propagated to alpine:latest across trust boundary"
@@ -72,7 +81,10 @@ findings:
     rule_id: authority_propagation
     severity: critical
     source: built-in
-  - category: authority_propagation
+  - authority_kinds:
+      - credential_named_variable
+    category: authority_propagation
+    confidence_scope: yaml_only
     finding_group_id: f529a601-9f35-545c-8e7e-74c2442a6908
     fingerprint: 1464f3114a20b17016c1f4a4fac39c16
     message: "DEPLOY_TOKEN propagated to alpine:latest across trust boundary"
@@ -95,7 +107,10 @@ findings:
     rule_id: authority_propagation
     severity: critical
     source: built-in
-  - category: long_lived_credential
+  - authority_kinds:
+      - credential_named_variable
+    category: long_lived_credential
+    confidence_scope: yaml_only
     finding_group_id: c494fbb4-778f-5822-8dad-6f8e82c5921b
     fingerprint: d2405dfb12dabdf464262a499c87ba54
     message: "'API_SECRET_KEY' looks like a long-lived static credential"
@@ -109,7 +124,10 @@ findings:
     severity: low
     source: built-in
     time_to_fix: large
-  - category: long_lived_credential
+  - authority_kinds:
+      - credential_named_variable
+    category: long_lived_credential
+    confidence_scope: yaml_only
     finding_group_id: 6fdceba6-6f33-58fe-95bf-927f469b15ec
     fingerprint: a04b0fa8ff833821d59f9caa45266717
     message: "'DATABASE_PASSWORD' looks like a long-lived static credential"
@@ -123,7 +141,10 @@ findings:
     severity: low
     source: built-in
     time_to_fix: large
-  - category: over_privileged_identity
+  - authority_kinds:
+      - job_token
+    category: over_privileged_identity
+    confidence_scope: yaml_only
     finding_group_id: 00262520-9062-589a-8cfd-399be5d1a0b9
     fingerprint: 1ff9918fc8f89331c28c5c87af76f8ff
     message: "CI_JOB_TOKEN has broad scope (permissions: '') — likely broader than needed"
@@ -138,7 +159,10 @@ findings:
     severity: high
     source: built-in
     time_to_fix: small
-  - category: unpinned_action
+  - attacker_surface_kinds:
+      - mutable_dependency_ref
+    category: unpinned_action
+    confidence_scope: yaml_only
     finding_group_id: e9073e12-4672-5c3b-a881-79b1abc87da9
     fingerprint: 73aefa946595cc3323a3711d1b09f744
     message: "alpine:latest is not pinned to a SHA digest"
@@ -149,6 +173,8 @@ findings:
       pinned: "alpine:latest@<sha256-digest>"
       type: pin_action
     rule_id: unpinned_action
+    runtime_preconditions:
+      - "the referenced mutable branch, tag, include, or image can change independently of this repository"
     severity: high
     source: built-in
     time_to_fix: trivial
@@ -222,6 +248,15 @@ schema_version: 1.0.0
 summary:
   completeness: complete
   critical: 4
+  graph_risk_summary:
+    authority_roots: 4
+    delegation_hops: 0
+    mutable_refs: 1
+    protected_resource_categories:
+      - identity
+      - secret
+    publication_adjacent_sinks: 1
+    untrusted_sinks: 1
   high: 2
   info: 0
   low: 2

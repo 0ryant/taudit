@@ -2,14 +2,19 @@
 source: crates/taudit-cli/tests/snapshot_gha.rs
 expression: finding
 ---
-severity: critical
-category: untrusted_with_authority
+severity: medium
+category: unpinned_action
 nodes_involved:
-  - 6
-  - 0
-message: "Untrusted step 'build[2]' has direct access to identity 'GITHUB_TOKEN'"
+  - 5
+message: actions/upload-artifact@v4 is not pinned to a SHA digest
 recommendation:
-  type: reduce_permissions
-  current: write-all
-  minimum: minimal required scope
+  type: pin_action
+  current: actions/upload-artifact@v4
+  pinned: actions/upload-artifact@<sha256-digest>
 source: built-in
+time_to_fix: trivial
+confidence_scope: yaml_only
+runtime_preconditions:
+  - "the referenced mutable branch, tag, include, or image can change independently of this repository"
+attacker_surface_kinds:
+  - mutable_dependency_ref

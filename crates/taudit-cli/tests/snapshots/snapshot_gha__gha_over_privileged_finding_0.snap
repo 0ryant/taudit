@@ -22,3 +22,6 @@ recommendation:
   command: tsafe exec --ns <scoped-namespace> -- <command>
   explanation: Scope DEPLOY_TOKEN to only the steps that need it
 source: built-in
+confidence_scope: yaml_only
+authority_kinds:
+  - credential_named_variable

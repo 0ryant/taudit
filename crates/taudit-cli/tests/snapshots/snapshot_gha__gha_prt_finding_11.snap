@@ -1,0 +1,25 @@
+---
+source: crates/taudit-cli/tests/snapshot_gha.rs
+expression: finding
+---
+severity: info
+category: uplift_without_attestation
+nodes_involved:
+  - 2
+  - 3
+  - 0
+message: 2 step(s) use OIDC/federated identity but no provenance attestation step was detected — artifact integrity cannot be verified
+recommendation:
+  type: manual
+  action: "Add 'actions/attest-build-provenance' after your build step (GHA) to provide SLSA provenance. See https://docs.github.com/en/actions/security-guides/using-artifact-attestations"
+source: built-in
+confidence_scope: yaml_only
+runtime_preconditions:
+  - downstream identity provider accepts the issued OIDC token
+  - the configured audience or cloud role grants useful authority
+authority_kinds:
+  - oidc_identity
+attacker_surface_kinds:
+  - script_sink
+  - untrusted_checkout
+  - untrusted_step

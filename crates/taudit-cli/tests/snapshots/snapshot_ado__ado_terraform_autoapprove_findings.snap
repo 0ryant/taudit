@@ -12,6 +12,10 @@ expression: findings
     static_secret: ARM_CLIENT_SECRET
     oidc_provider: "Azure federated credential (azure/login with client-id, no client-secret)"
   source: built-in
+  confidence_scope: yaml_only
+  portal_control_dependency: true
+  authority_kinds:
+    - credential_named_variable
 - severity: high
   category: over_privileged_identity
   nodes_involved:
@@ -24,3 +28,7 @@ expression: findings
     minimum: "{ contents: read }"
   source: built-in
   time_to_fix: small
+  confidence_scope: yaml_only
+  portal_control_dependency: true
+  authority_kinds:
+    - job_token

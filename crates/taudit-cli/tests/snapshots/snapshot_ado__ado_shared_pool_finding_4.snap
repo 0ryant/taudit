@@ -16,3 +16,16 @@ recommendation:
   type: manual
   action: "Use a separate workflow triggered by workflow_run (not pull_request_target) for privileged operations, or ensure no checkout of the PR head ref occurs before secret use"
 source: built-in
+confidence_scope: yaml_only
+runtime_preconditions:
+  - the authority shown in the graph is available to that run
+  - untrusted PR or fork-controlled input can reach this workflow at runtime
+portal_control_dependency: true
+authority_kinds:
+  - credential_named_variable
+  - job_token
+  - secret
+attacker_surface_kinds:
+  - script_sink
+  - untrusted_checkout
+cve_relationship: same_authority_shape

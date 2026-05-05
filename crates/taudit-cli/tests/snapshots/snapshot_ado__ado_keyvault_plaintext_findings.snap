@@ -14,3 +14,9 @@ expression: findings
     minimum: "{ contents: read }"
   source: built-in
   time_to_fix: small
+  confidence_scope: yaml_only
+  runtime_preconditions:
+    - the parsed graph is partial; unresolved YAML may add or remove authority paths
+  portal_control_dependency: true
+  authority_kinds:
+    - job_token

@@ -1,6 +1,5 @@
 ---
 source: crates/taudit-cli/tests/snapshot_ado.rs
-assertion_line: 66
 expression: results
 ---
 - level: error
@@ -15,7 +14,11 @@ expression: results
     primaryLocationLineHash: 3f548f2bfdbb2270ced9c06d4ac73cea
     taudit/v1: 3f548f2bfdbb2270ced9c06d4ac73cea
   properties:
+    authorityKinds:
+      - job_token
+    confidenceScope: yaml_only
     findingGroupId: 7aba0f67-2e57-5ce8-ae96-ebb114102c7d
+    portalControlDependency: true
     security-severity: "7.5"
     taudit-source: built-in
     timeToFix: small
@@ -32,7 +35,15 @@ expression: results
     primaryLocationLineHash: 4464ed1f70695745708b1d6a25d0af30
     taudit/v1: 4464ed1f70695745708b1d6a25d0af30
   properties:
+    attackerSurfaceKinds:
+      - script_sink
+    authorityKinds:
+      - credential_named_variable
+      - job_token
+    confidenceScope: yaml_only
+    cveRelationship: analogue_only
     findingGroupId: a01ab427-afa1-5688-b2be-efa8eca2df6c
+    portalControlDependency: true
     security-severity: "7.5"
     taudit-source: built-in
   ruleId: self_mutating_pipeline
@@ -48,7 +59,11 @@ expression: results
     primaryLocationLineHash: 791dec6711c3ef285ab5fd8aa3cf3b65
     taudit/v1: 791dec6711c3ef285ab5fd8aa3cf3b65
   properties:
+    attackerSurfaceKinds:
+      - script_sink
+    confidenceScope: yaml_only
     findingGroupId: 89d948f5-12e9-5a29-b5c4-8dfded86a74a
+    portalControlDependency: true
     security-severity: "7.5"
     taudit-source: built-in
   ruleId: setvariable_issecret_false
@@ -64,7 +79,11 @@ expression: results
     primaryLocationLineHash: 791dec6711c3ef285ab5fd8aa3cf3b65
     taudit/v1: 791dec6711c3ef285ab5fd8aa3cf3b65
   properties:
+    attackerSurfaceKinds:
+      - script_sink
+    confidenceScope: yaml_only
     findingGroupId: 89d948f5-12e9-5a29-b5c4-8dfded86a74a
+    portalControlDependency: true
     security-severity: "7.5"
     taudit-source: built-in
   ruleId: setvariable_issecret_false

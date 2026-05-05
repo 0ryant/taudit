@@ -1,6 +1,5 @@
 ---
 source: crates/taudit-cli/tests/snapshot_gha.rs
-assertion_line: 87
 expression: results
 ---
 - level: error
@@ -15,6 +14,9 @@ expression: results
     primaryLocationLineHash: 9d041f143c8a77486348a9574b8a4298
     taudit/v1: 9d041f143c8a77486348a9574b8a4298
   properties:
+    authorityKinds:
+      - credential_named_variable
+    confidenceScope: yaml_only
     findingGroupId: 19ee4c2e-a538-5bdb-adc2-8f789fcb6206
     security-severity: "9.0"
     taudit-source: built-in
@@ -31,6 +33,9 @@ expression: results
     primaryLocationLineHash: 34dfeec1b30291318a55b11421fbac7b
     taudit/v1: 34dfeec1b30291318a55b11421fbac7b
   properties:
+    authorityKinds:
+      - oidc_identity
+    confidenceScope: yaml_only
     findingGroupId: be66107e-37fd-5dbf-9330-11b1a3a4fd7b
     security-severity: "9.0"
     taudit-source: built-in
@@ -47,6 +52,9 @@ expression: results
     primaryLocationLineHash: 778504a98a278328ffbfc4ba18a0c14e
     taudit/v1: 778504a98a278328ffbfc4ba18a0c14e
   properties:
+    authorityKinds:
+      - credential_named_variable
+    confidenceScope: yaml_only
     findingGroupId: 51fcc990-5084-59e3-a731-9c560c54d0ba
     security-severity: "2.0"
     taudit-source: built-in
@@ -64,6 +72,9 @@ expression: results
     primaryLocationLineHash: 8d56a5877d83d06dfd8503de6a61fe94
     taudit/v1: 8d56a5877d83d06dfd8503de6a61fe94
   properties:
+    authorityKinds:
+      - credential_named_variable
+    confidenceScope: yaml_only
     findingGroupId: 07e0de9b-04b5-5411-9c3b-bbf91d12002a
     security-severity: "2.0"
     taudit-source: built-in
@@ -81,6 +92,9 @@ expression: results
     primaryLocationLineHash: 1fbb9cf89e16b2623ad236fcace90316
     taudit/v1: 1fbb9cf89e16b2623ad236fcace90316
   properties:
+    authorityKinds:
+      - oidc_identity
+    confidenceScope: yaml_only
     findingGroupId: 61e587be-3ab9-585f-a534-4308d9267ffa
     security-severity: "7.5"
     taudit-source: built-in
@@ -93,12 +107,39 @@ expression: results
           uri: test.yml
           uriBaseId: "%SRCROOT%"
   message:
+    text: "\\[action_major_version_pin_without_sha\\] actions/checkout@v4 is pinned only to a mutable major tag; pin to a full commit SHA"
+  partialFingerprints:
+    primaryLocationLineHash: b3870c65b8f599cfdfca0db051b934b9
+    taudit/v1: b3870c65b8f599cfdfca0db051b934b9
+  properties:
+    attackerSurfaceKinds:
+      - mutable_dependency_ref
+    confidenceScope: yaml_only
+    findingGroupId: 9badf00f-185f-5503-87f6-b0f950472b76
+    runtimePreconditions:
+      - "the referenced mutable branch, tag, include, or image can change independently of this repository"
+    security-severity: "5.0"
+    taudit-source: built-in
+    timeToFix: trivial
+  ruleId: action_major_version_pin_without_sha
+- level: warning
+  locations:
+    - physicalLocation:
+        artifactLocation:
+          uri: test.yml
+          uriBaseId: "%SRCROOT%"
+  message:
     text: actions/checkout@v4 is not pinned to a SHA digest
   partialFingerprints:
     primaryLocationLineHash: 31ceeca3145a97625dfd847a040bbc26
     taudit/v1: 31ceeca3145a97625dfd847a040bbc26
   properties:
+    attackerSurfaceKinds:
+      - mutable_dependency_ref
+    confidenceScope: yaml_only
     findingGroupId: f4ab4e0a-cd93-56c6-a534-12aec7befcff
+    runtimePreconditions:
+      - "the referenced mutable branch, tag, include, or image can change independently of this repository"
     security-severity: "5.0"
     taudit-source: built-in
     timeToFix: trivial
@@ -115,7 +156,12 @@ expression: results
     primaryLocationLineHash: 15293f46f1061fc8b1d4c710dca0aa52
     taudit/v1: 15293f46f1061fc8b1d4c710dca0aa52
   properties:
+    attackerSurfaceKinds:
+      - mutable_dependency_ref
+    confidenceScope: yaml_only
     findingGroupId: aaddbe52-28d1-5412-8441-5d9ae95ecf85
+    runtimePreconditions:
+      - "the referenced mutable branch, tag, include, or image can change independently of this repository"
     security-severity: "7.5"
     taudit-source: built-in
     timeToFix: trivial
@@ -132,6 +178,12 @@ expression: results
     primaryLocationLineHash: 4cc63211c9299f9f5965da1d71e83023
     taudit/v1: 4cc63211c9299f9f5965da1d71e83023
   properties:
+    attackerSurfaceKinds:
+      - untrusted_checkout
+      - untrusted_step
+    authorityKinds:
+      - oidc_identity
+    confidenceScope: yaml_only
     findingGroupId: 8134004c-cfe9-54e3-8ac4-1099db4b20dc
     security-severity: "9.0"
     taudit-source: built-in
@@ -148,6 +200,11 @@ expression: results
     primaryLocationLineHash: b3aac2a7d760a06fdde4c9231697db3d
     taudit/v1: b3aac2a7d760a06fdde4c9231697db3d
   properties:
+    attackerSurfaceKinds:
+      - untrusted_step
+    authorityKinds:
+      - oidc_identity
+    confidenceScope: yaml_only
     findingGroupId: 26a1ad7d-a283-5a77-9c6c-f33833a25f7c
     security-severity: "9.0"
     taudit-source: built-in
@@ -164,6 +221,11 @@ expression: results
     primaryLocationLineHash: ccaf29551b139fb5d5c271a9c47d62de
     taudit/v1: ccaf29551b139fb5d5c271a9c47d62de
   properties:
+    attackerSurfaceKinds:
+      - untrusted_step
+    authorityKinds:
+      - credential_named_variable
+    confidenceScope: yaml_only
     findingGroupId: 5bb4e538-2f11-5dc2-949f-da1d8b6a37e2
     security-severity: "9.0"
     taudit-source: built-in
@@ -180,7 +242,17 @@ expression: results
     primaryLocationLineHash: 72c99cb062f0e9061b7bd3063a3387ca
     taudit/v1: 72c99cb062f0e9061b7bd3063a3387ca
   properties:
+    attackerSurfaceKinds:
+      - script_sink
+      - untrusted_checkout
+      - untrusted_step
+    authorityKinds:
+      - oidc_identity
+    confidenceScope: yaml_only
     findingGroupId: bb6d77e7-d049-593d-8e10-f5d12d9b7b20
+    runtimePreconditions:
+      - downstream identity provider accepts the issued OIDC token
+      - the configured audience or cloud role grants useful authority
     security-severity: "0.1"
     taudit-source: built-in
   ruleId: uplift_without_attestation

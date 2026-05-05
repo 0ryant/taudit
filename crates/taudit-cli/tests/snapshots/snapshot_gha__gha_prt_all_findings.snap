@@ -22,6 +22,9 @@ expression: findings
     command: tsafe exec --ns <scoped-namespace> -- <command>
     explanation: Scope GITHUB_TOKEN to only the steps that need it
   source: built-in
+  confidence_scope: yaml_only
+  authority_kinds:
+    - oidc_identity
 - severity: high
   category: checkout_self_pr_exposure
   nodes_involved:
@@ -32,6 +35,14 @@ expression: findings
     action: "Use `persist-credentials: false` and avoid reading workspace files in subsequent privileged steps. Consider `checkout: none` for jobs that only need pipeline config, not source code."
   source: built-in
   time_to_fix: medium
+  confidence_scope: yaml_only
+  runtime_preconditions:
+    - the authority shown in the graph is available to that run
+    - untrusted PR or fork-controlled input can reach this workflow at runtime
+  attacker_surface_kinds:
+    - untrusted_checkout
+    - untrusted_step
+  cve_relationship: same_authority_shape
 - severity: high
   category: over_privileged_identity
   nodes_involved:
@@ -45,6 +56,27 @@ expression: findings
     minimum: "{ contents: read }"
   source: built-in
   time_to_fix: small
+  confidence_scope: yaml_only
+  authority_kinds:
+    - oidc_identity
+- severity: high
+  category: over_privileged_identity
+  nodes_involved:
+    - 0
+    - 2
+    - 3
+  message: "[oidc_identity_in_untrusted_context] OIDC identity 'GITHUB_TOKEN' is reachable from untrusted trigger steps [check[0], check[1]]"
+  recommendation:
+    type: manual
+    action: Move OIDC credential minting to a trusted-ref workflow or protect it with environment approvals and provider-side subject/audience conditions that exclude fork pull requests and untrusted merge requests.
+  source: built-in
+  fingerprint_anchor: identity=GITHUB_TOKEN
+  confidence_scope: yaml_only
+  runtime_preconditions:
+    - downstream identity provider accepts the issued OIDC token
+    - the configured audience or cloud role grants useful authority
+  authority_kinds:
+    - oidc_identity
 - severity: critical
   category: pr_trigger_with_floating_action_ref
   nodes_involved:
@@ -55,6 +87,11 @@ expression: findings
     current: actions/checkout@v4
     pinned: actions/checkout@<sha256-digest>
   source: built-in
+  confidence_scope: yaml_only
+  runtime_preconditions:
+    - "the referenced mutable branch, tag, include, or image can change independently of this repository"
+  attacker_surface_kinds:
+    - mutable_dependency_ref
 - severity: critical
   category: script_injection_via_untrusted_context
   nodes_involved:
@@ -64,6 +101,11 @@ expression: findings
     type: manual
     action: "Bind the expression to a step-level `env:` variable and reference it as `\"$VAR\"` (shell) or `process.env.VAR` (JS). The runtime then quotes the value as data instead of YAML-rendering it as code."
   source: built-in
+  confidence_scope: yaml_only
+  attacker_surface_kinds:
+    - script_sink
+    - untrusted_step
+  cve_relationship: analogue_only
 - severity: critical
   category: trigger_context_mismatch
   nodes_involved:
@@ -75,6 +117,33 @@ expression: findings
     type: manual
     action: "Use a separate workflow triggered by workflow_run (not pull_request_target) for privileged operations, or ensure no checkout of the PR head ref occurs before secret use"
   source: built-in
+  confidence_scope: yaml_only
+  runtime_preconditions:
+    - the authority shown in the graph is available to that run
+    - untrusted PR or fork-controlled input can reach this workflow at runtime
+  authority_kinds:
+    - oidc_identity
+  attacker_surface_kinds:
+    - script_sink
+    - untrusted_checkout
+    - untrusted_step
+  cve_relationship: same_authority_shape
+- severity: medium
+  category: unpinned_action
+  nodes_involved:
+    - 1
+  message: "[action_major_version_pin_without_sha] actions/checkout@v4 is pinned only to a mutable major tag; pin to a full commit SHA"
+  recommendation:
+    type: pin_action
+    current: actions/checkout@v4
+    pinned: actions/checkout@<40-char-sha>
+  source: built-in
+  time_to_fix: trivial
+  confidence_scope: yaml_only
+  runtime_preconditions:
+    - "the referenced mutable branch, tag, include, or image can change independently of this repository"
+  attacker_surface_kinds:
+    - mutable_dependency_ref
 - severity: medium
   category: unpinned_action
   nodes_involved:
@@ -86,6 +155,11 @@ expression: findings
     pinned: actions/checkout@<sha256-digest>
   source: built-in
   time_to_fix: trivial
+  confidence_scope: yaml_only
+  runtime_preconditions:
+    - "the referenced mutable branch, tag, include, or image can change independently of this repository"
+  attacker_surface_kinds:
+    - mutable_dependency_ref
 - severity: critical
   category: untrusted_with_authority
   nodes_involved:
@@ -97,6 +171,12 @@ expression: findings
     current: write-all
     minimum: minimal required scope
   source: built-in
+  confidence_scope: yaml_only
+  authority_kinds:
+    - oidc_identity
+  attacker_surface_kinds:
+    - untrusted_checkout
+    - untrusted_step
 - severity: critical
   category: untrusted_with_authority
   nodes_involved:
@@ -108,6 +188,12 @@ expression: findings
     current: write-all
     minimum: minimal required scope
   source: built-in
+  confidence_scope: yaml_only
+  authority_kinds:
+    - oidc_identity
+  attacker_surface_kinds:
+    - script_sink
+    - untrusted_step
 - severity: info
   category: uplift_without_attestation
   nodes_involved:
@@ -119,3 +205,13 @@ expression: findings
     type: manual
     action: "Add 'actions/attest-build-provenance' after your build step (GHA) to provide SLSA provenance. See https://docs.github.com/en/actions/security-guides/using-artifact-attestations"
   source: built-in
+  confidence_scope: yaml_only
+  runtime_preconditions:
+    - downstream identity provider accepts the issued OIDC token
+    - the configured audience or cloud role grants useful authority
+  authority_kinds:
+    - oidc_identity
+  attacker_surface_kinds:
+    - script_sink
+    - untrusted_checkout
+    - untrusted_step

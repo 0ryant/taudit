@@ -6,10 +6,15 @@ severity: medium
 category: unpinned_action
 nodes_involved:
   - 8
-message: actions/download-artifact@v4 is not pinned to a SHA digest
+message: "[action_major_version_pin_without_sha] actions/download-artifact@v4 is pinned only to a mutable major tag; pin to a full commit SHA"
 recommendation:
   type: pin_action
   current: actions/download-artifact@v4
-  pinned: actions/download-artifact@<sha256-digest>
+  pinned: actions/download-artifact@<40-char-sha>
 source: built-in
 time_to_fix: trivial
+confidence_scope: yaml_only
+runtime_preconditions:
+  - "the referenced mutable branch, tag, include, or image can change independently of this repository"
+attacker_surface_kinds:
+  - mutable_dependency_ref

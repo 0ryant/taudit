@@ -3,20 +3,31 @@ source: crates/taudit-cli/tests/snapshot_ado.rs
 expression: json
 ---
 findings:
-  - category: checkout_self_pr_exposure
+  - attacker_surface_kinds:
+      - untrusted_checkout
+    category: checkout_self_pr_exposure
+    confidence_scope: yaml_only
+    cve_relationship: same_authority_shape
     finding_group_id: 07f2e7cf-9646-51fd-acf3-0bebfad3ad2e
     fingerprint: 481eb03db2f3c50620aead82178810b4
     message: "PR-triggered pipeline checks out the repository at step 'pipeline[0]' — attacker-controlled code from the fork lands on the runner and is readable by all subsequent steps"
     nodes_involved:
       - 2
+    portal_control_dependency: true
     recommendation:
       action: "Use `persist-credentials: false` and avoid reading workspace files in subsequent privileged steps. Consider `checkout: none` for jobs that only need pipeline config, not source code."
       type: manual
     rule_id: checkout_self_pr_exposure
+    runtime_preconditions:
+      - the authority shown in the graph is available to that run
+      - untrusted PR or fork-controlled input can reach this workflow at runtime
     severity: high
     source: built-in
     time_to_fix: medium
-  - category: over_privileged_identity
+  - authority_kinds:
+      - job_token
+    category: over_privileged_identity
+    confidence_scope: yaml_only
     finding_group_id: 5f27c90f-6130-57b7-931c-7e756722e388
     fingerprint: fd6a9adae7376318838370392ea657ca
     message: "System.AccessToken has broad scope (permissions: '') — likely broader than needed"
@@ -24,6 +35,7 @@ findings:
       - 0
       - 2
       - 3
+    portal_control_dependency: true
     recommendation:
       current: ""
       minimum: "{ contents: read }"
@@ -32,32 +44,54 @@ findings:
     severity: high
     source: built-in
     time_to_fix: small
-  - category: self_hosted_pool_pr_hijack
+  - attacker_surface_kinds:
+      - self_hosted_runner
+      - untrusted_checkout
+    category: self_hosted_pool_pr_hijack
+    confidence_scope: yaml_only
+    cve_relationship: same_authority_shape
     finding_group_id: 0953b31e-364f-5f21-89a6-a7ae6a1310bb
     fingerprint: 0647fb972a184c014fd376364580225d
     message: "PR-triggered pipeline uses self-hosted agent pool with checkout:self — enables git hook injection persisting across pipeline runs on the shared runner"
     nodes_involved:
       - 1
       - 2
+    portal_control_dependency: true
     recommendation:
       action: "Run PR pipelines on Microsoft-hosted (ephemeral) agents, or disable checkout:self for PR-triggered jobs on self-hosted pools"
       type: manual
     rule_id: self_hosted_pool_pr_hijack
+    runtime_preconditions:
+      - the authority shown in the graph is available to that run
+      - untrusted PR or fork-controlled input can reach this workflow at runtime
     severity: critical
     source: built-in
-  - category: shared_self_hosted_pool_no_isolation
+  - attacker_surface_kinds:
+      - self_hosted_runner
+    category: shared_self_hosted_pool_no_isolation
+    confidence_scope: yaml_only
     finding_group_id: 82f6a179-d521-5cd9-bdaa-09de04bfcb42
     fingerprint: 4873e5775b5e271f363374e5b504aca1
     message: "Self-hosted pool 'SharedBuildAgents' has no workspace isolation (workspace: {clean: all/true} not set); a previous pipeline run can pollute the workspace for the next — including privileged deployment jobs"
     nodes_involved:
       - 1
+    portal_control_dependency: true
     recommendation:
       action: "Add `workspace: { clean: all }` to every job that uses a self-hosted pool, or migrate to Microsoft-hosted (ephemeral) agents for untrusted builds."
       type: manual
     rule_id: shared_self_hosted_pool_no_isolation
     severity: high
     source: built-in
-  - category: trigger_context_mismatch
+  - attacker_surface_kinds:
+      - script_sink
+      - untrusted_checkout
+    authority_kinds:
+      - credential_named_variable
+      - job_token
+      - secret
+    category: trigger_context_mismatch
+    confidence_scope: yaml_only
+    cve_relationship: same_authority_shape
     finding_group_id: 113dc5b4-ddf6-5be7-aca2-4eddf0a8f032
     fingerprint: b6c2dbaccfb85fcc54955524d5539caa
     message: Workflow triggered by pr with secret/identity access — 2 step(s) hold authority that attacker-controlled code could reach
@@ -68,10 +102,14 @@ findings:
       - 4
       - 5
       - 6
+    portal_control_dependency: true
     recommendation:
       action: "Use a separate workflow triggered by workflow_run (not pull_request_target) for privileged operations, or ensure no checkout of the PR head ref occurs before secret use"
       type: manual
     rule_id: trigger_context_mismatch
+    runtime_preconditions:
+      - the authority shown in the graph is available to that run
+      - untrusted PR or fork-controlled input can reach this workflow at runtime
     severity: high
     source: built-in
 graph:
@@ -161,6 +199,15 @@ schema_version: 1.0.0
 summary:
   completeness: complete
   critical: 1
+  graph_risk_summary:
+    authority_roots: 4
+    delegation_hops: 0
+    mutable_refs: 1
+    protected_resource_categories:
+      - identity
+      - secret
+    publication_adjacent_sinks: 1
+    untrusted_sinks: 0
   high: 4
   info: 0
   low: 0

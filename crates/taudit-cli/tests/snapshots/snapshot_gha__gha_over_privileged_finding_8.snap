@@ -5,11 +5,17 @@ expression: finding
 severity: critical
 category: untrusted_with_authority
 nodes_involved:
-  - 8
+  - 2
   - 0
-message: "Untrusted step 'deploy[0]' has direct access to identity 'GITHUB_TOKEN'"
+message: "Untrusted step 'build[0]' has direct access to identity 'GITHUB_TOKEN'"
 recommendation:
   type: reduce_permissions
   current: write-all
   minimum: minimal required scope
 source: built-in
+confidence_scope: yaml_only
+authority_kinds:
+  - oidc_identity
+attacker_surface_kinds:
+  - untrusted_checkout
+  - untrusted_step

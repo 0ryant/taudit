@@ -1,6 +1,5 @@
 ---
 source: crates/taudit-cli/tests/snapshot_gitlab.rs
-assertion_line: 66
 expression: results
 ---
 - level: error
@@ -15,6 +14,9 @@ expression: results
     primaryLocationLineHash: d180931e883fe7d08a9ac19952c50b9d
     taudit/v1: d180931e883fe7d08a9ac19952c50b9d
   properties:
+    authorityKinds:
+      - credential_named_variable
+    confidenceScope: yaml_only
     findingGroupId: 3e1ce5ac-d8de-5111-85c0-c961f1bfea37
     security-severity: "9.0"
     taudit-source: built-in
@@ -31,6 +33,9 @@ expression: results
     primaryLocationLineHash: f310333c07ac5116f7733626d44cb753
     taudit/v1: f310333c07ac5116f7733626d44cb753
   properties:
+    authorityKinds:
+      - job_token
+    confidenceScope: yaml_only
     findingGroupId: 661d0527-036b-5986-a564-a1d93afd8748
     security-severity: "9.0"
     taudit-source: built-in
@@ -47,6 +52,9 @@ expression: results
     primaryLocationLineHash: a8e0befc7144da9fb4e5ef763fcc1fc5
     taudit/v1: a8e0befc7144da9fb4e5ef763fcc1fc5
   properties:
+    authorityKinds:
+      - credential_named_variable
+    confidenceScope: yaml_only
     findingGroupId: 0e309759-d91b-5d41-b2d7-b7ffeec7377c
     security-severity: "9.0"
     taudit-source: built-in
@@ -63,6 +71,9 @@ expression: results
     primaryLocationLineHash: 1464f3114a20b17016c1f4a4fac39c16
     taudit/v1: 1464f3114a20b17016c1f4a4fac39c16
   properties:
+    authorityKinds:
+      - credential_named_variable
+    confidenceScope: yaml_only
     findingGroupId: f529a601-9f35-545c-8e7e-74c2442a6908
     security-severity: "9.0"
     taudit-source: built-in
@@ -79,6 +90,9 @@ expression: results
     primaryLocationLineHash: d2405dfb12dabdf464262a499c87ba54
     taudit/v1: d2405dfb12dabdf464262a499c87ba54
   properties:
+    authorityKinds:
+      - credential_named_variable
+    confidenceScope: yaml_only
     findingGroupId: c494fbb4-778f-5822-8dad-6f8e82c5921b
     security-severity: "2.0"
     taudit-source: built-in
@@ -96,6 +110,9 @@ expression: results
     primaryLocationLineHash: a04b0fa8ff833821d59f9caa45266717
     taudit/v1: a04b0fa8ff833821d59f9caa45266717
   properties:
+    authorityKinds:
+      - credential_named_variable
+    confidenceScope: yaml_only
     findingGroupId: 6fdceba6-6f33-58fe-95bf-927f469b15ec
     security-severity: "2.0"
     taudit-source: built-in
@@ -113,6 +130,9 @@ expression: results
     primaryLocationLineHash: 1ff9918fc8f89331c28c5c87af76f8ff
     taudit/v1: 1ff9918fc8f89331c28c5c87af76f8ff
   properties:
+    authorityKinds:
+      - job_token
+    confidenceScope: yaml_only
     findingGroupId: 00262520-9062-589a-8cfd-399be5d1a0b9
     security-severity: "7.5"
     taudit-source: built-in
@@ -130,7 +150,12 @@ expression: results
     primaryLocationLineHash: 73aefa946595cc3323a3711d1b09f744
     taudit/v1: 73aefa946595cc3323a3711d1b09f744
   properties:
+    attackerSurfaceKinds:
+      - mutable_dependency_ref
+    confidenceScope: yaml_only
     findingGroupId: e9073e12-4672-5c3b-a881-79b1abc87da9
+    runtimePreconditions:
+      - "the referenced mutable branch, tag, include, or image can change independently of this repository"
     security-severity: "7.5"
     taudit-source: built-in
     timeToFix: trivial

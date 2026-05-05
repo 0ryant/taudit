@@ -3,7 +3,10 @@ source: crates/taudit-cli/tests/snapshot_ado.rs
 expression: json
 ---
 findings:
-  - category: over_privileged_identity
+  - authority_kinds:
+      - job_token
+    category: over_privileged_identity
+    confidence_scope: yaml_only
     finding_group_id: 7aba0f67-2e57-5ce8-ae96-ebb114102c7d
     fingerprint: 3f548f2bfdbb2270ced9c06d4ac73cea
     message: "System.AccessToken has broad scope (permissions: '') — likely broader than needed"
@@ -11,6 +14,7 @@ findings:
       - 0
       - 2
       - 4
+    portal_control_dependency: true
     recommendation:
       current: ""
       minimum: "{ contents: read }"
@@ -19,7 +23,14 @@ findings:
     severity: high
     source: built-in
     time_to_fix: small
-  - category: self_mutating_pipeline
+  - attacker_surface_kinds:
+      - script_sink
+    authority_kinds:
+      - credential_named_variable
+      - job_token
+    category: self_mutating_pipeline
+    confidence_scope: yaml_only
+    cve_relationship: analogue_only
     finding_group_id: a01ab427-afa1-5688-b2be-efa8eca2df6c
     fingerprint: 4464ed1f70695745708b1d6a25d0af30
     message: "Step 'Expose secrets as plain variables' writes to the environment gate while holding authority (System.AccessToken, API_KEY_SECRET) — secrets may leak into pipeline environment"
@@ -27,30 +38,39 @@ findings:
       - 2
       - 0
       - 3
+    portal_control_dependency: true
     recommendation:
       action: Avoid writing secrets or attacker-controlled values to $GITHUB_ENV / $GITHUB_PATH / pipeline variables. Use explicit step outputs with narrow scoping instead.
       type: manual
     rule_id: self_mutating_pipeline
     severity: high
     source: built-in
-  - category: setvariable_issecret_false
+  - attacker_surface_kinds:
+      - script_sink
+    category: setvariable_issecret_false
+    confidence_scope: yaml_only
     finding_group_id: 89d948f5-12e9-5a29-b5c4-8dfded86a74a
     fingerprint: 791dec6711c3ef285ab5fd8aa3cf3b65
     message: "ADO setvariable with sensitive name 'API_KEY' uses issecret=false or omits issecret flag, value printed in plaintext logs"
     nodes_involved:
       - 2
+    portal_control_dependency: true
     recommendation:
       action: "Add `issecret=true` to the setvariable directive: `##vso[task.setvariable variable=API_KEY;issecret=true]`"
       type: manual
     rule_id: setvariable_issecret_false
     severity: high
     source: built-in
-  - category: setvariable_issecret_false
+  - attacker_surface_kinds:
+      - script_sink
+    category: setvariable_issecret_false
+    confidence_scope: yaml_only
     finding_group_id: 89d948f5-12e9-5a29-b5c4-8dfded86a74a
     fingerprint: 791dec6711c3ef285ab5fd8aa3cf3b65
     message: "ADO setvariable with sensitive name 'MY_TOKEN' uses issecret=false or omits issecret flag, value printed in plaintext logs"
     nodes_involved:
       - 2
+    portal_control_dependency: true
     recommendation:
       action: "Add `issecret=true` to the setvariable directive: `##vso[task.setvariable variable=MY_TOKEN;issecret=true]`"
       type: manual
@@ -122,6 +142,15 @@ schema_version: 1.0.0
 summary:
   completeness: complete
   critical: 0
+  graph_risk_summary:
+    authority_roots: 2
+    delegation_hops: 0
+    mutable_refs: 1
+    protected_resource_categories:
+      - identity
+      - secret
+    publication_adjacent_sinks: 0
+    untrusted_sinks: 0
   high: 4
   info: 0
   low: 0

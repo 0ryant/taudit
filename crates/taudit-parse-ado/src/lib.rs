@@ -62,6 +62,20 @@ impl PipelineParser for AdoParser {
                 // parent pipeline; analyzing them in isolation is not meaningful.
                 // Return a near-empty graph marked Partial instead of crashing the scan.
                 let msg = e.to_string();
+                if msg.contains("invalid type: sequence, expected struct AdoPipeline") {
+                    if let Some(recovered) = recover_after_leading_root_sequence(content) {
+                        let pipeline: AdoPipeline = serde_yaml::from_str(recovered)
+                            .map_err(|e| TauditError::Parse(format!("YAML parse error: {e}")))?;
+                        let mut graph = build_ado_graph(pipeline, false, source, content);
+                        graph.mark_partial(
+                            GapKind::Structural,
+                            "ADO file starts with a root-level sequence before the pipeline mapping — recovered by analyzing the later pipeline mapping only".to_string(),
+                        );
+                        graph.stamp_edge_authority_summaries();
+                        return Ok(graph);
+                    }
+                }
+
                 let looks_like_template_fragment = (msg.contains("did not find expected key")
                     || (msg.contains("parameters")
                         && msg.contains("invalid type: map")
@@ -84,220 +98,158 @@ impl PipelineParser for AdoParser {
         };
         let extra_docs = de.next().is_some();
 
-        let mut graph = AuthorityGraph::new(source.clone());
-        graph
-            .metadata
-            .insert(META_PLATFORM.into(), "azure-devops".into());
-        if extra_docs {
-            graph.mark_partial(
-                GapKind::Expression,
-                "file contains multiple YAML documents (--- separator) — only the first was analyzed".to_string(),
+        let mut graph = build_ado_graph(pipeline, extra_docs, source, content);
+        graph.stamp_edge_authority_summaries();
+        Ok(graph)
+    }
+}
+
+fn build_ado_graph(
+    pipeline: AdoPipeline,
+    extra_docs: bool,
+    source: &PipelineSource,
+    content: &str,
+) -> AuthorityGraph {
+    let mut graph = AuthorityGraph::new(source.clone());
+    graph
+        .metadata
+        .insert(META_PLATFORM.into(), "azure-devops".into());
+    if extra_docs {
+        graph.mark_partial(
+            GapKind::Expression,
+            "file contains multiple YAML documents (--- separator) — only the first was analyzed"
+                .to_string(),
+        );
+    }
+
+    // Detect PR trigger — sets graph-level META_TRIGGER for trigger_context_mismatch.
+    // A genuine ADO PR trigger is always a mapping (`pr:\n  branches:...`) or a
+    // sequence (`pr:\n  - main`). Scalar opt-out forms — `pr: none`, `pr: ~`,
+    // `pr: false`, `pr: ""` — must NOT be treated as active triggers.
+    // Checking is_mapping()||is_sequence() is more robust than enumerating every
+    // scalar opt-out value (serde_yaml 0.9 parses "none" as a string, "~" as a
+    // string, and `null` as null — the shape test handles all forms uniformly).
+    let has_pr_trigger = pipeline
+        .pr
+        .as_ref()
+        .map(|v| v.is_mapping() || v.is_sequence())
+        .unwrap_or(false);
+    if has_pr_trigger {
+        graph.metadata.insert(META_TRIGGER.into(), "pr".into());
+    }
+
+    // Capture resources.repositories[] declarations and detect aliases that
+    // are actually referenced by an `extends:`, `template: x@alias`, or
+    // `checkout: alias`. The result is JSON-encoded into graph metadata
+    // for the `template_extends_unpinned_branch` rule to consume.
+    process_repositories(&pipeline, content, &mut graph);
+
+    // Capture top-level `parameters:` declarations (used by
+    // parameter_interpolation_into_shell). ADO defaults missing `type:`
+    // to string, so a missing/empty type is treated as a string.
+    if let Some(ref params) = pipeline.parameters {
+        for p in params {
+            let name = match p.name.as_ref() {
+                Some(n) if !n.is_empty() => n.clone(),
+                _ => continue,
+            };
+            let param_type = p.param_type.clone().unwrap_or_default();
+            let has_values_allowlist = p.values.as_ref().map(|v| !v.is_empty()).unwrap_or(false);
+            graph.parameters.insert(
+                name,
+                ParamSpec {
+                    param_type,
+                    has_values_allowlist,
+                },
             );
         }
+    }
 
-        // Detect PR trigger — sets graph-level META_TRIGGER for trigger_context_mismatch.
-        // A genuine ADO PR trigger is always a mapping (`pr:\n  branches:...`) or a
-        // sequence (`pr:\n  - main`). Scalar opt-out forms — `pr: none`, `pr: ~`,
-        // `pr: false`, `pr: ""` — must NOT be treated as active triggers.
-        // Checking is_mapping()||is_sequence() is more robust than enumerating every
-        // scalar opt-out value (serde_yaml 0.9 parses "none" as a string, "~" as a
-        // string, and `null` as null — the shape test handles all forms uniformly).
-        let has_pr_trigger = pipeline
-            .pr
-            .as_ref()
-            .map(|v| v.is_mapping() || v.is_sequence())
-            .unwrap_or(false);
-        if has_pr_trigger {
-            graph.metadata.insert(META_TRIGGER.into(), "pr".into());
+    let mut secret_ids: HashMap<String, NodeId> = HashMap::new();
+
+    // System.AccessToken is always present — equivalent to GITHUB_TOKEN.
+    // Tagged implicit: ADO injects this token into every task by platform design;
+    // its exposure to marketplace tasks is structural, not a fixable misconfiguration.
+    let mut meta = HashMap::new();
+    meta.insert(META_IDENTITY_SCOPE.into(), "broad".into());
+    meta.insert(META_IMPLICIT.into(), "true".into());
+    let token_id = graph.add_node_with_metadata(
+        NodeKind::Identity,
+        "System.AccessToken",
+        TrustZone::FirstParty,
+        meta,
+    );
+
+    // Pipeline-level permissions block — when present and non-broad (no write
+    // permissions), downgrade System.AccessToken from broad → constrained so
+    // over_privileged_identity does not fire on already-restricted pipelines.
+    if let Some(ref perms_val) = pipeline.permissions {
+        if !ado_permissions_are_broad(perms_val) {
+            let perms_str = ado_permissions_display(perms_val);
+            graph.nodes[token_id]
+                .metadata
+                .insert(META_IDENTITY_SCOPE.into(), "constrained".into());
+            graph.nodes[token_id]
+                .metadata
+                .insert(META_PERMISSIONS.into(), perms_str);
         }
+    }
 
-        // Capture resources.repositories[] declarations and detect aliases that
-        // are actually referenced by an `extends:`, `template: x@alias`, or
-        // `checkout: alias`. The result is JSON-encoded into graph metadata
-        // for the `template_extends_unpinned_branch` rule to consume.
-        process_repositories(&pipeline, content, &mut graph);
+    // Pipeline-level pool: adds Image node, tagged self-hosted when applicable.
+    process_pool(&pipeline.pool, &pipeline.workspace, &mut graph);
 
-        // Capture top-level `parameters:` declarations (used by
-        // parameter_interpolation_into_shell). ADO defaults missing `type:`
-        // to string, so a missing/empty type is treated as a string.
-        if let Some(ref params) = pipeline.parameters {
-            for p in params {
-                let name = match p.name.as_ref() {
-                    Some(n) if !n.is_empty() => n.clone(),
-                    _ => continue,
-                };
-                let param_type = p.param_type.clone().unwrap_or_default();
-                let has_values_allowlist =
-                    p.values.as_ref().map(|v| !v.is_empty()).unwrap_or(false);
-                graph.parameters.insert(
-                    name,
-                    ParamSpec {
-                        param_type,
-                        has_values_allowlist,
-                    },
-                );
+    // Pipeline-level variable groups and named secrets.
+    // pipeline_plain_vars tracks non-secret named variables so $(VAR) refs
+    // in scripts don't generate false-positive Secret nodes for plain
+    // config values. Stage/job scopes clone and extend this set so plain
+    // variables do not leak sideways into unrelated stages or jobs.
+    // pipeline_has_variable_groups is set when any pipeline-scope group is encountered so
+    // extract_dollar_paren_secrets can avoid creating per-variable Secret
+    // nodes from opaque groups (BUG-3).
+    let mut pipeline_plain_vars: HashSet<String> = HashSet::new();
+    let mut pipeline_has_variable_groups = false;
+    let pipeline_secret_ids = process_variables(
+        &pipeline.variables,
+        &mut graph,
+        &mut secret_ids,
+        "pipeline",
+        &mut pipeline_plain_vars,
+        &mut pipeline_has_variable_groups,
+    );
+
+    // Determine pipeline structure: stages → jobs → steps, or jobs → steps, or steps only
+    if let Some(ref stages) = pipeline.stages {
+        for stage in stages {
+            // Stage-level template reference — delegate and mark Partial
+            if let Some(ref tpl) = stage.template {
+                let stage_name = stage.stage.as_deref().unwrap_or("stage");
+                add_template_delegation(stage_name, tpl, token_id, None, &mut graph);
+                continue;
             }
-        }
 
-        let mut secret_ids: HashMap<String, NodeId> = HashMap::new();
+            let stage_name = stage.stage.as_deref().unwrap_or("stage").to_string();
+            let mut stage_plain_vars = pipeline_plain_vars.clone();
+            let mut stage_has_variable_groups = false;
+            let stage_secret_ids = process_variables(
+                &stage.variables,
+                &mut graph,
+                &mut secret_ids,
+                &stage_name,
+                &mut stage_plain_vars,
+                &mut stage_has_variable_groups,
+            );
+            let stage_scope_has_variable_groups =
+                pipeline_has_variable_groups || stage_has_variable_groups;
 
-        // System.AccessToken is always present — equivalent to GITHUB_TOKEN.
-        // Tagged implicit: ADO injects this token into every task by platform design;
-        // its exposure to marketplace tasks is structural, not a fixable misconfiguration.
-        let mut meta = HashMap::new();
-        meta.insert(META_IDENTITY_SCOPE.into(), "broad".into());
-        meta.insert(META_IMPLICIT.into(), "true".into());
-        let token_id = graph.add_node_with_metadata(
-            NodeKind::Identity,
-            "System.AccessToken",
-            TrustZone::FirstParty,
-            meta,
-        );
-
-        // Pipeline-level permissions block — when present and non-broad (no write
-        // permissions), downgrade System.AccessToken from broad → constrained so
-        // over_privileged_identity does not fire on already-restricted pipelines.
-        if let Some(ref perms_val) = pipeline.permissions {
-            if !ado_permissions_are_broad(perms_val) {
-                let perms_str = ado_permissions_display(perms_val);
-                graph.nodes[token_id]
-                    .metadata
-                    .insert(META_IDENTITY_SCOPE.into(), "constrained".into());
-                graph.nodes[token_id]
-                    .metadata
-                    .insert(META_PERMISSIONS.into(), perms_str);
+            let stage_condition = non_empty_condition(&stage.condition);
+            if let Some(c) = stage_condition {
+                mark_condition_partial(&mut graph, "stage", &stage_name, c);
             }
-        }
+            let stage_depends_on = stage.depends_on.as_ref().map(|d| d.as_csv());
 
-        // Pipeline-level pool: adds Image node, tagged self-hosted when applicable.
-        process_pool(&pipeline.pool, &pipeline.workspace, &mut graph);
-
-        // Pipeline-level variable groups and named secrets.
-        // pipeline_plain_vars tracks non-secret named variables so $(VAR) refs
-        // in scripts don't generate false-positive Secret nodes for plain
-        // config values. Stage/job scopes clone and extend this set so plain
-        // variables do not leak sideways into unrelated stages or jobs.
-        // pipeline_has_variable_groups is set when any pipeline-scope group is encountered so
-        // extract_dollar_paren_secrets can avoid creating per-variable Secret
-        // nodes from opaque groups (BUG-3).
-        let mut pipeline_plain_vars: HashSet<String> = HashSet::new();
-        let mut pipeline_has_variable_groups = false;
-        let pipeline_secret_ids = process_variables(
-            &pipeline.variables,
-            &mut graph,
-            &mut secret_ids,
-            "pipeline",
-            &mut pipeline_plain_vars,
-            &mut pipeline_has_variable_groups,
-        );
-
-        // Determine pipeline structure: stages → jobs → steps, or jobs → steps, or steps only
-        if let Some(ref stages) = pipeline.stages {
-            for stage in stages {
-                // Stage-level template reference — delegate and mark Partial
-                if let Some(ref tpl) = stage.template {
-                    let stage_name = stage.stage.as_deref().unwrap_or("stage");
-                    add_template_delegation(stage_name, tpl, token_id, None, &mut graph);
-                    continue;
-                }
-
-                let stage_name = stage.stage.as_deref().unwrap_or("stage").to_string();
-                let mut stage_plain_vars = pipeline_plain_vars.clone();
-                let mut stage_has_variable_groups = false;
-                let stage_secret_ids = process_variables(
-                    &stage.variables,
-                    &mut graph,
-                    &mut secret_ids,
-                    &stage_name,
-                    &mut stage_plain_vars,
-                    &mut stage_has_variable_groups,
-                );
-                let stage_scope_has_variable_groups =
-                    pipeline_has_variable_groups || stage_has_variable_groups;
-
-                let stage_condition = non_empty_condition(&stage.condition);
-                if let Some(c) = stage_condition {
-                    mark_condition_partial(&mut graph, "stage", &stage_name, c);
-                }
-                let stage_depends_on = stage.depends_on.as_ref().map(|d| d.as_csv());
-
-                for job in &stage.jobs {
-                    let job_name = job.effective_name();
-                    let mut job_plain_vars = stage_plain_vars.clone();
-                    let mut job_has_variable_groups = false;
-                    let job_secret_ids = process_variables(
-                        &job.variables,
-                        &mut graph,
-                        &mut secret_ids,
-                        &job_name,
-                        &mut job_plain_vars,
-                        &mut job_has_variable_groups,
-                    );
-                    let step_scope_has_variable_groups =
-                        stage_scope_has_variable_groups || job_has_variable_groups;
-
-                    let effective_workspace =
-                        job.workspace.as_ref().or(pipeline.workspace.as_ref());
-                    process_pool(&job.pool, &effective_workspace.cloned(), &mut graph);
-
-                    let all_secrets: Vec<NodeId> = pipeline_secret_ids
-                        .iter()
-                        .chain(&stage_secret_ids)
-                        .chain(&job_secret_ids)
-                        .copied()
-                        .collect();
-
-                    let steps_start = graph.nodes.len();
-
-                    let job_condition = non_empty_condition(&job.condition);
-                    if let Some(c) = job_condition {
-                        mark_condition_partial(&mut graph, "job", &job_name, c);
-                    }
-                    // Job's `dependsOn:` overrides any stage-level value when both
-                    // are present (job-level wins for the job's own ordering); fall
-                    // back to the stage-level value otherwise so the chain still
-                    // surfaces on the steps.
-                    let job_depends_on = job
-                        .depends_on
-                        .as_ref()
-                        .map(|d| d.as_csv())
-                        .or_else(|| stage_depends_on.clone());
-
-                    let outer_condition = join_conditions(stage_condition, job_condition);
-
-                    let job_steps = job.all_steps();
-                    process_steps(
-                        &job_steps,
-                        &job_name,
-                        token_id,
-                        &all_secrets,
-                        &job_plain_vars,
-                        step_scope_has_variable_groups,
-                        outer_condition.as_deref(),
-                        job_depends_on.as_deref(),
-                        &mut graph,
-                        &mut secret_ids,
-                    );
-
-                    if let Some(ref tpl) = job.template {
-                        add_template_delegation(
-                            &job_name,
-                            tpl,
-                            token_id,
-                            Some(&job_name),
-                            &mut graph,
-                        );
-                    }
-
-                    if job.has_environment_binding() {
-                        tag_job_steps_env_approval(&mut graph, steps_start);
-                    }
-                }
-            }
-        } else if let Some(ref jobs) = pipeline.jobs {
-            for job in jobs {
+            for job in &stage.jobs {
                 let job_name = job.effective_name();
-                let mut job_plain_vars = pipeline_plain_vars.clone();
+                let mut job_plain_vars = stage_plain_vars.clone();
                 let mut job_has_variable_groups = false;
                 let job_secret_ids = process_variables(
                     &job.variables,
@@ -308,13 +260,14 @@ impl PipelineParser for AdoParser {
                     &mut job_has_variable_groups,
                 );
                 let step_scope_has_variable_groups =
-                    pipeline_has_variable_groups || job_has_variable_groups;
+                    stage_scope_has_variable_groups || job_has_variable_groups;
 
                 let effective_workspace = job.workspace.as_ref().or(pipeline.workspace.as_ref());
                 process_pool(&job.pool, &effective_workspace.cloned(), &mut graph);
 
                 let all_secrets: Vec<NodeId> = pipeline_secret_ids
                     .iter()
+                    .chain(&stage_secret_ids)
                     .chain(&job_secret_ids)
                     .copied()
                     .collect();
@@ -325,7 +278,17 @@ impl PipelineParser for AdoParser {
                 if let Some(c) = job_condition {
                     mark_condition_partial(&mut graph, "job", &job_name, c);
                 }
-                let job_depends_on = job.depends_on.as_ref().map(|d| d.as_csv());
+                // Job's `dependsOn:` overrides any stage-level value when both
+                // are present (job-level wins for the job's own ordering); fall
+                // back to the stage-level value otherwise so the chain still
+                // surfaces on the steps.
+                let job_depends_on = job
+                    .depends_on
+                    .as_ref()
+                    .map(|d| d.as_csv())
+                    .or_else(|| stage_depends_on.clone());
+
+                let outer_condition = join_conditions(stage_condition, job_condition);
 
                 let job_steps = job.all_steps();
                 process_steps(
@@ -335,7 +298,7 @@ impl PipelineParser for AdoParser {
                     &all_secrets,
                     &job_plain_vars,
                     step_scope_has_variable_groups,
-                    job_condition,
+                    outer_condition.as_deref(),
                     job_depends_on.as_deref(),
                     &mut graph,
                     &mut secret_ids,
@@ -349,45 +312,100 @@ impl PipelineParser for AdoParser {
                     tag_job_steps_env_approval(&mut graph, steps_start);
                 }
             }
-        } else if let Some(ref steps) = pipeline.steps {
+        }
+    } else if let Some(ref jobs) = pipeline.jobs {
+        for job in jobs {
+            let job_name = job.effective_name();
+            let mut job_plain_vars = pipeline_plain_vars.clone();
+            let mut job_has_variable_groups = false;
+            let job_secret_ids = process_variables(
+                &job.variables,
+                &mut graph,
+                &mut secret_ids,
+                &job_name,
+                &mut job_plain_vars,
+                &mut job_has_variable_groups,
+            );
+            let step_scope_has_variable_groups =
+                pipeline_has_variable_groups || job_has_variable_groups;
+
+            let effective_workspace = job.workspace.as_ref().or(pipeline.workspace.as_ref());
+            process_pool(&job.pool, &effective_workspace.cloned(), &mut graph);
+
+            let all_secrets: Vec<NodeId> = pipeline_secret_ids
+                .iter()
+                .chain(&job_secret_ids)
+                .copied()
+                .collect();
+
+            let steps_start = graph.nodes.len();
+
+            let job_condition = non_empty_condition(&job.condition);
+            if let Some(c) = job_condition {
+                mark_condition_partial(&mut graph, "job", &job_name, c);
+            }
+            let job_depends_on = job.depends_on.as_ref().map(|d| d.as_csv());
+
+            let job_steps = job.all_steps();
             process_steps(
-                steps,
-                "pipeline",
+                &job_steps,
+                &job_name,
                 token_id,
-                &pipeline_secret_ids,
-                &pipeline_plain_vars,
-                pipeline_has_variable_groups,
-                None,
-                None,
+                &all_secrets,
+                &job_plain_vars,
+                step_scope_has_variable_groups,
+                job_condition,
+                job_depends_on.as_deref(),
                 &mut graph,
                 &mut secret_ids,
             );
-        }
 
-        // Cross-platform misclassification trap (red-team R2 #5): a YAML file
-        // shaped like ADO at the top level (stages/jobs/steps present) but whose
-        // body uses constructs the ADO parser doesn't recognise will deserialize
-        // without errors and yield no Step nodes. Marking Partial surfaces the
-        // gap instead of returning completeness=complete on a clean-but-empty
-        // graph (which a CI gate would treat as "passed").
-        let step_count = graph
-            .nodes
-            .iter()
-            .filter(|n| n.kind == NodeKind::Step)
-            .count();
-        let had_step_carrier = pipeline.stages.as_ref().is_some_and(|s| !s.is_empty())
-            || pipeline.jobs.as_ref().is_some_and(|j| !j.is_empty())
-            || pipeline.steps.as_ref().is_some_and(|s| !s.is_empty());
-        if step_count == 0 && had_step_carrier {
-            graph.mark_partial(
+            if let Some(ref tpl) = job.template {
+                add_template_delegation(&job_name, tpl, token_id, Some(&job_name), &mut graph);
+            }
+
+            if job.has_environment_binding() {
+                tag_job_steps_env_approval(&mut graph, steps_start);
+            }
+        }
+    } else if let Some(ref steps) = pipeline.steps {
+        process_steps(
+            steps,
+            "pipeline",
+            token_id,
+            &pipeline_secret_ids,
+            &pipeline_plain_vars,
+            pipeline_has_variable_groups,
+            None,
+            None,
+            &mut graph,
+            &mut secret_ids,
+        );
+    }
+
+    // Cross-platform misclassification trap (red-team R2 #5): a YAML file
+    // shaped like ADO at the top level (stages/jobs/steps present) but whose
+    // body uses constructs the ADO parser doesn't recognise will deserialize
+    // without errors and yield no Step nodes. Marking Partial surfaces the
+    // gap instead of returning completeness=complete on a clean-but-empty
+    // graph (which a CI gate would treat as "passed").
+    let step_count = graph
+        .nodes
+        .iter()
+        .filter(|n| n.kind == NodeKind::Step)
+        .count();
+    let had_step_carrier = pipeline.stages.as_ref().is_some_and(|s| !s.is_empty())
+        || pipeline.jobs.as_ref().is_some_and(|j| !j.is_empty())
+        || pipeline.steps.as_ref().is_some_and(|s| !s.is_empty());
+    if step_count == 0 && had_step_carrier {
+        graph.mark_partial(
                 GapKind::Structural,
                 "stages/jobs/steps parsed but produced 0 step nodes — possible non-ADO YAML wrong-platform-classified".to_string(),
             );
-        }
-
-        graph.stamp_edge_authority_summaries();
-        Ok(graph)
     }
+
+    graph.stamp_edge_authority_summaries();
+    graph
 }
 
 /// Returns `Some(trimmed)` when an ADO `condition:` value is present and
@@ -575,12 +593,12 @@ fn process_repositories(pipeline: &AdoPipeline, raw_content: &str, graph: &mut A
     // Build the JSON-encoded repository descriptor list.
     let mut entries: Vec<serde_json::Value> = Vec::with_capacity(resources.repositories.len());
     for repo in &resources.repositories {
-        let used = used_aliases.contains(&repo.repository);
+        let Some(alias) = repo.repository.as_ref().filter(|s| !s.is_empty()) else {
+            continue;
+        };
+        let used = used_aliases.contains(alias);
         let mut obj = serde_json::Map::new();
-        obj.insert(
-            "alias".into(),
-            serde_json::Value::String(repo.repository.clone()),
-        );
+        obj.insert("alias".into(), serde_json::Value::String(alias.clone()));
         if let Some(ref t) = repo.repo_type {
             obj.insert("repo_type".into(), serde_json::Value::String(t.clone()));
         }
@@ -983,17 +1001,19 @@ fn process_steps(
         // Detect $(varName) in step env values
         if let Some(ref env) = step.env {
             // determinism: sort by key — same YAML must produce same NodeId order
-            let mut env_entries: Vec<(&String, &String)> = env.iter().collect();
+            let mut env_entries: Vec<(&String, &serde_yaml::Value)> = env.iter().collect();
             env_entries.sort_by(|a, b| a.0.cmp(b.0));
             for (_k, val) in env_entries {
-                extract_dollar_paren_secrets(
-                    val,
-                    step_id,
-                    plain_vars,
-                    has_variable_groups,
-                    graph,
-                    cache,
-                );
+                if let Some(s) = yaml_scalar_to_string(val) {
+                    extract_dollar_paren_secrets(
+                        &s,
+                        step_id,
+                        plain_vars,
+                        has_variable_groups,
+                        graph,
+                        cache,
+                    );
+                }
             }
         }
 
@@ -1330,6 +1350,16 @@ fn yaml_value_as_str(val: &serde_yaml::Value) -> Option<&str> {
     val.as_str()
 }
 
+fn yaml_scalar_to_string(value: &serde_yaml::Value) -> Option<String> {
+    match value {
+        serde_yaml::Value::String(s) => Some(s.clone()),
+        serde_yaml::Value::Bool(b) => Some(b.to_string()),
+        serde_yaml::Value::Number(n) => Some(n.to_string()),
+        serde_yaml::Value::Null => Some(String::new()),
+        _ => None,
+    }
+}
+
 // ── Serde models for ADO YAML ─────────────────────────────
 
 /// Top-level ADO pipeline definition.
@@ -1352,7 +1382,7 @@ pub struct AdoPipeline {
     /// `None` and the graph is marked Partial downstream.
     #[serde(default, deserialize_with = "deserialize_optional_stages")]
     pub stages: Option<Vec<AdoStage>>,
-    #[serde(default)]
+    #[serde(default, deserialize_with = "deserialize_optional_jobs")]
     pub jobs: Option<Vec<AdoJob>>,
     #[serde(default)]
     pub steps: Option<Vec<AdoStep>>,
@@ -1549,7 +1579,7 @@ fn deserialize_optional_stages<'de, D>(deserializer: D) -> Result<Option<Vec<Ado
 where
     D: serde::Deserializer<'de>,
 {
-    use serde::de::{SeqAccess, Visitor};
+    use serde::de::{MapAccess, SeqAccess, Visitor};
     use std::fmt;
 
     struct StagesVisitor;
@@ -1582,9 +1612,108 @@ where
                 Vec::<AdoStage>::deserialize(serde::de::value::SeqAccessDeserializer::new(seq))?;
             Ok(Some(stages))
         }
+
+        fn visit_map<A: MapAccess<'de>>(self, map: A) -> Result<Self::Value, A::Error> {
+            let stage = AdoStage::deserialize(serde::de::value::MapAccessDeserializer::new(map))?;
+            Ok(Some(vec![stage]))
+        }
     }
 
     deserializer.deserialize_any(StagesVisitor)
+}
+
+fn deserialize_optional_jobs<'de, D>(deserializer: D) -> Result<Option<Vec<AdoJob>>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    deserialize_jobs(deserializer).map(Some)
+}
+
+fn deserialize_jobs<'de, D>(deserializer: D) -> Result<Vec<AdoJob>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    use serde::de::{MapAccess, SeqAccess, Visitor};
+    use std::fmt;
+
+    struct JobsVisitor;
+
+    impl<'de> Visitor<'de> for JobsVisitor {
+        type Value = Vec<AdoJob>;
+
+        fn expecting(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+            f.write_str("a sequence of ADO jobs, a map of job-name to job body, null, or a template expression")
+        }
+
+        fn visit_unit<E: serde::de::Error>(self) -> Result<Self::Value, E> {
+            Ok(Vec::new())
+        }
+        fn visit_none<E: serde::de::Error>(self) -> Result<Self::Value, E> {
+            Ok(Vec::new())
+        }
+        fn visit_some<D: serde::Deserializer<'de>>(self, d: D) -> Result<Self::Value, D::Error> {
+            d.deserialize_any(self)
+        }
+        fn visit_str<E: serde::de::Error>(self, _v: &str) -> Result<Self::Value, E> {
+            Ok(Vec::new())
+        }
+        fn visit_string<E: serde::de::Error>(self, _v: String) -> Result<Self::Value, E> {
+            Ok(Vec::new())
+        }
+
+        fn visit_seq<A: SeqAccess<'de>>(self, mut seq: A) -> Result<Self::Value, A::Error> {
+            let mut out = Vec::new();
+            while let Some(item) = seq.next_element::<serde_yaml::Value>()? {
+                if let Ok(job) = serde_yaml::from_value::<AdoJob>(item) {
+                    out.push(job);
+                }
+            }
+            Ok(out)
+        }
+
+        fn visit_map<A: MapAccess<'de>>(self, mut map: A) -> Result<Self::Value, A::Error> {
+            let mut out = Vec::new();
+            while let Some(key) = map.next_key::<serde_yaml::Value>()? {
+                let value = map.next_value::<serde_yaml::Value>()?;
+                let name = match key {
+                    serde_yaml::Value::String(s) if !s.is_empty() => s,
+                    _ => continue,
+                };
+                let Ok(mut job) = serde_yaml::from_value::<AdoJob>(value) else {
+                    continue;
+                };
+                if job.job.is_none() && job.deployment.is_none() {
+                    job.job = Some(name);
+                }
+                out.push(job);
+            }
+            Ok(out)
+        }
+    }
+
+    deserializer.deserialize_any(JobsVisitor)
+}
+
+fn deserialize_optional_bool<'de, D>(deserializer: D) -> Result<Option<bool>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    let value = Option::<serde_yaml::Value>::deserialize(deserializer)?;
+    let Some(value) = value else {
+        return Ok(None);
+    };
+    let parsed = match value {
+        serde_yaml::Value::Bool(b) => Some(b),
+        serde_yaml::Value::String(s) => match s.trim().to_ascii_lowercase().as_str() {
+            "true" | "yes" | "y" | "on" | "1" => Some(true),
+            "false" | "no" | "n" | "off" | "0" => Some(false),
+            _ => None,
+        },
+        serde_yaml::Value::Number(n) => n.as_i64().map(|v| v != 0),
+        serde_yaml::Value::Null => None,
+        _ => None,
+    };
+    Ok(parsed)
 }
 
 /// `resources:` block. Only `repositories[]` is modelled today.
@@ -1600,7 +1729,8 @@ pub struct AdoResources {
 #[derive(Debug, Deserialize)]
 pub struct AdoRepository {
     /// The alias used by consumers (`template: file@<repository>`).
-    pub repository: String,
+    #[serde(default)]
+    pub repository: Option<String>,
     /// `git`, `github`, `bitbucket`, or `azureGit`.
     #[serde(default, rename = "type")]
     pub repo_type: Option<String>,
@@ -1634,6 +1764,7 @@ pub struct AdoParameter {
 pub enum DependsOn {
     Single(String),
     Multiple(Vec<String>),
+    Other(serde_yaml::Value),
 }
 
 impl DependsOn {
@@ -1648,6 +1779,7 @@ impl DependsOn {
                 .filter(|s| !s.is_empty())
                 .collect::<Vec<_>>()
                 .join(","),
+            DependsOn::Other(_) => String::new(),
         }
     }
 }
@@ -1662,7 +1794,7 @@ pub struct AdoStage {
     pub template: Option<String>,
     #[serde(default)]
     pub variables: Option<AdoVariables>,
-    #[serde(default)]
+    #[serde(default, deserialize_with = "deserialize_jobs")]
     pub jobs: Vec<AdoJob>,
     /// Stage-level runtime gate. ADO evaluates this expression at queue time;
     /// when false, every job (and therefore every step) inside the stage is
@@ -1881,7 +2013,7 @@ pub struct AdoStep {
     #[serde(default)]
     pub name: Option<String>,
     #[serde(default)]
-    pub env: Option<HashMap<String, String>>,
+    pub env: Option<HashMap<String, serde_yaml::Value>>,
     /// Task inputs (key → value, but values may be nested)
     #[serde(default)]
     pub inputs: Option<HashMap<String, serde_yaml::Value>>,
@@ -1889,7 +2021,11 @@ pub struct AdoStep {
     #[serde(default)]
     pub checkout: Option<String>,
     /// When true on a checkout step, writes credentials to .git/config for subsequent steps.
-    #[serde(rename = "persistCredentials", default)]
+    #[serde(
+        rename = "persistCredentials",
+        default,
+        deserialize_with = "deserialize_optional_bool"
+    )]
     pub persist_credentials: Option<bool>,
     /// Step-level runtime gate. Evaluated by the agent before it dispatches
     /// the step; when false the step is skipped (status: Skipped). Cannot be
@@ -1999,6 +2135,43 @@ fn has_root_parameter_conditional(content: &str) -> bool {
         }
     }
     false
+}
+
+fn recover_after_leading_root_sequence(content: &str) -> Option<&str> {
+    for (idx, _) in content.char_indices() {
+        if idx == 0 {
+            continue;
+        }
+        if !is_root_pipeline_key_line(content[idx..].lines().next().unwrap_or_default()) {
+            continue;
+        }
+        let recovered = &content[idx..];
+        if serde_yaml::from_str::<AdoPipeline>(recovered).is_ok() {
+            return Some(recovered);
+        }
+    }
+    None
+}
+
+fn is_root_pipeline_key_line(line: &str) -> bool {
+    if line.starts_with(char::is_whitespace) || !line.ends_with(':') {
+        return false;
+    }
+    let key = line.trim_end_matches(':').trim();
+    matches!(
+        key,
+        "trigger"
+            | "pr"
+            | "pool"
+            | "variables"
+            | "resources"
+            | "stages"
+            | "jobs"
+            | "steps"
+            | "extends"
+            | "parameters"
+            | "permissions"
+    )
 }
 
 #[cfg(test)]
@@ -2383,6 +2556,55 @@ steps:
             persists_edges.len(),
             1,
             "checkout with persistCredentials: true must produce exactly one PersistsTo edge"
+        );
+    }
+
+    #[test]
+    fn persist_credentials_string_true_creates_persists_to_edge() {
+        let yaml = r#"
+steps:
+  - checkout: self
+    persistCredentials: "true"
+"#;
+        let graph = parse(yaml);
+        assert!(
+            graph.edges.iter().any(|e| e.kind == EdgeKind::PersistsTo),
+            "string true is accepted by ADO and must be treated as true"
+        );
+    }
+
+    #[test]
+    fn jobs_mapping_form_parses() {
+        let yaml = r#"
+jobs:
+  build:
+    steps:
+      - script: build.sh
+        displayName: Build
+"#;
+        let graph = parse(yaml);
+        assert!(
+            graph
+                .nodes_of_kind(NodeKind::Step)
+                .any(|s| s.name == "Build"),
+            "jobs: map form must produce step nodes"
+        );
+    }
+
+    #[test]
+    fn step_env_non_string_scalar_values_parse() {
+        let yaml = r#"
+steps:
+  - script: echo hi
+    env:
+      FEATURE_ENABLED: true
+      RETRIES: 3
+      EMPTY:
+"#;
+        let graph = parse(yaml);
+        assert!(
+            graph.nodes_of_kind(NodeKind::Step).next().is_some(),
+            "scalar env values should not reject the whole ADO file"
         );
     }
 

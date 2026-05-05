@@ -13,3 +13,11 @@ recommendation:
   type: manual
   action: Avoid writing secrets or attacker-controlled values to $GITHUB_ENV / $GITHUB_PATH / pipeline variables. Use explicit step outputs with narrow scoping instead.
 source: built-in
+confidence_scope: yaml_only
+portal_control_dependency: true
+authority_kinds:
+  - credential_named_variable
+  - job_token
+attacker_surface_kinds:
+  - script_sink
+cve_relationship: analogue_only

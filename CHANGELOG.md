@@ -18,6 +18,74 @@ _(none yet — populate this paragraph when adding entries that change finding b
 
 _(populate if any consumer-visible field, schema, or contract changes; remove subsection if none)_
 
+## v1.1.0-rc.2 — 2026-05-05 (release candidate)
+
+> **Release candidate.** Published to crates.io under semver pre-release identifier
+> `1.1.0-rc.2`. Opt in via `taudit = "=1.1.0-rc.2"` or
+> `cargo install taudit --version 1.1.0-rc.2`. Stable consumers on v1.0.12 are
+> unaffected per [ADR 0004](docs/adr/0004-prereleases-publish-to-crates-io.md).
+> This is not promoted to `v1.1.0` stable because
+> [`docs/RELEASE_GATES.md`](docs/RELEASE_GATES.md) sets the earliest stable date
+> at 2026-05-16, subject to soak and dogfood gates.
+
+### Detection delta (read first)
+
+`v1.1.0-rc.2` is an additive parser/rule/reporting cut driven by the public YAML
+corpus pass across GitHub Actions, Azure DevOps, GitLab CI, and Bitbucket
+Pipelines. It **will flag more issues** than `v1.1.0-rc.1` on repositories that
+use Bitbucket Pipelines, mutable remote scripts, Docker socket / privileged
+container patterns, compromised action references, or OIDC identity in
+untrusted contexts. It also adds publication-grade context fields to JSON and
+SARIF so downstream reports can distinguish YAML-only evidence from runtime
+preconditions and portal-side controls.
+
+| Change | Direction | Affects |
+|--------|-----------|---------|
+| Bitbucket Pipelines parser added and wired into `taudit scan --platform bitbucket` plus auto-detection for `bitbucket-pipelines.yml` | **more findings** (coverage↑) | Bitbucket corpora and any mixed-CI estate using BB pipelines |
+| Added/finalised rules for OIDC identity in untrusted context, known compromised action references, floating remote script execution, Docker socket exposure, and privileged CI containers | **more findings** (FN↓) | GHA/ADO/GitLab/BB pipelines with cloud identity, mutable supply-chain, or container escape primitives |
+| ADO/GHA/GitLab parser recovery improvements from corpus failures | **fewer parser failures** | Public YAML with non-canonical but recoverable structure |
+| JSON/SARIF findings now include `confidence_scope`, `runtime_preconditions`, `portal_control_dependency`, `authority_kinds`, `attacker_surface_kinds`, `template_resolution_strength`, and `cve_relationship` when known | **contract additive** | SIEM, Backstage, reporting, and case-study consumers |
+| JSON report `summary.graph_risk_summary` added | **contract additive** | High-volume corpus reporting and executive rollups |
+
+**Net FP/FN risk:** safer but noisier by design. New rules expose previously
+missed authority and supply-chain primitives; the added metadata is intended to
+make triage less noisy by showing which findings require runtime/platform
+preconditions before exploitability is claimed.
+
+### Added
+
+- **Bitbucket Pipelines parser crate** (`taudit-parse-bitbucket`) plus CLI
+  platform wiring and corpus harness support.
+- **Publication context metadata** on findings: confidence scope, runtime
+  preconditions, portal-control dependency, authority kinds, attacker-surface
+  kinds, template-resolution strength, and CVE relationship.
+- **Graph risk summary** in JSON reports for corpus-scale ranking.
+- **Research harnesses and reports** under `scripts/research/` and
+  `docs/research/` for public-corpus scanning and vulnerability/rule discovery.
+- **AAA roadmap and semantic index** docs for the current repository state.
+
+### Changed
+
+- **`taudit-api` bumped to `0.2.0`** for additive wire-type fields. Downstream
+  consumers pinned to `taudit-api = "0.1"` should review the new fields and move
+  to `taudit-api = "0.2"` when ready.
+- **JSON/SARIF snapshots updated** to pin the additive metadata contract.
+- **CloudEvents platform schema** now admits Bitbucket platform spellings.
+- **Release workflow semver gate is stable-only.** Prerelease tags still run
+  fmt, clippy, tests, deny, audit, publish packaging, SBOM, binaries, and
+  crates.io publish, but skip `cargo semver-checks` because the registry
+  baseline compares prereleases against the latest stable line.
+
+### Migration notes
+
+- **No CLI flag removal.** Existing `scan`, `verify`, baseline, and sink flags
+  remain compatible.
+- **Output consumers should tolerate additive fields.** JSON, SARIF, and schema
+  contracts gained optional metadata; strict consumers should refresh schemas.
+- **Finding counts may increase.** Treat this as an RC re-baseline event for
+  estates using Bitbucket, OIDC, Docker-in-Docker, floating script downloads, or
+  mutable action references.
+
 ## v1.1.0-rc.1 — 2026-05-02 (release candidate)
 
 > **Release candidate.** Published to crates.io under semver pre-release identifier `1.1.0-rc.1`. Opt-in via `taudit = "=1.1.0-rc.1"` or `cargo install taudit --version 1.1.0-rc.1`. Stable consumers on v1.0.12 are unaffected per [ADR 0004](docs/adr/0004-prereleases-publish-to-crates-io.md). Promotion to `v1.1.0` stable is gated by [`docs/RELEASE_GATES.md` §2.2](docs/RELEASE_GATES.md): ≥2 concurrent pilots × 14-day soak × zero new P0/P1 + ≥1 recorded buyer-side reference call.

@@ -3,13 +3,16 @@ source: crates/taudit-cli/tests/snapshot_gha.rs
 expression: finding
 ---
 severity: critical
-category: trigger_context_mismatch
+category: script_injection_via_untrusted_context
 nodes_involved:
-  - 2
   - 3
-  - 0
-message: Workflow triggered by pull_request_target with secret/identity access — 2 step(s) hold authority that attacker-controlled code could reach
+message: "Step 'check[1]' interpolates attacker-controlled expression(s) ${{ github.event.pull_request.title }} directly into a script body without an env: indirection — classic GitHub Actions RCE"
 recommendation:
   type: manual
-  action: "Use a separate workflow triggered by workflow_run (not pull_request_target) for privileged operations, or ensure no checkout of the PR head ref occurs before secret use"
+  action: "Bind the expression to a step-level `env:` variable and reference it as `\"$VAR\"` (shell) or `process.env.VAR` (JS). The runtime then quotes the value as data instead of YAML-rendering it as code."
 source: built-in
+confidence_scope: yaml_only
+attacker_surface_kinds:
+  - script_sink
+  - untrusted_step
+cve_relationship: analogue_only

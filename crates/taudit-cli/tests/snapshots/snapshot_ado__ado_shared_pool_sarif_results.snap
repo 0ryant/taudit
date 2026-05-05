@@ -1,6 +1,5 @@
 ---
 source: crates/taudit-cli/tests/snapshot_ado.rs
-assertion_line: 113
 expression: results
 ---
 - level: error
@@ -15,7 +14,15 @@ expression: results
     primaryLocationLineHash: 481eb03db2f3c50620aead82178810b4
     taudit/v1: 481eb03db2f3c50620aead82178810b4
   properties:
+    attackerSurfaceKinds:
+      - untrusted_checkout
+    confidenceScope: yaml_only
+    cveRelationship: same_authority_shape
     findingGroupId: 07f2e7cf-9646-51fd-acf3-0bebfad3ad2e
+    portalControlDependency: true
+    runtimePreconditions:
+      - the authority shown in the graph is available to that run
+      - untrusted PR or fork-controlled input can reach this workflow at runtime
     security-severity: "7.5"
     taudit-source: built-in
     timeToFix: medium
@@ -32,7 +39,11 @@ expression: results
     primaryLocationLineHash: fd6a9adae7376318838370392ea657ca
     taudit/v1: fd6a9adae7376318838370392ea657ca
   properties:
+    authorityKinds:
+      - job_token
+    confidenceScope: yaml_only
     findingGroupId: 5f27c90f-6130-57b7-931c-7e756722e388
+    portalControlDependency: true
     security-severity: "7.5"
     taudit-source: built-in
     timeToFix: small
@@ -49,7 +60,16 @@ expression: results
     primaryLocationLineHash: 0647fb972a184c014fd376364580225d
     taudit/v1: 0647fb972a184c014fd376364580225d
   properties:
+    attackerSurfaceKinds:
+      - self_hosted_runner
+      - untrusted_checkout
+    confidenceScope: yaml_only
+    cveRelationship: same_authority_shape
     findingGroupId: 0953b31e-364f-5f21-89a6-a7ae6a1310bb
+    portalControlDependency: true
+    runtimePreconditions:
+      - the authority shown in the graph is available to that run
+      - untrusted PR or fork-controlled input can reach this workflow at runtime
     security-severity: "9.0"
     taudit-source: built-in
   ruleId: self_hosted_pool_pr_hijack
@@ -65,7 +85,11 @@ expression: results
     primaryLocationLineHash: 4873e5775b5e271f363374e5b504aca1
     taudit/v1: 4873e5775b5e271f363374e5b504aca1
   properties:
+    attackerSurfaceKinds:
+      - self_hosted_runner
+    confidenceScope: yaml_only
     findingGroupId: 82f6a179-d521-5cd9-bdaa-09de04bfcb42
+    portalControlDependency: true
     security-severity: "7.5"
     taudit-source: built-in
   ruleId: shared_self_hosted_pool_no_isolation
@@ -81,7 +105,20 @@ expression: results
     primaryLocationLineHash: b6c2dbaccfb85fcc54955524d5539caa
     taudit/v1: b6c2dbaccfb85fcc54955524d5539caa
   properties:
+    attackerSurfaceKinds:
+      - script_sink
+      - untrusted_checkout
+    authorityKinds:
+      - credential_named_variable
+      - job_token
+      - secret
+    confidenceScope: yaml_only
+    cveRelationship: same_authority_shape
     findingGroupId: 113dc5b4-ddf6-5be7-aca2-4eddf0a8f032
+    portalControlDependency: true
+    runtimePreconditions:
+      - the authority shown in the graph is available to that run
+      - untrusted PR or fork-controlled input can reach this workflow at runtime
     security-severity: "7.5"
     taudit-source: built-in
   ruleId: trigger_context_mismatch

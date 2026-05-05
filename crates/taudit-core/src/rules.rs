@@ -3,7 +3,7 @@ use crate::finding::{
 };
 use crate::graph::{
     is_docker_digest_pinned, is_pin_semantically_valid, AuthorityGraph, EdgeKind, IdentityScope,
-    NodeId, NodeKind, TrustZone, META_ADD_SPN_TO_ENV, META_ATTESTS, META_CACHE_KEY,
+    Node, NodeId, NodeKind, TrustZone, META_ADD_SPN_TO_ENV, META_ATTESTS, META_CACHE_KEY,
     META_CHECKOUT_REF, META_CHECKOUT_SELF, META_CLI_FLAG_EXPOSED, META_CONDITION, META_CONTAINER,
     META_DIGEST, META_DISPATCH_INPUTS, META_DOTENV_FILE, META_DOWNLOADS_ARTIFACT,
     META_ENVIRONMENT_NAME, META_ENVIRONMENT_URL, META_ENV_APPROVAL,
@@ -342,6 +342,109 @@ pub fn over_privileged_identity(graph: &AuthorityGraph) -> Vec<Finding> {
     findings
 }
 
+/// Rule: OIDC-capable identity reachable from an untrusted trigger context.
+///
+/// OIDC is the preferred replacement for long-lived secrets, but only when
+/// the subject/audience constraints are bound to trusted refs or protected
+/// environments. In PR/MR contexts, a job that can mint OIDC credentials is
+/// still an authority-bearing job and should be split or gated.
+pub fn oidc_identity_in_untrusted_context(graph: &AuthorityGraph) -> Vec<Finding> {
+    if !graph_has_untrusted_trigger(graph) {
+        return Vec::new();
+    }
+
+    let mut findings = Vec::new();
+    for identity in graph.nodes_of_kind(NodeKind::Identity) {
+        let is_oidc = identity
+            .metadata
+            .get(META_OIDC)
+            .map(|v| v == "true")
+            .unwrap_or(false);
+        if !is_oidc {
+            continue;
+        }
+
+        let mut steps = Vec::new();
+        for edge in graph
+            .edges_to(identity.id)
+            .filter(|e| e.kind == EdgeKind::HasAccessTo)
+        {
+            let Some(step) = graph.node(edge.from) else {
+                continue;
+            };
+            if !step_is_untrusted_context(step, graph) {
+                continue;
+            }
+            steps.push(step);
+        }
+        if steps.is_empty() {
+            continue;
+        }
+        steps.sort_by_key(|s| s.id);
+        let mut nodes_involved = vec![identity.id];
+        nodes_involved.extend(steps.iter().map(|s| s.id));
+        let step_names = steps
+            .iter()
+            .take(5)
+            .map(|s| s.name.as_str())
+            .collect::<Vec<_>>()
+            .join(", ");
+        let suffix = if steps.len() > 5 {
+            format!(", ...+{} more", steps.len() - 5)
+        } else {
+            String::new()
+        };
+        findings.push(Finding {
+            severity: Severity::High,
+            category: FindingCategory::OverPrivilegedIdentity,
+            path: None,
+            nodes_involved,
+            message: format!(
+                "[oidc_identity_in_untrusted_context] OIDC identity '{}' is reachable from untrusted trigger steps [{}{}]",
+                identity.name, step_names, suffix
+            ),
+            recommendation: Recommendation::Manual {
+                action: "Move OIDC credential minting to a trusted-ref workflow or protect it with environment approvals and provider-side subject/audience conditions that exclude fork pull requests and untrusted merge requests.".into(),
+            },
+            source: FindingSource::BuiltIn,
+            extras: FindingExtras::with_anchor(format!("identity={}", identity.name)),
+        });
+    }
+    findings
+}
+
+fn graph_has_untrusted_trigger(graph: &AuthorityGraph) -> bool {
+    graph
+        .metadata
+        .get(META_TRIGGER)
+        .into_iter()
+        .chain(graph.metadata.get(META_TRIGGERS))
+        .flat_map(|s| s.split(','))
+        .map(str::trim)
+        .any(trigger_is_untrusted)
+}
+
+fn step_is_untrusted_context(step: &Node, graph: &AuthorityGraph) -> bool {
+    step.metadata
+        .get(META_TRIGGER)
+        .map(|s| s.split(',').map(str::trim).any(trigger_is_untrusted))
+        .unwrap_or_else(|| graph_has_untrusted_trigger(graph))
+}
+
+fn trigger_is_untrusted(trigger: &str) -> bool {
+    matches!(
+        trigger,
+        "pull_request"
+            | "pull_request_target"
+            | "merge_request"
+            | "merge_request_event"
+            | "workflow_run"
+            | "issue_comment"
+            | "pull_request_review"
+            | "pull_request_review_comment"
+    )
+}
+
 /// MVP Rule 3: Third-party action/image without SHA pin.
 ///
 /// **Severity tiering (v0.9.x):** the rule used to fire at a single severity
@@ -442,6 +545,158 @@ pub fn unpinned_action(graph: &AuthorityGraph) -> Vec<Finding> {
                 time_to_fix: Some(crate::finding::FixEffort::Trivial),
                 ..FindingExtras::default()
             },
+        });
+    }
+
+    findings
+}
+
+/// Rule: `action_major_version_pin_without_sha`.
+///
+/// A `uses:` reference pinned only to a moving major tag (`@v1`, `@v2`, ...)
+/// is reproducible only at the maintainer's current tag pointer, not at an
+/// immutable commit. This is intentionally a refinement alongside
+/// `unpinned_action`: it gives operators a stable filter for the most common
+/// "looks pinned but is still mutable" shape.
+pub fn action_major_version_pin_without_sha(graph: &AuthorityGraph) -> Vec<Finding> {
+    let mut findings = Vec::new();
+    let mut seen = std::collections::HashSet::new();
+
+    for image in graph.nodes_of_kind(NodeKind::Image) {
+        if image
+            .metadata
+            .get(META_CONTAINER)
+            .map(|v| v == "true")
+            .unwrap_or(false)
+            || image.metadata.contains_key(META_SELF_HOSTED)
+            || image.trust_zone == TrustZone::FirstParty
+        {
+            continue;
+        }
+        if !seen.insert(image.name.as_str()) || is_pin_semantically_valid(&image.name) {
+            continue;
+        }
+        if !action_ref_is_major_only(&image.name) {
+            continue;
+        }
+
+        findings.push(Finding {
+            severity: Severity::Medium,
+            category: FindingCategory::UnpinnedAction,
+            path: None,
+            nodes_involved: vec![image.id],
+            message: format!(
+                "[action_major_version_pin_without_sha] {} is pinned only to a mutable major tag; pin to a full commit SHA",
+                image.name
+            ),
+            recommendation: Recommendation::PinAction {
+                current: image.name.clone(),
+                pinned: format!(
+                    "{}@<40-char-sha>",
+                    image.name.split('@').next().unwrap_or(&image.name)
+                ),
+            },
+            source: FindingSource::BuiltIn,
+            extras: FindingExtras {
+                time_to_fix: Some(crate::finding::FixEffort::Trivial),
+                ..FindingExtras::default()
+            },
+        });
+    }
+
+    findings
+}
+
+fn action_ref_is_major_only(action: &str) -> bool {
+    let Some((_, r)) = action.rsplit_once('@') else {
+        return false;
+    };
+    let r = r.trim();
+    let digits = r.strip_prefix('v').unwrap_or(r);
+    !digits.is_empty() && digits.chars().all(|c| c.is_ascii_digit())
+}
+
+struct KnownActionAdvisory {
+    action: &'static str,
+    advisory: &'static str,
+    cve: &'static str,
+    severity: Severity,
+    note: &'static str,
+}
+
+const KNOWN_ACTION_ADVISORIES: &[KnownActionAdvisory] = &[
+    KnownActionAdvisory {
+        action: "tj-actions/changed-files",
+        advisory: "GHSA-mrrh-fwg8-r2c3",
+        cve: "CVE-2025-30066",
+        severity: Severity::Critical,
+        note: "supply-chain compromise leaked CI secrets in workflow logs",
+    },
+    KnownActionAdvisory {
+        action: "reviewdog/action-setup",
+        advisory: "GHSA-qmg3-hpqr-gqvc",
+        cve: "CVE-2025-30154",
+        severity: Severity::Critical,
+        note: "compromise chain associated with reviewdog setup action",
+    },
+    KnownActionAdvisory {
+        action: "reviewdog/action-shellcheck",
+        advisory: "GHSA-qmg3-hpqr-gqvc",
+        cve: "CVE-2025-30154",
+        severity: Severity::High,
+        note: "reviewdog wrapper action family; validate whether it pulled compromised setup code",
+    },
+];
+
+/// Rule: `known_compromised_action_ref`.
+///
+/// Deterministic family match for public advisory-backed GitHub Actions
+/// compromises that are visible from workflow YAML alone. This does not claim
+/// a particular run was exploited; it gives auditors a high-confidence queue
+/// for advisory review and historical run-window correlation.
+pub fn known_compromised_action_ref(graph: &AuthorityGraph) -> Vec<Finding> {
+    let mut findings = Vec::new();
+    let mut seen = std::collections::HashSet::new();
+
+    for image in graph.nodes_of_kind(NodeKind::Image) {
+        if image
+            .metadata
+            .get(META_CONTAINER)
+            .map(|v| v == "true")
+            .unwrap_or(false)
+        {
+            continue;
+        }
+        let bare = image
+            .name
+            .split('@')
+            .next()
+            .unwrap_or(image.name.as_str())
+            .to_ascii_lowercase();
+        let Some(advisory) = KNOWN_ACTION_ADVISORIES.iter().find(|a| bare == a.action) else {
+            continue;
+        };
+        if !seen.insert((advisory.action, image.name.as_str())) {
+            continue;
+        }
+
+        findings.push(Finding {
+            severity: advisory.severity,
+            category: FindingCategory::UnpinnedAction,
+            path: None,
+            nodes_involved: vec![image.id],
+            message: format!(
+                "[known_compromised_action_ref] {} matches {} / {} ({}) — correlate workflow run time and resolved SHA before claiming exploitability",
+                image.name, advisory.cve, advisory.advisory, advisory.note
+            ),
+            recommendation: Recommendation::Manual {
+                action: format!(
+                    "Remove or upgrade `{}`; resolve the referenced tag/SHA, compare it with the advisory's affected window, and rotate any secrets reachable by jobs that used it.",
+                    image.name
+                ),
+            },
+            source: FindingSource::BuiltIn,
+            extras: FindingExtras::default(),
         });
     }
 
@@ -3031,12 +3286,23 @@ fn expansion_in_shell_position(body: &str, name: &str) -> bool {
 // Severity: High (one upstream commit lands code on every consumer).
 fn body_has_pipe_to_shell_with_floating_url(body: &str) -> bool {
     // Cheap pre-filter to keep the regex-free scan fast.
-    let lower = body;
-    let has_curl_or_wget = lower.contains("curl") || lower.contains("wget");
+    let lower = body.to_ascii_lowercase();
+    let has_curl_or_wget = lower.contains("curl")
+        || lower.contains("wget")
+        || lower.contains("iwr ")
+        || lower.contains("irm ")
+        || lower.contains("invoke-webrequest")
+        || lower.contains("invoke-restmethod");
     let has_pipe_shell = lower.contains("| bash")
         || lower.contains("|bash")
         || lower.contains("| sh")
         || lower.contains("|sh")
+        || lower.contains("| pwsh")
+        || lower.contains("|pwsh")
+        || lower.contains("| powershell")
+        || lower.contains("|powershell")
+        || lower.contains("| iex")
+        || lower.contains("|iex")
         || lower.contains("<(curl")
         || lower.contains("<(wget");
     let has_deno_remote = lower.contains("deno run http://") || lower.contains("deno run https://");
@@ -3047,11 +3313,17 @@ fn body_has_pipe_to_shell_with_floating_url(body: &str) -> bool {
 
     // For each line that contains a fetch+pipe or a deno-remote run, check
     // whether the URL on that line is mutable.
-    for line in body.lines() {
+    for line in lower.lines() {
         let line_has_pipe_shell = line.contains("| bash")
             || line.contains("|bash")
             || line.contains("| sh")
             || line.contains("|sh")
+            || line.contains("| pwsh")
+            || line.contains("|pwsh")
+            || line.contains("| powershell")
+            || line.contains("|powershell")
+            || line.contains("| iex")
+            || line.contains("|iex")
             || line.contains("<(curl")
             || line.contains("<(wget");
         let line_has_deno_remote =
@@ -3068,11 +3340,28 @@ fn body_has_pipe_to_shell_with_floating_url(body: &str) -> bool {
     false
 }
 
+fn body_exposes_docker_socket(body: &str) -> bool {
+    let lower = body.to_ascii_lowercase();
+    lower.contains("/var/run/docker.sock")
+        || lower.contains("docker.sock:/var/run/docker.sock")
+        || lower.contains("-v docker.sock")
+}
+
+fn body_runs_privileged_container(body: &str) -> bool {
+    let lower = body.to_ascii_lowercase();
+    lower.contains("docker run --privileged")
+        || lower.contains("docker run")
+            && (lower.contains(" --privileged ") || lower.contains(" --privileged\n"))
+        || lower.contains("podman run --privileged")
+        || lower.contains("buildah ")
+            && (lower.contains(" --privileged ") || lower.contains(" --privileged\n"))
+}
+
 fn line_url_is_mutable(line: &str) -> bool {
     // Mutable URL markers.
     const MUTABLE_PATHS: &[&str] = &[
         "refs/heads/",
-        "/HEAD/",
+        "/head/",
         "/main/",
         "/master/",
         "/develop/",
@@ -3126,6 +3415,74 @@ pub fn runtime_script_fetched_from_floating_url(graph: &AuthorityGraph) -> Vec<F
 });
     }
 
+    findings
+}
+
+/// Rule: `docker_socket_exposed_to_ci_step`.
+///
+/// A CI step binds or references the host Docker socket. Docker socket access
+/// is effectively host-level authority: a step can start containers with
+/// arbitrary mounts and read runner filesystem state.
+pub fn docker_socket_exposed_to_ci_step(graph: &AuthorityGraph) -> Vec<Finding> {
+    let mut findings = Vec::new();
+    for step in graph.nodes_of_kind(NodeKind::Step) {
+        let body = match step.metadata.get(META_SCRIPT_BODY) {
+            Some(b) if !b.is_empty() => b,
+            _ => continue,
+        };
+        if !body_exposes_docker_socket(body) {
+            continue;
+        }
+        findings.push(Finding {
+            severity: Severity::Critical,
+            category: FindingCategory::DindServiceGrantsHostAuthority,
+            path: None,
+            nodes_involved: vec![step.id],
+            message: format!(
+                "[docker_socket_exposed_to_ci_step] Step '{}' references /var/run/docker.sock; Docker socket access is equivalent to runner-host control",
+                step.name
+            ),
+            recommendation: Recommendation::Manual {
+                action: "Do not mount the host Docker socket into CI jobs. Use rootless buildkit, kaniko, buildah/img, or a dedicated isolated runner with no shared workspace or secrets.".into(),
+            },
+            source: FindingSource::BuiltIn,
+            extras: FindingExtras::default(),
+        });
+    }
+    findings
+}
+
+/// Rule: `privileged_container_in_ci_step`.
+///
+/// A CI step starts a privileged container. Privileged containers remove the
+/// kernel isolation boundary and routinely combine with bind mounts or cached
+/// workspaces to become host compromise primitives.
+pub fn privileged_container_in_ci_step(graph: &AuthorityGraph) -> Vec<Finding> {
+    let mut findings = Vec::new();
+    for step in graph.nodes_of_kind(NodeKind::Step) {
+        let body = match step.metadata.get(META_SCRIPT_BODY) {
+            Some(b) if !b.is_empty() => b,
+            _ => continue,
+        };
+        if !body_runs_privileged_container(body) {
+            continue;
+        }
+        findings.push(Finding {
+            severity: Severity::High,
+            category: FindingCategory::DindServiceGrantsHostAuthority,
+            path: None,
+            nodes_involved: vec![step.id],
+            message: format!(
+                "[privileged_container_in_ci_step] Step '{}' starts a privileged container; it can bypass normal runner isolation",
+                step.name
+            ),
+            recommendation: Recommendation::Manual {
+                action: "Remove `--privileged`; use rootless builders or isolate the job to a dedicated runner with no sensitive credentials and no shared workspace.".into(),
+            },
+            source: FindingSource::BuiltIn,
+            extras: FindingExtras::default(),
+        });
+    }
     findings
 }
 
@@ -3605,7 +3962,10 @@ pub fn run_all_rules(graph: &AuthorityGraph, max_hops: usize) -> Vec<Finding> {
     // MVP rules
     findings.extend(authority_propagation(graph, max_hops));
     findings.extend(over_privileged_identity(graph));
+    findings.extend(oidc_identity_in_untrusted_context(graph));
     findings.extend(unpinned_action(graph));
+    findings.extend(action_major_version_pin_without_sha(graph));
+    findings.extend(known_compromised_action_ref(graph));
     findings.extend(untrusted_with_authority(graph));
     findings.extend(artifact_boundary_crossing(graph));
     // Stretch rules
@@ -3636,6 +3996,8 @@ pub fn run_all_rules(graph: &AuthorityGraph, max_hops: usize) -> Vec<Finding> {
     findings.extend(parameter_interpolation_into_shell(graph));
     // GHA red-team-derived rules
     findings.extend(runtime_script_fetched_from_floating_url(graph));
+    findings.extend(docker_socket_exposed_to_ci_step(graph));
+    findings.extend(privileged_container_in_ci_step(graph));
     findings.extend(pr_trigger_with_floating_action_ref(graph));
     findings.extend(check_homoglyph_in_action_ref(graph));
     findings.extend(untrusted_api_response_to_env_sink(graph));
@@ -3694,10 +4056,325 @@ pub fn run_all_rules(graph: &AuthorityGraph, max_hops: usize) -> Vec<Finding> {
     // neutralises the risk). Applied after dedup so each unique finding
     // gets exactly one CC evaluation.
     apply_compensating_controls(graph, &mut findings);
+    enrich_publication_context(graph, &mut findings);
 
     findings.sort_by_key(|f| f.severity);
 
     findings
+}
+
+fn enrich_publication_context(graph: &AuthorityGraph, findings: &mut [Finding]) {
+    for finding in findings {
+        if finding.extras.confidence_scope.is_none() {
+            finding.extras.confidence_scope = Some("yaml_only".to_string());
+        }
+
+        finding.extras.portal_control_dependency |= portal_dependency_for(graph, finding);
+
+        let mut authority = std::collections::BTreeSet::<String>::new();
+        for kind in authority_kinds_for_nodes(graph, finding) {
+            authority.insert(kind);
+        }
+        finding.extras.authority_kinds = authority.into_iter().collect();
+
+        let mut surfaces = attacker_surface_kinds_for(finding);
+        if !matches!(finding.category, FindingCategory::OverPrivilegedIdentity) {
+            for node_id in &finding.nodes_involved {
+                if let Some(node) = graph.node(*node_id) {
+                    if node.kind == NodeKind::Step {
+                        if node.trust_zone == TrustZone::Untrusted {
+                            surfaces.insert("untrusted_step".to_string());
+                        }
+                        if node.metadata.contains_key(META_CHECKOUT_SELF) {
+                            surfaces.insert("untrusted_checkout".to_string());
+                        }
+                        if node.metadata.contains_key(META_SELF_HOSTED) {
+                            surfaces.insert("self_hosted_runner".to_string());
+                        }
+                        if node.metadata.contains_key(META_SCRIPT_BODY) {
+                            surfaces.insert("script_sink".to_string());
+                        }
+                    }
+                }
+            }
+        }
+        finding.extras.attacker_surface_kinds = surfaces.into_iter().collect();
+
+        if finding.extras.template_resolution_strength.is_none() {
+            finding.extras.template_resolution_strength =
+                template_resolution_strength_for(graph, finding);
+        }
+
+        if finding.extras.cve_relationship.is_none() {
+            finding.extras.cve_relationship = cve_relationship_for(finding).map(str::to_string);
+        }
+
+        let mut preconditions = std::collections::BTreeSet::<String>::new();
+        for p in runtime_preconditions_for(graph, finding) {
+            preconditions.insert(p.to_string());
+        }
+        for existing in finding.extras.runtime_preconditions.drain(..) {
+            preconditions.insert(existing);
+        }
+        finding.extras.runtime_preconditions = preconditions.into_iter().collect();
+    }
+}
+
+fn portal_dependency_for(graph: &AuthorityGraph, finding: &Finding) -> bool {
+    let platform = graph
+        .metadata
+        .get(META_PLATFORM)
+        .map(String::as_str)
+        .unwrap_or_default();
+    matches!(platform, "ado" | "azure-devops")
+        || matches!(
+            finding.category,
+            FindingCategory::ServiceConnectionScopeMismatch
+                | FindingCategory::VariableGroupInPrJob
+                | FindingCategory::ProdDeployJobNoEnvironmentGate
+                | FindingCategory::TerraformAutoApproveInProd
+                | FindingCategory::AddSpnWithInlineScript
+                | FindingCategory::RiskyTriggerWithAuthority
+                | FindingCategory::NoWorkflowLevelPermissionsBlock
+                | FindingCategory::PullRequestWorkflowInconsistentForkCheck
+        )
+}
+
+fn authority_kinds_for_nodes(graph: &AuthorityGraph, finding: &Finding) -> Vec<String> {
+    let mut out = std::collections::BTreeSet::<String>::new();
+    for node_id in &finding.nodes_involved {
+        if let Some(node) = graph.node(*node_id) {
+            match node.kind {
+                NodeKind::Secret => {
+                    if node.metadata.contains_key(META_VARIABLE_GROUP)
+                        || node.name.to_ascii_lowercase().contains("variable group")
+                    {
+                        out.insert("variable_group".into());
+                    } else if is_credential_named(&node.name) {
+                        out.insert("credential_named_variable".into());
+                    } else {
+                        out.insert("secret".into());
+                    }
+                }
+                NodeKind::Identity => {
+                    let lower = node.name.to_ascii_lowercase();
+                    if node.metadata.contains_key(META_SERVICE_CONNECTION)
+                        || node.metadata.contains_key(META_SERVICE_CONNECTION_NAME)
+                    {
+                        out.insert("service_connection".into());
+                    } else if node.metadata.contains_key(META_OIDC) || lower.contains("oidc") {
+                        out.insert("oidc_identity".into());
+                    } else if lower.contains("github_token")
+                        || lower.contains("system.accesstoken")
+                        || lower.contains("ci_job_token")
+                    {
+                        out.insert("job_token".into());
+                    } else if node.metadata.contains_key(META_IMPLICIT) {
+                        out.insert("implicit_identity".into());
+                    } else {
+                        out.insert("identity".into());
+                    }
+                }
+                NodeKind::Artifact | NodeKind::Image | NodeKind::Step => {}
+            }
+        }
+    }
+    if out.is_empty() && matches!(finding.category, FindingCategory::OverPrivilegedIdentity) {
+        out.insert("identity".into());
+    }
+    out.into_iter().collect()
+}
+
+fn is_credential_named(name: &str) -> bool {
+    let lower = name.to_ascii_lowercase();
+    [
+        "token",
+        "secret",
+        "password",
+        "passwd",
+        "pat",
+        "private_key",
+        "access_key",
+        "api_key",
+        "credential",
+        "client_secret",
+    ]
+    .iter()
+    .any(|needle| lower.contains(needle))
+}
+
+fn attacker_surface_kinds_for(finding: &Finding) -> std::collections::BTreeSet<String> {
+    let mut out = std::collections::BTreeSet::<String>::new();
+    match finding.category {
+        FindingCategory::CheckoutSelfPrExposure => {
+            out.insert("untrusted_checkout".into());
+        }
+        FindingCategory::ScriptInjectionViaUntrustedContext
+        | FindingCategory::ManualDispatchInputToUrlOrCommand
+        | FindingCategory::ParameterInterpolationIntoShell
+        | FindingCategory::UntrustedCiVarInShellInterpolation
+        | FindingCategory::SetvariableIssecretFalse
+        | FindingCategory::TerraformOutputViaSetvariableShellExpansion => {
+            out.insert("script_sink".into());
+        }
+        FindingCategory::UnpinnedAction
+        | FindingCategory::PrTriggerWithFloatingActionRef
+        | FindingCategory::UnpinnedIncludeRemoteOrBranchRef
+        | FindingCategory::FloatingImage
+        | FindingCategory::TemplateExtendsUnpinnedBranch
+        | FindingCategory::TemplateRepoRefIsFeatureBranch => {
+            out.insert("mutable_dependency_ref".into());
+        }
+        FindingCategory::CrossWorkflowAuthorityChain
+        | FindingCategory::SecretsInheritOverscopedPassthrough
+        | FindingCategory::ChildPipelineTriggerInheritsAuthority => {
+            out.insert("reusable_workflow_boundary".into());
+        }
+        FindingCategory::RuntimeScriptFetchedFromFloatingUrl => {
+            out.insert("remote_script".into());
+        }
+        FindingCategory::DindServiceGrantsHostAuthority
+            if finding_message_rule_id_is(finding, "docker_socket_exposed_to_ci_step") =>
+        {
+            out.insert("docker_socket".into());
+        }
+        FindingCategory::DindServiceGrantsHostAuthority
+            if finding_message_rule_id_is(finding, "privileged_container_in_ci_step") =>
+        {
+            out.insert("privileged_container".into());
+        }
+        FindingCategory::SelfHostedPoolPrHijack
+        | FindingCategory::SharedSelfHostedPoolNoIsolation => {
+            out.insert("self_hosted_runner".into());
+        }
+        FindingCategory::CacheKeyCrossesTrustBoundary
+        | FindingCategory::PrSpecificCacheKeyInDefaultBranchConsumer => {
+            out.insert("cache".into());
+        }
+        FindingCategory::DotenvArtifactFlowsToPrivilegedDeployment => {
+            out.insert("dotenv_artifact".into());
+        }
+        FindingCategory::UnsafePrArtifactInWorkflowRunConsumer
+        | FindingCategory::ArtifactBoundaryCrossing => {
+            out.insert("artifact".into());
+        }
+        _ => {}
+    }
+    out
+}
+
+fn template_resolution_strength_for(graph: &AuthorityGraph, finding: &Finding) -> Option<String> {
+    if !matches!(
+        finding.category,
+        FindingCategory::CrossWorkflowAuthorityChain
+            | FindingCategory::TemplateExtendsUnpinnedBranch
+            | FindingCategory::TemplateRepoRefIsFeatureBranch
+            | FindingCategory::SecretsInheritOverscopedPassthrough
+            | FindingCategory::ChildPipelineTriggerInheritsAuthority
+    ) {
+        return None;
+    }
+    if graph
+        .completeness_gaps
+        .iter()
+        .any(|gap| gap.to_ascii_lowercase().contains("template"))
+    {
+        Some("opaque".into())
+    } else if graph.completeness == crate::graph::AuthorityCompleteness::Partial {
+        Some("partial".into())
+    } else {
+        Some("resolved".into())
+    }
+}
+
+fn cve_relationship_for(finding: &Finding) -> Option<&'static str> {
+    match finding.category {
+        FindingCategory::TriggerContextMismatch
+        | FindingCategory::CheckoutSelfPrExposure
+        | FindingCategory::SelfHostedPoolPrHijack => Some("same_authority_shape"),
+        FindingCategory::ScriptInjectionViaUntrustedContext
+        | FindingCategory::SelfMutatingPipeline
+        | FindingCategory::UntrustedApiResponseToEnvSink => Some("analogue_only"),
+        FindingCategory::UnpinnedAction
+            if finding_message_rule_id_is(finding, "known_compromised_action_ref") =>
+        {
+            Some("same_primitive")
+        }
+        _ => None,
+    }
+}
+
+fn runtime_preconditions_for(graph: &AuthorityGraph, finding: &Finding) -> Vec<&'static str> {
+    let mut out = Vec::new();
+    match finding.category {
+        FindingCategory::TriggerContextMismatch
+        | FindingCategory::CheckoutSelfPrExposure
+        | FindingCategory::SelfHostedPoolPrHijack => {
+            out.push("untrusted PR or fork-controlled input can reach this workflow at runtime");
+            out.push("the authority shown in the graph is available to that run");
+        }
+        FindingCategory::RiskyTriggerWithAuthority => {
+            out.push(
+                "repository settings allow the high-blast-radius trigger to execute this workflow",
+            );
+            out.push("write permissions or non-default secrets remain available at runtime");
+        }
+        FindingCategory::ServiceConnectionScopeMismatch
+        | FindingCategory::ProdDeployJobNoEnvironmentGate
+        | FindingCategory::TerraformAutoApproveInProd
+        | FindingCategory::AddSpnWithInlineScript => {
+            out.push("the referenced service connection is authorized for this pipeline");
+            out.push("Azure DevOps approvals or checks do not fully block use of the resource");
+        }
+        FindingCategory::VariableGroupInPrJob => {
+            out.push("the referenced variable group contains protected or secret values");
+            out.push("Azure DevOps variable-group permissions allow this pipeline to read it");
+        }
+        FindingCategory::UnpinnedAction
+            if finding_message_rule_id_is(finding, "known_compromised_action_ref") =>
+        {
+            out.push("the workflow run time overlaps the advisory exposure window");
+            out.push(
+                "the mutable action ref resolved to an affected commit or version at run time",
+            );
+        }
+        FindingCategory::UnpinnedAction
+        | FindingCategory::PrTriggerWithFloatingActionRef
+        | FindingCategory::UnpinnedIncludeRemoteOrBranchRef
+        | FindingCategory::TemplateExtendsUnpinnedBranch
+        | FindingCategory::TemplateRepoRefIsFeatureBranch
+        | FindingCategory::FloatingImage => {
+            out.push("the referenced mutable branch, tag, include, or image can change independently of this repository");
+        }
+        FindingCategory::ManualDispatchInputToUrlOrCommand
+        | FindingCategory::ParameterInterpolationIntoShell => {
+            out.push("an actor with dispatch or queue permission can supply untrusted input");
+        }
+        FindingCategory::OverPrivilegedIdentity
+            if finding_message_rule_id_is(finding, "oidc_identity_in_untrusted_context") =>
+        {
+            out.push("downstream identity provider accepts the issued OIDC token");
+            out.push("the configured audience or cloud role grants useful authority");
+        }
+        FindingCategory::IdTokenAudienceOverscoped | FindingCategory::UpliftWithoutAttestation => {
+            out.push("downstream identity provider accepts the issued OIDC token");
+            out.push("the configured audience or cloud role grants useful authority");
+        }
+        _ => {}
+    }
+    if graph.completeness == crate::graph::AuthorityCompleteness::Partial {
+        out.push("the parsed graph is partial; unresolved YAML may add or remove authority paths");
+    }
+    out
+}
+
+fn finding_message_rule_id_is(finding: &Finding, id: &str) -> bool {
+    let Some(rest) = finding.message.strip_prefix('[') else {
+        return false;
+    };
+    rest.strip_prefix(id)
+        .and_then(|tail| tail.strip_prefix(']'))
+        .is_some()
 }
 
 // ── R3: risky_trigger_with_authority ────────────────────
@@ -5254,7 +5931,16 @@ pub fn dind_service_grants_host_authority(graph: &AuthorityGraph) -> Vec<Finding
             .metadata
             .get(META_GITLAB_DIND_SERVICE)
             .map(|v| v == "true")
-            .unwrap_or(false);
+            .unwrap_or(false)
+            || graph.edges_from(step.id).any(|edge| {
+                edge.kind == EdgeKind::UsesImage
+                    && graph
+                        .node(edge.to)
+                        .map(|image| {
+                            image.kind == NodeKind::Image && image_ref_is_dind(&image.name)
+                        })
+                        .unwrap_or(false)
+            });
         if !has_dind {
             continue;
         }
@@ -5322,6 +6008,14 @@ pub fn dind_service_grants_host_authority(graph: &AuthorityGraph) -> Vec<Finding
     }
 
     findings
+}
+
+fn image_ref_is_dind(image: &str) -> bool {
+    let lower = image.to_ascii_lowercase();
+    let Some((name, tag_or_digest)) = lower.split_once(':') else {
+        return false;
+    };
+    name.ends_with("docker") && tag_or_digest.contains("dind")
 }
 
 /// Substrings (case-insensitive) that identify a GitLab security scanner job
@@ -9156,6 +9850,68 @@ mod tests {
         assert_eq!(findings.len(), 1);
     }
 
+    #[test]
+    fn powershell_iex_remote_main_is_flagged() {
+        let g = step_with_body(
+            "iwr https://raw.githubusercontent.com/some/repo/main/install.ps1 | iex",
+        );
+        let findings = runtime_script_fetched_from_floating_url(&g);
+        assert_eq!(findings.len(), 1);
+    }
+
+    #[test]
+    fn docker_socket_reference_is_flagged() {
+        let g = step_with_body(
+            "docker run -v /var/run/docker.sock:/var/run/docker.sock alpine docker ps",
+        );
+        let findings = docker_socket_exposed_to_ci_step(&g);
+        assert_eq!(findings.len(), 1);
+        assert_eq!(findings[0].severity, Severity::Critical);
+        assert!(findings[0]
+            .message
+            .starts_with("[docker_socket_exposed_to_ci_step]"));
+    }
+
+    #[test]
+    fn privileged_container_run_is_flagged() {
+        let g = step_with_body("docker run --privileged alpine true");
+        let findings = privileged_container_in_ci_step(&g);
+        assert_eq!(findings.len(), 1);
+        assert!(findings[0]
+            .message
+            .starts_with("[privileged_container_in_ci_step]"));
+    }
+
+    #[test]
+    fn known_compromised_action_ref_is_flagged() {
+        let mut g = AuthorityGraph::new(source("ci.yml"));
+        g.add_node(
+            NodeKind::Image,
+            "tj-actions/changed-files@v45",
+            TrustZone::Untrusted,
+        );
+        let findings = known_compromised_action_ref(&g);
+        assert_eq!(findings.len(), 1);
+        assert!(findings[0]
+            .message
+            .starts_with("[known_compromised_action_ref]"));
+    }
+
+    #[test]
+    fn major_version_action_ref_gets_specific_rule_id() {
+        let mut g = AuthorityGraph::new(source("ci.yml"));
+        g.add_node(
+            NodeKind::Image,
+            "docker/login-action@v3",
+            TrustZone::Untrusted,
+        );
+        let findings = action_major_version_pin_without_sha(&g);
+        assert_eq!(findings.len(), 1);
+        assert!(findings[0]
+            .message
+            .starts_with("[action_major_version_pin_without_sha]"));
+    }
+
     // ── pr_trigger_with_floating_action_ref ────────────────────
 
     fn graph_with_trigger_and_action(trigger: &str, action: &str) -> AuthorityGraph {
@@ -9718,6 +10474,30 @@ mod tests {
         g.metadata
             .insert(META_NO_WORKFLOW_PERMISSIONS.into(), "true".into());
         assert!(no_workflow_level_permissions_block(&g).is_empty());
+    }
+
+    #[test]
+    fn oidc_identity_in_untrusted_context_flags_pr_context() {
+        let mut g = graph_with_platform("bitbucket", "bitbucket-pipelines.yml");
+        g.metadata
+            .insert(META_TRIGGER.into(), "pull_request".into());
+        let step = g.add_node(NodeKind::Step, "deploy", TrustZone::FirstParty);
+        let mut meta = std::collections::HashMap::new();
+        meta.insert(META_OIDC.into(), "true".into());
+        meta.insert(META_IDENTITY_SCOPE.into(), "broad".into());
+        let identity = g.add_node_with_metadata(
+            NodeKind::Identity,
+            "BITBUCKET_STEP_OIDC_TOKEN",
+            TrustZone::FirstParty,
+            meta,
+        );
+        g.add_edge(step, identity, EdgeKind::HasAccessTo);
+
+        let findings = oidc_identity_in_untrusted_context(&g);
+        assert_eq!(findings.len(), 1);
+        assert!(findings[0]
+            .message
+            .starts_with("[oidc_identity_in_untrusted_context]"));
     }
 
     #[test]

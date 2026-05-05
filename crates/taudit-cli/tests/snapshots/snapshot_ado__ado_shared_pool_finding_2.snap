@@ -12,3 +12,12 @@ recommendation:
   type: manual
   action: "Run PR pipelines on Microsoft-hosted (ephemeral) agents, or disable checkout:self for PR-triggered jobs on self-hosted pools"
 source: built-in
+confidence_scope: yaml_only
+runtime_preconditions:
+  - the authority shown in the graph is available to that run
+  - untrusted PR or fork-controlled input can reach this workflow at runtime
+portal_control_dependency: true
+attacker_surface_kinds:
+  - self_hosted_runner
+  - untrusted_checkout
+cve_relationship: same_authority_shape

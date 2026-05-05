@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 use serde::{Deserialize, Serialize};
 use serde_yaml::Value;
@@ -59,303 +59,515 @@ impl PipelineParser for GitlabParser {
     }
 
     fn parse(&self, content: &str, source: &PipelineSource) -> Result<AuthorityGraph, TauditError> {
-        let mut de = serde_yaml::Deserializer::from_str(content);
-        let doc = de
-            .next()
-            .ok_or_else(|| TauditError::Parse("empty YAML document".into()))?;
-        let root: Value = Value::deserialize(doc)
+        let (parse_content, duplicate_recovery_note) = match parse_gitlab_yaml_value(content) {
+            Ok((root, extra_docs, first_doc_was_spec_header)) => {
+                let mut graph = build_graph_from_root(root, source)?;
+                if extra_docs {
+                    graph.mark_partial(
+                        GapKind::Expression,
+                        if first_doc_was_spec_header {
+                            "file contains GitLab spec: header plus executable config document — analyzed the executable document and preserved spec: as an unresolved header".to_string()
+                        } else {
+                            "file contains multiple YAML documents (--- separator) — only the first was analyzed".to_string()
+                        },
+                    );
+                }
+                return Ok(graph);
+            }
+            Err(e) if is_duplicate_key_parse_error(&e) => {
+                let sanitized = sanitize_duplicate_mapping_keys(content);
+                let note = format!(
+                    "GitLab YAML contained duplicate mapping keys; later duplicates were preserved as opaque __taudit_duplicate_* keys during recovery ({e})"
+                );
+                (sanitized, Some(note))
+            }
+            Err(e) => return Err(TauditError::Parse(format!("YAML parse error: {e}"))),
+        };
+
+        let (root, extra_docs, first_doc_was_spec_header) = parse_gitlab_yaml_value(&parse_content)
             .map_err(|e| TauditError::Parse(format!("YAML parse error: {e}")))?;
-
-        let mapping = root
-            .as_mapping()
-            .ok_or_else(|| TauditError::Parse("GitLab CI root must be a mapping".into()))?;
-
-        let mut graph = AuthorityGraph::new(source.clone());
-        graph.metadata.insert(META_PLATFORM.into(), "gitlab".into());
-
-        // CI_JOB_TOKEN is always present in every GitLab CI job — it's the built-in
-        // platform token, equivalent to ADO's System.AccessToken or GHA's GITHUB_TOKEN.
-        let mut meta = HashMap::new();
-        meta.insert(META_IDENTITY_SCOPE.into(), "broad".into());
-        meta.insert(META_IMPLICIT.into(), "true".into());
-        let token_id = graph.add_node_with_metadata(
-            NodeKind::Identity,
-            "CI_JOB_TOKEN",
-            TrustZone::FirstParty,
-            meta,
-        );
-
-        // Top-level include: → mark Partial immediately AND capture each
-        // entry's structure as graph metadata so include-pinning rules can
-        // reason about remote URLs and unpinned project refs.
-        if let Some(inc) = mapping.get("include") {
+        let mut graph = build_graph_from_root(root, source)?;
+        if extra_docs {
             graph.mark_partial(
-                GapKind::Structural,
-                "include: directive present — included templates not resolved".to_string(),
-            );
-            let entries = extract_include_entries(inc);
-            if !entries.is_empty() {
-                if let Ok(json) = serde_json::to_string(&entries) {
-                    graph.metadata.insert(META_GITLAB_INCLUDES.into(), json);
-                }
-            }
-        }
-
-        // Global variables
-        let global_secrets = process_variables(mapping.get("variables"), &mut graph, "pipeline");
-
-        // Global image
-        let global_image = mapping.get("image").and_then(extract_image_str);
-
-        // Top-level merge_request trigger detection from `workflow:` rules
-        if let Some(wf) = mapping.get("workflow") {
-            if has_mr_trigger_in_workflow(wf) {
-                graph
-                    .metadata
-                    .insert(META_TRIGGER.into(), "merge_request".into());
-            }
-        }
-
-        // Process each job (any top-level key not in RESERVED)
-        // determinism: sort by key — same YAML must produce same NodeId order
-        let mut top_level_entries: Vec<(&Value, &Value)> = mapping.iter().collect();
-        top_level_entries
-            .sort_by(|a, b| a.0.as_str().unwrap_or("").cmp(b.0.as_str().unwrap_or("")));
-        for (key, value) in top_level_entries {
-            let job_name = match key.as_str() {
-                Some(k) => k,
-                None => continue,
-            };
-            if RESERVED.contains(&job_name) {
-                continue;
-            }
-
-            // Hidden jobs (starting with a dot) are templates — mark Partial, skip
-            if job_name.starts_with('.') {
-                graph.mark_partial(
-                    GapKind::Structural,
-                    format!("job '{job_name}' is a hidden/template job — not resolved"),
-                );
-                continue;
-            }
-
-            let job_map = match value.as_mapping() {
-                Some(m) => m,
-                None => continue,
-            };
-
-            // extends: — job template inheritance, can't resolve statically
-            let extends_names = extract_extends_list(job_map.get("extends"));
-            if !extends_names.is_empty() {
-                graph.mark_partial(
-                    GapKind::Structural,
-                    format!(
-                        "job '{job_name}' uses extends: — inherited configuration not resolved"
-                    ),
-                );
-            }
-
-            // Detect PR/MR trigger in this job's rules: or only:
-            let job_triggers_mr = job_has_mr_trigger(job_map);
-
-            // Propagate job MR trigger to graph level
-            if job_triggers_mr && !graph.metadata.contains_key(META_TRIGGER) {
-                graph
-                    .metadata
-                    .insert(META_TRIGGER.into(), "merge_request".into());
-            }
-
-            // Job-level variables
-            let job_secrets = process_variables(job_map.get("variables"), &mut graph, job_name);
-
-            // Job-level explicit secrets: (Vault, AWS Secrets Manager, GCP, Azure)
-            let explicit_secrets =
-                process_explicit_secrets(job_map.get("secrets"), job_name, &mut graph);
-
-            // Job-level OIDC tokens (id_tokens:)
-            let oidc_identities = process_id_tokens(job_map.get("id_tokens"), job_name, &mut graph);
-
-            // Job image (falls back to global)
-            let job_image_str = job_map
-                .get("image")
-                .and_then(extract_image_str)
-                .or(global_image.as_deref().map(String::from));
-
-            let image_id = job_image_str.as_deref().map(|img| {
-                let pinned = is_docker_digest_pinned(img);
-                let trust_zone = if pinned {
-                    TrustZone::ThirdParty
+                GapKind::Expression,
+                if first_doc_was_spec_header {
+                    "file contains GitLab spec: header plus executable config document — analyzed the executable document and preserved spec: as an unresolved header".to_string()
                 } else {
-                    TrustZone::Untrusted
-                };
-                let mut imeta = HashMap::new();
-                if let Some(digest) = img.split("@sha256:").nth(1) {
-                    imeta.insert(META_DIGEST.into(), format!("sha256:{digest}"));
-                }
-                graph.add_node_with_metadata(NodeKind::Image, img, trust_zone, imeta)
-            });
-
-            // Services (each is an Image node)
-            let service_ids = process_services(job_map.get("services"), &mut graph);
-
-            // Environment — record name as metadata, sets trust boundary marker
-            let env_name = job_map
-                .get("environment")
-                .and_then(extract_environment_name);
-            let env_url = job_map.get("environment").and_then(extract_environment_url);
-
-            // Concatenated script body (before_script + script + after_script).
-            // Stamped on the Step node so script-aware rules (notably
-            // `untrusted_ci_var_in_shell_interpolation` and
-            // `ci_job_token_to_external_api`) can pattern-match without
-            // re-walking the YAML.
-            // Inline script body — concatenate before_script, script, after_script
-            // (each may be a string or a list-of-strings). Stamped on the Step so
-            // script-aware rules can pattern-match without re-parsing YAML.
-            let script_body = extract_script_body(job_map);
-
-            // GitLab `artifacts.reports.dotenv: <file>` — when set, the file's
-            // KEY=value lines are silently promoted to pipeline variables for
-            // any downstream job that consumes this one via `needs:` /
-            // `dependencies:`. Required input to
-            // `dotenv_artifact_flows_to_privileged_deployment`.
-            let dotenv_file = extract_dotenv_file(job_map);
-
-            // Upstream job names consumed via `needs:` / `dependencies:`.
-            // Used to build dotenv-flow chains across stages.
-            let needs = extract_needs(job_map);
-
-            // Detect whether this job's `rules:` / `only:` clause restricts
-            // execution to protected branches (or to the default branch,
-            // which is protected by GitLab default policy). Used by the
-            // `gitlab_deploy_job_missing_protected_branch_only` rule to
-            // detect deployment jobs that lack any branch guard.
-            let protected_only = job_has_protected_branch_restriction(job_map);
-
-            // Create the Step node for this job
-            let mut step_meta = HashMap::new();
-            step_meta.insert(META_JOB_NAME.into(), job_name.to_string());
-            if let Some(ref env) = env_name {
-                step_meta.insert(META_ENVIRONMENT_NAME.into(), env.clone());
-            }
-            if !script_body.is_empty() {
-                step_meta.insert(META_SCRIPT_BODY.into(), script_body);
-            }
-            if let Some(ref f) = dotenv_file {
-                step_meta.insert(META_DOTENV_FILE.into(), f.clone());
-            }
-            if !needs.is_empty() {
-                step_meta.insert(META_NEEDS.into(), needs.join(","));
-            }
-            if let Some(ref url) = env_url {
-                step_meta.insert(META_ENVIRONMENT_URL.into(), url.clone());
-            }
-            // Per-step MR trigger marker — graph-level META_TRIGGER applies to
-            // the file as a whole, but `id_token_audience_overscoped` needs to
-            // compare audience usage between MR-context and protected-context
-            // jobs in the same file.
-            if job_triggers_mr {
-                step_meta.insert(META_TRIGGER.into(), "merge_request".into());
-            }
-            // extends: list (comma-joined, in source order)
-            if !extends_names.is_empty() {
-                step_meta.insert(META_GITLAB_EXTENDS.into(), extends_names.join(","));
-            }
-            // allow_failure: true|false (only stamp when explicitly set so the
-            // rule can distinguish "absent" from "false")
-            if let Some(af) = job_map.get("allow_failure").and_then(|v| v.as_bool()) {
-                step_meta.insert(META_GITLAB_ALLOW_FAILURE.into(), af.to_string());
-            } else if job_map
-                .get("allow_failure")
-                .and_then(|v| v.as_mapping())
-                .is_some()
-            {
-                // `allow_failure: { exit_codes: [42] }` — conditional pass; treat
-                // as truthy for silent-skip detection.
-                step_meta.insert(META_GITLAB_ALLOW_FAILURE.into(), "true".into());
-            }
-            // dind sidecar detection: any service whose name matches docker:*-dind
-            if job_services_have_dind(job_map.get("services")) {
-                step_meta.insert(META_GITLAB_DIND_SERVICE.into(), "true".into());
-            }
-            // trigger: block — child / downstream pipeline
-            if let Some(kind) = classify_trigger(job_map.get("trigger")) {
-                step_meta.insert(META_GITLAB_TRIGGER_KIND.into(), kind.into());
-            }
-            // cache: structural capture (key + policy)
-            if let Some((cache_key, cache_policy)) = extract_cache_key_policy(job_map.get("cache"))
-            {
-                step_meta.insert(META_GITLAB_CACHE_KEY.into(), cache_key);
-                if let Some(p) = cache_policy {
-                    step_meta.insert(META_GITLAB_CACHE_POLICY.into(), p);
-                }
-            }
-            if protected_only {
-                step_meta.insert(META_RULES_PROTECTED_ONLY.into(), "true".into());
-            }
-            let step_id = graph.add_node_with_metadata(
-                NodeKind::Step,
-                job_name,
-                TrustZone::FirstParty,
-                step_meta,
-            );
-
-            // CI_JOB_TOKEN always available to every step
-            graph.add_edge(step_id, token_id, EdgeKind::HasAccessTo);
-
-            // Link all secrets
-            for &sid in global_secrets
-                .iter()
-                .chain(&job_secrets)
-                .chain(&explicit_secrets)
-            {
-                graph.add_edge(step_id, sid, EdgeKind::HasAccessTo);
-            }
-
-            // Link OIDC identities
-            for &iid in &oidc_identities {
-                graph.add_edge(step_id, iid, EdgeKind::HasAccessTo);
-            }
-
-            // UsesImage edges
-            if let Some(img_id) = image_id {
-                graph.add_edge(step_id, img_id, EdgeKind::UsesImage);
-            }
-            for &svc_id in &service_ids {
-                graph.add_edge(step_id, svc_id, EdgeKind::UsesImage);
-            }
-        }
-
-        // Cross-platform misclassification trap (red-team R2 #5): a YAML file
-        // with non-reserved top-level keys looks like a GitLab pipeline shape
-        // but its body may use constructs the GitLab parser doesn't recognise
-        // (e.g. an ADO `task:` payload). Mark Partial when the source had at
-        // least one job-shaped top-level key but we ended up with no Step
-        // nodes — better than silently returning completeness=complete on a
-        // clean-but-empty graph that a CI gate would treat as "passed".
-        let step_count = graph
-            .nodes
-            .iter()
-            .filter(|n| n.kind == NodeKind::Step)
-            .count();
-        let had_job_carrier = mapping.iter().any(|(k, v)| {
-            k.as_str()
-                .map(|name| !RESERVED.contains(&name) && !name.starts_with('.'))
-                .unwrap_or(false)
-                && v.as_mapping().is_some()
-        });
-        if step_count == 0 && had_job_carrier {
-            graph.mark_partial(
-                GapKind::Opaque,
-                "non-reserved top-level keys parsed but produced 0 step nodes — possible non-GitLab YAML wrong-platform-classified".to_string(),
+                    "file contains multiple YAML documents (--- separator) — only the first was analyzed".to_string()
+                },
             );
         }
-
-        graph.stamp_edge_authority_summaries();
+        if let Some(note) = duplicate_recovery_note {
+            graph.mark_partial(GapKind::Structural, note);
+        }
         Ok(graph)
     }
 }
 
+fn parse_gitlab_yaml_value(content: &str) -> Result<(Value, bool, bool), serde_yaml::Error> {
+    let mut de = serde_yaml::Deserializer::from_str(content);
+    let Some(doc) = de.next() else {
+        return Ok((Value::Null, false, false));
+    };
+    let first = Value::deserialize(doc)?;
+    let Some(second_doc) = de.next() else {
+        return Ok((first, false, false));
+    };
+    if gitlab_doc_is_spec_header(&first) {
+        return Ok((Value::deserialize(second_doc)?, true, true));
+    }
+    Ok((first, true, false))
+}
+
+fn gitlab_doc_is_spec_header(doc: &Value) -> bool {
+    let Some(map) = doc.as_mapping() else {
+        return false;
+    };
+    map.contains_key("spec")
+}
+
+fn is_duplicate_key_parse_error(error: &serde_yaml::Error) -> bool {
+    error.to_string().contains("duplicate entry with key")
+}
+
+fn sanitize_duplicate_mapping_keys(content: &str) -> String {
+    #[derive(Default)]
+    struct Frame {
+        indent: usize,
+        keys: HashSet<String>,
+    }
+
+    let mut out = Vec::new();
+    let mut frames: Vec<Frame> = Vec::new();
+    let mut duplicate_counts: HashMap<(usize, String), usize> = HashMap::new();
+    let mut block_scalar_indent: Option<usize> = None;
+
+    for line in content.lines() {
+        let indent = line.chars().take_while(|c| *c == ' ').count();
+        let trimmed = &line[indent..];
+
+        if let Some(block_indent) = block_scalar_indent {
+            if !trimmed.is_empty() && indent <= block_indent {
+                block_scalar_indent = None;
+            } else {
+                out.push(line.to_string());
+                continue;
+            }
+        }
+
+        if trimmed.is_empty() || trimmed.starts_with('#') {
+            out.push(line.to_string());
+            continue;
+        }
+
+        let (key_indent, key_start, key_end, key) = match yaml_mapping_key_span(line, indent) {
+            Some(parts) => parts,
+            None => {
+                out.push(line.to_string());
+                continue;
+            }
+        };
+
+        while frames.last().is_some_and(|frame| frame.indent > key_indent) {
+            frames.pop();
+        }
+        if !frames.iter().any(|frame| frame.indent == key_indent) {
+            frames.push(Frame {
+                indent: key_indent,
+                keys: HashSet::new(),
+            });
+        }
+        let frame = frames
+            .iter_mut()
+            .rev()
+            .find(|frame| frame.indent == key_indent)
+            .expect("frame inserted above");
+
+        if frame.keys.insert(key.clone()) {
+            out.push(line.to_string());
+        } else {
+            let count = duplicate_counts
+                .entry((key_indent, key.clone()))
+                .and_modify(|n| *n += 1)
+                .or_insert(2);
+            let replacement = format!(
+                "__taudit_duplicate_{}_{}",
+                sanitize_key_fragment(&key),
+                count
+            );
+            let mut rewritten = String::with_capacity(line.len() + replacement.len());
+            rewritten.push_str(&line[..key_start]);
+            rewritten.push_str(&replacement);
+            rewritten.push_str(&line[key_end..]);
+            out.push(rewritten);
+        }
+
+        let value_tail = line[key_end..].trim_start();
+        if value_tail.starts_with(": |") || value_tail.starts_with(": >") {
+            block_scalar_indent = Some(key_indent);
+        }
+    }
+
+    let mut sanitized = out.join("\n");
+    if content.ends_with('\n') {
+        sanitized.push('\n');
+    }
+    sanitized
+}
+
+fn yaml_mapping_key_span(line: &str, indent: usize) -> Option<(usize, usize, usize, String)> {
+    let trimmed = &line[indent..];
+    if trimmed.starts_with('#') {
+        return None;
+    }
+
+    let mut key_indent = indent;
+    let mut key_start = indent;
+    let key_text = if let Some(rest) = trimmed.strip_prefix("- ") {
+        key_indent = indent + 2;
+        key_start = indent + 2;
+        rest
+    } else {
+        trimmed
+    };
+
+    let mut in_single = false;
+    let mut in_double = false;
+    let mut bracket_depth = 0i32;
+    let mut prev = '\0';
+    for (offset, ch) in key_text.char_indices() {
+        match ch {
+            '\'' if !in_double => in_single = !in_single,
+            '"' if !in_single && prev != '\\' => in_double = !in_double,
+            '[' | '{' if !in_single && !in_double => bracket_depth += 1,
+            ']' | '}' if !in_single && !in_double => bracket_depth -= 1,
+            ':' if !in_single && !in_double && bracket_depth == 0 => {
+                let after = key_text[offset + ch.len_utf8()..].chars().next();
+                if after.is_some_and(|c| !c.is_whitespace()) {
+                    prev = ch;
+                    continue;
+                }
+                let raw = &key_text[..offset];
+                let key = raw.trim();
+                if key.is_empty() {
+                    return None;
+                }
+                let leading = raw.len() - raw.trim_start().len();
+                let trailing = raw.trim_end().len();
+                let start = key_start + leading;
+                let end = key_start + trailing;
+                return Some((key_indent, start, end, key.to_string()));
+            }
+            _ => {}
+        }
+        prev = ch;
+    }
+    None
+}
+
+fn sanitize_key_fragment(key: &str) -> String {
+    let mut out = String::new();
+    for c in key.chars() {
+        if c.is_ascii_alphanumeric() {
+            out.push(c.to_ascii_lowercase());
+        } else {
+            out.push('_');
+        }
+    }
+    while out.contains("__") {
+        out = out.replace("__", "_");
+    }
+    out.trim_matches('_').chars().take(48).collect::<String>()
+}
+
+fn build_graph_from_root(
+    root: Value,
+    source: &PipelineSource,
+) -> Result<AuthorityGraph, TauditError> {
+    let mapping = root
+        .as_mapping()
+        .ok_or_else(|| TauditError::Parse("GitLab CI root must be a mapping".into()))?;
+
+    let mut graph = AuthorityGraph::new(source.clone());
+    graph.metadata.insert(META_PLATFORM.into(), "gitlab".into());
+
+    // CI_JOB_TOKEN is always present in every GitLab CI job — it's the built-in
+    // platform token, equivalent to ADO's System.AccessToken or GHA's GITHUB_TOKEN.
+    let mut meta = HashMap::new();
+    meta.insert(META_IDENTITY_SCOPE.into(), "broad".into());
+    meta.insert(META_IMPLICIT.into(), "true".into());
+    let token_id = graph.add_node_with_metadata(
+        NodeKind::Identity,
+        "CI_JOB_TOKEN",
+        TrustZone::FirstParty,
+        meta,
+    );
+
+    // Top-level include: → mark Partial immediately AND capture each
+    // entry's structure as graph metadata so include-pinning rules can
+    // reason about remote URLs and unpinned project refs.
+    if let Some(inc) = mapping.get("include") {
+        graph.mark_partial(
+            GapKind::Structural,
+            "include: directive present — included templates not resolved".to_string(),
+        );
+        let entries = extract_include_entries(inc);
+        if !entries.is_empty() {
+            if let Ok(json) = serde_json::to_string(&entries) {
+                graph.metadata.insert(META_GITLAB_INCLUDES.into(), json);
+            }
+        }
+    }
+
+    // Global variables
+    let global_secrets = process_variables(mapping.get("variables"), &mut graph, "pipeline");
+
+    // Global image
+    let global_image = mapping.get("image").and_then(extract_image_str);
+
+    // Top-level merge_request trigger detection from `workflow:` rules
+    if let Some(wf) = mapping.get("workflow") {
+        if has_mr_trigger_in_workflow(wf) {
+            graph
+                .metadata
+                .insert(META_TRIGGER.into(), "merge_request".into());
+        }
+    }
+
+    // Process each job (any top-level key not in RESERVED)
+    // determinism: sort by key — same YAML must produce same NodeId order
+    let mut top_level_entries: Vec<(&Value, &Value)> = mapping.iter().collect();
+    top_level_entries.sort_by(|a, b| a.0.as_str().unwrap_or("").cmp(b.0.as_str().unwrap_or("")));
+    for (key, value) in top_level_entries {
+        let job_name = match key.as_str() {
+            Some(k) => k,
+            None => continue,
+        };
+        if RESERVED.contains(&job_name) {
+            continue;
+        }
+
+        // Hidden jobs (starting with a dot) are templates — mark Partial, skip
+        if job_name.starts_with('.') {
+            graph.mark_partial(
+                GapKind::Structural,
+                format!("job '{job_name}' is a hidden/template job — not resolved"),
+            );
+            continue;
+        }
+
+        let job_map = match value.as_mapping() {
+            Some(m) => m,
+            None => continue,
+        };
+
+        // extends: — job template inheritance, can't resolve statically
+        let extends_names = extract_extends_list(job_map.get("extends"));
+        if !extends_names.is_empty() {
+            graph.mark_partial(
+                GapKind::Structural,
+                format!("job '{job_name}' uses extends: — inherited configuration not resolved"),
+            );
+        }
+
+        // Detect PR/MR trigger in this job's rules: or only:
+        let job_triggers_mr = job_has_mr_trigger(job_map);
+
+        // Propagate job MR trigger to graph level
+        if job_triggers_mr && !graph.metadata.contains_key(META_TRIGGER) {
+            graph
+                .metadata
+                .insert(META_TRIGGER.into(), "merge_request".into());
+        }
+
+        // Job-level variables
+        let job_secrets = process_variables(job_map.get("variables"), &mut graph, job_name);
+
+        // Job-level explicit secrets: (Vault, AWS Secrets Manager, GCP, Azure)
+        let explicit_secrets =
+            process_explicit_secrets(job_map.get("secrets"), job_name, &mut graph);
+
+        // Job-level OIDC tokens (id_tokens:)
+        let oidc_identities = process_id_tokens(job_map.get("id_tokens"), job_name, &mut graph);
+
+        // Job image (falls back to global)
+        let job_image_str = job_map
+            .get("image")
+            .and_then(extract_image_str)
+            .or(global_image.as_deref().map(String::from));
+
+        let image_id = job_image_str.as_deref().map(|img| {
+            let pinned = is_docker_digest_pinned(img);
+            let trust_zone = if pinned {
+                TrustZone::ThirdParty
+            } else {
+                TrustZone::Untrusted
+            };
+            let mut imeta = HashMap::new();
+            if let Some(digest) = img.split("@sha256:").nth(1) {
+                imeta.insert(META_DIGEST.into(), format!("sha256:{digest}"));
+            }
+            graph.add_node_with_metadata(NodeKind::Image, img, trust_zone, imeta)
+        });
+
+        // Services (each is an Image node)
+        let service_ids = process_services(job_map.get("services"), &mut graph);
+
+        // Environment — record name as metadata, sets trust boundary marker
+        let env_name = job_map
+            .get("environment")
+            .and_then(extract_environment_name);
+        let env_url = job_map.get("environment").and_then(extract_environment_url);
+
+        // Concatenated script body (before_script + script + after_script).
+        // Stamped on the Step node so script-aware rules (notably
+        // `untrusted_ci_var_in_shell_interpolation` and
+        // `ci_job_token_to_external_api`) can pattern-match without
+        // re-walking the YAML.
+        // Inline script body — concatenate before_script, script, after_script
+        // (each may be a string or a list-of-strings). Stamped on the Step so
+        // script-aware rules can pattern-match without re-parsing YAML.
+        let script_body = extract_script_body(job_map);
+
+        // GitLab `artifacts.reports.dotenv: <file>` — when set, the file's
+        // KEY=value lines are silently promoted to pipeline variables for
+        // any downstream job that consumes this one via `needs:` /
+        // `dependencies:`. Required input to
+        // `dotenv_artifact_flows_to_privileged_deployment`.
+        let dotenv_file = extract_dotenv_file(job_map);
+
+        // Upstream job names consumed via `needs:` / `dependencies:`.
+        // Used to build dotenv-flow chains across stages.
+        let needs = extract_needs(job_map);
+
+        // Detect whether this job's `rules:` / `only:` clause restricts
+        // execution to protected branches (or to the default branch,
+        // which is protected by GitLab default policy). Used by the
+        // `gitlab_deploy_job_missing_protected_branch_only` rule to
+        // detect deployment jobs that lack any branch guard.
+        let protected_only = job_has_protected_branch_restriction(job_map);
+
+        // Create the Step node for this job
+        let mut step_meta = HashMap::new();
+        step_meta.insert(META_JOB_NAME.into(), job_name.to_string());
+        if let Some(ref env) = env_name {
+            step_meta.insert(META_ENVIRONMENT_NAME.into(), env.clone());
+        }
+        if !script_body.is_empty() {
+            step_meta.insert(META_SCRIPT_BODY.into(), script_body);
+        }
+        if let Some(ref f) = dotenv_file {
+            step_meta.insert(META_DOTENV_FILE.into(), f.clone());
+        }
+        if !needs.is_empty() {
+            step_meta.insert(META_NEEDS.into(), needs.join(","));
+        }
+        if let Some(ref url) = env_url {
+            step_meta.insert(META_ENVIRONMENT_URL.into(), url.clone());
+        }
+        // Per-step MR trigger marker — graph-level META_TRIGGER applies to
+        // the file as a whole, but `id_token_audience_overscoped` needs to
+        // compare audience usage between MR-context and protected-context
+        // jobs in the same file.
+        if job_triggers_mr {
+            step_meta.insert(META_TRIGGER.into(), "merge_request".into());
+        }
+        // extends: list (comma-joined, in source order)
+        if !extends_names.is_empty() {
+            step_meta.insert(META_GITLAB_EXTENDS.into(), extends_names.join(","));
+        }
+        // allow_failure: true|false (only stamp when explicitly set so the
+        // rule can distinguish "absent" from "false")
+        if let Some(af) = job_map.get("allow_failure").and_then(|v| v.as_bool()) {
+            step_meta.insert(META_GITLAB_ALLOW_FAILURE.into(), af.to_string());
+        } else if job_map
+            .get("allow_failure")
+            .and_then(|v| v.as_mapping())
+            .is_some()
+        {
+            // `allow_failure: { exit_codes: [42] }` — conditional pass; treat
+            // as truthy for silent-skip detection.
+            step_meta.insert(META_GITLAB_ALLOW_FAILURE.into(), "true".into());
+        }
+        // dind sidecar detection: any service whose name matches docker:*-dind
+        if job_services_have_dind(job_map.get("services")) {
+            step_meta.insert(META_GITLAB_DIND_SERVICE.into(), "true".into());
+        }
+        // trigger: block — child / downstream pipeline
+        if let Some(kind) = classify_trigger(job_map.get("trigger")) {
+            step_meta.insert(META_GITLAB_TRIGGER_KIND.into(), kind.into());
+        }
+        // cache: structural capture (key + policy)
+        if let Some((cache_key, cache_policy)) = extract_cache_key_policy(job_map.get("cache")) {
+            step_meta.insert(META_GITLAB_CACHE_KEY.into(), cache_key);
+            if let Some(p) = cache_policy {
+                step_meta.insert(META_GITLAB_CACHE_POLICY.into(), p);
+            }
+        }
+        if protected_only {
+            step_meta.insert(META_RULES_PROTECTED_ONLY.into(), "true".into());
+        }
+        let step_id = graph.add_node_with_metadata(
+            NodeKind::Step,
+            job_name,
+            TrustZone::FirstParty,
+            step_meta,
+        );
+
+        // CI_JOB_TOKEN always available to every step
+        graph.add_edge(step_id, token_id, EdgeKind::HasAccessTo);
+
+        // Link all secrets
+        for &sid in global_secrets
+            .iter()
+            .chain(&job_secrets)
+            .chain(&explicit_secrets)
+        {
+            graph.add_edge(step_id, sid, EdgeKind::HasAccessTo);
+        }
+
+        // Link OIDC identities
+        for &iid in &oidc_identities {
+            graph.add_edge(step_id, iid, EdgeKind::HasAccessTo);
+        }
+
+        // UsesImage edges
+        if let Some(img_id) = image_id {
+            graph.add_edge(step_id, img_id, EdgeKind::UsesImage);
+        }
+        for &svc_id in &service_ids {
+            graph.add_edge(step_id, svc_id, EdgeKind::UsesImage);
+        }
+    }
+
+    // Cross-platform misclassification trap (red-team R2 #5): a YAML file
+    // with non-reserved top-level keys looks like a GitLab pipeline shape
+    // but its body may use constructs the GitLab parser doesn't recognise
+    // (e.g. an ADO `task:` payload). Mark Partial when the source had at
+    // least one job-shaped top-level key but we ended up with no Step
+    // nodes — better than silently returning completeness=complete on a
+    // clean-but-empty graph that a CI gate would treat as "passed".
+    let step_count = graph
+        .nodes
+        .iter()
+        .filter(|n| n.kind == NodeKind::Step)
+        .count();
+    let had_job_carrier = mapping.iter().any(|(k, v)| {
+        k.as_str()
+            .map(|name| !RESERVED.contains(&name) && !name.starts_with('.'))
+            .unwrap_or(false)
+            && v.as_mapping().is_some()
+    });
+    if step_count == 0 && had_job_carrier {
+        graph.mark_partial(
+                GapKind::Opaque,
+                "non-reserved top-level keys parsed but produced 0 step nodes — possible non-GitLab YAML wrong-platform-classified".to_string(),
+            );
+    }
+
+    graph.stamp_edge_authority_summaries();
+    Ok(graph)
+}
 /// Detect `image:` string from a YAML value — can be a bare string or a mapping with `name:`.
 fn extract_image_str(v: &Value) -> Option<String> {
     match v {

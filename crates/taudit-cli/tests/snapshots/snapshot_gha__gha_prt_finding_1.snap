@@ -12,3 +12,11 @@ recommendation:
   action: "Use `persist-credentials: false` and avoid reading workspace files in subsequent privileged steps. Consider `checkout: none` for jobs that only need pipeline config, not source code."
 source: built-in
 time_to_fix: medium
+confidence_scope: yaml_only
+runtime_preconditions:
+  - the authority shown in the graph is available to that run
+  - untrusted PR or fork-controlled input can reach this workflow at runtime
+attacker_surface_kinds:
+  - untrusted_checkout
+  - untrusted_step
+cve_relationship: same_authority_shape

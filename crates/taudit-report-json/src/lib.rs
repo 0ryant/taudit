@@ -1,6 +1,10 @@
 use taudit_core::error::TauditError;
 use taudit_core::finding::{compute_finding_group_id, compute_fingerprint, rule_id_for, Finding};
-use taudit_core::graph::{AuthorityCompleteness, AuthorityGraph, GapKind};
+use taudit_core::graph::{
+    is_docker_digest_pinned, is_pin_semantically_valid, AuthorityCompleteness, AuthorityGraph,
+    EdgeKind, GapKind, NodeKind, META_CONTAINER, META_OIDC, META_SERVICE_CONNECTION,
+    META_SERVICE_CONNECTION_NAME, META_VARIABLE_GROUP,
+};
 use taudit_core::ports::ReportSink;
 
 use serde::Serialize;
@@ -110,6 +114,100 @@ pub struct Summary {
     /// with `AuthorityGraph.completeness_gaps`. Omitted when empty.
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub completeness_gaps: Vec<CompletenessGap>,
+    /// Compact graph-density rollup for report authors and triage systems.
+    /// This is not a finding; it describes how much authority-bearing surface
+    /// the graph exposed so large workflows can be discussed without relying
+    /// on raw finding count alone.
+    #[serde(skip_serializing_if = "GraphRiskSummary::is_empty")]
+    pub graph_risk_summary: GraphRiskSummary,
+}
+
+/// High-signal graph-density metrics used by reports and dashboards.
+#[derive(Serialize, Default)]
+pub struct GraphRiskSummary {
+    pub authority_roots: usize,
+    pub untrusted_sinks: usize,
+    pub mutable_refs: usize,
+    pub publication_adjacent_sinks: usize,
+    pub delegation_hops: usize,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub protected_resource_categories: Vec<String>,
+}
+
+impl GraphRiskSummary {
+    fn is_empty(&self) -> bool {
+        self.authority_roots == 0
+            && self.untrusted_sinks == 0
+            && self.mutable_refs == 0
+            && self.publication_adjacent_sinks == 0
+            && self.delegation_hops == 0
+            && self.protected_resource_categories.is_empty()
+    }
+}
+
+fn graph_risk_summary(graph: &AuthorityGraph) -> GraphRiskSummary {
+    let mut protected = std::collections::BTreeSet::<String>::new();
+    let mut summary = GraphRiskSummary::default();
+
+    for node in &graph.nodes {
+        match node.kind {
+            NodeKind::Secret | NodeKind::Identity => {
+                summary.authority_roots += 1;
+            }
+            _ => {}
+        }
+
+        if node.trust_zone == taudit_core::graph::TrustZone::Untrusted {
+            summary.untrusted_sinks += 1;
+        }
+
+        if node.kind == NodeKind::Image
+            && !node
+                .metadata
+                .get(META_CONTAINER)
+                .map(|v| v == "true")
+                .unwrap_or(false)
+            && !is_pin_semantically_valid(&node.name)
+            && !is_docker_digest_pinned(&node.name)
+        {
+            summary.mutable_refs += 1;
+        }
+
+        let lower = node.name.to_ascii_lowercase();
+        if node.kind == NodeKind::Step
+            && ["publish", "release", "deploy", "push", "upload"]
+                .iter()
+                .any(|needle| lower.contains(needle))
+        {
+            summary.publication_adjacent_sinks += 1;
+        }
+
+        if node.metadata.contains_key(META_VARIABLE_GROUP) {
+            protected.insert("variable_group".into());
+        }
+        if node.metadata.contains_key(META_SERVICE_CONNECTION)
+            || node.metadata.contains_key(META_SERVICE_CONNECTION_NAME)
+        {
+            protected.insert("service_connection".into());
+        }
+        if node.metadata.contains_key(META_OIDC) {
+            protected.insert("oidc_identity".into());
+        }
+        if node.kind == NodeKind::Secret {
+            protected.insert("secret".into());
+        }
+        if node.kind == NodeKind::Identity {
+            protected.insert("identity".into());
+        }
+    }
+
+    summary.delegation_hops = graph
+        .edges
+        .iter()
+        .filter(|edge| edge.kind == EdgeKind::DelegatesTo)
+        .count();
+    summary.protected_resource_categories = protected.into_iter().collect();
+    summary
 }
 
 pub struct JsonReportSink;
@@ -189,6 +287,7 @@ impl<W: std::io::Write> ReportSink<W> for JsonReportSink {
                         reason: reason.clone(),
                     })
                     .collect(),
+                graph_risk_summary: graph_risk_summary(graph),
             },
         };
 

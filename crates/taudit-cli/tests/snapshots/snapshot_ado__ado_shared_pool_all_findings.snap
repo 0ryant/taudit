@@ -12,6 +12,14 @@ expression: findings
     action: "Use `persist-credentials: false` and avoid reading workspace files in subsequent privileged steps. Consider `checkout: none` for jobs that only need pipeline config, not source code."
   source: built-in
   time_to_fix: medium
+  confidence_scope: yaml_only
+  runtime_preconditions:
+    - the authority shown in the graph is available to that run
+    - untrusted PR or fork-controlled input can reach this workflow at runtime
+  portal_control_dependency: true
+  attacker_surface_kinds:
+    - untrusted_checkout
+  cve_relationship: same_authority_shape
 - severity: high
   category: over_privileged_identity
   nodes_involved:
@@ -25,6 +33,10 @@ expression: findings
     minimum: "{ contents: read }"
   source: built-in
   time_to_fix: small
+  confidence_scope: yaml_only
+  portal_control_dependency: true
+  authority_kinds:
+    - job_token
 - severity: critical
   category: self_hosted_pool_pr_hijack
   nodes_involved:
@@ -35,6 +47,15 @@ expression: findings
     type: manual
     action: "Run PR pipelines on Microsoft-hosted (ephemeral) agents, or disable checkout:self for PR-triggered jobs on self-hosted pools"
   source: built-in
+  confidence_scope: yaml_only
+  runtime_preconditions:
+    - the authority shown in the graph is available to that run
+    - untrusted PR or fork-controlled input can reach this workflow at runtime
+  portal_control_dependency: true
+  attacker_surface_kinds:
+    - self_hosted_runner
+    - untrusted_checkout
+  cve_relationship: same_authority_shape
 - severity: high
   category: shared_self_hosted_pool_no_isolation
   nodes_involved:
@@ -44,6 +65,10 @@ expression: findings
     type: manual
     action: "Add `workspace: { clean: all }` to every job that uses a self-hosted pool, or migrate to Microsoft-hosted (ephemeral) agents for untrusted builds."
   source: built-in
+  confidence_scope: yaml_only
+  portal_control_dependency: true
+  attacker_surface_kinds:
+    - self_hosted_runner
 - severity: high
   category: trigger_context_mismatch
   nodes_involved:
@@ -58,3 +83,16 @@ expression: findings
     type: manual
     action: "Use a separate workflow triggered by workflow_run (not pull_request_target) for privileged operations, or ensure no checkout of the PR head ref occurs before secret use"
   source: built-in
+  confidence_scope: yaml_only
+  runtime_preconditions:
+    - the authority shown in the graph is available to that run
+    - untrusted PR or fork-controlled input can reach this workflow at runtime
+  portal_control_dependency: true
+  authority_kinds:
+    - credential_named_variable
+    - job_token
+    - secret
+  attacker_surface_kinds:
+    - script_sink
+    - untrusted_checkout
+  cve_relationship: same_authority_shape

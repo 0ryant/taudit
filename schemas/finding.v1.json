@@ -84,6 +84,40 @@
     "suppression_reason": {
       "type": "string",
       "description": "Operator-supplied justification from the matching `.taudit-suppressions.yml` entry. Optional."
+    },
+    "confidence_scope": {
+      "type": "string",
+      "enum": ["yaml_only"],
+      "description": "Evidence boundary for the finding. `yaml_only` means taudit proved the static authority shape in the scanned YAML artifact; runtime/provider settings may still affect exploitability."
+    },
+    "runtime_preconditions": {
+      "type": "array",
+      "items": { "type": "string" },
+      "description": "Runtime or provider-side assumptions to verify before treating the static finding as live exploitability."
+    },
+    "portal_control_dependency": {
+      "type": "boolean",
+      "description": "True when exploitability materially depends on provider-side controls outside YAML, such as Azure DevOps service-connection authorization or GitHub repository settings."
+    },
+    "authority_kinds": {
+      "type": "array",
+      "items": { "type": "string" },
+      "description": "Coarse authority types involved in the finding, such as job_token, oidc_identity, service_connection, variable_group, secret, artifact, or image."
+    },
+    "attacker_surface_kinds": {
+      "type": "array",
+      "items": { "type": "string" },
+      "description": "Coarse attacker-influenced surfaces involved in the finding, such as untrusted_checkout, script_sink, mutable_dependency_ref, reusable_workflow_boundary, or self_hosted_runner."
+    },
+    "template_resolution_strength": {
+      "type": "string",
+      "enum": ["resolved", "partial", "opaque", "not_applicable"],
+      "description": "Resolution strength for reusable workflow/template delegation findings."
+    },
+    "cve_relationship": {
+      "type": "string",
+      "enum": ["same_primitive", "same_authority_shape", "analogue_only", "not_applicable"],
+      "description": "Relationship between this finding and any cited public CVE/advisory class."
     }
   },
   "$defs": {

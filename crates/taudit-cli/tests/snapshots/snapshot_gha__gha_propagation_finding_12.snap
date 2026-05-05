@@ -1,0 +1,20 @@
+---
+source: crates/taudit-cli/tests/snapshot_gha.rs
+expression: finding
+---
+severity: critical
+category: untrusted_with_authority
+nodes_involved:
+  - 11
+  - 12
+message: "Untrusted step 'publish[1]' has direct access to secret 'PUBLISH_API_KEY'"
+recommendation:
+  type: cellos_remediation
+  reason: "Untrusted step 'publish[1]' has direct access to secret 'PUBLISH_API_KEY'"
+  spec_hint: "cellos run --network deny-all --broker env:PUBLISH_API_KEY"
+source: built-in
+confidence_scope: yaml_only
+authority_kinds:
+  - credential_named_variable
+attacker_surface_kinds:
+  - untrusted_step

@@ -13,3 +13,6 @@ recommendation:
   oidc_provider: "GitHub Actions OIDC (id-token: write)"
 source: built-in
 time_to_fix: large
+confidence_scope: yaml_only
+authority_kinds:
+  - credential_named_variable

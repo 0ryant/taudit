@@ -264,6 +264,40 @@
         "suppression_reason": {
           "type": "string",
           "description": "Operator-supplied justification from the matching `.taudit-suppressions.yml` entry. Absent when no suppression applies."
+        },
+        "confidence_scope": {
+          "type": "string",
+          "enum": ["yaml_only"],
+          "description": "Evidence boundary for the finding. `yaml_only` means taudit proved the static authority shape in the scanned YAML artifact; runtime/provider settings may still affect exploitability."
+        },
+        "runtime_preconditions": {
+          "type": "array",
+          "items": { "type": "string" },
+          "description": "Runtime or provider-side assumptions to verify before treating the static finding as live exploitability."
+        },
+        "portal_control_dependency": {
+          "type": "boolean",
+          "description": "True when exploitability materially depends on provider-side controls outside YAML, such as Azure DevOps service-connection authorization or GitHub repository settings."
+        },
+        "authority_kinds": {
+          "type": "array",
+          "items": { "type": "string" },
+          "description": "Coarse authority types involved in the finding."
+        },
+        "attacker_surface_kinds": {
+          "type": "array",
+          "items": { "type": "string" },
+          "description": "Coarse attacker-influenced surfaces involved in the finding."
+        },
+        "template_resolution_strength": {
+          "type": "string",
+          "enum": ["resolved", "partial", "opaque", "not_applicable"],
+          "description": "Resolution strength for reusable workflow/template delegation findings."
+        },
+        "cve_relationship": {
+          "type": "string",
+          "enum": ["same_primitive", "same_authority_shape", "analogue_only", "not_applicable"],
+          "description": "Relationship between this finding and any cited public CVE/advisory class."
         }
       }
     },
@@ -371,6 +405,21 @@
                 "enum": ["expression", "structural", "opaque"]
               },
               "reason": { "type": "string" }
+            }
+          }
+        },
+        "graph_risk_summary": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "authority_roots": { "type": "integer", "minimum": 0 },
+            "untrusted_sinks": { "type": "integer", "minimum": 0 },
+            "mutable_refs": { "type": "integer", "minimum": 0 },
+            "publication_adjacent_sinks": { "type": "integer", "minimum": 0 },
+            "delegation_hops": { "type": "integer", "minimum": 0 },
+            "protected_resource_categories": {
+              "type": "array",
+              "items": { "type": "string" }
             }
           }
         }

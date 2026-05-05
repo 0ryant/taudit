@@ -3,7 +3,10 @@ source: crates/taudit-cli/tests/snapshot_gha.rs
 expression: json
 ---
 findings:
-  - category: authority_propagation
+  - authority_kinds:
+      - credential_named_variable
+    category: authority_propagation
+    confidence_scope: yaml_only
     finding_group_id: 19ee4c2e-a538-5bdb-adc2-8f789fcb6206
     fingerprint: 9d041f143c8a77486348a9574b8a4298
     message: DEPLOY_TOKEN propagated to some-org/deploy-action@main across trust boundary
@@ -26,7 +29,10 @@ findings:
     rule_id: authority_propagation
     severity: critical
     source: built-in
-  - category: authority_propagation
+  - authority_kinds:
+      - oidc_identity
+    category: authority_propagation
+    confidence_scope: yaml_only
     finding_group_id: be66107e-37fd-5dbf-9330-11b1a3a4fd7b
     fingerprint: 34dfeec1b30291318a55b11421fbac7b
     message: "GITHUB_TOKEN reaches 2 sinks via authority propagation: [actions/checkout@v4, some-org/deploy-action@main]"
@@ -50,7 +56,10 @@ findings:
     rule_id: authority_propagation
     severity: critical
     source: built-in
-  - category: long_lived_credential
+  - authority_kinds:
+      - credential_named_variable
+    category: long_lived_credential
+    confidence_scope: yaml_only
     finding_group_id: 51fcc990-5084-59e3-a731-9c560c54d0ba
     fingerprint: 778504a98a278328ffbfc4ba18a0c14e
     message: "'AWS_ACCESS_KEY_ID' looks like a long-lived static credential"
@@ -64,7 +73,10 @@ findings:
     severity: low
     source: built-in
     time_to_fix: large
-  - category: long_lived_credential
+  - authority_kinds:
+      - credential_named_variable
+    category: long_lived_credential
+    confidence_scope: yaml_only
     finding_group_id: 07e0de9b-04b5-5411-9c3b-bbf91d12002a
     fingerprint: 8d56a5877d83d06dfd8503de6a61fe94
     message: "'AWS_SECRET_ACCESS_KEY' looks like a long-lived static credential"
@@ -78,7 +90,10 @@ findings:
     severity: low
     source: built-in
     time_to_fix: large
-  - category: over_privileged_identity
+  - authority_kinds:
+      - oidc_identity
+    category: over_privileged_identity
+    confidence_scope: yaml_only
     finding_group_id: 61e587be-3ab9-585f-a534-4308d9267ffa
     fingerprint: 1fbb9cf89e16b2623ad236fcace90316
     message: "GITHUB_TOKEN has broad scope (permissions: 'write-all') — likely broader than needed"
@@ -95,7 +110,29 @@ findings:
     severity: high
     source: built-in
     time_to_fix: small
-  - category: unpinned_action
+  - attacker_surface_kinds:
+      - mutable_dependency_ref
+    category: unpinned_action
+    confidence_scope: yaml_only
+    finding_group_id: 9badf00f-185f-5503-87f6-b0f950472b76
+    fingerprint: b3870c65b8f599cfdfca0db051b934b9
+    message: "[action_major_version_pin_without_sha] actions/checkout@v4 is pinned only to a mutable major tag; pin to a full commit SHA"
+    nodes_involved:
+      - 1
+    recommendation:
+      current: actions/checkout@v4
+      pinned: actions/checkout@<40-char-sha>
+      type: pin_action
+    rule_id: action_major_version_pin_without_sha
+    runtime_preconditions:
+      - "the referenced mutable branch, tag, include, or image can change independently of this repository"
+    severity: medium
+    source: built-in
+    time_to_fix: trivial
+  - attacker_surface_kinds:
+      - mutable_dependency_ref
+    category: unpinned_action
+    confidence_scope: yaml_only
     finding_group_id: f4ab4e0a-cd93-56c6-a534-12aec7befcff
     fingerprint: 31ceeca3145a97625dfd847a040bbc26
     message: actions/checkout@v4 is not pinned to a SHA digest
@@ -106,10 +143,15 @@ findings:
       pinned: actions/checkout@<sha256-digest>
       type: pin_action
     rule_id: unpinned_action
+    runtime_preconditions:
+      - "the referenced mutable branch, tag, include, or image can change independently of this repository"
     severity: medium
     source: built-in
     time_to_fix: trivial
-  - category: unpinned_action
+  - attacker_surface_kinds:
+      - mutable_dependency_ref
+    category: unpinned_action
+    confidence_scope: yaml_only
     finding_group_id: aaddbe52-28d1-5412-8441-5d9ae95ecf85
     fingerprint: 15293f46f1061fc8b1d4c710dca0aa52
     message: some-org/deploy-action@main is not pinned to a SHA digest
@@ -120,10 +162,18 @@ findings:
       pinned: some-org/deploy-action@<sha256-digest>
       type: pin_action
     rule_id: unpinned_action
+    runtime_preconditions:
+      - "the referenced mutable branch, tag, include, or image can change independently of this repository"
     severity: high
     source: built-in
     time_to_fix: trivial
-  - category: untrusted_with_authority
+  - attacker_surface_kinds:
+      - untrusted_checkout
+      - untrusted_step
+    authority_kinds:
+      - oidc_identity
+    category: untrusted_with_authority
+    confidence_scope: yaml_only
     finding_group_id: 8134004c-cfe9-54e3-8ac4-1099db4b20dc
     fingerprint: 4cc63211c9299f9f5965da1d71e83023
     message: "Untrusted step 'build[0]' has direct access to identity 'GITHUB_TOKEN'"
@@ -137,7 +187,12 @@ findings:
     rule_id: untrusted_with_authority
     severity: critical
     source: built-in
-  - category: untrusted_with_authority
+  - attacker_surface_kinds:
+      - untrusted_step
+    authority_kinds:
+      - oidc_identity
+    category: untrusted_with_authority
+    confidence_scope: yaml_only
     finding_group_id: 26a1ad7d-a283-5a77-9c6c-f33833a25f7c
     fingerprint: b3aac2a7d760a06fdde4c9231697db3d
     message: "Untrusted step 'deploy[0]' has direct access to identity 'GITHUB_TOKEN'"
@@ -151,7 +206,12 @@ findings:
     rule_id: untrusted_with_authority
     severity: critical
     source: built-in
-  - category: untrusted_with_authority
+  - attacker_surface_kinds:
+      - untrusted_step
+    authority_kinds:
+      - credential_named_variable
+    category: untrusted_with_authority
+    confidence_scope: yaml_only
     finding_group_id: 5bb4e538-2f11-5dc2-949f-da1d8b6a37e2
     fingerprint: ccaf29551b139fb5d5c271a9c47d62de
     message: "Untrusted step 'deploy[0]' has direct access to secret 'DEPLOY_TOKEN'"
@@ -165,7 +225,14 @@ findings:
     rule_id: untrusted_with_authority
     severity: critical
     source: built-in
-  - category: uplift_without_attestation
+  - attacker_surface_kinds:
+      - script_sink
+      - untrusted_checkout
+      - untrusted_step
+    authority_kinds:
+      - oidc_identity
+    category: uplift_without_attestation
+    confidence_scope: yaml_only
     finding_group_id: bb6d77e7-d049-593d-8e10-f5d12d9b7b20
     fingerprint: 72c99cb062f0e9061b7bd3063a3387ca
     message: 3 step(s) use OIDC/federated identity but no provenance attestation step was detected — artifact integrity cannot be verified
@@ -178,6 +245,9 @@ findings:
       action: "Add 'actions/attest-build-provenance' after your build step (GHA) to provide SLSA provenance. See https://docs.github.com/en/actions/security-guides/using-artifact-attestations"
       type: manual
     rule_id: uplift_without_attestation
+    runtime_preconditions:
+      - downstream identity provider accepts the issued OIDC token
+      - the configured audience or cloud role grants useful authority
     severity: info
     source: built-in
 graph:
@@ -301,10 +371,20 @@ schema_version: 1.0.0
 summary:
   completeness: complete
   critical: 5
+  graph_risk_summary:
+    authority_roots: 5
+    delegation_hops: 0
+    mutable_refs: 2
+    protected_resource_categories:
+      - identity
+      - oidc_identity
+      - secret
+    publication_adjacent_sinks: 1
+    untrusted_sinks: 4
   high: 2
   info: 1
   low: 2
-  medium: 1
+  medium: 2
   total_edges: 9
-  total_findings: 11
+  total_findings: 12
   total_nodes: 10

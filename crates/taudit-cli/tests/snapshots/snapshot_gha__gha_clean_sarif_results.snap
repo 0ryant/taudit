@@ -14,6 +14,9 @@ expression: results
     primaryLocationLineHash: 2c001aeeb933afb192cc1af87babdff9
     taudit/v1: 2c001aeeb933afb192cc1af87babdff9
   properties:
+    authorityKinds:
+      - job_token
+    confidenceScope: yaml_only
     findingGroupId: 58af3d8a-8e02-5d29-8a35-013ac5b8ddc2
     security-severity: "5.0"
     taudit-source: built-in

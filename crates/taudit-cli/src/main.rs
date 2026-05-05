@@ -14,6 +14,7 @@ use taudit_core::propagation::DEFAULT_MAX_HOPS;
 use taudit_core::rules;
 use taudit_core::summary;
 use taudit_parse_ado::AdoParser;
+use taudit_parse_bitbucket::BitbucketParser;
 use taudit_parse_gha::GhaParser;
 use taudit_parse_gitlab::GitlabParser;
 use taudit_report_json::JsonReportSink;
@@ -969,6 +970,8 @@ enum Platform {
     AzureDevOps,
     #[value(name = "gitlab")]
     GitLab,
+    #[value(name = "bitbucket")]
+    Bitbucket,
 }
 
 impl Platform {
@@ -985,6 +988,7 @@ impl Platform {
             Platform::GithubActions => "github-actions",
             Platform::AzureDevOps => "azure-devops",
             Platform::GitLab => "gitlab",
+            Platform::Bitbucket => "bitbucket",
         }
     }
 
@@ -998,6 +1002,7 @@ impl Platform {
             Platform::GithubActions => Some("gha"),
             Platform::AzureDevOps => Some("ado"),
             Platform::GitLab => Some("gitlab"),
+            Platform::Bitbucket => Some("bitbucket"),
         }
     }
 }
@@ -1008,6 +1013,7 @@ impl Platform {
 ///
 /// Hints (case-sensitive against forward-slash-normalised path):
 /// - `.gitlab-ci.yml`, `*-gitlab-ci.yml`, `gitlab-ci.yml` → GitLab
+/// - `bitbucket-pipelines.yml` / `.yaml` → Bitbucket Pipelines
 /// - `azure-pipelines*.yml`, `*.azure-pipelines.yml`, files under
 ///   `.azuredevops/` or `.pipelines/` → ADO
 /// - Files under `.github/workflows/` → GHA
@@ -1030,6 +1036,10 @@ fn platform_from_path(path: &Path) -> Option<Platform> {
         || file_name.ends_with(".gitlab-ci.yml")
     {
         return Some(Platform::GitLab);
+    }
+
+    if file_name == "bitbucket-pipelines.yml" || file_name == "bitbucket-pipelines.yaml" {
+        return Some(Platform::Bitbucket);
     }
 
     // ADO — `azure-pipelines.yml`, `azure-pipelines-prod.yml`, `release.azure-pipelines.yml`,
@@ -1070,6 +1080,10 @@ fn detect_platform_from_content(content: &str) -> Platform {
 
     if has_key("on") {
         return Platform::GithubActions;
+    }
+
+    if has_key("pipelines") {
+        return Platform::Bitbucket;
     }
 
     // `stages:` disambiguation: GitLab uses a flat string list, ADO uses a list of objects.
@@ -1134,12 +1148,14 @@ fn detect_platform(content: &str, path: Option<&Path>) -> Platform {
             Platform::GitLab => "GitLab CI",
             Platform::AzureDevOps => "Azure DevOps",
             Platform::GithubActions => "GitHub Actions",
+            Platform::Bitbucket => "Bitbucket Pipelines",
             Platform::Auto => "auto",
         };
         let cli_value = match path_guess {
             Platform::GitLab => "gitlab",
             Platform::AzureDevOps => "azure-devops",
             Platform::GithubActions => "github-actions",
+            Platform::Bitbucket => "bitbucket",
             Platform::Auto => "auto",
         };
 
@@ -4623,6 +4639,7 @@ fn make_parser(platform: &Platform) -> Box<dyn taudit_core::ports::PipelineParse
         Platform::Auto | Platform::GithubActions => Box::new(GhaParser),
         Platform::AzureDevOps => Box::new(AdoParser),
         Platform::GitLab => Box::new(GitlabParser),
+        Platform::Bitbucket => Box::new(BitbucketParser),
     }
 }
 
@@ -4635,6 +4652,7 @@ fn resolve_platform(platform: &Platform, content: &str, path: Option<&Path>) -> 
         Platform::GithubActions => Platform::GithubActions,
         Platform::AzureDevOps => Platform::AzureDevOps,
         Platform::GitLab => Platform::GitLab,
+        Platform::Bitbucket => Platform::Bitbucket,
     }
 }
 

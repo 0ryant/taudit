@@ -3,7 +3,10 @@ source: crates/taudit-cli/tests/snapshot_gha.rs
 expression: json
 ---
 findings:
-  - category: authority_propagation
+  - authority_kinds:
+      - job_token
+    category: authority_propagation
+    confidence_scope: yaml_only
     finding_group_id: 58af3d8a-8e02-5d29-8a35-013ac5b8ddc2
     fingerprint: 2c001aeeb933afb192cc1af87babdff9
     message: GITHUB_TOKEN propagated to actions/checkout@a5ac7e51b41094c92402da3b24376905380afc29 across trust boundary
@@ -88,6 +91,14 @@ schema_version: 1.0.0
 summary:
   completeness: complete
   critical: 0
+  graph_risk_summary:
+    authority_roots: 1
+    delegation_hops: 0
+    mutable_refs: 0
+    protected_resource_categories:
+      - identity
+    publication_adjacent_sinks: 0
+    untrusted_sinks: 0
   high: 0
   info: 0
   low: 0

@@ -2,14 +2,19 @@
 source: crates/taudit-cli/tests/snapshot_gha.rs
 expression: finding
 ---
-severity: high
+severity: medium
 category: unpinned_action
 nodes_involved:
-  - 10
-message: untrusted-org/publish-action@main is not pinned to a SHA digest
+  - 8
+message: actions/download-artifact@v4 is not pinned to a SHA digest
 recommendation:
   type: pin_action
-  current: untrusted-org/publish-action@main
-  pinned: untrusted-org/publish-action@<sha256-digest>
+  current: actions/download-artifact@v4
+  pinned: actions/download-artifact@<sha256-digest>
 source: built-in
 time_to_fix: trivial
+confidence_scope: yaml_only
+runtime_preconditions:
+  - "the referenced mutable branch, tag, include, or image can change independently of this repository"
+attacker_surface_kinds:
+  - mutable_dependency_ref

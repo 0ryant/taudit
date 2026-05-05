@@ -77,7 +77,7 @@ run_trivy_config() {
   echo "quality-gate: trivy config"
   trivy config \
     --severity HIGH,CRITICAL \
-    --skip-dirs MEMORY,.claude \
+    --skip-dirs MEMORY,.claude,corpus \
     --exit-code 1 \
     .
 }
@@ -87,7 +87,7 @@ run_trivy_fs() {
   trivy fs \
     --scanners vuln,misconfig,secret \
     --severity HIGH,CRITICAL \
-    --skip-dirs MEMORY,.claude \
+    --skip-dirs MEMORY,.claude,corpus \
     --exit-code 1 \
     .
 }

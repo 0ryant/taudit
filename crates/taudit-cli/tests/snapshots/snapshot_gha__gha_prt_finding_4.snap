@@ -3,11 +3,17 @@ source: crates/taudit-cli/tests/snapshot_gha.rs
 expression: finding
 ---
 severity: critical
-category: script_injection_via_untrusted_context
+category: pr_trigger_with_floating_action_ref
 nodes_involved:
-  - 3
-message: "Step 'check[1]' interpolates attacker-controlled expression(s) ${{ github.event.pull_request.title }} directly into a script body without an env: indirection — classic GitHub Actions RCE"
+  - 1
+message: "Workflow trigger 'pull_request_target' runs in privileged base-repo context and step uses unpinned action 'actions/checkout@v4' — anyone who can push to that action's branch executes arbitrary code with full repo write token"
 recommendation:
-  type: manual
-  action: "Bind the expression to a step-level `env:` variable and reference it as `\"$VAR\"` (shell) or `process.env.VAR` (JS). The runtime then quotes the value as data instead of YAML-rendering it as code."
+  type: pin_action
+  current: actions/checkout@v4
+  pinned: actions/checkout@<sha256-digest>
 source: built-in
+confidence_scope: yaml_only
+runtime_preconditions:
+  - "the referenced mutable branch, tag, include, or image can change independently of this repository"
+attacker_surface_kinds:
+  - mutable_dependency_ref

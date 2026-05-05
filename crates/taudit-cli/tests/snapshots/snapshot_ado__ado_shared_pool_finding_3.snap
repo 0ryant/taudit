@@ -11,3 +11,7 @@ recommendation:
   type: manual
   action: "Add `workspace: { clean: all }` to every job that uses a self-hosted pool, or migrate to Microsoft-hosted (ephemeral) agents for untrusted builds."
 source: built-in
+confidence_scope: yaml_only
+portal_control_dependency: true
+attacker_surface_kinds:
+  - self_hosted_runner

@@ -26,6 +26,9 @@ expression: findings
     command: tsafe exec --ns <scoped-namespace> -- <command>
     explanation: Scope GITHUB_TOKEN to only the steps that need it
   source: built-in
+  confidence_scope: yaml_only
+  authority_kinds:
+    - oidc_identity
 - severity: critical
   category: authority_propagation
   path:
@@ -46,6 +49,9 @@ expression: findings
     command: tsafe exec --ns <scoped-namespace> -- <command>
     explanation: Scope PUBLISH_API_KEY to only the steps that need it
   source: built-in
+  confidence_scope: yaml_only
+  authority_kinds:
+    - credential_named_variable
 - severity: low
   category: long_lived_credential
   nodes_involved:
@@ -57,6 +63,9 @@ expression: findings
     oidc_provider: "GitHub Actions OIDC (id-token: write)"
   source: built-in
   time_to_fix: large
+  confidence_scope: yaml_only
+  authority_kinds:
+    - credential_named_variable
 - severity: high
   category: over_privileged_identity
   nodes_involved:
@@ -73,6 +82,41 @@ expression: findings
     minimum: "{ contents: read }"
   source: built-in
   time_to_fix: small
+  confidence_scope: yaml_only
+  authority_kinds:
+    - oidc_identity
+- severity: medium
+  category: unpinned_action
+  nodes_involved:
+    - 8
+  message: "[action_major_version_pin_without_sha] actions/download-artifact@v4 is pinned only to a mutable major tag; pin to a full commit SHA"
+  recommendation:
+    type: pin_action
+    current: actions/download-artifact@v4
+    pinned: actions/download-artifact@<40-char-sha>
+  source: built-in
+  time_to_fix: trivial
+  confidence_scope: yaml_only
+  runtime_preconditions:
+    - "the referenced mutable branch, tag, include, or image can change independently of this repository"
+  attacker_surface_kinds:
+    - mutable_dependency_ref
+- severity: medium
+  category: unpinned_action
+  nodes_involved:
+    - 5
+  message: "[action_major_version_pin_without_sha] actions/upload-artifact@v4 is pinned only to a mutable major tag; pin to a full commit SHA"
+  recommendation:
+    type: pin_action
+    current: actions/upload-artifact@v4
+    pinned: actions/upload-artifact@<40-char-sha>
+  source: built-in
+  time_to_fix: trivial
+  confidence_scope: yaml_only
+  runtime_preconditions:
+    - "the referenced mutable branch, tag, include, or image can change independently of this repository"
+  attacker_surface_kinds:
+    - mutable_dependency_ref
 - severity: medium
   category: unpinned_action
   nodes_involved:
@@ -84,6 +128,11 @@ expression: findings
     pinned: actions/download-artifact@<sha256-digest>
   source: built-in
   time_to_fix: trivial
+  confidence_scope: yaml_only
+  runtime_preconditions:
+    - "the referenced mutable branch, tag, include, or image can change independently of this repository"
+  attacker_surface_kinds:
+    - mutable_dependency_ref
 - severity: medium
   category: unpinned_action
   nodes_involved:
@@ -95,6 +144,11 @@ expression: findings
     pinned: actions/upload-artifact@<sha256-digest>
   source: built-in
   time_to_fix: trivial
+  confidence_scope: yaml_only
+  runtime_preconditions:
+    - "the referenced mutable branch, tag, include, or image can change independently of this repository"
+  attacker_surface_kinds:
+    - mutable_dependency_ref
 - severity: high
   category: unpinned_action
   nodes_involved:
@@ -106,6 +160,11 @@ expression: findings
     pinned: untrusted-org/publish-action@<sha256-digest>
   source: built-in
   time_to_fix: trivial
+  confidence_scope: yaml_only
+  runtime_preconditions:
+    - "the referenced mutable branch, tag, include, or image can change independently of this repository"
+  attacker_surface_kinds:
+    - mutable_dependency_ref
 - severity: critical
   category: untrusted_with_authority
   nodes_involved:
@@ -117,6 +176,11 @@ expression: findings
     current: write-all
     minimum: minimal required scope
   source: built-in
+  confidence_scope: yaml_only
+  authority_kinds:
+    - oidc_identity
+  attacker_surface_kinds:
+    - untrusted_step
 - severity: critical
   category: untrusted_with_authority
   nodes_involved:
@@ -128,6 +192,11 @@ expression: findings
     current: write-all
     minimum: minimal required scope
   source: built-in
+  confidence_scope: yaml_only
+  authority_kinds:
+    - oidc_identity
+  attacker_surface_kinds:
+    - untrusted_step
 - severity: critical
   category: untrusted_with_authority
   nodes_involved:
@@ -139,6 +208,11 @@ expression: findings
     current: write-all
     minimum: minimal required scope
   source: built-in
+  confidence_scope: yaml_only
+  authority_kinds:
+    - oidc_identity
+  attacker_surface_kinds:
+    - untrusted_step
 - severity: critical
   category: untrusted_with_authority
   nodes_involved:
@@ -150,6 +224,11 @@ expression: findings
     reason: "Untrusted step 'publish[1]' has direct access to secret 'PUBLISH_API_KEY'"
     spec_hint: "cellos run --network deny-all --broker env:PUBLISH_API_KEY"
   source: built-in
+  confidence_scope: yaml_only
+  authority_kinds:
+    - credential_named_variable
+  attacker_surface_kinds:
+    - untrusted_step
 - severity: info
   category: uplift_without_attestation
   nodes_involved:
@@ -164,3 +243,13 @@ expression: findings
     type: manual
     action: "Add 'actions/attest-build-provenance' after your build step (GHA) to provide SLSA provenance. See https://docs.github.com/en/actions/security-guides/using-artifact-attestations"
   source: built-in
+  confidence_scope: yaml_only
+  runtime_preconditions:
+    - downstream identity provider accepts the issued OIDC token
+    - the configured audience or cloud role grants useful authority
+  authority_kinds:
+    - oidc_identity
+  attacker_surface_kinds:
+    - script_sink
+    - untrusted_checkout
+    - untrusted_step

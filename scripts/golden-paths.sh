@@ -26,13 +26,13 @@ log "$BIN scan $clean --platform github-actions --quiet"
 
 log "$BIN graph ... --format json"
 out_json=$("$BIN" graph "$clean" --platform github-actions --format json)
-echo "$out_json" | grep -q '"schema_version"'
-echo "$out_json" | grep -q '"graph"'
+grep -q '"schema_version"' <<<"$out_json"
+grep -q '"graph"' <<<"$out_json"
 
 log "$BIN graph ... --format summary"
 out_sum=$("$BIN" graph "$clean" --platform github-actions --format summary)
-echo "$out_sum" | grep -q '"schema_version"'
-echo "$out_sum" | grep -q bfs_lower_trust_zone_sinks
+grep -q '"schema_version"' <<<"$out_sum"
+grep -q bfs_lower_trust_zone_sinks <<<"$out_sum"
 
 log "$BIN map $clean ..."
 "$BIN" map "$clean" --platform github-actions --no-color | grep -q .
@@ -48,7 +48,7 @@ log "$BIN explain authority_propagation"
 
 log "$BIN verify (noop policy on clean fixture)"
 out_verify=$("$BIN" verify --policy "$noop_policy" "$clean" --platform github-actions --format text)
-echo "$out_verify" | grep -q "verify: authority graph modeling:"
-echo "$out_verify" | grep -q "verify: 0 violations"
+grep -q "verify: authority graph modeling:" <<<"$out_verify"
+grep -q "verify: 0 violations" <<<"$out_verify"
 
 echo "golden-paths: OK"

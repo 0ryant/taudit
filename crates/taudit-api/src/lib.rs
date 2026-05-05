@@ -578,6 +578,47 @@ pub struct FindingExtras {
     /// canonical string.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub fingerprint_anchor: Option<String>,
+
+    /// Scope of confidence for this finding. Current built-in rules are
+    /// `yaml_only`: taudit has proved a static authority shape in the scanned
+    /// YAML artifact, but runtime/provider settings may still affect
+    /// exploitability.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub confidence_scope: Option<String>,
+
+    /// Human-readable runtime or control-plane assumptions that must be
+    /// verified before treating the static finding as live exploitability.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub runtime_preconditions: Vec<String>,
+
+    /// True when exploitability materially depends on provider-side controls
+    /// not represented in the YAML artifact, such as Azure DevOps service
+    /// connection authorization or GitHub repository settings.
+    #[serde(default, skip_serializing_if = "is_false")]
+    pub portal_control_dependency: bool,
+
+    /// Coarse authority kinds involved in the finding: e.g. `job_token`,
+    /// `oidc_identity`, `service_connection`, `variable_group`,
+    /// `credential_named_variable`, `artifact`, or `image`.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub authority_kinds: Vec<String>,
+
+    /// Coarse attacker-influenced surfaces involved in the finding: e.g.
+    /// `untrusted_checkout`, `script_sink`, `mutable_dependency_ref`,
+    /// `reusable_workflow_boundary`, or `self_hosted_runner`.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub attacker_surface_kinds: Vec<String>,
+
+    /// Template/reusable-workflow resolution strength for delegation findings:
+    /// `resolved`, `partial`, `opaque`, or `not_applicable`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub template_resolution_strength: Option<String>,
+
+    /// Relationship between this finding and any cited CVE/advisory:
+    /// `same_primitive`, `same_authority_shape`, `analogue_only`, or
+    /// `not_applicable`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub cve_relationship: Option<String>,
 }
 
 impl FindingExtras {
@@ -589,6 +630,16 @@ impl FindingExtras {
     pub fn with_anchor(anchor: impl Into<String>) -> Self {
         Self {
             fingerprint_anchor: Some(anchor.into()),
+            ..Self::default()
+        }
+    }
+
+    /// Convenience constructor for report-facing metadata that is not a
+    /// fingerprint anchor. Keeps rule call sites additive rather than forcing
+    /// every built-in rule to hand-populate publication context.
+    pub fn with_confidence_scope(scope: impl Into<String>) -> Self {
+        Self {
+            confidence_scope: Some(scope.into()),
             ..Self::default()
         }
     }

@@ -32,7 +32,7 @@ Companion docs: [`release-strategy.md`](release-strategy.md) (lane policy: stabl
 - [ ] `cargo fmt --all -- --check` clean.
 - [ ] `cargo clippy --workspace --all-targets -- -D warnings` clean.
 - [ ] `python3 scripts/generate-authority-invariant-schema.py --check` clean (Rust↔schema enum drift).
-- [ ] `cargo semver-checks check-release` clean against the previous published baseline.
+- [ ] `cargo semver-checks check-release` clean against the previous published baseline for stable tags. Prerelease tags (`*-beta.*`, `*-rc.*`) skip this CI step because Cargo's registry baseline selection compares them against the latest stable line; prerelease API churn is instead controlled by explicit CHANGELOG migration notes and the eventual stable-promotion semver gate.
 - [ ] CHANGELOG entry under `## v{tag}` includes the **Detection delta (read first)** paragraph (see [`release-strategy.md` §5](release-strategy.md#5-changelog-discipline-trust)).
 
 **RC blockers (per-cycle)** — listed in the active CHANGELOG `Unreleased` section. The current cycle's RC blockers for `1.1.0-rc.1` are:
