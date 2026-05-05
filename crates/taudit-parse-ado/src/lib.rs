@@ -175,18 +175,19 @@ impl PipelineParser for AdoParser {
         // Pipeline-level variable groups and named secrets.
         // plain_vars tracks non-secret named variables so $(VAR) refs in scripts
         // don't generate false-positive Secret nodes for plain config values.
-        // has_variable_groups is set when any variable group is encountered so
-        // extract_dollar_paren_secrets can avoid creating per-variable Secret
-        // nodes from opaque groups (BUG-3).
+        // `pipeline_has_groups` is per-scope: stage- and job-level groups are
+        // tracked separately and OR'd in only along the lexical inheritance
+        // chain (pipeline → stage → job → step), never across sibling stages
+        // or jobs (BUG-3 — previously a single pipeline-wide flag was set on
+        // first sight of any group and never reset, which suppressed legitimate
+        // `$(SECRET)` Secret nodes in later sibling scopes).
         let mut plain_vars: HashSet<String> = HashSet::new();
-        let mut has_variable_groups = false;
-        let pipeline_secret_ids = process_variables(
+        let (pipeline_secret_ids, pipeline_has_groups) = process_variables(
             &pipeline.variables,
             &mut graph,
             &mut secret_ids,
             "pipeline",
             &mut plain_vars,
-            &mut has_variable_groups,
         );
 
         // Determine pipeline structure: stages → jobs → steps, or jobs → steps, or steps only
@@ -200,13 +201,12 @@ impl PipelineParser for AdoParser {
                 }
 
                 let stage_name = stage.stage.as_deref().unwrap_or("stage").to_string();
-                let stage_secret_ids = process_variables(
+                let (stage_secret_ids, stage_has_groups) = process_variables(
                     &stage.variables,
                     &mut graph,
                     &mut secret_ids,
                     &stage_name,
                     &mut plain_vars,
-                    &mut has_variable_groups,
                 );
 
                 let stage_condition = non_empty_condition(&stage.condition);
@@ -217,14 +217,17 @@ impl PipelineParser for AdoParser {
 
                 for job in &stage.jobs {
                     let job_name = job.effective_name();
-                    let job_secret_ids = process_variables(
+                    let (job_secret_ids, job_has_groups) = process_variables(
                         &job.variables,
                         &mut graph,
                         &mut secret_ids,
                         &job_name,
                         &mut plain_vars,
-                        &mut has_variable_groups,
                     );
+                    // Effective groups along this step's lexical inheritance
+                    // chain only — sibling stages/jobs do NOT contribute.
+                    let effective_has_groups =
+                        pipeline_has_groups || stage_has_groups || job_has_groups;
 
                     let effective_workspace =
                         job.workspace.as_ref().or(pipeline.workspace.as_ref());
@@ -262,7 +265,7 @@ impl PipelineParser for AdoParser {
                         token_id,
                         &all_secrets,
                         &plain_vars,
-                        has_variable_groups,
+                        effective_has_groups,
                         outer_condition.as_deref(),
                         job_depends_on.as_deref(),
                         &mut graph,
@@ -287,14 +290,14 @@ impl PipelineParser for AdoParser {
         } else if let Some(ref jobs) = pipeline.jobs {
             for job in jobs {
                 let job_name = job.effective_name();
-                let job_secret_ids = process_variables(
+                let (job_secret_ids, job_has_groups) = process_variables(
                     &job.variables,
                     &mut graph,
                     &mut secret_ids,
                     &job_name,
                     &mut plain_vars,
-                    &mut has_variable_groups,
                 );
+                let effective_has_groups = pipeline_has_groups || job_has_groups;
 
                 let effective_workspace = job.workspace.as_ref().or(pipeline.workspace.as_ref());
                 process_pool(&job.pool, &effective_workspace.cloned(), &mut graph);
@@ -320,7 +323,7 @@ impl PipelineParser for AdoParser {
                     token_id,
                     &all_secrets,
                     &plain_vars,
-                    has_variable_groups,
+                    effective_has_groups,
                     job_condition,
                     job_depends_on.as_deref(),
                     &mut graph,
@@ -342,7 +345,7 @@ impl PipelineParser for AdoParser {
                 token_id,
                 &pipeline_secret_ids,
                 &plain_vars,
-                has_variable_groups,
+                pipeline_has_groups,
                 None,
                 None,
                 &mut graph,
@@ -662,7 +665,12 @@ fn tag_job_steps_env_approval(graph: &mut AuthorityGraph, start_idx: usize) {
     }
 }
 
-/// Process a variable list, creating Secret nodes and returning their IDs.
+/// Process a variable list, creating Secret nodes and returning their IDs
+/// **plus** a bool indicating whether THIS scope itself attached a variable
+/// group. The bool is intentionally per-scope (not threaded through a shared
+/// mutable flag) so that a `- group:` reference at stage A does not silently
+/// suppress new `$(VAR)` Secret nodes in an unrelated stage B (BUG-3 — was
+/// previously a single pipeline-wide flag that was set once and never reset).
 /// Returns IDs for secrets only (not variable groups, which are opaque).
 /// Populates `plain_vars` with the names of non-secret named variables so
 /// downstream `$(VAR)` scanning can skip them.
@@ -672,13 +680,13 @@ fn process_variables(
     cache: &mut HashMap<String, NodeId>,
     scope: &str,
     plain_vars: &mut HashSet<String>,
-    has_variable_groups: &mut bool,
-) -> Vec<NodeId> {
+) -> (Vec<NodeId>, bool) {
     let mut ids = Vec::new();
+    let mut has_group_in_scope = false;
 
     let vars = match variables.as_ref() {
         Some(v) => v,
-        None => return ids,
+        None => return (ids, has_group_in_scope),
     };
 
     for var in &vars.0 {
@@ -696,7 +704,7 @@ fn process_variables(
                     );
                     continue;
                 }
-                *has_variable_groups = true;
+                has_group_in_scope = true;
                 let mut meta = HashMap::new();
                 meta.insert(META_VARIABLE_GROUP.into(), "true".into());
                 let id = graph.add_node_with_metadata(
@@ -727,7 +735,7 @@ fn process_variables(
         }
     }
 
-    ids
+    (ids, has_group_in_scope)
 }
 
 /// Process a list of ADO steps, adding nodes and edges to the graph.
@@ -812,6 +820,8 @@ fn process_steps(
 
         // Stamp parent job name so consumers (e.g. `taudit map --job`) can
         // attribute steps back to their containing job.
+        // META_SCRIPT_BODY consumed by setvariable_issecret_false, terraform_*,
+        // secret_to_inline_script_env_export, and others; single insert is sufficient.
         if let Some(node) = graph.nodes.get_mut(step_id) {
             node.metadata.insert(META_JOB_NAME.into(), job_name.into());
             // Stamp the raw inline script body so script-aware rules
@@ -835,25 +845,6 @@ fn process_steps(
                 if !d.is_empty() {
                     node.metadata.insert(META_DEPENDS_ON.into(), d.clone());
                 }
-            }
-        }
-
-        // Stamp inline script body so command-line-leakage rules can inspect
-        // what the step actually executes (vm_remote_exec_via_pipeline_secret,
-        // short_lived_sas_in_command_line).
-        if let Some(ref body) = inline_script {
-            if let Some(node) = graph.nodes.get_mut(step_id) {
-                node.metadata.insert(META_SCRIPT_BODY.into(), body.clone());
-            }
-        }
-
-        // Stamp the inline script body when present so rules that need to
-        // pattern-match against shell content can do so without re-parsing
-        // YAML. Bodies can be large; rules should treat META_SCRIPT_BODY as
-        // an opaque string and not assume any framing.
-        if let Some(ref body) = inline_script {
-            if let Some(node) = graph.nodes.get_mut(step_id) {
-                node.metadata.insert(META_SCRIPT_BODY.into(), body.clone());
             }
         }
 
@@ -1174,6 +1165,9 @@ fn add_template_delegation(
 /// an ADO `$(secretRef)` expression — i.e., the step is writing a secret-derived
 /// value into the environment gate (BUG-4: plain integers and PowerShell vars
 /// like `$psVar` should not fire the secret-exfiltration rule).
+///
+/// `$$(VAR)` is the documented ADO escape (literal output, not substitution)
+/// and is intentionally NOT treated as a secret reference.
 fn setvariable_value_contains_secret_ref(script: &str) -> bool {
     for line in script.lines() {
         let lower = line.to_lowercase();
@@ -1183,10 +1177,36 @@ fn setvariable_value_contains_secret_ref(script: &str) -> bool {
         // The value starts after the closing `]` of the ##vso directive.
         if let Some(close_bracket) = line.find(']') {
             let value_part = &line[close_bracket + 1..];
-            if value_part.contains("$(") {
+            if contains_unescaped_dollar_paren(value_part) {
                 return true;
             }
         }
+    }
+    false
+}
+
+/// True iff `s` contains a `$(` substitution that is NOT preceded by another
+/// `$` (the `$$(VAR)` escape form is rejected). Used by both the setvariable
+/// secret-ref detector and any future caller that needs the same semantics
+/// without going through the full Secret-node creation path.
+fn contains_unescaped_dollar_paren(s: &str) -> bool {
+    let bytes = s.as_bytes();
+    let mut i = 0;
+    while i + 1 < bytes.len() {
+        if bytes[i] == b'$' && bytes[i + 1] == b'(' {
+            if i > 0 && bytes[i - 1] == b'$' {
+                // Escaped — skip to end of the (...) group and continue.
+                let after_open = i + 2;
+                if let Some(end_offset) = s[after_open..].find(')') {
+                    i = after_open + end_offset + 1;
+                    continue;
+                }
+                i += 2;
+                continue;
+            }
+            return true;
+        }
+        i += 1;
     }
     false
 }
@@ -1197,6 +1217,11 @@ fn setvariable_value_contains_secret_ref(script: &str) -> bool {
 /// is treated as a variable reference. This rejects PowerShell sub-expressions
 /// (`$($var)`), ADO template expressions (`${{ ... }}`), shell commands (`$(date)`),
 /// and anything with spaces or special characters.
+///
+/// `$$(VAR)` is the documented ADO escape — it renders as a literal `$(VAR)`
+/// in output and is **not** a substitution. We skip these without creating a
+/// Secret node so that documentation strings like `echo "use $$(BUILD_BUILDID)"`
+/// don't manufacture phantom HasAccessTo edges (BUG-4).
 fn extract_dollar_paren_secrets(
     text: &str,
     step_id: NodeId,
@@ -1209,13 +1234,26 @@ fn extract_dollar_paren_secrets(
     let bytes = text.as_bytes();
     while pos < bytes.len() {
         if pos + 2 < bytes.len() && bytes[pos] == b'$' && bytes[pos + 1] == b'(' {
+            // Honour the `$$(VAR)` escape — second `$` makes the whole token a
+            // literal in ADO's output, not a substitution. Skip past the
+            // closing `)` without creating a Secret node.
+            if pos > 0 && bytes[pos - 1] == b'$' {
+                let start = pos + 2;
+                if let Some(end_offset) = text[start..].find(')') {
+                    pos = start + end_offset + 1;
+                    continue;
+                }
+                pos += 1;
+                continue;
+            }
             let start = pos + 2;
             if let Some(end_offset) = text[start..].find(')') {
                 let var_name = &text[start..start + end_offset];
-                // BUG-3: when variable groups are present the group is opaque —
-                // any $(VAR) could be a plain config value from the group.
-                // Only create a Secret node if the var was explicitly declared
-                // as a secret (is already in cache) or there are no groups.
+                // BUG-3: when variable groups are present in this scope (or an
+                // ancestor scope) the group is opaque — any $(VAR) could be a
+                // plain config value from the group. Only create a Secret node
+                // if the var was explicitly declared as a secret (is already
+                // in cache) or there are no groups *along the inheritance chain*.
                 let already_declared_secret = cache.contains_key(var_name);
                 if is_valid_ado_identifier(var_name)
                     && !is_predefined_ado_var(var_name)
@@ -1242,13 +1280,60 @@ fn extract_dollar_paren_secrets(
     }
 }
 
-/// Returns true if the `$(VAR)` at `var_pos` is inside a Terraform `-var` flag argument.
-/// Pattern: the line before `$(VAR)` contains `-var` and `=`, indicating `-var "key=$(VAR)"`.
+/// Returns true if the `$(VAR)` at `var_pos` is inside a Terraform `-var` flag
+/// argument. Two requirements (BUG-3 — the previous heuristic just checked
+/// `line_before.contains("-var") && line_before.contains('=')`, which matched
+/// `--var-file=`, `extra-vars=`, `-vargs=`, anything-with-`-var`-and-`=`):
+///
+/// 1. The case-insensitive token `terraform` must appear earlier on the same
+///    line, OR on a prior line that is connected to the current line via a
+///    shell continuation chain (trailing `\` for POSIX, trailing `` ` `` for
+///    PowerShell). This admits `terraform.exe`, `tfwrapper terraform`,
+///    `aws-vault exec ... terraform`, and the common heredoc shape:
+///    `terraform apply \`
+///    `  -var "db=$(secret)"`
+///
+/// 2. Immediately before the `$(VAR)` substitution position there must be a
+///    `-var ` (with a trailing space) or `-var=` literal. This rejects
+///    `-var-file=`, `--var-file=`, `extra-vars=`, `-vargs=`, etc., where the
+///    character following the literal `-var` is not space or `=`.
 fn is_in_terraform_var_flag(text: &str, var_pos: usize) -> bool {
     let line_start = text[..var_pos].rfind('\n').map(|p| p + 1).unwrap_or(0);
     let line_before = &text[line_start..var_pos];
-    // Must contain -var (the flag) and = (the key=value assignment)
-    line_before.contains("-var") && line_before.contains('=')
+
+    // (2) `-var ` (space) or `-var=` immediately within line_before.
+    let has_var_flag = line_before.contains("-var ") || line_before.contains("-var=");
+    if !has_var_flag {
+        return false;
+    }
+
+    // (1) `terraform` appears earlier on the same line — fast path.
+    let lower_line = line_before.to_lowercase();
+    if lower_line.contains("terraform") {
+        return true;
+    }
+
+    // (1, fallback) Walk backwards through continuation chain. The previous
+    // line must end in a continuation character for it to extend onto our
+    // line; once we hit a non-continuing line we stop.
+    let mut cursor_end = line_start; // exclusive of '\n' separator
+    while cursor_end > 0 {
+        // The byte at cursor_end-1 is `\n`; the prior line spans from the
+        // previous `\n` (exclusive) to cursor_end-1.
+        let nl_idx = cursor_end.saturating_sub(1);
+        let prev_line_start = text[..nl_idx].rfind('\n').map(|p| p + 1).unwrap_or(0);
+        let prev_line = &text[prev_line_start..nl_idx];
+        let trimmed = prev_line.trim_end();
+        let continues = trimmed.ends_with('\\') || trimmed.ends_with('`');
+        if !continues {
+            return false;
+        }
+        if prev_line.to_lowercase().contains("terraform") {
+            return true;
+        }
+        cursor_end = prev_line_start;
+    }
+    false
 }
 
 /// Returns true if `name` is a valid ADO variable identifier.
