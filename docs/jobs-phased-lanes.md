@@ -10,6 +10,8 @@
 | [`seam-freeze-v1.md`](seam-freeze-v1.md) | Cross-tool correlation / provenance vocabulary (draft until freeze criteria met) |
 | [`../TODOS.md`](../TODOS.md) | ADO `--ado-pat` deep spec |
 | [`adr/0003-strategic-spine-adoption-phased.md`](adr/0003-strategic-spine-adoption-phased.md) | Adoption spine |
+| [`adr/0005-authority-edge-classifier-and-witness-handoff.md`](adr/0005-authority-edge-classifier-and-witness-handoff.md) | Helper-resolution authority-edge classifier and witness handoff |
+| [`research/BACKLOG-helper-resolution-authority-edges-adr0005.md`](research/BACKLOG-helper-resolution-authority-edges-adr0005.md) | ADR 0005 task backlog |
 | [`research/PHASE1-lanes.md`](research/PHASE1-lanes.md) | **Different** scope — ADR 0002 `--rich-labels` / map Mermaid only |
 
 **Verification defaults (repo root):** after substantive code changes, run `cargo fmt --all && cargo clippy --workspace --all-targets -- -D warnings && cargo test --workspace` and `just golden-paths` when CLI/output/docs paths changed.
@@ -96,12 +98,20 @@ flowchart TB
     N[4C Tier-6 rules]
     O[4D Expression eval]
   end
+  subgraph P5["Phase 5 — Helper authority edges"]
+    P[5R Catalog research]
+    Q[5W Report writing]
+    R[5A Timing + catalog schema]
+    S[5B Rules + downgrades]
+    T[5C Witness spec + scoring]
+  end
   subgraph EX["Ecosystem — other repos"]
     X[E1–E3 G1–G4]
   end
   P1 --> P2
   P2 --> P3
   P1 --> P4
+  P4 --> P5
   X -.->|consumer alignment only| P2
 ```
 
@@ -169,6 +179,34 @@ flowchart TB
 | **4D** | **Limited expression evaluation** (GHA) | GHA parser | — | Scoped milestone (e.g. known context keys only); conservative Partial fallback preserved. |
 
 **Conflict hotspots:** **4D** touches the busiest parser — isolate long-running work behind a feature branch.
+
+---
+
+## Phase 5 — Helper-resolution authority edges
+
+**Goal:** Implement [ADR 0005](adr/0005-authority-edge-classifier-and-witness-handoff.md): taudit classifies and ranks helper-resolution authority edges, emits internal witness specs, and leaves proof execution to the witness harness.
+
+Disclosure/CVE-oriented tooling is internal signal. Witness-spec emission, disclosure scores, CVE workflow metadata, private source anchors, and canary details must be feature-gated or internal-build-only and absent from default downstream/customer output.
+
+| Lane | Job | Primary paths | Depends on | Done when |
+|------|-----|---------------|------------|-----------|
+| **5R** | **Research catalog anchors** | `docs/research/`, action catalog fixtures | - | Initial catalog entries have pinned versions/SHAs, helper invocation notes, authority transport, authority origin, witness status, and internal disclosure-score notes. |
+| **5W** | **Report writing and caveats** | `docs/`, terminal/SARIF/report snapshots after code lands | 5R helpful | Customer-safe templates explain earlier mutable channel, later authority, helper sink, transport, same-job caveat, remediation, and no CVE/disclosure wording by default. |
+| **5A** | **Timing + metadata schema** | `crates/taudit-core/src/graph.rs`, finding/report schemas, contracts | 5R input | Authority timing, helper resolution, transport, and origin are modeled without ad hoc strings. |
+| **5B** | **Rules + downgrades** | `crates/taudit-core/src/rules.rs`, `docs/rules/`, sink mappings | 5A | `GHA_HELPER_PATH_LATER_AUTHORITY` and transport-specific rules require ordered authority timing; absolute/toolcache/action-owned/explicit-mode cases downgrade or suppress. |
+| **5C** | **Witness spec + scoring** | `crates/taudit-cli/`, report schemas, docs | 5A, 5B | `taudit witness-spec` and `disclosure_score` are feature-gated; default findings expose customer-safe authority classification, `technical_score`, confidence, witness status, and product labels. |
+
+**Researcher prompt:**
+
+> You are the ADR 0005 researcher. Own `docs/research/` notes and catalog source anchors only. Build initial catalog evidence for Firebase, Azure, Cloudflare, Docker login, npm publish, ECR login, setup-gcloud, GoReleaser, Codecov, and Teleport. Return pinned versions/SHAs, helper invocation, helper resolution, authority transport, authority origin, witness status, and internal disclosure-score factors. Do not edit Rust.
+
+**Writer prompt:**
+
+> You are the ADR 0005 writer. Own report copy, examples, and docs only. Draft customer-safe text for helper-resolution authority findings that explains earlier mutable state, later authority materialization, helper sink, transport, same-job caveat, witness status, and remediation. Put witness next action, disclosure routing, and CVE language behind the internal feature gate only. Do not change rule logic.
+
+**Conflict hotspots:** **5A/5B** touch `taudit-core` and finding schemas; keep one implementation owner at a time. **5C** may touch `crates/taudit-cli/src/main.rs`, so serialize it after the schema/rule shape is stable.
+
+**Verification:** after code changes, run `cargo fmt --all`, `cargo clippy --workspace --all-targets -- -D warnings`, `cargo test --workspace`, cross-sink contract tests, and `just golden-paths` when CLI output or docs examples change.
 
 ---
 
