@@ -18,11 +18,31 @@ _(none yet — populate this paragraph when adding entries that change finding b
 
 _(populate if any consumer-visible field, schema, or contract changes; remove subsection if none)_
 
+## v1.1.0-rc.3 — 2026-05-05 (release candidate)
+
+> **Release candidate.** Supersedes `v1.1.0-rc.2`, which partially published
+> lower-level crates before crates.io rejected `taudit-parse-bitbucket` for
+> missing package metadata. `v1.1.0-rc.3` carries the same detection payload as
+> `rc.2`, adds the missing Bitbucket parser crate description, and adds a CI
+> release gate so publish metadata fails before any registry upload.
+
+### Detection delta (read first)
+
+No rule, parser, report, or schema behaviour change versus `v1.1.0-rc.2`.
+
+### Fixed
+
+- Added required crates.io metadata to `taudit-parse-bitbucket`.
+- Added `scripts/check-crates-publish-metadata.py` and wired it into the
+  release workflow before publish, preventing another partial publish caused by
+  missing crates.io package metadata or incoherent release versions.
+
 ## v1.1.0-rc.2 — 2026-05-05 (release candidate)
 
-> **Release candidate.** Published to crates.io under semver pre-release identifier
-> `1.1.0-rc.2`. Opt in via `taudit = "=1.1.0-rc.2"` or
-> `cargo install taudit --version 1.1.0-rc.2`. Stable consumers on v1.0.12 are
+> **Superseded release candidate.** `v1.1.0-rc.2` partially published
+> `taudit-api@0.2.0`, `taudit-core@1.1.0-rc.2`, and
+> `taudit-parse-ado@1.1.0-rc.2`, then failed before the top-level `taudit`
+> crate was published. Use `v1.1.0-rc.3` instead. Stable consumers on v1.0.12 are
 > unaffected per [ADR 0004](docs/adr/0004-prereleases-publish-to-crates-io.md).
 > This is not promoted to `v1.1.0` stable because
 > [`docs/RELEASE_GATES.md`](docs/RELEASE_GATES.md) sets the earliest stable date

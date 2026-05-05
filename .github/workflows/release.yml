@@ -32,6 +32,9 @@ jobs:
       - name: test
         run: cargo test --workspace
 
+      - name: crates publish metadata
+        run: python3 scripts/check-crates-publish-metadata.py --expected-release-version "${GITHUB_REF_NAME#v}"
+
       # Per the v1.1.0-beta.3 API stability policy: `taudit-core` is workspace-
       # internal but its `pub` items are still in the technical ABI; an
       # accidental signature change between minor versions would break any
@@ -260,6 +263,9 @@ jobs:
 
       - name: Rust toolchain
         uses: dtolnay/rust-toolchain@98e1b82157cd469e843cb7f524c1313b4ad9492c # 1.88
+
+      - name: crates publish metadata
+        run: python3 scripts/check-crates-publish-metadata.py --expected-release-version "${GITHUB_REF_NAME#v}"
 
       - name: Publish to crates.io
         # Cargo 1.88 still keeps `cargo publish --workspace` unstable, so
