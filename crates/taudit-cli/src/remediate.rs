@@ -874,8 +874,7 @@ fn commit_backup_id(backups_dir: &Path) -> Result<(String, PathBuf)> {
         }
     }
     Err(anyhow::anyhow!(
-        "failed to allocate unique backup id after {} attempts (possible DoS or disk full)",
-        MAX_BACKUP_ID_ATTEMPTS
+        "failed to allocate unique backup id after {MAX_BACKUP_ID_ATTEMPTS} attempts (possible DoS or disk full)"
     ))
 }
 
