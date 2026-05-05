@@ -142,11 +142,6 @@ struct VerifyRun {
     stderr: String,
 }
 
-struct RollbackWrite {
-    target: PathBuf,
-    original: String,
-}
-
 struct IndexLock {
     path: PathBuf,
 }
@@ -292,14 +287,11 @@ pub fn cmd_apply(opts: ApplyOpts) -> Result<()> {
     fs::create_dir_all(&backups_dir)
         .with_context(|| format!("failed to create {}", backups_dir.display()))?;
 
-    let backup_id = allocate_backup_id(&backups_dir)?;
-    let operation_dir = backups_dir.join(&backup_id);
-    fs::create_dir(&operation_dir).with_context(|| {
-        format!(
-            "failed to create backup operation directory {}",
-            operation_dir.display()
-        )
-    })?;
+    // Race-safe backup-id commit: candidates are proposed and the
+    // binding commit is `fs::create_dir`, which returns `AlreadyExists`
+    // atomically if another process won the race. Retries up to
+    // `MAX_BACKUP_ID_ATTEMPTS` times to absorb extreme contention.
+    let (backup_id, operation_dir) = commit_backup_id(&backups_dir)?;
 
     let original_dir = operation_dir.join("original");
     let rewritten_dir = operation_dir.join("rewritten");
@@ -416,6 +408,24 @@ pub fn cmd_apply(opts: ApplyOpts) -> Result<()> {
     std::process::exit(0)
 }
 
+/// Restore files from a previous `apply` operation in two passes.
+///
+/// **Pass 1** reads every file referenced by the manifest and verifies
+/// its SHA-256 matches `post_apply_hash`. ALL hashes are checked before
+/// any write happens, and ALL mismatches are reported together; the
+/// rollback aborts before touching any file unless `--force` is set.
+///
+/// **Pass 2** writes the original content of each file via the atomic
+/// tempfile-rename pattern (see [`write_text`]). Per-file atomicity
+/// is guaranteed by POSIX `rename(2)` — a concurrent reader sees either
+/// the post-apply content or the fully-restored original, never a
+/// partial write.
+///
+/// **Cross-file atomicity is best-effort.** If pass 2 fails partway
+/// through (disk full, permission revoked, etc.), files already
+/// restored stay restored, and files not yet visited stay at their
+/// post-apply state. There is intentionally no journal — re-running
+/// `rollback` on the same backup id is idempotent and will resume.
 pub fn cmd_rollback(opts: RollbackOpts) -> Result<()> {
     if !is_valid_backup_id(&opts.backup_id) {
         eprintln!("error: invalid backup_id format (expected YYYYMMDDTHHMMSSZ-<pid>-<suffix>)");
@@ -453,7 +463,18 @@ pub fn cmd_rollback(opts: RollbackOpts) -> Result<()> {
     let operation_dir = fs::canonicalize(operation_dir)
         .with_context(|| format!("failed to resolve {}", operation_dir.display()))?;
 
-    let mut writes = Vec::with_capacity(manifest.files.len());
+    // Pass 1 — verify every record's hash and accumulate mismatches.
+    // Reading files here is fine: reads do not mutate state, so the
+    // worst-case outcome of pass 1 is "no changes were made".
+    struct ResolvedRecord<'a> {
+        record: &'a FileBackupRecord,
+        target: PathBuf,
+        original: String,
+        original_hash: String,
+        current_hash: String,
+    }
+    let mut resolved: Vec<ResolvedRecord<'_>> = Vec::with_capacity(manifest.files.len());
+    let mut mismatches: Vec<String> = Vec::new();
     for record in &manifest.files {
         let target = resolve_manifest_target(&record.path, &workspace_root)?;
         let original_path = resolve_manifest_snapshot(
@@ -470,23 +491,49 @@ pub fn cmd_rollback(opts: RollbackOpts) -> Result<()> {
         let current_hash = sha256_hex(&current);
         let original_hash = sha256_hex(&original);
 
-        if current_hash != record.post_apply_hash && !opts.force {
-            eprintln!(
-                "error: hash mismatch for {} (expected post-apply {}, found {}) -- use --force to override",
+        if current_hash != record.post_apply_hash {
+            mismatches.push(format!(
+                "  {} (expected post-apply {}, found {})",
                 record.path, record.post_apply_hash, current_hash
-            );
-            std::process::exit(2);
+            ));
         }
 
-        if current_hash == original_hash {
-            continue;
-        }
-
-        writes.push(RollbackWrite { target, original });
+        resolved.push(ResolvedRecord {
+            record,
+            target,
+            original,
+            original_hash,
+            current_hash,
+        });
     }
 
-    for write in writes {
-        write_text(&write.target, &write.original)?;
+    // If any hash mismatched and `--force` is not set, abort BEFORE any
+    // write. Print every offending file so the operator can inspect
+    // them in one pass instead of fixing-and-rerunning serially.
+    if !mismatches.is_empty() && !opts.force {
+        eprintln!(
+            "error: rollback aborted — {} file(s) have unexpected hashes:",
+            mismatches.len()
+        );
+        for line in &mismatches {
+            eprintln!("{line}");
+        }
+        eprintln!("re-run with --force to override (will restore originals regardless)");
+        std::process::exit(2);
+    }
+
+    // Pass 2 — write each file via tempfile-rename. Per-file atomic;
+    // see this function's doc-comment for the cross-file contract.
+    for r in &resolved {
+        if r.current_hash == r.original_hash {
+            continue;
+        }
+        write_text(&r.target, &r.original).with_context(|| {
+            format!(
+                "failed to restore {} from backup {}",
+                r.record.path, opts.backup_id
+            )
+        })?;
     }
 
     try_write_stdout(
@@ -791,39 +838,54 @@ fn resolve_backup_root(override_root: Option<PathBuf>) -> PathBuf {
     override_root.unwrap_or_else(|| PathBuf::from(".taudit"))
 }
 
-fn allocate_backup_id(backups_dir: &Path) -> Result<String> {
-    // Verify backup directory is writable before attempting allocation
-    if backups_dir.exists() {
-        let metadata = std::fs::metadata(backups_dir)
-            .with_context(|| format!("failed to check {}", backups_dir.display()))?;
-        if metadata.permissions().readonly() {
-            return Err(anyhow::anyhow!(
-                "backup directory is read-only\n{BACKUP_READ_ONLY}"
-            ));
-        }
+/// Maximum attempts to commit a unique backup id when racing with other
+/// `apply` invocations. Each attempt does an atomic `fs::create_dir`
+/// which fails with `AlreadyExists` if the candidate is taken.
+const MAX_BACKUP_ID_ATTEMPTS: u32 = 100;
+
+/// Race-safe commit of a fresh backup id. Replaces the old "check
+/// `exists()` then create later" TOCTOU dance: the directory creation
+/// itself is the atomic commit step. Returns `(backup_id, operation_dir)`.
+fn commit_backup_id(backups_dir: &Path) -> Result<(String, PathBuf)> {
+    // Verify backup directory is writable before attempting allocation.
+    let metadata = std::fs::metadata(backups_dir)
+        .with_context(|| format!("failed to check {}", backups_dir.display()))?;
+    if metadata.permissions().readonly() {
+        return Err(anyhow::anyhow!(
+            "backup directory is read-only\n{BACKUP_READ_ONLY}"
+        ));
     }
 
-    for attempt in 0..100 {
-        let id = format!(
-            "{}-{:x}-{}",
-            chrono::Utc::now().format("%Y%m%dT%H%M%SZ"),
-            std::process::id(),
-            rand_suffix()
-        );
-        if !backups_dir.join(&id).exists() {
-            return Ok(id);
-        }
-        // After 50 failed attempts, something is very wrong
-        if attempt >= 50 {
-            return Err(anyhow::anyhow!(
-                "failed to allocate unique backup id after {} attempts (possible DoS or disk full)",
-                attempt + 1
-            ));
+    for _ in 0..MAX_BACKUP_ID_ATTEMPTS {
+        let id = candidate_backup_id();
+        let dir = backups_dir.join(&id);
+        match fs::create_dir(&dir) {
+            Ok(()) => return Ok((id, dir)),
+            Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => {
+                // Another process won the race; try a fresh id.
+                continue;
+            }
+            Err(e) => {
+                return Err(anyhow::Error::new(e).context(format!(
+                    "failed to create backup operation directory {}",
+                    dir.display()
+                )));
+            }
         }
     }
     Err(anyhow::anyhow!(
-        "failed to allocate unique backup id after 100 attempts"
+        "failed to allocate unique backup id after {} attempts (possible DoS or disk full)",
+        MAX_BACKUP_ID_ATTEMPTS
     ))
+}
+
+fn candidate_backup_id() -> String {
+    format!(
+        "{}-{:x}-{}",
+        chrono::Utc::now().format("%Y%m%dT%H%M%SZ"),
+        std::process::id(),
+        rand_suffix()
+    )
 }
 
 fn rand_suffix() -> String {
@@ -841,6 +903,11 @@ fn unique_nanos() -> u128 {
         .unwrap_or(0)
 }
 
+/// Persist the per-operation manifest and append a reference to the
+/// shared `index.json`. The index update is serialised across
+/// concurrent `apply` invocations by holding an exclusive lockfile for
+/// the read-modify-write window, and the final `index.json` write goes
+/// through [`write_text`].
 fn save_manifest_and_index(
     backup_root: &Path,
     backup_id: &str,
@@ -855,6 +922,9 @@ fn save_manifest_and_index(
 
     let index_path = backup_root.join("backups").join("index.json");
     let _lock = lock_index(&index_path)?;
+
+    // Reload inside the critical section so we observe any update made
+    // by a process that held the lock just before us.
     let mut index = load_backup_index(&index_path)?;
     index.entries.push(BackupIndexEntry {
         backup_id: backup_id.to_string(),
@@ -866,7 +936,9 @@ fn save_manifest_and_index(
         .entries
         .sort_by(|a, b| b.created_at.cmp(&a.created_at));
 
-    write_text(&index_path, &serde_json::to_string_pretty(&index)?)
+    let index_json = serde_json::to_string_pretty(&index).context("serialize index")?;
+    write_text(&index_path, &index_json)?;
+    Ok(())
 }
 
 fn load_backup_index(index_path: &Path) -> Result<BackupIndex> {
@@ -885,10 +957,6 @@ fn load_backup_index(index_path: &Path) -> Result<BackupIndex> {
 }
 
 fn write_text(path: &Path, content: &str) -> Result<()> {
-    if let Some(parent) = path.parent() {
-        fs::create_dir_all(parent)
-            .with_context(|| format!("failed creating {}", parent.display()))?;
-    }
     atomic_write(path, content.as_bytes())
         .with_context(|| format!("failed writing {}", path.display()))?;
     Ok(())
