@@ -166,6 +166,23 @@ fn category_rule_id(category: &FindingCategory) -> &'static str {
             "pr_specific_cache_key_in_default_branch_consumer"
         }
         FindingCategory::GhCliWithDefaultTokenEscalating => "gh_cli_with_default_token_escalating",
+        FindingCategory::GhaScriptInjectionToPrivilegedShell => {
+            "gha_script_injection_to_privileged_shell"
+        }
+        FindingCategory::GhaWorkflowRunArtifactPoisoningToPrivilegedConsumer => {
+            "gha_workflow_run_artifact_poisoning_to_privileged_consumer"
+        }
+        FindingCategory::GhaRemoteScriptInAuthorityJob => "gha_remote_script_in_authority_job",
+        FindingCategory::GhaPatRemoteUrlWrite => "gha_pat_remote_url_write",
+        FindingCategory::GhaIssueCommentCommandToWriteToken => {
+            "gha_issue_comment_command_to_write_token"
+        }
+        FindingCategory::GhaPrBuildPushesPublishableImage => {
+            "gha_pr_build_pushes_publishable_image"
+        }
+        FindingCategory::GhaManualDispatchRefToPrivilegedCheckout => {
+            "gha_manual_dispatch_ref_to_privileged_checkout"
+        }
         FindingCategory::CiJobTokenToExternalApi => "ci_job_token_to_external_api",
         FindingCategory::IdTokenAudienceOverscoped => "id_token_audience_overscoped",
         FindingCategory::UntrustedCiVarInShellInterpolation => {
@@ -220,6 +237,46 @@ fn category_rule_id(category: &FindingCategory) -> &'static str {
         FindingCategory::GhaWorkflowShellAuthorityConcentration => {
             "gha_workflow_shell_authority_concentration"
         }
+        FindingCategory::GhaActionTokenEnvBeforeBareDownloadHelper => {
+            "gha_action_token_env_before_bare_download_helper"
+        }
+        FindingCategory::GhaPostActionInputRetargetToCacheSave => {
+            "gha_post_action_input_retarget_to_cache_save"
+        }
+        FindingCategory::GhaTerraformWrapperSensitiveOutput => {
+            "gha_terraform_wrapper_sensitive_output"
+        }
+        FindingCategory::GhaCompositeBareHelperAfterPathInstallWithSecretEnv => {
+            "gha_composite_bare_helper_after_path_install_with_secret_env"
+        }
+        FindingCategory::GhaPulumiPathResolvedCliWithAuthority => {
+            "gha_pulumi_path_resolved_cli_with_authority"
+        }
+        FindingCategory::GhaPypiPublishOidcAfterPathMutation => {
+            "gha_pypi_publish_oidc_after_path_mutation"
+        }
+        FindingCategory::GhaChangesetsPublishCommandWithAuthority => {
+            "gha_changesets_publish_command_with_authority"
+        }
+        FindingCategory::GhaRubygemsReleaseGitTokenAndOidcHelper => {
+            "gha_rubygems_release_git_token_and_oidc_helper"
+        }
+        FindingCategory::GhaCompositeEntrypointPathShadowWithSecretEnv => {
+            "gha_composite_entrypoint_path_shadow_with_secret_env"
+        }
+        FindingCategory::GhaDockerBuildxAuthorityPathHandoff => {
+            "gha_docker_buildx_authority_path_handoff"
+        }
+        FindingCategory::GhaGoogleDeployGcloudCredentialPath => {
+            "gha_google_deploy_gcloud_credential_path"
+        }
+        FindingCategory::GhaDatadogTestVisibilityInstallerAuthority => {
+            "gha_datadog_test_visibility_installer_authority"
+        }
+        FindingCategory::GhaKubernetesHelperKubeconfigAuthority => {
+            "gha_kubernetes_helper_kubeconfig_authority"
+        }
+        FindingCategory::GhaAzureCompanionHelperAuthority => "gha_azure_companion_helper_authority",
         FindingCategory::GhaCreatePrGitTokenPathHandoff => "gha_create_pr_git_token_path_handoff",
         FindingCategory::GhaImportGpgPrivateKeyHelperPath => {
             "gha_import_gpg_private_key_helper_path"
@@ -232,6 +289,84 @@ fn category_rule_id(category: &FindingCategory) -> &'static str {
         }
         FindingCategory::GhaPagesDeployTokenUrlToGitHelper => {
             "gha_pages_deploy_token_url_to_git_helper"
+        }
+        FindingCategory::GhaWorkflowRunArtifactMetadataToPrivilegedApi => {
+            "gha_workflow_run_artifact_metadata_to_privileged_api"
+        }
+        FindingCategory::GhaWorkflowRunArtifactReportToPrComment => {
+            "gha_workflow_run_artifact_report_to_pr_comment"
+        }
+        FindingCategory::GhaWorkflowRunArtifactToBuildScanPublish => {
+            "gha_workflow_run_artifact_to_build_scan_publish"
+        }
+        FindingCategory::GhaFloatingRemoteScriptBeforePublishSink => {
+            "gha_floating_remote_script_before_publish_sink"
+        }
+        FindingCategory::GhaTokenRemoteUrlWithTraceOrProcessExposure => {
+            "gha_token_remote_url_with_trace_or_process_exposure"
+        }
+        FindingCategory::GhaEnvCredentialHelperConfigRedirectBeforeAuthority => {
+            "gha_env_credential_helper_config_redirect_before_authority"
+        }
+        FindingCategory::GhaEnvNodeOptionsCodeInjectionBeforeNodeAuthority => {
+            "gha_env_node_options_code_injection_before_node_authority"
+        }
+        FindingCategory::GhaEnvDyldOrLdLibraryPathBeforeCredentialHelper => {
+            "gha_env_dyld_or_ld_library_path_before_credential_helper"
+        }
+        FindingCategory::GhaWorkflowCallContainerImageInputSecretsInherit => {
+            "gha_workflow_call_container_image_input_secrets_inherit"
+        }
+        FindingCategory::GhaWorkflowCallRunnerLabelInputPrivilegeEscalation => {
+            "gha_workflow_call_runner_label_input_privilege_escalation"
+        }
+        FindingCategory::GhaContainerImageAttackerInfluencedWithSecretEnv => {
+            "gha_container_image_attacker_influenced_with_secret_env"
+        }
+        FindingCategory::GhaAttestationSubjectDigestFromStepOutputUnverified => {
+            "gha_attestation_subject_digest_from_step_output_unverified"
+        }
+        FindingCategory::GhaAttestationSubjectPathWorkspaceGlobWithPrTrigger => {
+            "gha_attestation_subject_path_workspace_glob_with_pr_trigger"
+        }
+        FindingCategory::GhaAttestationConfigDrivenGateFromWorkspaceFile => {
+            "gha_attestation_config_driven_gate_from_workspace_file"
+        }
+        FindingCategory::GhaTelemetryPrOrIssueTextToExternalSink => {
+            "gha_telemetry_pr_or_issue_text_to_external_sink"
+        }
+        FindingCategory::GhaTelemetryDebugFlagWithSecretEnv => {
+            "gha_telemetry_debug_flag_with_secret_env"
+        }
+        FindingCategory::GhaTelemetryAutonomousAgentInputFromUntrustedEvent => {
+            "gha_telemetry_autonomous_agent_input_from_untrusted_event"
+        }
+        FindingCategory::GhaWorkflowRunArtifactToBlobStorageToken => {
+            "gha_workflow_run_artifact_to_blob_storage_token"
+        }
+        FindingCategory::GhaApiWorkflowRunArtifactToAutonomousAgentToGitPush => {
+            "gha_api_workflow_run_artifact_to_autonomous_agent_to_git_push"
+        }
+        FindingCategory::GhaManifestNpmLifecycleHookPrTriggerWithToken => {
+            "gha_manifest_npm_lifecycle_hook_pr_trigger_with_token"
+        }
+        FindingCategory::GhaManifestPythonMBuildWithPrCredentials => {
+            "gha_manifest_python_m_build_with_pr_credentials"
+        }
+        FindingCategory::GhaManifestCargoBuildRsPullRequestWithToken => {
+            "gha_manifest_cargo_build_rs_pull_request_with_token"
+        }
+        FindingCategory::GhaManifestMakefileWithPrTriggerAndSecrets => {
+            "gha_manifest_makefile_with_pr_trigger_and_secrets"
+        }
+        FindingCategory::GhaManifestSubmodulesRecursiveWithPrAuthority => {
+            "gha_manifest_submodules_recursive_with_pr_authority"
+        }
+        FindingCategory::GhaCrossrepoWorkflowCallFloatingRefCascade => {
+            "gha_crossrepo_workflow_call_floating_ref_cascade"
+        }
+        FindingCategory::GhaCrossrepoSecretsInheritUnreviewedCallee => {
+            "gha_crossrepo_secrets_inherit_unreviewed_callee"
         }
         FindingCategory::GhaToolcacheAbsolutePathDowngrade => {
             "gha_toolcache_absolute_path_downgrade"
@@ -834,6 +969,13 @@ mod fingerprint_tests {
             FindingCategory::InteractiveDebugActionInAuthorityWorkflow,
             FindingCategory::PrSpecificCacheKeyInDefaultBranchConsumer,
             FindingCategory::GhCliWithDefaultTokenEscalating,
+            FindingCategory::GhaScriptInjectionToPrivilegedShell,
+            FindingCategory::GhaWorkflowRunArtifactPoisoningToPrivilegedConsumer,
+            FindingCategory::GhaRemoteScriptInAuthorityJob,
+            FindingCategory::GhaPatRemoteUrlWrite,
+            FindingCategory::GhaIssueCommentCommandToWriteToken,
+            FindingCategory::GhaPrBuildPushesPublishableImage,
+            FindingCategory::GhaManualDispatchRefToPrivilegedCheckout,
             FindingCategory::CiJobTokenToExternalApi,
             FindingCategory::IdTokenAudienceOverscoped,
             FindingCategory::UntrustedCiVarInShellInterpolation,
@@ -862,6 +1004,20 @@ mod fingerprint_tests {
             FindingCategory::GhaDockerSetupQemuPrivilegedDockerHelper,
             FindingCategory::GhaToolInstallerThenShellHelperAuthority,
             FindingCategory::GhaWorkflowShellAuthorityConcentration,
+            FindingCategory::GhaActionTokenEnvBeforeBareDownloadHelper,
+            FindingCategory::GhaPostActionInputRetargetToCacheSave,
+            FindingCategory::GhaTerraformWrapperSensitiveOutput,
+            FindingCategory::GhaCompositeBareHelperAfterPathInstallWithSecretEnv,
+            FindingCategory::GhaPulumiPathResolvedCliWithAuthority,
+            FindingCategory::GhaPypiPublishOidcAfterPathMutation,
+            FindingCategory::GhaChangesetsPublishCommandWithAuthority,
+            FindingCategory::GhaRubygemsReleaseGitTokenAndOidcHelper,
+            FindingCategory::GhaCompositeEntrypointPathShadowWithSecretEnv,
+            FindingCategory::GhaDockerBuildxAuthorityPathHandoff,
+            FindingCategory::GhaGoogleDeployGcloudCredentialPath,
+            FindingCategory::GhaDatadogTestVisibilityInstallerAuthority,
+            FindingCategory::GhaKubernetesHelperKubeconfigAuthority,
+            FindingCategory::GhaAzureCompanionHelperAuthority,
             FindingCategory::GhaCreatePrGitTokenPathHandoff,
             FindingCategory::GhaImportGpgPrivateKeyHelperPath,
             FindingCategory::GhaSshAgentPrivateKeyToPathHelper,

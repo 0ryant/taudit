@@ -1,0 +1,58 @@
+# Algol authority-confusion policy-rule test fixture.
+#
+# Used by: invariants/policies/algol-authority-confusion-extensions.yml
+#
+# This synthetic workflow is designed to trigger every rule in the active
+# Algol invariant bundle. Run:
+#
+#   taudit verify --policy invariants/policies/algol-authority-confusion-extensions.yml \
+#                 tests/fixtures/algol-authority-confusion-fixture.yml
+#
+# Expected violations (rc.3):
+#   - algol_oidc_broad_to_third_party_action       — 7 high
+#   - algol_github_path_mutator_with_authority     — 1 high
+#
+# All third-party action refs are pinned to the canary digest
+# `a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2` so the fixture stays stable
+# across upstream releases.
+
+on: push
+permissions:
+  contents: read
+  id-token: write
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2
+      - uses: actions/setup-node@a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2
+        with:
+          node-version: 20
+      - name: extend path
+        run: echo "$HOME/.local/bin" >> $GITHUB_PATH
+      - name: vercel deploy
+        uses: amondnet/vercel-action@a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2
+        with:
+          vercel-token: ${{ secrets.VERCEL_TOKEN }}
+          vercel-project-id: ${{ secrets.VERCEL_PROJECT_ID }}
+      - name: hf upload
+        uses: huggingface/upload-folder-to-hf-space@a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2
+        with:
+          hf_token: ${{ secrets.HUGGINGFACE_TOKEN }}
+      - name: flyctl deploy
+        uses: superfly/flyctl-actions/setup-flyctl@a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2
+      - name: deploy
+        env:
+          FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN }}
+        run: flyctl deploy
+      - name: helm
+        uses: azure/setup-helm@a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2
+      - name: helm install
+        run: helm upgrade --install whatever
+      - name: vault fetch
+        uses: hashicorp/vault-action@a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2
+        with:
+          url: https://vault.example.com
+          token: ${{ secrets.VAULT_TOKEN }}
+          secrets: |
+            secret/data/foo bar

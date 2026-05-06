@@ -267,11 +267,12 @@ enum Cli {
         rich_labels: bool,
     },
 
-    /// Emit the canonical authority graph (JSON, DOT, or Mermaid).
+    /// Emit graph views (JSON, DOT, Mermaid, or summary).
     ///
     /// Unlike `taudit map` (human-readable table), this command emits the full
     /// `AuthorityGraph`: by default as JSON (`schemas/authority-graph.v1.json`)
     /// for downstream tools, or as Graphviz DOT / Mermaid for documentation.
+    /// Use `--view exploit` for mutable-state to helper-authority paths.
     ///
     /// Formats:
     ///   json (default) — schema-validated; canonical machine interchange.
@@ -300,6 +301,10 @@ enum Cli {
         /// `mermaid` (GitHub-flavored Markdown `flowchart`), or `summary` (propagation rollup JSON).
         #[arg(long, default_value = "json")]
         format: GraphFormat,
+
+        /// Graph view: `authority` (canonical graph) or `exploit` (mutable-state/helper path graph).
+        #[arg(long, default_value = "authority")]
+        view: GraphView,
 
         /// Maximum propagation depth for `--format summary` (same meaning as `taudit scan`).
         #[arg(long, default_value_t = DEFAULT_MAX_HOPS)]
@@ -923,6 +928,14 @@ enum GraphFormat {
     Summary,
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq, clap::ValueEnum)]
+enum GraphView {
+    /// Canonical authority graph view.
+    Authority,
+    /// Mutable-state to helper-authority path graph view.
+    Exploit,
+}
+
 /// Dimension for org-scale collapsed graph views (ADR 0002 Phase 4).
 #[derive(Clone, Copy, Debug, PartialEq, Eq, clap::ValueEnum)]
 enum GraphCollapseBy {
@@ -1384,6 +1397,7 @@ fn run() -> Result<()> {
             paths,
             platform,
             format,
+            view,
             max_hops,
             force_scan_dense,
             job,
@@ -1395,6 +1409,7 @@ fn run() -> Result<()> {
             paths,
             platform,
             format,
+            view,
             max_hops,
             force_scan_dense,
             job,
@@ -3794,6 +3809,7 @@ fn cmd_graph(
     paths: Vec<PathBuf>,
     platform: Platform,
     format: GraphFormat,
+    view: GraphView,
     max_hops: usize,
     force_scan_dense: bool,
     job: Option<String>,
@@ -3802,16 +3818,27 @@ fn cmd_graph(
     collapse_by: Option<GraphCollapseBy>,
     risk_only: bool,
 ) -> Result<()> {
-    warn_graph_phase4_flags(collapse_by, risk_only, format);
+    if view == GraphView::Authority {
+        warn_graph_phase4_flags(collapse_by, risk_only, format);
+    } else if collapse_by.is_some() || risk_only {
+        anyhow::bail!("`--collapse-by` and `--risk-only` apply only to `--view authority`");
+    }
+
+    if rich_labels && view != GraphView::Authority {
+        anyhow::bail!("`--rich-labels` applies only to `--view authority`");
+    }
 
     if rich_labels && matches!(format, GraphFormat::Json | GraphFormat::Summary) {
         anyhow::bail!("`--rich-labels` applies only to `--format dot` and `--format mermaid`");
     }
 
     if matches!(format, GraphFormat::Summary) && job.is_some() {
-        anyhow::bail!(
-            "`--job` does not apply to `--format summary` (summary is always computed on the full parsed graph)"
-        );
+        match view {
+            GraphView::Authority => anyhow::bail!(
+                "`--job` does not apply to `--format summary` (summary is always computed on the full parsed graph)"
+            ),
+            GraphView::Exploit => {}
+        }
     }
 
     // Validate `--rules-dir` early so a bad directory fails fast, even
@@ -3895,8 +3922,54 @@ fn cmd_graph(
             map::DiagramLabelDetail::Compact
         };
 
-        match format {
-            GraphFormat::Summary => {
+        match (view, format) {
+            (GraphView::Exploit, GraphFormat::Json) => {
+                let mut json = taudit_core::exploit_path::render_json_pretty(
+                    &graph,
+                    taudit_core::exploit_path::ExploitGraphOptions {
+                        job: job.as_deref(),
+                    },
+                )
+                .map_err(|e| anyhow::anyhow!("exploit graph JSON error: {e}"))?
+                .into_bytes();
+                json.push(b'\n');
+                try_write_stdout(&json)?;
+            }
+            (GraphView::Exploit, GraphFormat::Summary) => {
+                let mut json = taudit_core::exploit_path::render_summary_pretty(
+                    &graph,
+                    taudit_core::exploit_path::ExploitGraphOptions {
+                        job: job.as_deref(),
+                    },
+                )
+                .map_err(|e| anyhow::anyhow!("exploit graph summary JSON error: {e}"))?
+                .into_bytes();
+                json.push(b'\n');
+                try_write_stdout(&json)?;
+            }
+            (GraphView::Exploit, GraphFormat::Dot) => {
+                let mut dot = taudit_core::exploit_path::render_dot(
+                    &graph,
+                    taudit_core::exploit_path::ExploitGraphOptions {
+                        job: job.as_deref(),
+                    },
+                )
+                .into_bytes();
+                dot.push(b'\n');
+                try_write_stdout(&dot)?;
+            }
+            (GraphView::Exploit, GraphFormat::Mermaid) => {
+                let mut mer = taudit_core::exploit_path::render_mermaid(
+                    &graph,
+                    taudit_core::exploit_path::ExploitGraphOptions {
+                        job: job.as_deref(),
+                    },
+                )
+                .into_bytes();
+                mer.push(b'\n');
+                try_write_stdout(&mer)?;
+            }
+            (GraphView::Authority, GraphFormat::Summary) => {
                 let doc = summary::build_authority_propagation_summary(
                     &graph,
                     max_hops,
@@ -3911,7 +3984,7 @@ fn cmd_graph(
                 json.push(b'\n');
                 try_write_stdout(&json)?;
             }
-            GraphFormat::Json => {
+            (GraphView::Authority, GraphFormat::Json) => {
                 // Note: --job only filters diagram output (DOT / Mermaid); the
                 // JSON export emits the full graph for every matched file. This
                 // matches user expectation that the schema-validated JSON
@@ -3924,7 +3997,7 @@ fn cmd_graph(
                 json.push(b'\n');
                 try_write_stdout(&json)?;
             }
-            GraphFormat::Dot => {
+            (GraphView::Authority, GraphFormat::Dot) => {
                 let job_collapse = if collapse_by == Some(GraphCollapseBy::Job) {
                     map::DotJobCollapse::On
                 } else {
@@ -3936,7 +4009,7 @@ fn cmd_graph(
                 dot.push(b'\n');
                 try_write_stdout(&dot)?;
             }
-            GraphFormat::Mermaid => {
+            (GraphView::Authority, GraphFormat::Mermaid) => {
                 let mut mer =
                     map::render_mermaid(&graph, job.as_deref(), diagram_label_detail).into_bytes();
                 mer.push(b'\n');

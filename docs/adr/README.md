@@ -9,6 +9,7 @@ Records in this directory capture **significant** product and technical decision
 | [0003](0003-strategic-spine-adoption-phased.md) | Strategic spine, merge gate, adoption: phased tasks (council-aligned; see implementation status in ADR) |
 | [0004](0004-prereleases-publish-to-crates-io.md) | Prereleases publish to crates.io, gated by Cargo's resolver |
 | [0005](0005-authority-edge-classifier-and-witness-handoff.md) | Authority-edge classifier and witness handoff |
+| [0006](0006-exploit-path-view-and-ruleset.md) | Exploit-path view and ruleset |
 
 ## Conventions
 

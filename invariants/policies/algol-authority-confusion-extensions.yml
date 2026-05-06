@@ -1,0 +1,286 @@
+# Algol Authority-Confusion Extensions — taudit invariant pack
+#
+# Provenance:  Algol disclosure program (rytilcock).
+# Compatible:  taudit 1.1.0-rc.3 (CustomRule schema as shipped in rc.3).
+# Status:      validated against 1471-file `corpus/gha/` and the synthetic
+#              fixture `tests/fixtures/algol-authority-confusion-fixture.yml`
+#              (added in this change).
+#
+# Purpose:
+#   Codify policy invariants for the authority-confusion CVE family that the
+#   Algol team has been hunting on disclosure-ready leads. The 5 leads in the
+#   2026-05-05 filing tranche (FirebaseExtended/action-hosting-deploy,
+#   cloudflare/wrangler-action, Azure/login, teleport-actions/database-tunnel,
+#   google-github-actions/deploy-appengine) all share the same shape:
+#
+#     authority source -- secret or OIDC identity -- reaches a third-party
+#     action that delegates to a bare-name helper resolved through a runner
+#     PATH that an earlier same-job step mutated.
+#
+#   Each rule below names the SHAPE; per-action variants for high-risk
+#   action families (Vercel, Helm, Vault, Snowflake, etc.) are blocked on
+#   the action-name-predicate enhancement noted at the bottom of this file
+#   and live in `algol-authority-confusion-extensions-future.yml`.
+#
+# How to use:
+#   taudit verify --policy invariants/policies/algol-authority-confusion-extensions.yml \
+#                 .github/workflows/
+#
+# Authority-delta classification:
+#   Each rule below carries `authority_delta_type` in its description.
+#   Allowed values match the Algol candidate-tracking contract:
+#     - contract-boundary-violation
+#     - intra-workflow-escalation
+#     - cross-principal-escalation
+#
+# Calibration on `corpus/gha/` (1471 files, 2026-05-05):
+#   algol_oidc_broad_to_third_party_action               727 hits
+#   algol_long_lived_secret_to_third_party_pr_context     60 hits
+#   algol_github_path_mutator_with_authority              63 hits  <-- signature
+#   algol_authority_to_untrusted_in_pr_workflow            1 hit
+#
+#   The signature rule is `algol_github_path_mutator_with_authority`. Its
+#   63 hits in this corpus are precisely the precondition shape every
+#   Algol disclosure-ready lead exploits: a same-job step mutates
+#   $GITHUB_PATH while the workflow is grant ed authority. Treat it as the
+#   policy gate operators should pin merge on.
+
+# ---------------------------------------------------------------------------
+# Rule 1 (auth) — OIDC-broad authority reaches an unpinned third-party action
+#
+# authority_delta_type: contract-boundary-violation
+# Class: an OIDC identity with broad scope is granted to a workflow whose
+#        trigger context can be PR-influenced AND that authority propagates
+#        to a third-party action. Every Algol lead in the 2026-05-05
+#        tranche has this property.
+#
+# Severity: high (not critical) — fires on workflows that grant
+#           id-token: write at workflow level without per-job scoping.
+#           Operators should pair it with the bare-helper-handoff
+#           detection from the built-in
+#           `gha_action_minted_secret_to_helper` rule.
+# ---------------------------------------------------------------------------
+id: algol_oidc_broad_to_third_party_action
+name: OIDC broad-scope identity reaches third-party action
+description: >
+  An OIDC identity (id-token: write) with broad permissions propagates to
+  a third-party action. authority_delta_type: contract-boundary-violation.
+  This shape is the trunk of the Algol authority-confusion family: when
+  the third-party action delegates to a bare-name helper, the OIDC token
+  becomes attacker-shadowable through whatever PATH an earlier same-job
+  step mutated. Pin id-token: write to the smallest job that needs it,
+  scope OIDC audiences to the protected branch, or split the OIDC
+  exchange into a dedicated authority-free job that does not run any
+  third-party actions.
+severity: high
+category: authority_propagation
+match:
+  source:
+    node_type: identity
+    metadata:
+      oidc: "true"
+      identity_scope: broad
+  sink:
+    node_type: image
+    trust_zone: third_party
+  path:
+    crosses_to:
+      - third_party
+
+# ---------------------------------------------------------------------------
+# Rule 2 (auth) — Long-lived secret reaches third-party action under a
+#                 PR-influenceable trigger context
+# ---------------------------------------------------------------------------
+---
+id: algol_long_lived_secret_to_third_party_pr_context
+name: Long-lived secret reaches third-party action under PR-influenced trigger
+description: >
+  A long-lived secret reaches a third-party action in a workflow whose
+  trigger surface includes pull_request_target, workflow_run, or
+  issue_comment. authority_delta_type: cross-principal-escalation. The
+  caller-provided credential and the PR-author-influenced principal share
+  the same job; if the action delegates to a bare-name helper, the helper
+  resolution is selected through whatever PATH the earlier checkout/setup
+  steps left mutable. Replace the static credential with an OIDC exchange
+  scoped to the protected branch, or split into a workflow_run consumer
+  that does NOT inherit secrets.
+severity: high
+category: authority_propagation
+match:
+  graph_metadata:
+    trigger:
+      in: [pull_request_target, workflow_run, issue_comment]
+  source:
+    node_type: secret
+  sink:
+    node_type: image
+    trust_zone: third_party
+  path:
+    crosses_to:
+      - third_party
+
+# ---------------------------------------------------------------------------
+# Rule 3 (signature exploit) — GITHUB_PATH mutator with authority
+#                              propagation in the same graph
+#
+# This is the SIGNATURE rule of the Algol authority-confusion family. A
+# step writes to the env gate AND its script body contains $GITHUB_PATH
+# (or ${GITHUB_PATH}). Every disclosure-ready lead in the 2026-05-05
+# tranche depends on this precondition.
+#
+# Standalone mode — fires per-step. Combine with policy enforcement to
+# gate merges on workflows that have any authority granted (id-token,
+# secrets:) when this signature is present.
+# ---------------------------------------------------------------------------
+---
+id: algol_github_path_mutator_with_authority
+name: GITHUB_PATH mutator step (authority-confusion precondition)
+description: >
+  A step in this graph writes to the env gate AND its script body
+  contains `$GITHUB_PATH` or `${GITHUB_PATH}`. authority_delta_type:
+  intra-workflow-escalation when followed by a same-job authority sink,
+  cross-principal-escalation when the trigger is PR-class. This is the
+  canonical precondition shape for the Algol authority-confusion family
+  — every disclosure-ready lead in the 2026-05-05 tranche depends on a
+  same-job PATH mutation preceding a bare-name helper hand-off. If the
+  workflow also holds a secret or OIDC identity, the bare-name helper
+  invocation downstream of this step is a contract boundary that
+  taudit's built-in `gha_action_minted_secret_to_helper` and
+  `later_secret_materialized_after_path_mutation` rules will likely
+  flag. This rule lets policy gate the precondition itself. Pin helper
+  resolution to a trusted absolute path, or split PATH setup into an
+  authority-free job.
+severity: high
+category: self_mutating_pipeline
+match:
+  standalone:
+    node_type: step
+    metadata:
+      writes_env_gate: "true"
+      script_body:
+        contains: GITHUB_PATH
+
+# ---------------------------------------------------------------------------
+# Rule 4 (auth) — Authority-bearing PR-target workflow that runs an
+#                 untrusted-zone step (cross-principal pre-condition)
+# ---------------------------------------------------------------------------
+---
+id: algol_authority_to_untrusted_in_pr_workflow
+name: Authority reaches untrusted-zone step under PR trigger
+description: >
+  A secret or OIDC identity reaches an untrusted-zone step in a workflow
+  triggered by pull_request_target / workflow_run / issue_comment.
+  authority_delta_type: cross-principal-escalation. This is the most
+  acute shape in the authority-confusion family: the caller's secret and
+  the fork author's code share the same execution principal. Re-design
+  the workflow so the secret-bearing job runs only AFTER an explicit
+  fork-check guard, OR split into a workflow_run consumer that does not
+  inherit secrets, OR remove the pull_request_target trigger.
+severity: critical
+category: trigger_context_mismatch
+match:
+  graph_metadata:
+    trigger:
+      in: [pull_request_target, workflow_run, issue_comment]
+  source:
+    node_type: [secret, identity]
+  sink:
+    node_type: step
+    trust_zone: untrusted
+  path:
+    crosses_to:
+      - untrusted
+
+# ---------------------------------------------------------------------------
+# Future-rules pointer
+#
+# Per-action invariants (Vercel, Netlify, Fly.io, DigitalOcean doctl,
+# Helm, Vault, Snowflake, Databricks, Atlas, JFrog, Supabase, Hugging
+# Face, Modal, Replicate, sigstore, plus the Azure/k8s helper family,
+# and 6+ GitLab / ADO / Bitbucket variants surfaced by the Algol corpus
+# hunt on 2026-05-05) live in
+# `algol-authority-confusion-extensions-future.yml`. They are blocked on
+# one of:
+#   - taudit-parse-gha populating `META_GHA_ACTION` on Step nodes (this
+#     is on HEAD as of 2026-05-05; ship in the next RC), OR
+#   - CustomRule.NodeMatcher gaining a `name: { contains, in }` predicate
+#     so rules can match on the action ref string stored on Image nodes.
+# Either change unblocks per-action policy gates.
+
+# ---------------------------------------------------------------------------
+# Rule 5 (novel exploit shape A) — Secret-reachable env-gate writer
+#
+# Source: 2026-05-06 novel-shapes red-team pass. Captures the precondition
+# for "post-action env cleanup retargeting" — a step holds authority AND
+# writes the env gate, so any later post-action that consults env for
+# cleanup decisions inherits the authority-step's writes. Built-in
+# `gha_post_ambient_env_cleanup_path` covers the same shape but only fires
+# on 3 hardcoded action profiles with `cleanup_env=true`. This rule is the
+# wide net that catches every authority+env-gate-writer pair, regardless
+# of whether the post-action is in the profile list.
+#
+# Overlaps intentionally with `algol_github_path_mutator_with_authority`
+# (Rule 3) — that rule narrows to GITHUB_PATH writers; this rule covers
+# the broader `$GITHUB_ENV` writer surface.
+# ---------------------------------------------------------------------------
+---
+id: algol_secret_reachable_env_gate_writer
+name: Secret-reachable step writes env gate (post-cleanup retargeting risk)
+description: >
+  A step holds secret or OIDC identity AND writes to the environment gate
+  ($GITHUB_ENV / $GITHUB_PATH). If any prior same-job step uses a
+  third-party action with a `post:` cleanup hook that reads $GITHUB_ENV,
+  this write can retarget the cleanup operation to an attacker-chosen
+  resource. authority_delta_type: intra-workflow-escalation. Wide-net
+  generalisation of the built-in `gha_post_ambient_env_cleanup_path`,
+  which only fires on `cachix/cachix-action`,
+  `google-github-actions/auth`, and `prefix-dev/setup-pixi`. Until the
+  parser emits `META_POST_ACTION` on every step whose action.yml declares
+  a `post:` block, this is the broadest shape detector available.
+severity: high
+category: self_mutating_pipeline
+match:
+  source:
+    node_type: [secret, identity]
+  sink:
+    node_type: step
+    metadata:
+      writes_env_gate: "true"
+
+# ---------------------------------------------------------------------------
+# Rule 6 (novel exploit shape D) — Secret laundered via $GITHUB_ENV to
+#                                   third-party action
+#
+# Source: 2026-05-06 novel-shapes red-team pass. The built-in
+# `secrets_inherit_overscoped_passthrough` checks the call boundary of a
+# reusable workflow but doesn't track the SECONDARY launder: a secret
+# written to $GITHUB_ENV inside the reusable workflow that's then
+# inherited by a later third-party action via ambient env.
+#
+# This rule fires when a secret reaches any third-party action image in
+# the same graph. It overlaps intentionally with built-in
+# `authority_propagation` (which would fire on the same shape at
+# `critical`); the novelty is the named, dedicated policy gate for the
+# laundering chain.
+# ---------------------------------------------------------------------------
+---
+id: algol_secret_laundered_via_github_env
+name: Secret written to $GITHUB_ENV reachable from third-party action
+description: >
+  A secret propagates to a third-party action image. When the workflow
+  also contains a step that writes the env gate with secret-bearing
+  authority (i.e. Rule 5 fires), the secret is laundered through
+  $GITHUB_ENV inheritance to the third-party action sink without an
+  explicit `env:` mapping. authority_delta_type:
+  intra-workflow-escalation.
+severity: medium
+category: authority_propagation
+match:
+  source:
+    node_type: secret
+  sink:
+    node_type: image
+    trust_zone: third_party
+  path:
+    crosses_to:
+      - third_party

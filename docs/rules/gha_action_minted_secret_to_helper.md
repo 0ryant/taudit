@@ -9,7 +9,10 @@
 
 Fires when a same-job earlier step writes to `GITHUB_PATH` and a later known action mints or exchanges credentials before delegating them to a PATH-resolved helper.
 
-Current action coverage includes `teleport-actions/database-tunnel`, `google-github-actions/setup-gcloud` with `skip_install: true`, and `aws-actions/amazon-ecr-login`.
+Current action coverage includes `FirebaseExtended/action-hosting-deploy`,
+`teleport-actions/database-tunnel`, `google-github-actions/setup-gcloud` with
+`skip_install: true`, `google-github-actions/deploy-appengine`,
+`google-github-actions/deploy-cloudrun`, and `aws-actions/amazon-ecr-login`.
 
 ## Risk
 

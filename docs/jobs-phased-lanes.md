@@ -11,6 +11,7 @@
 | [`../TODOS.md`](../TODOS.md) | ADO `--ado-pat` deep spec |
 | [`adr/0003-strategic-spine-adoption-phased.md`](adr/0003-strategic-spine-adoption-phased.md) | Adoption spine |
 | [`adr/0005-authority-edge-classifier-and-witness-handoff.md`](adr/0005-authority-edge-classifier-and-witness-handoff.md) | Helper-resolution authority-edge classifier and witness handoff |
+| [`adr/0006-exploit-path-view-and-ruleset.md`](adr/0006-exploit-path-view-and-ruleset.md) | Exploit-path graph view and separate ruleset scope |
 | [`research/BACKLOG-helper-resolution-authority-edges-adr0005.md`](research/BACKLOG-helper-resolution-authority-edges-adr0005.md) | ADR 0005 task backlog |
 | [`research/PHASE1-lanes.md`](research/PHASE1-lanes.md) | **Different** scope — ADR 0002 `--rich-labels` / map Mermaid only |
 
@@ -184,7 +185,7 @@ flowchart TB
 
 ## Phase 5 — Helper-resolution authority edges
 
-**Goal:** Implement [ADR 0005](adr/0005-authority-edge-classifier-and-witness-handoff.md): taudit classifies and ranks helper-resolution authority edges, emits internal witness specs, and leaves proof execution to the witness harness.
+**Goal:** Implement [ADR 0005](adr/0005-authority-edge-classifier-and-witness-handoff.md) and [ADR 0006](adr/0006-exploit-path-view-and-ruleset.md): taudit classifies and ranks helper-resolution authority edges, emits a separate exploit-path graph/ruleset scope for candidate proof paths, emits internal witness specs where gated, and leaves proof execution to the witness harness.
 
 Disclosure/CVE-oriented tooling is internal signal. Witness-spec emission, disclosure scores, CVE workflow metadata, private source anchors, and canary details must be feature-gated or internal-build-only and absent from default downstream/customer output.
 
@@ -196,6 +197,7 @@ Disclosure/CVE-oriented tooling is internal signal. Witness-spec emission, discl
 | **5B** | **Rules + downgrades** | `crates/taudit-core/src/rules.rs`, `docs/rules/`, sink mappings | 5A | `GHA_HELPER_PATH_LATER_AUTHORITY`, setup-node/setup-python/Docker-QEMU helper handoffs, installer-then-shell advisories, and transport-specific rules require ordered authority timing; absolute/toolcache/action-owned/explicit-mode cases downgrade or suppress. |
 | **5C** | **Witness spec + scoring** | `crates/taudit-cli/`, report schemas, docs | 5A, 5B | `taudit witness-spec` and `disclosure_score` are feature-gated; default findings expose customer-safe authority classification, `technical_score`, confidence, witness status, and product labels. |
 | **5D** | **Corpus authority mining** | `crates/taudit-core/src/rules.rs`, corpus fixtures, report labels | 5A | Shell authority concentration rules identify publish/deploy/sign/release hotspots as corpus signal or workflow hardening, not disclosure candidates by default. |
+| **5E** | **Exploit-path ruleset scope** | `crates/taudit-core/src/exploit_path.rs`, rule/report schemas, `docs/authority-graph.md` | 5A, 5B | Exploit-path rules are candidate-agnostic deterministic patterns, tagged separately from authority rules; candidate packs are regression fixtures/evidence inputs, not one-off detections; `taudit graph --view exploit` keeps format parity with authority output; disclosure score, witness-spec, private anchors, and canary material are gated. |
 
 **Researcher prompt:**
 

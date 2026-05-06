@@ -2,20 +2,19 @@
 source: crates/taudit-cli/tests/snapshot_gha.rs
 expression: finding
 ---
-severity: critical
-category: untrusted_with_authority
+severity: medium
+category: unpinned_action
 nodes_involved:
-  - 2
-  - 0
-message: "Untrusted step 'check[0]' has direct access to identity 'GITHUB_TOKEN'"
+  - 1
+message: actions/checkout@v4 is not pinned to a SHA digest
 recommendation:
-  type: reduce_permissions
-  current: write-all
-  minimum: minimal required scope
+  type: pin_action
+  current: actions/checkout@v4
+  pinned: actions/checkout@<sha256-digest>
 source: built-in
+time_to_fix: trivial
 confidence_scope: yaml_only
-authority_kinds:
-  - oidc_identity
+runtime_preconditions:
+  - "the referenced mutable branch, tag, include, or image can change independently of this repository"
 attacker_surface_kinds:
-  - untrusted_checkout
-  - untrusted_step
+  - mutable_dependency_ref
