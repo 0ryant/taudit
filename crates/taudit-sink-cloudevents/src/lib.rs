@@ -567,10 +567,7 @@ impl CloudEventsJsonlSink {
         self.correlation_id
             .clone()
             .and_then(non_empty_env_value)
-            .or_else(|| {
-                std::env::var(CORRELATION_ID_ENV)
-                    .ok()
-            })
+            .or_else(|| std::env::var(CORRELATION_ID_ENV).ok().and_then(non_empty_env_value))
             .unwrap_or_else(|| uuid::Uuid::new_v4().to_string())
     }
 
@@ -673,6 +670,12 @@ mod tests {
     fn env_lock() -> &'static Mutex<()> {
         static LOCK: OnceLock<Mutex<()>> = OnceLock::new();
         LOCK.get_or_init(|| Mutex::new(()))
+    }
+
+    fn env_guard() -> std::sync::MutexGuard<'static, ()> {
+        env_lock()
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
     }
 
     fn cleanup_correlation_env() {
@@ -1021,7 +1024,7 @@ mod tests {
 
     #[test]
     fn correlation_id_uses_non_empty_env_value_when_set() {
-        let _guard = env_lock().lock().unwrap();
+        let _guard = env_guard();
         cleanup_correlation_env();
         unsafe {
             std::env::set_var(CORRELATION_ID_ENV, "corr-from-env");
@@ -1035,7 +1038,7 @@ mod tests {
 
     #[test]
     fn correlation_id_empty_env_value_falls_back_to_uuid() {
-        let _guard = env_lock().lock().unwrap();
+        let _guard = env_guard();
         cleanup_correlation_env();
         unsafe {
             std::env::set_var(CORRELATION_ID_ENV, "   ");
@@ -1053,7 +1056,7 @@ mod tests {
 
     #[test]
     fn correlation_id_unset_env_falls_back_to_uuid() {
-        let _guard = env_lock().lock().unwrap();
+        let _guard = env_guard();
         cleanup_correlation_env();
 
         let sink = CloudEventsJsonlSink::default();
@@ -1066,7 +1069,7 @@ mod tests {
 
     #[test]
     fn explicit_empty_correlation_id_falls_back_to_env() {
-        let _guard = env_lock().lock().unwrap();
+        let _guard = env_guard();
         cleanup_correlation_env();
         unsafe {
             std::env::set_var(CORRELATION_ID_ENV, "corr-from-env");
@@ -1080,7 +1083,7 @@ mod tests {
 
     #[test]
     fn scan_run_id_uses_non_empty_env_value_when_set() {
-        let _guard = env_lock().lock().unwrap();
+        let _guard = env_guard();
         cleanup_scan_run_env();
         unsafe {
             std::env::set_var(SCAN_RUN_ID_ENV, "scan-run-from-env");
@@ -1094,7 +1097,7 @@ mod tests {
 
     #[test]
     fn scan_run_id_empty_env_value_falls_back_to_uuid() {
-        let _guard = env_lock().lock().unwrap();
+        let _guard = env_guard();
         cleanup_scan_run_env();
         unsafe {
             std::env::set_var(SCAN_RUN_ID_ENV, "   ");
@@ -1112,7 +1115,7 @@ mod tests {
 
     #[test]
     fn scan_run_id_unset_env_falls_back_to_uuid() {
-        let _guard = env_lock().lock().unwrap();
+        let _guard = env_guard();
         cleanup_scan_run_env();
 
         let sink = CloudEventsJsonlSink::default();
@@ -1125,7 +1128,7 @@ mod tests {
 
     #[test]
     fn explicit_empty_scan_run_id_falls_back_to_env() {
-        let _guard = env_lock().lock().unwrap();
+        let _guard = env_guard();
         cleanup_scan_run_env();
         unsafe {
             std::env::set_var(SCAN_RUN_ID_ENV, "scan-run-from-env");
