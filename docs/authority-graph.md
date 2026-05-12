@@ -10,8 +10,9 @@ taudit's internals.
 
 - **Schema**: [`schemas/authority-graph.v1.json`](../schemas/authority-graph.v1.json)
 - **Schema URI**: `https://taudit.dev/schemas/authority-graph.v1.json`
+- **Exploit view schema**: [`schemas/exploit-graph.v1.json`](../schemas/exploit-graph.v1.json)
 - **Schema version**: `1.0.0` (semver — see [Versioning](#versioning))
-- **CLI**: `taudit graph <path> [--format json|dot|mermaid|summary] [--platform ...] [--rules-dir ...] [--job ...] [--rich-labels]` — JSON includes optional **`authority_summary`** on `has_access_to` → identity edges (see below). **`summary`** is a separate bounded JSON document (see [Propagation summary](#propagation-summary-format-summary)).
+- **CLI**: `taudit graph <path> [--format json|dot|mermaid|summary] [--view authority|exploit] [--platform ...] [--rules-dir ...] [--job ...] [--rich-labels]` — JSON includes optional **`authority_summary`** on `has_access_to` → identity edges (see below). **`summary`** is a separate bounded JSON document (see [Propagation summary](#propagation-summary-format-summary)).
 
 ## Quick start
 
@@ -21,6 +22,12 @@ taudit graph .github/workflows/release.yml
 
 # Graphviz DOT for visualization
 taudit graph .github/workflows/release.yml --format dot | dot -Tsvg -o release.svg
+
+# Exploit graph view: mutable state → action boundary → helper → authority sink
+taudit graph .github/workflows/deploy.yml \
+  --platform github-actions \
+  --format dot \
+  --view exploit
 
 # Mermaid flowchart (no Graphviz — paste into Markdown)
 taudit graph .github/workflows/release.yml --format mermaid
@@ -41,7 +48,10 @@ taudit graph .github/workflows/release.yml --format summary
 ### At a glance (one graph, several exports)
 
 `json`, `dot`, `mermaid`, and `summary` are different **views** or **rollups** of the same in-memory
-`AuthorityGraph` — not separate pipelines.
+`AuthorityGraph` — not separate pipelines. `--view authority` is the default
+canonical view. `--view exploit` is a path-oriented view over the same parsed
+graph. The rule/view boundary is recorded in
+[ADR 0006](adr/0006-exploit-path-view-and-ruleset.md).
 
 ```text
   workflow YAML
@@ -66,8 +76,79 @@ taudit graph .github/workflows/release.yml --format summary
                                block
 ```
 
-`--job` limits **dot** and **mermaid** to a job’s reachable subgraph; **json**
-and **summary** stay full-graph when you need lossless `completeness` / `completeness_gaps` or a global propagation rollup.
+### Exploit View (`--view exploit`)
+
+The exploit view extracts this path shape from the parsed workflow:
+
+```text
+mutable state source → later action boundary → helper resolution
+→ authority-bearing artifact/env → optional observed sink
+```
+
+Node types emitted by this view:
+
+| View node          | Example                                      |
+| ------------------ | -------------------------------------------- |
+| `Step`             | `Create fake npx and persist PATH mutation`  |
+| `MutableState`     | `GITHUB_PATH`                                |
+| `ResolvedHelper`   | `PATH-selected npx`                          |
+| `ThirdPartyAction` | `FirebaseExtended/action-hosting-deploy`     |
+| `AuthorityArtifact`| `service-account credential file`            |
+| `AuthorityEnv`     | `GOOGLE_APPLICATION_CREDENTIALS`             |
+| `ObservedSink`     | witness-observed authority sink, when explicit evidence is ingested |
+
+Edge types:
+
+| View edge                    | Meaning                                      |
+| ---------------------------- | -------------------------------------------- |
+| `mutates_state`              | earlier step writes a mutable runner channel |
+| `influences_resolution`      | mutable state can affect helper lookup       |
+| `uses_action`                | workflow step crosses into an action boundary|
+| `creates_authority_artifact` | later action creates/derives authority       |
+| `exposes_env`                | authority is exposed through environment     |
+| `invokes_helper`             | action invokes a helper resolved by name     |
+| `reads_artifact`             | selected helper receives/reads authority     |
+| `observed_by_witness`        | explicit witness evidence observed it        |
+
+DOT edge styling carries confidence:
+
+| Style        | Meaning                                |
+| ------------ | -------------------------------------- |
+| solid        | statically proven from workflow/source |
+| dashed       | inferred taint path                    |
+| bold         | observed by witness                    |
+| red          | authority-bearing boundary             |
+
+The exploit view supports the same `--format` surface as the authority view:
+`json`, `dot`, `mermaid`, and `summary`. It stays at the same support level as
+the underlying parser and helper-action catalog. If the workflow/action source
+cannot prove a helper boundary, the view does not invent one.
+
+Exploit-path rules are a separate scope from ordinary authority rules. Default
+customer output may show the path view and evidence strength, but disclosure
+scores, witness-spec generation, CVE workflow metadata, private source anchors,
+and canary details remain internal-gated.
+
+The exploit-path scope is candidate-agnostic and deterministic. Rules are
+defined from reusable patterns over mutable state, later authority
+materialization, helper resolution, transport, and downgrade logic. Candidate
+packs are regression fixtures and optional evidence inputs; they do not create
+one-off detections. The same workflow and catalog version must produce the same
+result on every run.
+
+Exploit JSON includes `rule_id`, `umbrella_rule_id`, and `rule_scope` on each
+path. Consumers should filter on those fields rather than action names or
+candidate labels. Each path also carries the deterministic pattern facts used by
+the rule: `mutable_channel`, `helper`, `helper_resolution`,
+`authority_transport`, and `authority_origin`.
+
+For the canonical authority view, `--job` limits **dot** and **mermaid** to a
+job's reachable subgraph; **json** and **summary** stay full-graph when you need
+lossless `completeness` / `completeness_gaps` or a global propagation rollup.
+For the exploit view, `--job` filters the path projection before rendering
+**json**, **dot**, **mermaid**, or **summary**; the emitted JSON remains the
+separate [`exploit-graph.v1.json`](../schemas/exploit-graph.v1.json) contract,
+not the canonical authority graph envelope.
 
 `taudit map` defaults to the human-readable step×authority **table**; with
 `--format dot` or `--format mermaid` it emits the same diagram renderers as

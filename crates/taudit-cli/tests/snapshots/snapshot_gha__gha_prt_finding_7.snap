@@ -2,19 +2,25 @@
 source: crates/taudit-cli/tests/snapshot_gha.rs
 expression: finding
 ---
-severity: medium
-category: unpinned_action
+severity: critical
+category: trigger_context_mismatch
 nodes_involved:
-  - 1
-message: "[action_major_version_pin_without_sha] actions/checkout@v4 is pinned only to a mutable major tag; pin to a full commit SHA"
+  - 2
+  - 3
+  - 0
+message: Workflow triggered by pull_request_target with secret/identity access — 2 step(s) hold authority that attacker-controlled code could reach
 recommendation:
-  type: pin_action
-  current: actions/checkout@v4
-  pinned: actions/checkout@<40-char-sha>
+  type: manual
+  action: "Use a separate workflow triggered by workflow_run (not pull_request_target) for privileged operations, or ensure no checkout of the PR head ref occurs before secret use"
 source: built-in
-time_to_fix: trivial
 confidence_scope: yaml_only
 runtime_preconditions:
-  - "the referenced mutable branch, tag, include, or image can change independently of this repository"
+  - the authority shown in the graph is available to that run
+  - untrusted PR or fork-controlled input can reach this workflow at runtime
+authority_kinds:
+  - oidc_identity
 attacker_surface_kinds:
-  - mutable_dependency_ref
+  - script_sink
+  - untrusted_checkout
+  - untrusted_step
+cve_relationship: same_authority_shape

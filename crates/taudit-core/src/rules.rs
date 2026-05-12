@@ -7,7 +7,8 @@ use crate::graph::{
     META_CHECKOUT_REF, META_CHECKOUT_SELF, META_CLI_FLAG_EXPOSED, META_CONDITION, META_CONTAINER,
     META_DIGEST, META_DISPATCH_INPUTS, META_DOTENV_FILE, META_DOWNLOADS_ARTIFACT,
     META_ENVIRONMENT_NAME, META_ENVIRONMENT_URL, META_ENV_APPROVAL,
-    META_ENV_GATE_WRITES_SECRET_VALUE, META_FORK_CHECK, META_GHA_ACTION, META_GHA_WITH_INPUTS,
+    META_ENV_GATE_WRITES_SECRET_VALUE, META_FORK_CHECK, META_GHA_ACTION, META_GHA_ENV_ASSIGNMENTS,
+    META_GHA_RUNS_ON, META_GHA_WITH_INPUTS, META_GHA_WORKFLOW_CALL_INPUTS,
     META_GITLAB_ALLOW_FAILURE, META_GITLAB_CACHE_KEY, META_GITLAB_CACHE_POLICY,
     META_GITLAB_DIND_SERVICE, META_GITLAB_EXTENDS, META_GITLAB_INCLUDES, META_GITLAB_TRIGGER_KIND,
     META_IDENTITY_SCOPE, META_IMPLICIT, META_INTERACTIVE_DEBUG, META_INTERPRETS_ARTIFACT,
@@ -1475,9 +1476,12 @@ pub fn checkout_self_pr_exposure(graph: &AuthorityGraph) -> Vec<Finding> {
             path: None,
             nodes_involved: vec![step.id],
             recommendation: Recommendation::Manual {
-                action: "Use `persist-credentials: false` and avoid reading workspace \
-                         files in subsequent privileged steps. Consider `checkout: none` \
-                         for jobs that only need pipeline config, not source code."
+                action: "Use `persist-credentials: false` (GitHub Actions) or \
+                         `persistCredentials: false` (Azure DevOps) to stop \
+                         writing the repo token to disk, and avoid reading \
+                         workspace files in subsequent privileged steps. \
+                         Consider `checkout: none` or omitting checkout for \
+                         jobs that only need pipeline config, not source code."
                     .into(),
             },
             source: FindingSource::BuiltIn,
@@ -3975,6 +3979,19 @@ struct GhaHelperProfile {
 
 const GHA_HELPER_PROFILES: &[GhaHelperProfile] = &[
     GhaHelperProfile {
+        action: "firebaseextended/action-hosting-deploy",
+        helper: "npx/firebase-tools",
+        path_resolved_helper: true,
+        argv: false,
+        stdin: false,
+        env: true,
+        cleanup_env: false,
+        minted: true,
+        output_after_login: false,
+        requires_skip_install: false,
+        toolcache_absolute: false,
+    },
+    GhaHelperProfile {
         action: "teleport-actions/database-tunnel",
         helper: "tbot",
         path_resolved_helper: true,
@@ -4037,6 +4054,32 @@ const GHA_HELPER_PROFILES: &[GhaHelperProfile] = &[
         minted: true,
         output_after_login: false,
         requires_skip_install: true,
+        toolcache_absolute: false,
+    },
+    GhaHelperProfile {
+        action: "google-github-actions/deploy-appengine",
+        helper: "gcloud",
+        path_resolved_helper: true,
+        argv: true,
+        stdin: false,
+        env: true,
+        cleanup_env: false,
+        minted: true,
+        output_after_login: false,
+        requires_skip_install: false,
+        toolcache_absolute: false,
+    },
+    GhaHelperProfile {
+        action: "google-github-actions/deploy-cloudrun",
+        helper: "gcloud",
+        path_resolved_helper: true,
+        argv: true,
+        stdin: false,
+        env: true,
+        cleanup_env: false,
+        minted: true,
+        output_after_login: false,
+        requires_skip_install: false,
         toolcache_absolute: false,
     },
     GhaHelperProfile {
@@ -4548,6 +4591,125 @@ fn pages_deploy_authority(graph: &AuthorityGraph, step: &Node) -> bool {
         || step_has_github_token_write_authority(graph, step.id)
 }
 
+fn token_download_helper_authority(graph: &AuthorityGraph, step: &Node) -> bool {
+    gha_has_any_nonempty_with(
+        step,
+        &[
+            "token",
+            "github-token",
+            "github_token",
+            "api-token",
+            "api_token",
+            "sentry-auth-token",
+            "sentry_auth_token",
+        ],
+    ) || step_has_sensitive_authority(graph, step.id)
+}
+
+fn pulumi_authority(graph: &AuthorityGraph, step: &Node) -> bool {
+    gha_has_any_nonempty_with(
+        step,
+        &[
+            "pulumi-access-token",
+            "pulumi_access_token",
+            "cloud-url",
+            "cloud_url",
+            "secrets-provider",
+            "secrets_provider",
+        ],
+    ) || step_has_sensitive_authority(graph, step.id)
+        || job_has_sensitive_authority(graph, step)
+}
+
+fn pypi_publish_authority(graph: &AuthorityGraph, step: &Node) -> bool {
+    gha_has_any_nonempty_with(
+        step,
+        &[
+            "password",
+            "api-token",
+            "api_token",
+            "user",
+            "attestations",
+            "repository-url",
+            "repository_url",
+        ],
+    ) || step_has_sensitive_authority(graph, step.id)
+        || job_has_sensitive_authority(graph, step)
+}
+
+fn changesets_publish_authority(graph: &AuthorityGraph, step: &Node) -> bool {
+    gha_with_nonempty(step, "publish")
+        && (gha_has_any_nonempty_with(step, &["token", "github-token", "github_token"])
+            || step_has_sensitive_authority(graph, step.id)
+            || job_has_sensitive_authority(graph, step))
+}
+
+fn rubygems_release_authority(graph: &AuthorityGraph, step: &Node) -> bool {
+    gha_has_any_nonempty_with(
+        step,
+        &[
+            "rubygems-api-key",
+            "rubygems_api_key",
+            "github-token",
+            "github_token",
+            "token",
+        ],
+    ) || step_has_sensitive_authority(graph, step.id)
+        || step_has_github_token_write_authority(graph, step.id)
+        || job_has_sensitive_authority(graph, step)
+}
+
+fn docker_buildx_authority(graph: &AuthorityGraph, step: &Node) -> bool {
+    gha_with_truthy(step, "push")
+        || gha_has_any_nonempty_with(
+            step,
+            &[
+                "secrets",
+                "secret-files",
+                "ssh",
+                "github-token",
+                "provenance",
+            ],
+        )
+        || same_job_steps_before(graph, step).any(|candidate| {
+            gha_action_is(candidate, "docker/login-action")
+                || gha_action_is(candidate, "aws-actions/amazon-ecr-login")
+                || step_script_contains_any(candidate, &["docker login"])
+        })
+        || step_has_sensitive_authority(graph, step.id)
+        || job_has_sensitive_authority(graph, step)
+}
+
+fn google_deploy_authority(graph: &AuthorityGraph, step: &Node) -> bool {
+    gha_has_any_nonempty_with(
+        step,
+        &[
+            "credentials",
+            "credentials_json",
+            "service_account",
+            "project_id",
+            "project-id",
+        ],
+    ) || same_job_steps_before(graph, step)
+        .any(|candidate| gha_action_is(candidate, "google-github-actions/auth"))
+        || step_has_sensitive_authority(graph, step.id)
+        || job_has_sensitive_authority(graph, step)
+}
+
+fn datadog_visibility_authority(graph: &AuthorityGraph, step: &Node) -> bool {
+    gha_has_any_nonempty_with(
+        step,
+        &[
+            "api_key",
+            "api-key",
+            "datadog-api-key",
+            "datadog_api_key",
+            "site",
+        ],
+    ) || step_has_sensitive_authority(graph, step.id)
+        || job_has_sensitive_authority(graph, step)
+}
+
 #[derive(Clone, Copy)]
 struct GhaActionBoundaryRule {
     actions: &'static [&'static str],
@@ -4601,6 +4763,77 @@ const GHA_ACTION_BOUNDARY_RULES: &[GhaActionBoundaryRule] = &[
         category: FindingCategory::GhaPagesDeployTokenUrlToGitHelper,
         authority: pages_deploy_authority,
         recommendation: "Deploy Pages before mutable PATH setup, prefer least-privileged deploy keys or tokens, and ensure git resolves to a trusted absolute path before token URLs are composed.",
+    },
+    GhaActionBoundaryRule {
+        actions: &[
+            "codecov/codecov-action",
+            "coverallsapp/github-action",
+            "getsentry/action-release",
+        ],
+        helper: "curl/wget/gpg/shasum",
+        authority_label: "token-bearing upload or release authority",
+        category: FindingCategory::GhaActionTokenEnvBeforeBareDownloadHelper,
+        authority: token_download_helper_authority,
+        recommendation: "Run token-bearing upload/release actions before mutable PATH setup, or resolve download and verification helpers through trusted absolute paths before token env is present.",
+    },
+    GhaActionBoundaryRule {
+        actions: &["pulumi/actions"],
+        helper: "pulumi",
+        authority_label: "Pulumi access token or cloud deployment authority",
+        category: FindingCategory::GhaPulumiPathResolvedCliWithAuthority,
+        authority: pulumi_authority,
+        recommendation: "Run Pulumi before mutable PATH setup, or ensure the Pulumi CLI is resolved from a trusted absolute path before stack or cloud credentials are available.",
+    },
+    GhaActionBoundaryRule {
+        actions: &["pypa/gh-action-pypi-publish"],
+        helper: "python/pip/twine",
+        authority_label: "PyPI token or OIDC publishing authority",
+        category: FindingCategory::GhaPypiPublishOidcAfterPathMutation,
+        authority: pypi_publish_authority,
+        recommendation: "Publish to PyPI before mutable PATH setup, or use trusted absolute helper paths and keep OIDC/token publishing authority scoped to the publish boundary.",
+    },
+    GhaActionBoundaryRule {
+        actions: &["changesets/action"],
+        helper: "npm/pnpm/yarn",
+        authority_label: "package publish command authority",
+        category: FindingCategory::GhaChangesetsPublishCommandWithAuthority,
+        authority: changesets_publish_authority,
+        recommendation: "Run Changesets publish before mutable PATH setup, pin package-manager helper resolution, and keep npm registry tokens out of ambient helper environments.",
+    },
+    GhaActionBoundaryRule {
+        actions: &["rubygems/release-gem"],
+        helper: "gem/bundle/git",
+        authority_label: "RubyGems release token, GitHub token, or OIDC authority",
+        category: FindingCategory::GhaRubygemsReleaseGitTokenAndOidcHelper,
+        authority: rubygems_release_authority,
+        recommendation: "Run RubyGems release before mutable PATH setup, or ensure gem, bundle, and git resolve to trusted absolute paths before release authority is present.",
+    },
+    GhaActionBoundaryRule {
+        actions: &["docker/build-push-action", "docker/setup-buildx-action"],
+        helper: "docker/buildx",
+        authority_label: "Docker registry, SSH, build secret, or publish authority",
+        category: FindingCategory::GhaDockerBuildxAuthorityPathHandoff,
+        authority: docker_buildx_authority,
+        recommendation: "Run Buildx setup/build-push before mutable PATH setup where possible, resolve docker/buildx through trusted paths, and keep registry/build secrets scoped to the build boundary.",
+    },
+    GhaActionBoundaryRule {
+        actions: &[
+            "google-github-actions/deploy-appengine",
+            "google-github-actions/deploy-cloudrun",
+        ],
+        helper: "gcloud",
+        authority_label: "Google deploy credential or generated ADC authority",
+        category: FindingCategory::GhaGoogleDeployGcloudCredentialPath,
+        authority: google_deploy_authority,
+        recommendation: "Run Google deploy actions before mutable PATH setup, or resolve gcloud through trusted absolute paths before ADC, OIDC, or service-account authority is present.",
+    },
+    GhaActionBoundaryRule {
+        actions: &["datadog/test-visibility-github-action"],
+        helper: "installer/runtime helper",
+        authority_label: "Datadog API key or test visibility upload authority",
+        category: FindingCategory::GhaDatadogTestVisibilityInstallerAuthority,
+        authority: datadog_visibility_authority,
+        recommendation: "Run Datadog test visibility setup before mutable PATH setup, or resolve installer/runtime helpers through trusted paths before API key authority is present.",
     },
 ];
 
@@ -4662,6 +4895,38 @@ pub fn gha_macos_codesign_cert_security_path(graph: &AuthorityGraph) -> Vec<Find
 
 pub fn gha_pages_deploy_token_url_to_git_helper(graph: &AuthorityGraph) -> Vec<Finding> {
     gha_action_boundary_findings(graph, GHA_ACTION_BOUNDARY_RULES[4])
+}
+
+pub fn gha_action_token_env_before_bare_download_helper(graph: &AuthorityGraph) -> Vec<Finding> {
+    gha_action_boundary_findings(graph, GHA_ACTION_BOUNDARY_RULES[5])
+}
+
+pub fn gha_pulumi_path_resolved_cli_with_authority(graph: &AuthorityGraph) -> Vec<Finding> {
+    gha_action_boundary_findings(graph, GHA_ACTION_BOUNDARY_RULES[6])
+}
+
+pub fn gha_pypi_publish_oidc_after_path_mutation(graph: &AuthorityGraph) -> Vec<Finding> {
+    gha_action_boundary_findings(graph, GHA_ACTION_BOUNDARY_RULES[7])
+}
+
+pub fn gha_changesets_publish_command_with_authority(graph: &AuthorityGraph) -> Vec<Finding> {
+    gha_action_boundary_findings(graph, GHA_ACTION_BOUNDARY_RULES[8])
+}
+
+pub fn gha_rubygems_release_git_token_and_oidc_helper(graph: &AuthorityGraph) -> Vec<Finding> {
+    gha_action_boundary_findings(graph, GHA_ACTION_BOUNDARY_RULES[9])
+}
+
+pub fn gha_docker_buildx_authority_path_handoff(graph: &AuthorityGraph) -> Vec<Finding> {
+    gha_action_boundary_findings(graph, GHA_ACTION_BOUNDARY_RULES[10])
+}
+
+pub fn gha_google_deploy_gcloud_credential_path(graph: &AuthorityGraph) -> Vec<Finding> {
+    gha_action_boundary_findings(graph, GHA_ACTION_BOUNDARY_RULES[11])
+}
+
+pub fn gha_datadog_test_visibility_installer_authority(graph: &AuthorityGraph) -> Vec<Finding> {
+    gha_action_boundary_findings(graph, GHA_ACTION_BOUNDARY_RULES[12])
 }
 
 fn step_job(step: &Node) -> Option<&str> {
@@ -5054,6 +5319,319 @@ pub fn gha_workflow_shell_authority_concentration(graph: &AuthorityGraph) -> Vec
     findings
 }
 
+pub fn gha_post_action_input_retarget_to_cache_save(graph: &AuthorityGraph) -> Vec<Finding> {
+    if !graph_is_platform(graph, "github-actions") {
+        return Vec::new();
+    }
+    let mut findings = Vec::new();
+    for step in graph.nodes_of_kind(NodeKind::Step) {
+        if !(gha_action_is(step, "actions/cache")
+            || gha_action_is(step, "actions/cache/save")
+            || gha_action_is(step, "actions/cache/restore"))
+        {
+            continue;
+        }
+        if !gha_with_nonempty(step, "path") {
+            continue;
+        }
+        let Some(writer) = same_job_steps_after(graph, step).find(|candidate| {
+            step_script_contains_any(
+                candidate,
+                &[
+                    "GITHUB_ENV",
+                    "INPUT_PATH",
+                    "ACTIONS_CACHE",
+                    "CACHE_PATH",
+                    "CACHE_KEY",
+                ],
+            )
+        }) else {
+            continue;
+        };
+        findings.push(Finding {
+            severity: Severity::Medium,
+            category: FindingCategory::GhaPostActionInputRetargetToCacheSave,
+            path: None,
+            nodes_involved: vec![step.id, writer.id],
+            message: format!(
+                "Cache action '{}' has a post-save boundary and later step '{}' mutates ambient env/input-like cache state in the same job",
+                step.name, writer.name
+            ),
+            recommendation: Recommendation::Manual {
+                action: "Keep actions/cache path/key inputs immutable after restore, avoid later GITHUB_ENV writes to INPUT_*/cache variables, or split cache restore/save across jobs with explicit artifact boundaries.".into(),
+            },
+            source: FindingSource::BuiltIn,
+            extras: FindingExtras::default(),
+        });
+    }
+    findings
+}
+
+pub fn gha_terraform_wrapper_sensitive_output(graph: &AuthorityGraph) -> Vec<Finding> {
+    if !graph_is_platform(graph, "github-actions") {
+        return Vec::new();
+    }
+    let mut findings = Vec::new();
+    for setup in graph.nodes_of_kind(NodeKind::Step) {
+        if !gha_action_is(setup, "hashicorp/setup-terraform")
+            || gha_with_false(setup, "terraform_wrapper")
+        {
+            continue;
+        }
+        let Some(consumer) = same_job_steps_after(graph, setup).find(|candidate| {
+            step_script_contains_any(
+                candidate,
+                &[
+                    ".outputs.stdout",
+                    ".outputs.stderr",
+                    "outputs.stdout",
+                    "outputs.stderr",
+                ],
+            )
+        }) else {
+            continue;
+        };
+        findings.push(Finding {
+            severity: Severity::Medium,
+            category: FindingCategory::GhaTerraformWrapperSensitiveOutput,
+            path: None,
+            nodes_involved: vec![setup.id, consumer.id],
+            message: format!(
+                "hashicorp/setup-terraform step '{}' leaves wrapper stdout/stderr outputs consumable by later step '{}'",
+                setup.name, consumer.name
+            ),
+            recommendation: Recommendation::Manual {
+                action: "Avoid propagating Terraform wrapper stdout/stderr as step outputs when plans or outputs may contain sensitive values; use explicit nonsensitive output selection and mask or redact before reuse.".into(),
+            },
+            source: FindingSource::BuiltIn,
+            extras: FindingExtras::default(),
+        });
+    }
+    findings
+}
+
+pub fn gha_composite_bare_helper_after_path_install_with_secret_env(
+    graph: &AuthorityGraph,
+) -> Vec<Finding> {
+    if !graph_is_platform(graph, "github-actions") {
+        return Vec::new();
+    }
+    const HELPER_SINKS: &[&str] = &[
+        "npx wrangler",
+        "npx firebase",
+        "npm publish",
+        "pnpm publish",
+        "yarn npm publish",
+        "pip install",
+        "poetry publish",
+        "twine upload",
+        "docker login",
+        "docker push",
+        "docker buildx build --push",
+        "helm registry login",
+        "helm push",
+        "kubectl apply",
+        "kubectl create secret",
+        "cosign sign",
+        "cosign attest",
+        "pulumi up",
+        "pulumi preview",
+        "terraform apply",
+        "gh release",
+        "git push",
+    ];
+    let mut findings = Vec::new();
+    for step in graph.nodes_of_kind(NodeKind::Step) {
+        let Some(body) = step.metadata.get(META_SCRIPT_BODY) else {
+            continue;
+        };
+        let matched: Vec<&str> = HELPER_SINKS
+            .iter()
+            .copied()
+            .filter(|sink| script_contains_any(body, &[*sink]))
+            .collect();
+        if matched.is_empty() || !step_has_sensitive_authority(graph, step.id) {
+            continue;
+        }
+        let Some(writer) = prior_github_path_writer(graph, step) else {
+            continue;
+        };
+        findings.push(Finding {
+            severity: Severity::Medium,
+            category: FindingCategory::GhaCompositeBareHelperAfterPathInstallWithSecretEnv,
+            path: None,
+            nodes_involved: helper_authority_nodes(graph, writer.id, step.id),
+            message: format!(
+                "Earlier step '{}' mutates GITHUB_PATH before shell/composite-style step '{}' invokes bare helper(s) [{}] with secret authority in scope",
+                writer.name,
+                step.name,
+                matched.join(", ")
+            ),
+            recommendation: Recommendation::Manual {
+                action: "Resolve authority-bearing helpers through trusted absolute paths, move mutable PATH setup to an authority-free job, or pass a narrowed environment to the helper step.".into(),
+            },
+            source: FindingSource::BuiltIn,
+            extras: FindingExtras::default(),
+        });
+    }
+    findings
+}
+
+pub fn gha_composite_entrypoint_path_shadow_with_secret_env(
+    graph: &AuthorityGraph,
+) -> Vec<Finding> {
+    if !graph_is_platform(graph, "github-actions") {
+        return Vec::new();
+    }
+    let mut findings = Vec::new();
+    for step in graph.nodes_of_kind(NodeKind::Step) {
+        let Some(action) = gha_action_name(step) else {
+            continue;
+        };
+        if !action.starts_with("./") || !step_has_sensitive_authority(graph, step.id) {
+            continue;
+        }
+        let Some(writer) = prior_github_path_writer(graph, step) else {
+            continue;
+        };
+        findings.push(Finding {
+            severity: Severity::Medium,
+            category: FindingCategory::GhaCompositeEntrypointPathShadowWithSecretEnv,
+            path: None,
+            nodes_involved: helper_authority_nodes(graph, writer.id, step.id),
+            message: format!(
+                "Earlier step '{}' mutates GITHUB_PATH before local/composite action '{}' runs with secret authority in scope",
+                writer.name, step.name
+            ),
+            recommendation: Recommendation::Manual {
+                action: "Inline or audit the local composite action entrypoint, resolve internal helpers to trusted paths, and avoid running local actions with secret env after mutable PATH setup.".into(),
+            },
+            source: FindingSource::BuiltIn,
+            extras: FindingExtras::default(),
+        });
+    }
+    findings
+}
+
+pub fn gha_kubernetes_helper_kubeconfig_authority(graph: &AuthorityGraph) -> Vec<Finding> {
+    if !graph_is_platform(graph, "github-actions") {
+        return Vec::new();
+    }
+    const KUBE_SINKS: &[&str] = &[
+        "kubectl apply",
+        "kubectl create secret",
+        "kubectl rollout",
+        "kubectl set image",
+        "helm upgrade",
+        "helm install",
+        "helm registry login",
+        "helm push",
+    ];
+    let mut findings = Vec::new();
+    for step in graph.nodes_of_kind(NodeKind::Step) {
+        let Some(body) = step.metadata.get(META_SCRIPT_BODY) else {
+            continue;
+        };
+        let matched: Vec<&str> = KUBE_SINKS
+            .iter()
+            .copied()
+            .filter(|sink| script_contains_any(body, &[*sink]))
+            .collect();
+        if matched.is_empty() || !job_has_sensitive_authority(graph, step) {
+            continue;
+        }
+        let kubeconfig_context = step_script_contains_any(step, &["KUBECONFIG", "kubeconfig"])
+            || gha_has_any_nonempty_with(step, &["kubeconfig", "kube-config", "cluster"]);
+        if !kubeconfig_context
+            && !same_job_steps_before(graph, step).any(|candidate| {
+                gha_action_is(candidate, "azure/k8s-set-context")
+                    || gha_action_is(candidate, "azure/aks-set-context")
+                    || step_script_contains_any(candidate, &["KUBECONFIG", "kubeconfig"])
+            })
+        {
+            continue;
+        }
+        let Some(writer) = prior_github_path_writer(graph, step) else {
+            continue;
+        };
+        findings.push(Finding {
+            severity: Severity::High,
+            category: FindingCategory::GhaKubernetesHelperKubeconfigAuthority,
+            path: None,
+            nodes_involved: helper_authority_nodes(graph, writer.id, step.id),
+            message: format!(
+                "Earlier step '{}' mutates GITHUB_PATH before Kubernetes helper step '{}' invokes [{}] with kubeconfig/deploy authority in scope",
+                writer.name,
+                step.name,
+                matched.join(", ")
+            ),
+            recommendation: Recommendation::Manual {
+                action: "Resolve kubectl/helm through trusted absolute paths before kubeconfig or deploy credentials are present, or split PATH mutation into an authority-free job.".into(),
+            },
+            source: FindingSource::BuiltIn,
+            extras: FindingExtras::default(),
+        });
+    }
+    findings
+}
+
+pub fn gha_azure_companion_helper_authority(graph: &AuthorityGraph) -> Vec<Finding> {
+    if !graph_is_platform(graph, "github-actions") {
+        return Vec::new();
+    }
+    const AZURE_SINKS: &[&str] = &[
+        "sqlcmd",
+        "SqlPackage",
+        "sqlpackage",
+        "kubelogin",
+        "pwsh",
+        "powershell",
+    ];
+    let mut findings = Vec::new();
+    for step in graph.nodes_of_kind(NodeKind::Step) {
+        let Some(body) = step.metadata.get(META_SCRIPT_BODY) else {
+            continue;
+        };
+        let matched: Vec<&str> = AZURE_SINKS
+            .iter()
+            .copied()
+            .filter(|sink| script_contains_any(body, &[*sink]))
+            .collect();
+        if matched.is_empty() {
+            continue;
+        }
+        let azure_context = step_has_sensitive_authority(graph, step.id)
+            || same_job_steps_before(graph, step).any(|candidate| {
+                gha_action_is(candidate, "azure/login")
+                    || step_script_contains_any(candidate, &["az login", "AZURE_"])
+            });
+        if !azure_context {
+            continue;
+        }
+        let Some(writer) = prior_github_path_writer(graph, step) else {
+            continue;
+        };
+        findings.push(Finding {
+            severity: Severity::High,
+            category: FindingCategory::GhaAzureCompanionHelperAuthority,
+            path: None,
+            nodes_involved: helper_authority_nodes(graph, writer.id, step.id),
+            message: format!(
+                "Earlier step '{}' mutates GITHUB_PATH before Azure companion helper step '{}' invokes [{}] with Azure login or cloud authority in scope",
+                writer.name,
+                step.name,
+                matched.join(", ")
+            ),
+            recommendation: Recommendation::Manual {
+                action: "Resolve Azure companion helpers through trusted absolute paths before Azure login credentials are present, and keep Azure deployment helpers in a job without prior mutable PATH state.".into(),
+            },
+            source: FindingSource::BuiltIn,
+            extras: FindingExtras::default(),
+        });
+    }
+    findings
+}
+
 pub fn run_all_rules(graph: &AuthorityGraph, max_hops: usize) -> Vec<Finding> {
     let mut findings = Vec::new();
     // MVP rules
@@ -5100,6 +5678,61 @@ pub fn run_all_rules(graph: &AuthorityGraph, max_hops: usize) -> Vec<Finding> {
     findings.extend(untrusted_api_response_to_env_sink(graph));
     findings.extend(pr_build_pushes_image_with_floating_credentials(graph));
     findings.extend(secret_via_env_gate_to_untrusted_consumer(graph));
+    findings.extend(gha_script_injection_to_privileged_shell(graph));
+    findings.extend(gha_workflow_run_artifact_poisoning_to_privileged_consumer(
+        graph,
+    ));
+    findings.extend(gha_remote_script_in_authority_job(graph));
+    findings.extend(gha_pat_remote_url_write(graph));
+    findings.extend(gha_workflow_run_artifact_metadata_to_privileged_api(graph));
+    findings.extend(gha_workflow_run_artifact_report_to_pr_comment(graph));
+    findings.extend(gha_workflow_run_artifact_to_build_scan_publish(graph));
+    findings.extend(gha_floating_remote_script_before_publish_sink(graph));
+    findings.extend(gha_token_remote_url_with_trace_or_process_exposure(graph));
+    findings.extend(gha_env_credential_helper_config_redirect_before_authority(
+        graph,
+    ));
+    findings.extend(gha_env_node_options_code_injection_before_node_authority(
+        graph,
+    ));
+    findings.extend(gha_env_dyld_or_ld_library_path_before_credential_helper(
+        graph,
+    ));
+    findings.extend(gha_workflow_call_container_image_input_secrets_inherit(
+        graph,
+    ));
+    findings.extend(gha_workflow_call_runner_label_input_privilege_escalation(
+        graph,
+    ));
+    findings.extend(gha_container_image_attacker_influenced_with_secret_env(
+        graph,
+    ));
+    findings.extend(gha_attestation_subject_digest_from_step_output_unverified(
+        graph,
+    ));
+    findings.extend(gha_attestation_subject_path_workspace_glob_with_pr_trigger(
+        graph,
+    ));
+    findings.extend(gha_attestation_config_driven_gate_from_workspace_file(
+        graph,
+    ));
+    findings.extend(gha_telemetry_pr_or_issue_text_to_external_sink(graph));
+    findings.extend(gha_telemetry_debug_flag_with_secret_env(graph));
+    findings.extend(gha_telemetry_autonomous_agent_input_from_untrusted_event(
+        graph,
+    ));
+    findings.extend(gha_workflow_run_artifact_to_blob_storage_token(graph));
+    findings.extend(gha_api_workflow_run_artifact_to_autonomous_agent_to_git_push(graph));
+    findings.extend(gha_manifest_npm_lifecycle_hook_pr_trigger_with_token(graph));
+    findings.extend(gha_manifest_python_m_build_with_pr_credentials(graph));
+    findings.extend(gha_manifest_cargo_build_rs_pull_request_with_token(graph));
+    findings.extend(gha_manifest_makefile_with_pr_trigger_and_secrets(graph));
+    findings.extend(gha_manifest_submodules_recursive_with_pr_authority(graph));
+    findings.extend(gha_crossrepo_workflow_call_floating_ref_cascade(graph));
+    findings.extend(gha_crossrepo_secrets_inherit_unreviewed_callee(graph));
+    findings.extend(gha_issue_comment_command_to_write_token(graph));
+    findings.extend(gha_pr_build_pushes_publishable_image(graph));
+    findings.extend(gha_manual_dispatch_ref_to_privileged_checkout(graph));
     // GHA helper-authority rules from Algol authority-confusion research
     findings.extend(gha_helper_path_sensitive_argv(graph));
     findings.extend(gha_helper_path_sensitive_stdin(graph));
@@ -5116,6 +5749,20 @@ pub fn run_all_rules(graph: &AuthorityGraph, max_hops: usize) -> Vec<Finding> {
     findings.extend(gha_docker_setup_qemu_privileged_docker_helper(graph));
     findings.extend(gha_tool_installer_then_shell_helper_authority(graph));
     findings.extend(gha_workflow_shell_authority_concentration(graph));
+    findings.extend(gha_action_token_env_before_bare_download_helper(graph));
+    findings.extend(gha_post_action_input_retarget_to_cache_save(graph));
+    findings.extend(gha_terraform_wrapper_sensitive_output(graph));
+    findings.extend(gha_composite_bare_helper_after_path_install_with_secret_env(graph));
+    findings.extend(gha_pulumi_path_resolved_cli_with_authority(graph));
+    findings.extend(gha_pypi_publish_oidc_after_path_mutation(graph));
+    findings.extend(gha_changesets_publish_command_with_authority(graph));
+    findings.extend(gha_rubygems_release_git_token_and_oidc_helper(graph));
+    findings.extend(gha_composite_entrypoint_path_shadow_with_secret_env(graph));
+    findings.extend(gha_docker_buildx_authority_path_handoff(graph));
+    findings.extend(gha_google_deploy_gcloud_credential_path(graph));
+    findings.extend(gha_datadog_test_visibility_installer_authority(graph));
+    findings.extend(gha_kubernetes_helper_kubeconfig_authority(graph));
+    findings.extend(gha_azure_companion_helper_authority(graph));
     findings.extend(gha_create_pr_git_token_path_handoff(graph));
     findings.extend(gha_import_gpg_private_key_helper_path(graph));
     findings.extend(gha_ssh_agent_private_key_to_path_helper(graph));
@@ -5353,6 +6000,10 @@ fn attacker_surface_kinds_for(finding: &Finding) -> std::collections::BTreeSet<S
         FindingCategory::RuntimeScriptFetchedFromFloatingUrl => {
             out.insert("remote_script".into());
         }
+        FindingCategory::GhaFloatingRemoteScriptBeforePublishSink => {
+            out.insert("remote_script".into());
+            out.insert("script_sink".into());
+        }
         FindingCategory::DindServiceGrantsHostAuthority
             if finding_message_rule_id_is(finding, "docker_socket_exposed_to_ci_step") =>
         {
@@ -5371,18 +6022,98 @@ fn attacker_surface_kinds_for(finding: &Finding) -> std::collections::BTreeSet<S
         | FindingCategory::PrSpecificCacheKeyInDefaultBranchConsumer
         | FindingCategory::GhaSetupNodeCacheHelperPathHandoff
         | FindingCategory::GhaSetupPythonCacheHelperPathHandoff
-        | FindingCategory::GhaSetupGoCacheHelperPathHandoff => {
+        | FindingCategory::GhaSetupGoCacheHelperPathHandoff
+        | FindingCategory::GhaPostActionInputRetargetToCacheSave => {
             out.insert("cache".into());
         }
         FindingCategory::GhaDockerSetupQemuPrivilegedDockerHelper => {
             out.insert("privileged_container".into());
         }
+        FindingCategory::GhaDockerBuildxAuthorityPathHandoff => {
+            out.insert("container_registry".into());
+        }
+        FindingCategory::GhaTerraformWrapperSensitiveOutput => {
+            out.insert("step_output".into());
+        }
+        FindingCategory::GhaCompositeBareHelperAfterPathInstallWithSecretEnv
+        | FindingCategory::GhaCompositeEntrypointPathShadowWithSecretEnv
+        | FindingCategory::GhaKubernetesHelperKubeconfigAuthority
+        | FindingCategory::GhaAzureCompanionHelperAuthority => {
+            out.insert("script_sink".into());
+        }
         FindingCategory::DotenvArtifactFlowsToPrivilegedDeployment => {
             out.insert("dotenv_artifact".into());
         }
         FindingCategory::UnsafePrArtifactInWorkflowRunConsumer
+        | FindingCategory::GhaWorkflowRunArtifactMetadataToPrivilegedApi
+        | FindingCategory::GhaWorkflowRunArtifactReportToPrComment
+        | FindingCategory::GhaWorkflowRunArtifactToBuildScanPublish
         | FindingCategory::ArtifactBoundaryCrossing => {
             out.insert("artifact".into());
+        }
+        FindingCategory::GhaTokenRemoteUrlWithTraceOrProcessExposure => {
+            out.insert("process_argv".into());
+        }
+        FindingCategory::GhaEnvCredentialHelperConfigRedirectBeforeAuthority => {
+            out.insert("mutable_environment".into());
+            out.insert("credential_helper_config".into());
+        }
+        FindingCategory::GhaEnvNodeOptionsCodeInjectionBeforeNodeAuthority => {
+            out.insert("mutable_environment".into());
+            out.insert("runtime_startup".into());
+        }
+        FindingCategory::GhaEnvDyldOrLdLibraryPathBeforeCredentialHelper => {
+            out.insert("mutable_environment".into());
+            out.insert("dynamic_loader".into());
+        }
+        FindingCategory::GhaWorkflowCallContainerImageInputSecretsInherit
+        | FindingCategory::GhaWorkflowCallRunnerLabelInputPrivilegeEscalation => {
+            out.insert("reusable_workflow_boundary".into());
+            out.insert("caller_controlled_input".into());
+        }
+        FindingCategory::GhaContainerImageAttackerInfluencedWithSecretEnv => {
+            out.insert("container_image".into());
+            out.insert("caller_controlled_input".into());
+        }
+        FindingCategory::GhaAttestationSubjectDigestFromStepOutputUnverified
+        | FindingCategory::GhaAttestationSubjectPathWorkspaceGlobWithPrTrigger
+        | FindingCategory::GhaAttestationConfigDrivenGateFromWorkspaceFile => {
+            out.insert("attestation".into());
+            out.insert("trusted_channel".into());
+        }
+        FindingCategory::GhaTelemetryPrOrIssueTextToExternalSink
+        | FindingCategory::GhaTelemetryDebugFlagWithSecretEnv => {
+            out.insert("telemetry_sink".into());
+            out.insert("trusted_channel".into());
+        }
+        FindingCategory::GhaTelemetryAutonomousAgentInputFromUntrustedEvent => {
+            out.insert("autonomous_agent".into());
+            out.insert("event_text".into());
+        }
+        FindingCategory::GhaWorkflowRunArtifactToBlobStorageToken => {
+            out.insert("artifact".into());
+            out.insert("blob_storage".into());
+        }
+        FindingCategory::GhaApiWorkflowRunArtifactToAutonomousAgentToGitPush => {
+            out.insert("artifact".into());
+            out.insert("autonomous_agent".into());
+            out.insert("git_or_api_mutation".into());
+        }
+        FindingCategory::GhaManifestNpmLifecycleHookPrTriggerWithToken
+        | FindingCategory::GhaManifestPythonMBuildWithPrCredentials
+        | FindingCategory::GhaManifestCargoBuildRsPullRequestWithToken
+        | FindingCategory::GhaManifestMakefileWithPrTriggerAndSecrets => {
+            out.insert("manifest_as_code".into());
+            out.insert("pr_workspace".into());
+        }
+        FindingCategory::GhaManifestSubmodulesRecursiveWithPrAuthority => {
+            out.insert("gitmodules".into());
+            out.insert("submodule_checkout".into());
+        }
+        FindingCategory::GhaCrossrepoWorkflowCallFloatingRefCascade
+        | FindingCategory::GhaCrossrepoSecretsInheritUnreviewedCallee => {
+            out.insert("reusable_workflow_boundary".into());
+            out.insert("cross_repo_callee".into());
         }
         _ => {}
     }
@@ -5483,6 +6214,18 @@ fn runtime_preconditions_for(graph: &AuthorityGraph, finding: &Finding) -> Vec<&
         | FindingCategory::GhaSshAgentPrivateKeyToPathHelper
         | FindingCategory::GhaMacosCodesignCertSecurityPath
         | FindingCategory::GhaPagesDeployTokenUrlToGitHelper
+        | FindingCategory::GhaActionTokenEnvBeforeBareDownloadHelper
+        | FindingCategory::GhaPulumiPathResolvedCliWithAuthority
+        | FindingCategory::GhaPypiPublishOidcAfterPathMutation
+        | FindingCategory::GhaChangesetsPublishCommandWithAuthority
+        | FindingCategory::GhaRubygemsReleaseGitTokenAndOidcHelper
+        | FindingCategory::GhaCompositeBareHelperAfterPathInstallWithSecretEnv
+        | FindingCategory::GhaCompositeEntrypointPathShadowWithSecretEnv
+        | FindingCategory::GhaDockerBuildxAuthorityPathHandoff
+        | FindingCategory::GhaGoogleDeployGcloudCredentialPath
+        | FindingCategory::GhaDatadogTestVisibilityInstallerAuthority
+        | FindingCategory::GhaKubernetesHelperKubeconfigAuthority
+        | FindingCategory::GhaAzureCompanionHelperAuthority
         | FindingCategory::GhaSetupNodeCacheHelperPathHandoff
         | FindingCategory::GhaSetupPythonCacheHelperPathHandoff
         | FindingCategory::GhaSetupGoCacheHelperPathHandoff
@@ -5494,9 +6237,16 @@ fn runtime_preconditions_for(graph: &AuthorityGraph, finding: &Finding) -> Vec<&
         }
         FindingCategory::GhaSetupPythonPipInstallAuthorityEnv
         | FindingCategory::GhaToolInstallerThenShellHelperAuthority
-        | FindingCategory::GhaWorkflowShellAuthorityConcentration => {
+        | FindingCategory::GhaWorkflowShellAuthorityConcentration
+        | FindingCategory::GhaTerraformWrapperSensitiveOutput => {
             out.push("token, cloud, registry, package, or signing authority is present in the job environment");
             out.push("the workflow-authored helper command runs on the hosted runner");
+        }
+        FindingCategory::GhaPostActionInputRetargetToCacheSave => {
+            out.push("the cache action has a post-save boundary in the same job");
+            out.push(
+                "later environment mutation can influence cache path/key-like state at runtime",
+            );
         }
         FindingCategory::ManualDispatchInputToUrlOrCommand
         | FindingCategory::ParameterInterpolationIntoShell => {
@@ -5511,6 +6261,124 @@ fn runtime_preconditions_for(graph: &AuthorityGraph, finding: &Finding) -> Vec<&
         FindingCategory::IdTokenAudienceOverscoped | FindingCategory::UpliftWithoutAttestation => {
             out.push("downstream identity provider accepts the issued OIDC token");
             out.push("the configured audience or cloud role grants useful authority");
+        }
+        FindingCategory::GhaWorkflowRunArtifactMetadataToPrivilegedApi
+        | FindingCategory::GhaWorkflowRunArtifactReportToPrComment
+        | FindingCategory::GhaWorkflowRunArtifactToBuildScanPublish => {
+            out.push("the downloaded artifact was produced by a lower-trust PR-context workflow");
+            out.push(
+                "the workflow_run consumer has write-token or deployment authority at runtime",
+            );
+        }
+        FindingCategory::GhaFloatingRemoteScriptBeforePublishSink => {
+            out.push("the floating remote script URL resolves to mutable content at runtime");
+            out.push("a later publish, deploy, release, or push sink runs in the same authority-bearing job");
+        }
+        FindingCategory::GhaTokenRemoteUrlWithTraceOrProcessExposure => {
+            out.push("the token-bearing URL is materialized into a real git process invocation");
+            out.push("trace/debug/process inspection output is retained in logs or artifacts");
+        }
+        FindingCategory::GhaEnvCredentialHelperConfigRedirectBeforeAuthority => {
+            out.push("an earlier same-job step can write credential-helper config env through GITHUB_ENV");
+            out.push("a later helper/action reads that env while credential authority is present");
+        }
+        FindingCategory::GhaEnvNodeOptionsCodeInjectionBeforeNodeAuthority => {
+            out.push("an earlier same-job step can write NODE_OPTIONS through GITHUB_ENV");
+            out.push("a later Node action or package-manager helper runs with authority in the inherited environment");
+        }
+        FindingCategory::GhaEnvDyldOrLdLibraryPathBeforeCredentialHelper => {
+            out.push("an earlier same-job step can write dynamic-loader env through GITHUB_ENV");
+            out.push("a later dynamically linked credential helper runs with authority in the inherited environment");
+        }
+        FindingCategory::GhaWorkflowCallContainerImageInputSecretsInherit => {
+            out.push("caller-controlled reusable-workflow input can affect the container image selected by the callee or caller");
+            out.push("secrets, OIDC, cloud, registry, package, or write-token authority is present across that boundary");
+        }
+        FindingCategory::GhaWorkflowCallRunnerLabelInputPrivilegeEscalation => {
+            out.push("caller-controlled reusable-workflow input can affect runner label selection");
+            out.push(
+                "the selected runner receives secrets, OIDC, or write-token authority at runtime",
+            );
+        }
+        FindingCategory::GhaContainerImageAttackerInfluencedWithSecretEnv => {
+            out.push("the container image expression resolves to a value controlled by inputs, matrix, event, or needs output state");
+            out.push("the job environment includes secret, OIDC, registry, cloud, package, or write-token authority");
+        }
+        FindingCategory::GhaAttestationSubjectDigestFromStepOutputUnverified => {
+            out.push(
+                "the referenced digest output is produced by mutable workflow state at runtime",
+            );
+            out.push(
+                "the attestation action has id-token: write and attestations: write authority",
+            );
+        }
+        FindingCategory::GhaAttestationSubjectPathWorkspaceGlobWithPrTrigger => {
+            out.push(
+                "PR or workflow_run-controlled workspace content can affect the subject-path glob",
+            );
+            out.push("downstream verifiers trust the resulting attestation subject identity");
+        }
+        FindingCategory::GhaAttestationConfigDrivenGateFromWorkspaceFile => {
+            out.push("workspace/config-derived outputs can affect the attestation gate condition");
+            out.push("the attestation is consumed as release or provenance evidence downstream");
+        }
+        FindingCategory::GhaTelemetryPrOrIssueTextToExternalSink => {
+            out.push(
+                "attacker-controlled event text reaches the configured external telemetry channel",
+            );
+            out.push("the sink preserves formatting, mentions, control sequences, or operational context");
+        }
+        FindingCategory::GhaTelemetryDebugFlagWithSecretEnv => {
+            out.push("debug logging is enabled for a real workflow run");
+            out.push(
+                "secret or token-bearing helper output is emitted while debug logging is active",
+            );
+        }
+        FindingCategory::GhaTelemetryAutonomousAgentInputFromUntrustedEvent => {
+            out.push("the autonomous agent receives untrusted event text or workflow_run context at runtime");
+            out.push("the agent has access to write-class tools, tokens, or a later mutation step");
+        }
+        FindingCategory::GhaWorkflowRunArtifactToBlobStorageToken => {
+            out.push("the downloaded artifact was produced by a lower-trust upstream workflow");
+            out.push("the blob/object/release storage destination is consumed as trusted output");
+        }
+        FindingCategory::GhaApiWorkflowRunArtifactToAutonomousAgentToGitPush => {
+            out.push("the downloaded artifact was produced by a lower-trust upstream workflow");
+            out.push("the autonomous agent can influence a later git or GitHub API mutation");
+        }
+        FindingCategory::GhaManifestNpmLifecycleHookPrTriggerWithToken => {
+            out.push("the package manifest or lockfile is controlled by the PR/workspace source");
+            out.push("npm-family lifecycle scripts execute during the observed install command");
+        }
+        FindingCategory::GhaManifestPythonMBuildWithPrCredentials => {
+            out.push("the Python build backend, setup.py, or project manifest is controlled by the PR/workspace source");
+            out.push("the resulting wheel/sdist is later treated as trusted publish material");
+        }
+        FindingCategory::GhaManifestCargoBuildRsPullRequestWithToken => {
+            out.push("the Cargo workspace can contain PR-controlled build.rs, build-dependencies, or proc-macro inputs");
+            out.push("Cargo compilation executes those build-time hooks on the CI host");
+        }
+        FindingCategory::GhaManifestMakefileWithPrTriggerAndSecrets => {
+            out.push(
+                "the invoked Makefile target is read from PR/workspace-controlled manifest state",
+            );
+            out.push("the target's recipe executes shell with the job environment");
+        }
+        FindingCategory::GhaManifestSubmodulesRecursiveWithPrAuthority => {
+            out.push(".gitmodules is PR/workspace-controlled or not independently allowlisted");
+            out.push("submodule contents are built, installed, or executed in a later authority-bearing step");
+        }
+        FindingCategory::GhaCrossrepoWorkflowCallFloatingRefCascade => {
+            out.push("the producer repository's mutable ref can change independently of the consumer review boundary");
+            out.push("the called workflow runs with caller-side authority or release/deploy expectations");
+        }
+        FindingCategory::GhaCrossrepoSecretsInheritUnreviewedCallee => {
+            out.push(
+                "the callee repository receives more secrets than a named secret map would expose",
+            );
+            out.push(
+                "the callee repository's branch protection and CODEOWNERS are weaker or unverified",
+            );
         }
         _ => {}
     }
@@ -6549,6 +7417,2066 @@ fn detect_gh_escalating_verb(body: &str) -> Option<String> {
         }
     }
     None
+}
+
+fn same_job_has_github_token_write_authority(graph: &AuthorityGraph, step: &Node) -> bool {
+    same_job_steps_before(graph, step)
+        .chain(std::iter::once(step))
+        .chain(same_job_steps_after(graph, step))
+        .any(|candidate| step_has_github_token_write_authority(graph, candidate.id))
+}
+
+fn job_has_privileged_authority(graph: &AuthorityGraph, step: &Node) -> bool {
+    job_has_sensitive_authority(graph, step)
+        || same_job_has_github_token_write_authority(graph, step)
+}
+
+pub fn gha_script_injection_to_privileged_shell(graph: &AuthorityGraph) -> Vec<Finding> {
+    if !graph_is_platform(graph, "github-actions") {
+        return Vec::new();
+    }
+    let mut findings = Vec::new();
+    for step in graph.nodes_of_kind(NodeKind::Step) {
+        let Some(body) = step.metadata.get(META_SCRIPT_BODY) else {
+            continue;
+        };
+        let mut hits = Vec::new();
+        for (expr, range) in find_template_expressions(body) {
+            if is_untrusted_context_expression(&expr) && is_script_injection_sink(body, &range) {
+                hits.push(expr);
+            }
+        }
+        if hits.is_empty() || !job_has_privileged_authority(graph, step) {
+            continue;
+        }
+        findings.push(Finding {
+            severity: Severity::Critical,
+            category: FindingCategory::GhaScriptInjectionToPrivilegedShell,
+            path: None,
+            nodes_involved: vec![step.id],
+            message: format!(
+                "Step '{}' interpolates attacker-controlled GitHub context directly into a privileged script while secrets, OIDC, or write-token authority is in the job",
+                step.name
+            ),
+            recommendation: Recommendation::Manual {
+                action: "Bind attacker-controlled values through step-level `env:` and reference them as data (`\"$VAR\"` or `process.env.VAR`); keep write tokens and secrets out of the injection-capable job.".into(),
+            },
+            source: FindingSource::BuiltIn,
+            extras: FindingExtras::default(),
+        });
+    }
+    findings
+}
+
+pub fn gha_workflow_run_artifact_poisoning_to_privileged_consumer(
+    graph: &AuthorityGraph,
+) -> Vec<Finding> {
+    if !graph_is_platform(graph, "github-actions") {
+        return Vec::new();
+    }
+    let triggers_ok = triggers_contain_any(
+        graph.metadata.get(META_TRIGGERS),
+        &["workflow_run", "pull_request_target"],
+    );
+    if !triggers_ok {
+        return Vec::new();
+    }
+    use std::collections::BTreeMap;
+    let mut by_job: BTreeMap<String, (Vec<&Node>, Vec<&Node>)> = BTreeMap::new();
+    for step in graph.nodes_of_kind(NodeKind::Step) {
+        let job = step
+            .metadata
+            .get(META_JOB_NAME)
+            .cloned()
+            .unwrap_or_default();
+        let entry = by_job.entry(job).or_default();
+        if step
+            .metadata
+            .get(META_DOWNLOADS_ARTIFACT)
+            .map(|v| v == "true")
+            .unwrap_or(false)
+        {
+            entry.0.push(step);
+        }
+        if step
+            .metadata
+            .get(META_INTERPRETS_ARTIFACT)
+            .map(|v| v == "true")
+            .unwrap_or(false)
+        {
+            entry.1.push(step);
+        }
+    }
+    let mut findings = Vec::new();
+    for (job, (downloaders, interpreters)) in by_job {
+        if downloaders.is_empty() || interpreters.is_empty() {
+            continue;
+        }
+        let privileged = downloaders
+            .iter()
+            .chain(interpreters.iter())
+            .any(|step| job_has_privileged_authority(graph, step));
+        if !privileged {
+            continue;
+        }
+        let mut nodes: Vec<NodeId> = downloaders.iter().map(|s| s.id).collect();
+        nodes.extend(interpreters.iter().map(|s| s.id));
+        findings.push(Finding {
+            severity: Severity::Critical,
+            category: FindingCategory::GhaWorkflowRunArtifactPoisoningToPrivilegedConsumer,
+            path: None,
+            nodes_involved: nodes,
+            message: format!(
+                "Job '{}' downloads PR-context artifact content, interprets it, and holds privileged authority; malicious PR artifacts can drive privileged sinks",
+                if job.is_empty() { "<workflow-level>" } else { &job }
+            ),
+            recommendation: Recommendation::Manual {
+                action: "Treat workflow_run artifacts as untrusted: validate against a strict schema, never feed artifact content into env/output/comment/script sinks, and isolate privileged follow-up work from artifact parsing.".into(),
+            },
+            source: FindingSource::BuiltIn,
+            extras: FindingExtras::default(),
+        });
+    }
+    findings
+}
+
+pub fn gha_remote_script_in_authority_job(graph: &AuthorityGraph) -> Vec<Finding> {
+    if !graph_is_platform(graph, "github-actions") {
+        return Vec::new();
+    }
+    let mut findings = Vec::new();
+    for step in graph.nodes_of_kind(NodeKind::Step) {
+        let Some(body) = step.metadata.get(META_SCRIPT_BODY) else {
+            continue;
+        };
+        if !body_has_pipe_to_shell_with_floating_url(body)
+            || !job_has_privileged_authority(graph, step)
+        {
+            continue;
+        }
+        findings.push(Finding {
+            severity: Severity::Critical,
+            category: FindingCategory::GhaRemoteScriptInAuthorityJob,
+            path: None,
+            nodes_involved: vec![step.id],
+            message: format!(
+                "Step '{}' executes a mutable remote script inside a job with secrets, OIDC, cloud, registry, package, signing, or write-token authority",
+                step.name
+            ),
+            recommendation: Recommendation::Manual {
+                action: "Pin remote scripts to immutable commits/releases, verify checksums before execution, or run remote installers only in authority-free jobs.".into(),
+            },
+            source: FindingSource::BuiltIn,
+            extras: FindingExtras::default(),
+        });
+    }
+    findings
+}
+
+pub fn gha_pat_remote_url_write(graph: &AuthorityGraph) -> Vec<Finding> {
+    if !graph_is_platform(graph, "github-actions") {
+        return Vec::new();
+    }
+    let mut findings = Vec::new();
+    for step in graph.nodes_of_kind(NodeKind::Step) {
+        let Some(body) = step.metadata.get(META_SCRIPT_BODY) else {
+            continue;
+        };
+        let lower = body.to_ascii_lowercase();
+        let token_in_url = lower.contains("https://")
+            && lower.contains("@github.com")
+            && (lower.contains("secrets.")
+                || lower.contains("github_token")
+                || lower.contains("github-token")
+                || lower.contains("$github_token")
+                || lower.contains("${github_token}"));
+        let write_op = lower.contains("git push")
+            || lower.contains("git remote set-url")
+            || lower.contains("git tag")
+            || lower.contains("git release");
+        if !(token_in_url && write_op) {
+            continue;
+        }
+        findings.push(Finding {
+            severity: Severity::High,
+            category: FindingCategory::GhaPatRemoteUrlWrite,
+            path: None,
+            nodes_involved: vec![step.id],
+            message: format!(
+                "Step '{}' embeds token material in a GitHub remote URL used by write-capable git operations",
+                step.name
+            ),
+            recommendation: Recommendation::Manual {
+                action: "Avoid token-bearing git remote URLs; use credential helpers or `gh` with least-privileged token scope, and prevent tokens from entering argv, logs, or `.git/config`.".into(),
+            },
+            source: FindingSource::BuiltIn,
+            extras: FindingExtras::default(),
+        });
+    }
+    findings
+}
+
+fn graph_has_workflow_run_or_prt_trigger(graph: &AuthorityGraph) -> bool {
+    triggers_contain_any(
+        graph.metadata.get(META_TRIGGERS),
+        &["workflow_run", "pull_request_target"],
+    ) || graph
+        .metadata
+        .get(META_TRIGGER)
+        .map(|trigger| trigger == "workflow_run" || trigger == "pull_request_target")
+        .unwrap_or(false)
+}
+
+fn artifact_downloaded_before_step(graph: &AuthorityGraph, step: &Node) -> Option<NodeId> {
+    same_job_steps_before(graph, step)
+        .chain(std::iter::once(step))
+        .find(|candidate| {
+            candidate
+                .metadata
+                .get(META_DOWNLOADS_ARTIFACT)
+                .map(|v| v == "true")
+                .unwrap_or(false)
+        })
+        .map(|candidate| candidate.id)
+}
+
+fn body_posts_pr_comment_or_review(body: &str) -> bool {
+    let lower = body.to_ascii_lowercase();
+    body.contains("createComment")
+        || body.contains("updateComment")
+        || body.contains("createCommitComment")
+        || body.contains("createReview")
+        || lower.contains("gh pr comment")
+        || lower.contains("gh issue comment")
+        || (lower.contains("gh api ")
+            && (lower.contains("/comments") || lower.contains("issues/comments")))
+}
+
+fn body_uses_artifact_pr_metadata(body: &str) -> bool {
+    let lower = body.to_ascii_lowercase();
+    lower.contains("pr_number")
+        || lower.contains("pull_number")
+        || lower.contains("pull-request-number")
+        || lower.contains("pull_request_number")
+        || lower.contains("github.event.workflow_run")
+        || lower.contains("artifact_pr")
+}
+
+fn body_uses_build_scan_publish(body: &str) -> bool {
+    let lower = body.to_ascii_lowercase();
+    lower.contains("develocity")
+        || lower.contains("gradle enterprise")
+        || lower.contains("gradle-enterprise")
+        || lower.contains("build scan")
+        || lower.contains("buildscan")
+        || lower.contains("--scan")
+        || lower.contains("publishbuildscan")
+}
+
+fn body_has_publish_deploy_release_sink(body: &str) -> bool {
+    script_contains_any(
+        body,
+        &[
+            "docker push",
+            "docker buildx build --push",
+            "npm publish",
+            "pnpm publish",
+            "yarn npm publish",
+            "twine upload",
+            "maturin publish",
+            "cargo publish",
+            "gem push",
+            "helm push",
+            "kubectl apply",
+            "firebase deploy",
+            "wrangler deploy",
+            "gcloud app deploy",
+            "gcloud run deploy",
+            "gh release create",
+            "gh release upload",
+            "git push",
+        ],
+    )
+}
+
+fn body_has_tokenized_git_remote_url(body: &str) -> bool {
+    let lower = body.to_ascii_lowercase();
+    lower.contains("https://")
+        && lower.contains("@")
+        && (lower.contains("github.com")
+            || lower.contains("gitlab.com")
+            || lower.contains("bitbucket.org"))
+        && (lower.contains("secrets.")
+            || lower.contains("github_token")
+            || lower.contains("github-token")
+            || lower.contains("$github_token")
+            || lower.contains("${github_token}")
+            || lower.contains("token")
+            || lower.contains("pat"))
+}
+
+fn body_enables_trace_or_process_exposure(body: &str) -> bool {
+    let lower = body.to_ascii_lowercase();
+    lower.contains("git_trace")
+        || lower.contains("git_curl_verbose")
+        || lower.contains("set -x")
+        || lower.contains("bash -x")
+        || lower.contains("ps ")
+        || lower.contains("pgrep ")
+        || lower.contains("/proc/")
+        || lower.contains("cmdline")
+}
+
+pub fn gha_workflow_run_artifact_metadata_to_privileged_api(
+    graph: &AuthorityGraph,
+) -> Vec<Finding> {
+    if !graph_is_platform(graph, "github-actions") || !graph_has_workflow_run_or_prt_trigger(graph)
+    {
+        return Vec::new();
+    }
+    let mut findings = Vec::new();
+    for step in graph.nodes_of_kind(NodeKind::Step) {
+        let Some(body) = step.metadata.get(META_SCRIPT_BODY) else {
+            continue;
+        };
+        if !step
+            .metadata
+            .get(META_INTERPRETS_ARTIFACT)
+            .map(|v| v == "true")
+            .unwrap_or(false)
+            || !body_uses_artifact_pr_metadata(body)
+            || !body_posts_pr_comment_or_review(body)
+            || !job_has_privileged_authority(graph, step)
+        {
+            continue;
+        }
+        let Some(download_id) = artifact_downloaded_before_step(graph, step) else {
+            continue;
+        };
+        findings.push(Finding {
+            severity: Severity::High,
+            category: FindingCategory::GhaWorkflowRunArtifactMetadataToPrivilegedApi,
+            path: None,
+            nodes_involved: vec![download_id, step.id],
+            message: format!(
+                "workflow_run consumer step '{}' uses PR metadata from a downloaded artifact near a write-class GitHub API/comment sink",
+                step.name
+            ),
+            recommendation: Recommendation::Manual {
+                action: "Derive PR identity from the trusted workflow_run event payload or GitHub API, not from downloaded artifact content; validate artifact fields against a strict schema before any write API call.".into(),
+            },
+            source: FindingSource::BuiltIn,
+            extras: FindingExtras::default(),
+        });
+    }
+    findings
+}
+
+pub fn gha_workflow_run_artifact_report_to_pr_comment(graph: &AuthorityGraph) -> Vec<Finding> {
+    if !graph_is_platform(graph, "github-actions") || !graph_has_workflow_run_or_prt_trigger(graph)
+    {
+        return Vec::new();
+    }
+    let mut findings = Vec::new();
+    for step in graph.nodes_of_kind(NodeKind::Step) {
+        let Some(body) = step.metadata.get(META_SCRIPT_BODY) else {
+            continue;
+        };
+        if !step
+            .metadata
+            .get(META_INTERPRETS_ARTIFACT)
+            .map(|v| v == "true")
+            .unwrap_or(false)
+            || !body_posts_pr_comment_or_review(body)
+            || !job_has_privileged_authority(graph, step)
+        {
+            continue;
+        }
+        let Some(download_id) = artifact_downloaded_before_step(graph, step) else {
+            continue;
+        };
+        findings.push(Finding {
+            severity: Severity::High,
+            category: FindingCategory::GhaWorkflowRunArtifactReportToPrComment,
+            path: None,
+            nodes_involved: vec![download_id, step.id],
+            message: format!(
+                "workflow_run consumer step '{}' reads downloaded artifact content and posts it to a PR/review comment sink with privileged authority",
+                step.name
+            ),
+            recommendation: Recommendation::Manual {
+                action: "Treat artifact report text as untrusted markdown: generate the comment body in the trusted consumer, code-fence or escape untrusted sections, cap length, and avoid using artifact content for target PR selection.".into(),
+            },
+            source: FindingSource::BuiltIn,
+            extras: FindingExtras::default(),
+        });
+    }
+    findings
+}
+
+pub fn gha_workflow_run_artifact_to_build_scan_publish(graph: &AuthorityGraph) -> Vec<Finding> {
+    if !graph_is_platform(graph, "github-actions") || !graph_has_workflow_run_or_prt_trigger(graph)
+    {
+        return Vec::new();
+    }
+    let mut findings = Vec::new();
+    for step in graph.nodes_of_kind(NodeKind::Step) {
+        let Some(body) = step.metadata.get(META_SCRIPT_BODY) else {
+            continue;
+        };
+        if !step
+            .metadata
+            .get(META_INTERPRETS_ARTIFACT)
+            .map(|v| v == "true")
+            .unwrap_or(false)
+            || !body_uses_build_scan_publish(body)
+            || !job_has_privileged_authority(graph, step)
+        {
+            continue;
+        }
+        let Some(download_id) = artifact_downloaded_before_step(graph, step) else {
+            continue;
+        };
+        findings.push(Finding {
+            severity: Severity::High,
+            category: FindingCategory::GhaWorkflowRunArtifactToBuildScanPublish,
+            path: None,
+            nodes_involved: vec![download_id, step.id],
+            message: format!(
+                "workflow_run consumer step '{}' feeds downloaded artifact-controlled data into a build-scan publication path",
+                step.name
+            ),
+            recommendation: Recommendation::Manual {
+                action: "Keep build-scan publication inputs generated in the trusted consumer; never publish artifact-controlled URLs, tags, or metadata without schema validation and provenance checks.".into(),
+            },
+            source: FindingSource::BuiltIn,
+            extras: FindingExtras::default(),
+        });
+    }
+    findings
+}
+
+pub fn gha_floating_remote_script_before_publish_sink(graph: &AuthorityGraph) -> Vec<Finding> {
+    if !graph_is_platform(graph, "github-actions") {
+        return Vec::new();
+    }
+    let mut findings = Vec::new();
+    for step in graph.nodes_of_kind(NodeKind::Step) {
+        let Some(body) = step.metadata.get(META_SCRIPT_BODY) else {
+            continue;
+        };
+        if !body_has_pipe_to_shell_with_floating_url(body)
+            || !job_has_privileged_authority(graph, step)
+        {
+            continue;
+        }
+        let publish_step = if body_has_publish_deploy_release_sink(body) {
+            Some(step)
+        } else {
+            same_job_steps_after(graph, step).find(|candidate| {
+                candidate
+                    .metadata
+                    .get(META_SCRIPT_BODY)
+                    .map(|candidate_body| body_has_publish_deploy_release_sink(candidate_body))
+                    .unwrap_or(false)
+            })
+        };
+        let Some(publish_step) = publish_step else {
+            continue;
+        };
+        findings.push(Finding {
+            severity: Severity::High,
+            category: FindingCategory::GhaFloatingRemoteScriptBeforePublishSink,
+            path: None,
+            nodes_involved: if publish_step.id == step.id {
+                vec![step.id]
+            } else {
+                vec![step.id, publish_step.id]
+            },
+            message: format!(
+                "Step '{}' executes a mutable remote script before publish/deploy/release sink '{}' in the same authority-bearing job",
+                step.name, publish_step.name
+            ),
+            recommendation: Recommendation::Manual {
+                action: "Pin remote installers to immutable commits and verify checksums before execution, or run remote script installation in an authority-free job before any publish/deploy/release credentials are present.".into(),
+            },
+            source: FindingSource::BuiltIn,
+            extras: FindingExtras::default(),
+        });
+    }
+    findings
+}
+
+pub fn gha_token_remote_url_with_trace_or_process_exposure(graph: &AuthorityGraph) -> Vec<Finding> {
+    if !graph_is_platform(graph, "github-actions") {
+        return Vec::new();
+    }
+    let mut findings = Vec::new();
+    for step in graph.nodes_of_kind(NodeKind::Step) {
+        let Some(body) = step.metadata.get(META_SCRIPT_BODY) else {
+            continue;
+        };
+        if !(body_has_tokenized_git_remote_url(body)
+            && body_enables_trace_or_process_exposure(body))
+        {
+            continue;
+        }
+        findings.push(Finding {
+            severity: Severity::High,
+            category: FindingCategory::GhaTokenRemoteUrlWithTraceOrProcessExposure,
+            path: None,
+            nodes_involved: vec![step.id],
+            message: format!(
+                "Step '{}' uses a token-bearing Git remote URL while trace/debug or process-inspection exposure is enabled",
+                step.name
+            ),
+            recommendation: Recommendation::Manual {
+                action: "Avoid embedding tokens in Git remote URLs. Use credential helpers or header-based auth, and keep `GIT_TRACE`, `set -x`, process dumps, and `/proc/*/cmdline` inspection away from token-bearing commands.".into(),
+            },
+            source: FindingSource::BuiltIn,
+            extras: FindingExtras::default(),
+        });
+    }
+    findings
+}
+
+const GHA_ENV_CONFIG_KEYS: &[&str] = &[
+    "AWS_CONFIG_FILE",
+    "AWS_SHARED_CREDENTIALS_FILE",
+    "AWS_PROFILE",
+    "AWS_WEB_IDENTITY_TOKEN_FILE",
+    "AZURE_CONFIG_DIR",
+    "CLOUDSDK_CONFIG",
+    "GOOGLE_APPLICATION_CREDENTIALS",
+    "KUBECONFIG",
+    "KUBE_CONFIG_PATH",
+    "DOCKER_CONFIG",
+    "DOCKER_HOST",
+    "NPM_CONFIG_USERCONFIG",
+    "NPMRC",
+    "PIP_CONFIG_FILE",
+    "HELM_REPOSITORY_CONFIG",
+    "HELM_REGISTRY_CONFIG",
+    "TF_CLI_CONFIG_FILE",
+    "GNUPGHOME",
+    "XDG_CONFIG_HOME",
+];
+
+const GHA_NODE_OPTIONS_DANGEROUS_FLAGS: &[&str] = &[
+    "--require",
+    "--import",
+    "--inspect",
+    "--experimental-loader",
+    "--experimental-vm-modules",
+    "--experimental-policy",
+];
+
+const GHA_DYNAMIC_LOADER_KEYS: &[&str] = &[
+    "LD_PRELOAD",
+    "LD_LIBRARY_PATH",
+    "DYLD_INSERT_LIBRARIES",
+    "DYLD_LIBRARY_PATH",
+];
+
+fn body_writes_github_env_key(body: &str, key: &str) -> bool {
+    body.contains("GITHUB_ENV") && body.contains(key)
+}
+
+fn body_writes_github_env_any(body: &str, keys: &[&str]) -> bool {
+    keys.iter().any(|key| body_writes_github_env_key(body, key))
+}
+
+fn body_has_any_key_and_any_value(body: &str, keys: &[&str], values: &[&str]) -> bool {
+    body_writes_github_env_any(body, keys) && script_contains_any(body, values)
+}
+
+fn prior_github_env_writer_for<'a>(
+    graph: &'a AuthorityGraph,
+    step: &'a Node,
+    predicate: impl Fn(&str) -> bool,
+) -> Option<&'a Node> {
+    same_job_steps_before(graph, step)
+        .filter_map(|candidate| {
+            candidate
+                .metadata
+                .get(META_SCRIPT_BODY)
+                .map(|body| (candidate, body))
+        })
+        .find_map(|(candidate, body)| predicate(body).then_some(candidate))
+}
+
+fn gha_known_credential_helper_boundary(step: &Node) -> bool {
+    if let Some(action) = gha_action_name(step) {
+        return matches!(
+            action.as_str(),
+            "aws-actions/configure-aws-credentials"
+                | "azure/login"
+                | "google-github-actions/auth"
+                | "google-github-actions/get-gke-credentials"
+                | "google-github-actions/deploy-cloudrun"
+                | "google-github-actions/deploy-appengine"
+                | "azure/k8s-set-context"
+                | "azure/aks-set-context"
+                | "azure/k8s-deploy"
+                | "docker/login-action"
+                | "JS-DevTools/npm-publish"
+                | "pypa/gh-action-pypi-publish"
+                | "crazy-max/ghaction-import-gpg"
+                | "webfactory/ssh-agent"
+                | "peter-evans/create-pull-request"
+                | "hashicorp/setup-terraform"
+        );
+    }
+    step_script_contains_any(
+        step,
+        &[
+            "aws ",
+            "az ",
+            "gcloud ",
+            "kubectl ",
+            "helm ",
+            "docker login",
+            "npm publish",
+            "pnpm publish",
+            "yarn npm publish",
+            "twine upload",
+            "terraform ",
+            "gpg ",
+            "git push",
+            "cosign ",
+        ],
+    )
+}
+
+fn gha_node_authority_boundary(step: &Node) -> bool {
+    gha_action_name(step).is_some()
+        || step_script_contains_any(step, &["node ", "npm ", "npx ", "pnpm ", "yarn "])
+}
+
+fn attacker_influenced_expression(value: &str) -> bool {
+    let lower = value.to_ascii_lowercase();
+    lower.contains("${{ inputs.")
+        || lower.contains("${{ github.event.")
+        || lower.contains("${{ matrix.")
+        || lower.contains("${{ needs.")
+        || lower.contains("fromjson(inputs.")
+        || lower.contains("fromjson(github.event.")
+        || lower.contains("fromjson(needs.")
+}
+
+fn runner_label_attacker_influenced_expression(value: &str) -> bool {
+    let lower = value.to_ascii_lowercase();
+    lower.contains("${{ inputs.")
+        || lower.contains("${{ github.event.")
+        || lower.contains("fromjson(inputs.")
+        || lower.contains("fromjson(github.event.")
+        || lower.contains("fromjson(needs.")
+        || (lower.contains("${{ needs.") && lower.contains(".outputs."))
+}
+
+fn input_like_with_key(key: &str) -> bool {
+    let lower = key.to_ascii_lowercase();
+    lower.contains("image")
+        || lower.contains("container")
+        || lower.contains("docker")
+        || lower.contains("runner")
+        || lower.contains("runs-on")
+        || lower.contains("runs_on")
+        || lower.contains("runner-label")
+        || lower.contains("runner_label")
+        || lower == "os"
+}
+
+fn gha_with_inputs_matching(
+    step: &Node,
+    key_predicate: impl Fn(&str) -> bool,
+) -> Vec<(&str, &str)> {
+    step.metadata
+        .get(META_GHA_WITH_INPUTS)
+        .map(|inputs| {
+            inputs
+                .lines()
+                .filter_map(|line| {
+                    let (k, v) = line.split_once('=')?;
+                    key_predicate(k).then_some((k, v))
+                })
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
+pub fn gha_env_credential_helper_config_redirect_before_authority(
+    graph: &AuthorityGraph,
+) -> Vec<Finding> {
+    if !graph_is_platform(graph, "github-actions") {
+        return Vec::new();
+    }
+    let mut findings = Vec::new();
+    for step in graph.nodes_of_kind(NodeKind::Step) {
+        if !gha_known_credential_helper_boundary(step)
+            || !(job_has_sensitive_authority(graph, step)
+                || step_has_sensitive_authority(graph, step.id))
+        {
+            continue;
+        }
+        let Some(writer) = prior_github_env_writer_for(graph, step, |body| {
+            body_writes_github_env_any(body, GHA_ENV_CONFIG_KEYS)
+        }) else {
+            continue;
+        };
+        findings.push(Finding {
+            severity: Severity::High,
+            category: FindingCategory::GhaEnvCredentialHelperConfigRedirectBeforeAuthority,
+            path: None,
+            nodes_involved: helper_authority_nodes(graph, writer.id, step.id),
+            message: format!(
+                "Earlier step '{}' writes credential-helper config env before later authority-bearing helper boundary '{}'",
+                writer.name, step.name
+            ),
+            recommendation: Recommendation::Manual {
+                action: "Do not carry credential-helper config paths through mutable $GITHUB_ENV before cloud, registry, package, or signing authority is materialized. Bind config paths in the consuming step from trusted absolute locations or split the env mutation into an authority-free job.".into(),
+            },
+            source: FindingSource::BuiltIn,
+            extras: FindingExtras::default(),
+        });
+    }
+    findings
+}
+
+pub fn gha_env_node_options_code_injection_before_node_authority(
+    graph: &AuthorityGraph,
+) -> Vec<Finding> {
+    if !graph_is_platform(graph, "github-actions") {
+        return Vec::new();
+    }
+    let mut findings = Vec::new();
+    for step in graph.nodes_of_kind(NodeKind::Step) {
+        if !gha_node_authority_boundary(step) || !job_has_sensitive_authority(graph, step) {
+            continue;
+        }
+        let Some(writer) = prior_github_env_writer_for(graph, step, |body| {
+            body_has_any_key_and_any_value(
+                body,
+                &["NODE_OPTIONS"],
+                GHA_NODE_OPTIONS_DANGEROUS_FLAGS,
+            )
+        }) else {
+            continue;
+        };
+        findings.push(Finding {
+            severity: Severity::High,
+            category: FindingCategory::GhaEnvNodeOptionsCodeInjectionBeforeNodeAuthority,
+            path: None,
+            nodes_involved: helper_authority_nodes(graph, writer.id, step.id),
+            message: format!(
+                "Earlier step '{}' writes NODE_OPTIONS startup injection before later Node authority boundary '{}'",
+                writer.name, step.name
+            ),
+            recommendation: Recommendation::Manual {
+                action: "Clear NODE_OPTIONS before Node/npm/npx/yarn actions or commands receive registry, cloud, OIDC, or write-token authority; allow only explicit memory-tuning flags in authority-bearing jobs.".into(),
+            },
+            source: FindingSource::BuiltIn,
+            extras: FindingExtras::default(),
+        });
+    }
+    findings
+}
+
+pub fn gha_env_dyld_or_ld_library_path_before_credential_helper(
+    graph: &AuthorityGraph,
+) -> Vec<Finding> {
+    if !graph_is_platform(graph, "github-actions") {
+        return Vec::new();
+    }
+    let mut findings = Vec::new();
+    for step in graph.nodes_of_kind(NodeKind::Step) {
+        if !gha_known_credential_helper_boundary(step) || !job_has_sensitive_authority(graph, step)
+        {
+            continue;
+        }
+        let Some(writer) = prior_github_env_writer_for(graph, step, |body| {
+            body_has_any_key_and_any_value(
+                body,
+                GHA_DYNAMIC_LOADER_KEYS,
+                &[
+                    "$github_workspace",
+                    "github.workspace",
+                    "$runner_temp",
+                    "runner.temp",
+                    "/tmp/",
+                    "./",
+                    "${{ inputs.",
+                    "${{ matrix.",
+                    "${{ github.event.",
+                ],
+            )
+        }) else {
+            continue;
+        };
+        findings.push(Finding {
+            severity: Severity::High,
+            category: FindingCategory::GhaEnvDyldOrLdLibraryPathBeforeCredentialHelper,
+            path: None,
+            nodes_involved: helper_authority_nodes(graph, writer.id, step.id),
+            message: format!(
+                "Earlier step '{}' writes dynamic-loader environment state before later credential-bearing helper boundary '{}'",
+                writer.name, step.name
+            ),
+            recommendation: Recommendation::Manual {
+                action: "Clear LD_PRELOAD/LD_LIBRARY_PATH/DYLD_* before credential helpers run, or keep loader-path setup in jobs without cloud, registry, package, signing, or write-token authority.".into(),
+            },
+            source: FindingSource::BuiltIn,
+            extras: FindingExtras::default(),
+        });
+    }
+    findings
+}
+
+pub fn gha_workflow_call_container_image_input_secrets_inherit(
+    graph: &AuthorityGraph,
+) -> Vec<Finding> {
+    if !graph_is_platform(graph, "github-actions") {
+        return Vec::new();
+    }
+    let mut findings = Vec::new();
+    for step in graph.nodes_of_kind(NodeKind::Step) {
+        let matches = gha_with_inputs_matching(step, input_like_with_key)
+            .into_iter()
+            .filter(|(key, value)| {
+                key.to_ascii_lowercase().contains("image")
+                    || key.to_ascii_lowercase().contains("container")
+                    || key.to_ascii_lowercase().contains("docker")
+                    || attacker_influenced_expression(value)
+            })
+            .collect::<Vec<_>>();
+        if matches.is_empty()
+            || step.metadata.get(META_SECRETS_INHERIT).map(String::as_str) != Some("true")
+        {
+            continue;
+        }
+        findings.push(Finding {
+            severity: Severity::High,
+            category: FindingCategory::GhaWorkflowCallContainerImageInputSecretsInherit,
+            path: None,
+            nodes_involved: vec![step.id],
+            message: format!(
+                "Reusable workflow call '{}' inherits all secrets while passing caller-controlled container/image-like inputs [{}]",
+                step.name,
+                matches
+                    .iter()
+                    .map(|(k, _)| *k)
+                    .collect::<Vec<_>>()
+                    .join(", ")
+            ),
+            recommendation: Recommendation::Manual {
+                action: "Do not combine `secrets: inherit` with caller-controlled container image inputs. Use named secrets, restrict image inputs to a closed allowlist, and pin image values by digest before authority reaches the callee.".into(),
+            },
+            source: FindingSource::BuiltIn,
+            extras: FindingExtras::default(),
+        });
+    }
+
+    let workflow_call_inputs = graph
+        .metadata
+        .get(META_GHA_WORKFLOW_CALL_INPUTS)
+        .map(String::as_str)
+        .unwrap_or("");
+    if !workflow_call_inputs.is_empty() {
+        for image in graph.nodes_of_kind(NodeKind::Image) {
+            if image.metadata.get(META_CONTAINER).map(String::as_str) != Some("true")
+                || !attacker_influenced_expression(&image.name)
+            {
+                continue;
+            }
+            let authority_steps: Vec<NodeId> = graph
+                .edges_to(image.id)
+                .filter(|edge| edge.kind == EdgeKind::UsesImage)
+                .filter_map(|edge| graph.node(edge.from))
+                .filter(|step| job_has_sensitive_authority(graph, step))
+                .map(|step| step.id)
+                .collect();
+            if authority_steps.is_empty() {
+                continue;
+            }
+            let mut nodes = vec![image.id];
+            nodes.extend(authority_steps);
+            findings.push(Finding {
+                severity: Severity::High,
+                category: FindingCategory::GhaWorkflowCallContainerImageInputSecretsInherit,
+                path: None,
+                nodes_involved: nodes,
+                message: format!(
+                    "Reusable workflow container image '{}' is selected from workflow_call input state while authority is present in the job",
+                    image.name
+                ),
+                recommendation: Recommendation::Manual {
+                    action: "Constrain workflow_call image inputs to a closed digest allowlist before running jobs that inherit secrets, OIDC, cloud, registry, package, or write-token authority.".into(),
+                },
+                source: FindingSource::BuiltIn,
+                extras: FindingExtras::default(),
+            });
+        }
+    }
+    findings
+}
+
+pub fn gha_workflow_call_runner_label_input_privilege_escalation(
+    graph: &AuthorityGraph,
+) -> Vec<Finding> {
+    if !graph_is_platform(graph, "github-actions") {
+        return Vec::new();
+    }
+    let mut findings = Vec::new();
+    let mut emitted_dynamic_runner_jobs = std::collections::HashSet::new();
+    for step in graph.nodes_of_kind(NodeKind::Step) {
+        let runner_inputs = gha_with_inputs_matching(step, |key| {
+            let lower = key.to_ascii_lowercase();
+            lower.contains("runner") || lower.contains("runs-on") || lower == "os"
+        });
+        if !runner_inputs.is_empty()
+            && step.metadata.get(META_SECRETS_INHERIT).map(String::as_str) == Some("true")
+        {
+            findings.push(Finding {
+                severity: Severity::High,
+                category: FindingCategory::GhaWorkflowCallRunnerLabelInputPrivilegeEscalation,
+                path: None,
+                nodes_involved: vec![step.id],
+                message: format!(
+                    "Reusable workflow call '{}' inherits secrets while caller inputs can select runner labels [{}]",
+                    step.name,
+                    runner_inputs
+                        .iter()
+                        .map(|(k, _)| *k)
+                        .collect::<Vec<_>>()
+                        .join(", ")
+                ),
+                recommendation: Recommendation::Manual {
+                    action: "Do not allow caller-controlled runner labels for secret-inheriting reusable workflows. Gate runner selection through a hosted-only allowlist and keep self-hosted labels outside untrusted caller control.".into(),
+                },
+                source: FindingSource::BuiltIn,
+                extras: FindingExtras::default(),
+            });
+        }
+
+        let Some(runs_on) = step.metadata.get(META_GHA_RUNS_ON) else {
+            continue;
+        };
+        if runner_label_attacker_influenced_expression(runs_on)
+            && job_has_sensitive_authority(graph, step)
+        {
+            let key = format!("{}::{runs_on}", step_job(step).unwrap_or(&step.name));
+            if !emitted_dynamic_runner_jobs.insert(key) {
+                continue;
+            }
+            findings.push(Finding {
+                severity: Severity::High,
+                category: FindingCategory::GhaWorkflowCallRunnerLabelInputPrivilegeEscalation,
+                path: None,
+                nodes_involved: vec![step.id],
+                message: format!(
+                    "Step '{}' runs with authority while runs-on is selected from caller or event-controlled expression '{}'",
+                    step.name, runs_on
+                ),
+                recommendation: Recommendation::Manual {
+                    action: "Constrain dynamic `runs-on` expressions to hosted runner allowlists before secrets, OIDC, or write-token authority is available.".into(),
+                },
+                source: FindingSource::BuiltIn,
+                extras: FindingExtras::default(),
+            });
+        }
+    }
+    findings
+}
+
+pub fn gha_container_image_attacker_influenced_with_secret_env(
+    graph: &AuthorityGraph,
+) -> Vec<Finding> {
+    if !graph_is_platform(graph, "github-actions") {
+        return Vec::new();
+    }
+    let mut findings = Vec::new();
+    for image in graph.nodes_of_kind(NodeKind::Image) {
+        if image.metadata.get(META_CONTAINER).map(String::as_str) != Some("true")
+            || !attacker_influenced_expression(&image.name)
+        {
+            continue;
+        }
+        let steps: Vec<NodeId> = graph
+            .edges_to(image.id)
+            .filter(|edge| edge.kind == EdgeKind::UsesImage)
+            .filter_map(|edge| graph.node(edge.from))
+            .filter(|step| job_has_sensitive_authority(graph, step))
+            .map(|step| step.id)
+            .collect();
+        if steps.is_empty() {
+            continue;
+        }
+        let mut nodes = vec![image.id];
+        nodes.extend(steps);
+        findings.push(Finding {
+            severity: Severity::High,
+            category: FindingCategory::GhaContainerImageAttackerInfluencedWithSecretEnv,
+            path: None,
+            nodes_involved: nodes,
+            message: format!(
+                "Job container image '{}' is selected from attacker-influenced expression while secret or token authority is present",
+                image.name
+            ),
+            recommendation: Recommendation::Manual {
+                action: "Pin authority-bearing job containers to trusted digests and move attacker-selected image testing into an authority-free job.".into(),
+            },
+            source: FindingSource::BuiltIn,
+            extras: FindingExtras::default(),
+        });
+    }
+    findings
+}
+
+fn step_permission_scope_write(graph: &AuthorityGraph, step_id: NodeId, scope: &str) -> bool {
+    let wanted = format!("{}: write", scope.to_ascii_lowercase());
+    graph.edges_from(step_id).any(|e| {
+        e.kind == EdgeKind::HasAccessTo
+            && graph
+                .node(e.to)
+                .filter(|n| n.kind == NodeKind::Identity)
+                .and_then(|n| n.metadata.get(META_PERMISSIONS))
+                .map(|perms| {
+                    let lower = perms.to_ascii_lowercase();
+                    lower.contains("write-all") || lower.contains(&wanted)
+                })
+                .unwrap_or(false)
+    })
+}
+
+fn step_has_oidc_capability(graph: &AuthorityGraph, step_id: NodeId) -> bool {
+    graph.edges_from(step_id).any(|e| {
+        e.kind == EdgeKind::HasAccessTo
+            && graph
+                .node(e.to)
+                .filter(|n| n.kind == NodeKind::Identity)
+                .map(|n| {
+                    n.metadata.get(META_OIDC).map(String::as_str) == Some("true")
+                        || n.metadata
+                            .get(META_PERMISSIONS)
+                            .map(|perms| {
+                                let lower = perms.to_ascii_lowercase();
+                                lower.contains("write-all") || lower.contains("id-token: write")
+                            })
+                            .unwrap_or(false)
+                })
+                .unwrap_or(false)
+    })
+}
+
+fn gha_action_is_attestation(step: &Node) -> bool {
+    gha_action_name(step)
+        .map(|action| {
+            matches!(
+                action.as_str(),
+                "actions/attest" | "actions/attest-build-provenance" | "actions/attest-sbom"
+            )
+        })
+        .unwrap_or(false)
+}
+
+fn step_has_attestation_authority(graph: &AuthorityGraph, step: &Node) -> bool {
+    step_has_oidc_capability(graph, step.id)
+        && step_permission_scope_write(graph, step.id, "attestations")
+}
+
+fn tca_untrusted_output_expr(value: &str) -> bool {
+    let lower = value.to_ascii_lowercase();
+    (lower.contains("${{ steps.") && lower.contains(".outputs."))
+        || (lower.contains("${{ needs.") && lower.contains(".outputs."))
+        || lower.contains("${{ inputs.")
+        || lower.contains("${{ matrix.")
+        || lower.contains("fromjson(needs.")
+        || lower.contains("fromjson(inputs.")
+}
+
+fn tca_workspace_glob_subject_path(value: &str) -> bool {
+    let lower = value.to_ascii_lowercase();
+    (lower.contains('*')
+        || lower.contains("${{ github.workspace }}")
+        || lower.contains("$github_workspace"))
+        && !lower.starts_with("https://")
+        && !lower.starts_with("http://")
+}
+
+fn tca_condition_excludes_pr(condition: Option<&String>) -> bool {
+    let Some(condition) = condition else {
+        return false;
+    };
+    let lower = condition.to_ascii_lowercase();
+    (lower.contains("github.event_name") && lower.contains("push"))
+        || lower.contains("refs/tags/")
+        || lower.contains("refs/heads/main")
+        || lower.contains("refs/heads/master")
+}
+
+fn tca_config_driven_attestation_gate(condition: &str) -> bool {
+    let lower = condition.to_ascii_lowercase();
+    (lower.contains("fromjson(needs.") || lower.contains("${{ needs."))
+        && lower.contains(".outputs.")
+        && (lower.contains("pr_run_mode")
+            || lower.contains("attest")
+            || lower.contains("provenance")
+            || lower.contains("artifact")
+            || lower.contains("publish")
+            || lower.contains("dist"))
+}
+
+fn step_text_contains_untrusted_event_text(step: &Node) -> bool {
+    step.metadata
+        .get(META_SCRIPT_BODY)
+        .into_iter()
+        .chain(step.metadata.get(META_GHA_WITH_INPUTS))
+        .chain(step.metadata.get(META_GHA_ENV_ASSIGNMENTS))
+        .any(|text| {
+            let lower = text.to_ascii_lowercase();
+            lower.contains("github.event.pull_request.title")
+                || lower.contains("github.event.pull_request.body")
+                || lower.contains("github.event.issue.title")
+                || lower.contains("github.event.issue.body")
+                || lower.contains("github.event.comment.body")
+                || lower.contains("github.event.review.body")
+                || lower.contains("github.event.head_commit.message")
+        })
+}
+
+fn tca_external_telemetry_sink(step: &Node) -> bool {
+    if let Some(action) = gha_action_name(step) {
+        if action.contains("slack")
+            || action.contains("discord")
+            || action.contains("teams")
+            || action.contains("webhook")
+            || action.contains("sentry")
+            || action.contains("datadog")
+            || action.contains("honeycomb")
+        {
+            return true;
+        }
+    }
+    step.metadata
+        .get(META_SCRIPT_BODY)
+        .map(|body| {
+            let lower = body.to_ascii_lowercase();
+            (lower.contains("curl ") || lower.contains("wget ") || lower.contains("http "))
+                && (lower.contains("webhook")
+                    || lower.contains("slack.com")
+                    || lower.contains("discord.com")
+                    || lower.contains("sentry.io")
+                    || lower.contains("datadog")
+                    || lower.contains("honeycomb"))
+        })
+        .unwrap_or(false)
+}
+
+fn step_sets_debug_flag(step: &Node) -> bool {
+    step.metadata
+        .get(META_GHA_ENV_ASSIGNMENTS)
+        .map(|env| {
+            env.lines().any(|line| {
+                let lower = line.to_ascii_lowercase();
+                lower.starts_with("actions_step_debug=true")
+                    || lower.starts_with("actions_runner_debug=true")
+                    || (lower.contains("actions_step_debug=") && lower.contains("secrets."))
+                    || (lower.contains("actions_runner_debug=") && lower.contains("secrets."))
+            })
+        })
+        .unwrap_or(false)
+}
+
+fn tca_autonomous_agent_step(step: &Node) -> bool {
+    if let Some(action) = gha_action_name(step) {
+        if action.contains("anthropics/claude-code-action")
+            || action.contains("claude-code-action")
+            || action.contains("openai/codex")
+            || action.contains("codex-action")
+            || action.contains("aider")
+            || action.contains("autofix")
+        {
+            return true;
+        }
+    }
+    step.metadata
+        .get(META_SCRIPT_BODY)
+        .map(|body| {
+            let lower = body.to_ascii_lowercase();
+            lower.contains("claude")
+                || lower.contains("codex")
+                || lower.contains("aider")
+                || lower.contains("autonomous")
+        })
+        .unwrap_or(false)
+}
+
+fn tca_mutating_api_or_git_step(step: &Node) -> bool {
+    if let Some(action) = gha_action_name(step) {
+        if action == "peter-evans/create-pull-request"
+            || action == "peter-evans/create-or-update-comment"
+        {
+            return true;
+        }
+    }
+    step.metadata
+        .get(META_SCRIPT_BODY)
+        .map(|body| {
+            let lower = body.to_ascii_lowercase();
+            lower.contains("git push")
+                || lower.contains("gh pr review")
+                || lower.contains("gh pr merge")
+                || lower.contains("gh pr edit")
+                || lower.contains("gh api -x post")
+                || lower.contains("gh api -x patch")
+                || lower.contains("gh api -x put")
+                || detect_gh_escalating_verb(body).is_some()
+        })
+        .unwrap_or(false)
+}
+
+fn tca_blob_or_release_upload_sink(step: &Node) -> bool {
+    if let Some(action) = gha_action_name(step) {
+        if action.contains("vercel")
+            || action.contains("blob")
+            || action.contains("upload-artifact")
+            || action.contains("release")
+        {
+            return true;
+        }
+    }
+    step.metadata
+        .get(META_SCRIPT_BODY)
+        .map(|body| {
+            let lower = body.to_ascii_lowercase();
+            lower.contains("aws s3 cp")
+                || lower.contains("aws s3 sync")
+                || lower.contains("gcloud storage cp")
+                || lower.contains("gsutil cp")
+                || lower.contains("az storage blob upload")
+                || lower.contains("wrangler r2 object put")
+                || lower.contains("r2 object put")
+                || lower.contains("gh release upload")
+                || lower.contains("vercel blob")
+        })
+        .unwrap_or(false)
+}
+
+pub fn gha_attestation_subject_digest_from_step_output_unverified(
+    graph: &AuthorityGraph,
+) -> Vec<Finding> {
+    if !graph_is_platform(graph, "github-actions") {
+        return Vec::new();
+    }
+    let mut findings = Vec::new();
+    for step in graph.nodes_of_kind(NodeKind::Step) {
+        let Some(subject_digest) = gha_with_value(step, "subject-digest") else {
+            continue;
+        };
+        if !gha_action_is_attestation(step)
+            || !tca_untrusted_output_expr(subject_digest)
+            || !step_has_attestation_authority(graph, step)
+        {
+            continue;
+        }
+        findings.push(Finding {
+            severity: Severity::High,
+            category: FindingCategory::GhaAttestationSubjectDigestFromStepOutputUnverified,
+            path: None,
+            nodes_involved: vec![step.id],
+            message: format!(
+                "Attestation step '{}' signs subject-digest from output-controlled expression '{}'",
+                step.name, subject_digest
+            ),
+            recommendation: Recommendation::Manual {
+                action: "Compute the attested digest in the trusted attestation job from the artifact bytes being signed, or use subject-path with a pinned, trusted build output instead of accepting digest text from earlier step, needs, matrix, or input state.".into(),
+            },
+            source: FindingSource::BuiltIn,
+            extras: FindingExtras::default(),
+        });
+    }
+    findings
+}
+
+pub fn gha_attestation_subject_path_workspace_glob_with_pr_trigger(
+    graph: &AuthorityGraph,
+) -> Vec<Finding> {
+    if !graph_is_platform(graph, "github-actions")
+        || !triggers_contain_any(
+            graph.metadata.get(META_TRIGGERS),
+            &["pull_request", "pull_request_target", "workflow_run"],
+        )
+    {
+        return Vec::new();
+    }
+    let mut findings = Vec::new();
+    for step in graph.nodes_of_kind(NodeKind::Step) {
+        let Some(subject_path) = gha_with_value(step, "subject-path") else {
+            continue;
+        };
+        if !gha_action_is_attestation(step)
+            || !tca_workspace_glob_subject_path(subject_path)
+            || tca_condition_excludes_pr(step.metadata.get(META_CONDITION))
+            || !step_has_attestation_authority(graph, step)
+        {
+            continue;
+        }
+        findings.push(Finding {
+            severity: Severity::High,
+            category: FindingCategory::GhaAttestationSubjectPathWorkspaceGlobWithPrTrigger,
+            path: None,
+            nodes_involved: vec![step.id],
+            message: format!(
+                "Attestation step '{}' signs workspace/glob subject-path '{}' on PR-capable trigger state",
+                step.name, subject_path
+            ),
+            recommendation: Recommendation::Manual {
+                action: "Constrain attestation subject-path to trusted, deterministic build outputs and keep PR-controlled workspace content out of the attested glob; add an explicit push/tag gate when the attestation is release-grade.".into(),
+            },
+            source: FindingSource::BuiltIn,
+            extras: FindingExtras::default(),
+        });
+    }
+    findings
+}
+
+pub fn gha_attestation_config_driven_gate_from_workspace_file(
+    graph: &AuthorityGraph,
+) -> Vec<Finding> {
+    if !graph_is_platform(graph, "github-actions") {
+        return Vec::new();
+    }
+    let mut findings = Vec::new();
+    for step in graph.nodes_of_kind(NodeKind::Step) {
+        let Some(condition) = step.metadata.get(META_CONDITION) else {
+            continue;
+        };
+        if !gha_action_is_attestation(step)
+            || !tca_config_driven_attestation_gate(condition)
+            || !step_has_attestation_authority(graph, step)
+        {
+            continue;
+        }
+        findings.push(Finding {
+            severity: Severity::High,
+            category: FindingCategory::GhaAttestationConfigDrivenGateFromWorkspaceFile,
+            path: None,
+            nodes_involved: vec![step.id],
+            message: format!(
+                "Attestation step '{}' is gated by output/config-derived condition '{}'",
+                step.name, condition
+            ),
+            recommendation: Recommendation::Manual {
+                action: "Keep release/attestation gates derived from trusted event state, protected refs, or maintainer approvals. Do not let workspace/config-derived step or job outputs decide whether privileged attestations are minted.".into(),
+            },
+            source: FindingSource::BuiltIn,
+            extras: FindingExtras::default(),
+        });
+    }
+    findings
+}
+
+pub fn gha_telemetry_pr_or_issue_text_to_external_sink(graph: &AuthorityGraph) -> Vec<Finding> {
+    if !graph_is_platform(graph, "github-actions") {
+        return Vec::new();
+    }
+    let mut findings = Vec::new();
+    for step in graph.nodes_of_kind(NodeKind::Step) {
+        if !step_text_contains_untrusted_event_text(step) || !tca_external_telemetry_sink(step) {
+            continue;
+        }
+        findings.push(Finding {
+            severity: Severity::Medium,
+            category: FindingCategory::GhaTelemetryPrOrIssueTextToExternalSink,
+            path: None,
+            nodes_involved: vec![step.id],
+            message: format!(
+                "Telemetry step '{}' sends PR, issue, review, or comment-controlled text to an external sink",
+                step.name
+            ),
+            recommendation: Recommendation::Manual {
+                action: "Treat event text as untrusted telemetry payload: escape or code-fence it, cap length, remove control sequences and mentions, and avoid mixing it with secret-bearing debug or incident channels.".into(),
+            },
+            source: FindingSource::BuiltIn,
+            extras: FindingExtras::default(),
+        });
+    }
+    findings
+}
+
+pub fn gha_telemetry_debug_flag_with_secret_env(graph: &AuthorityGraph) -> Vec<Finding> {
+    if !graph_is_platform(graph, "github-actions") {
+        return Vec::new();
+    }
+    let mut findings = Vec::new();
+    let mut emitted_jobs = std::collections::HashSet::new();
+    for step in graph.nodes_of_kind(NodeKind::Step) {
+        let Some(job) = step_job(step) else {
+            continue;
+        };
+        if !step_sets_debug_flag(step) || !job_has_sensitive_authority(graph, step) {
+            continue;
+        }
+        if !emitted_jobs.insert(job.to_string()) {
+            continue;
+        }
+        findings.push(Finding {
+            severity: Severity::High,
+            category: FindingCategory::GhaTelemetryDebugFlagWithSecretEnv,
+            path: None,
+            nodes_involved: vec![step.id],
+            message: format!(
+                "Job '{job}' enables GitHub Actions debug telemetry while secret or token authority is present"
+            ),
+            recommendation: Recommendation::Manual {
+                action: "Do not enable ACTIONS_STEP_DEBUG or ACTIONS_RUNNER_DEBUG in authority-bearing jobs. Move debug runs to read-only jobs with synthetic credentials, or require a temporary maintainer-only gate that removes deploy/package/cloud secrets.".into(),
+            },
+            source: FindingSource::BuiltIn,
+            extras: FindingExtras::default(),
+        });
+    }
+    findings
+}
+
+pub fn gha_telemetry_autonomous_agent_input_from_untrusted_event(
+    graph: &AuthorityGraph,
+) -> Vec<Finding> {
+    if !graph_is_platform(graph, "github-actions") {
+        return Vec::new();
+    }
+    let mut findings = Vec::new();
+    for step in graph.nodes_of_kind(NodeKind::Step) {
+        if !tca_autonomous_agent_step(step) {
+            continue;
+        }
+        let untrusted_input = step_text_contains_untrusted_event_text(step)
+            || triggers_contain_any(
+                graph.metadata.get(META_TRIGGERS),
+                &[
+                    "pull_request",
+                    "pull_request_target",
+                    "issue_comment",
+                    "workflow_run",
+                ],
+            );
+        let later_mutation = same_job_steps_after(graph, step)
+            .find(|candidate| tca_mutating_api_or_git_step(candidate));
+        if !untrusted_input
+            || !(job_has_privileged_authority(graph, step)
+                || later_mutation
+                    .map(|candidate| job_has_privileged_authority(graph, candidate))
+                    .unwrap_or(false))
+        {
+            continue;
+        }
+        let mut nodes = vec![step.id];
+        if let Some(candidate) = later_mutation {
+            nodes.push(candidate.id);
+        }
+        findings.push(Finding {
+            severity: Severity::High,
+            category: FindingCategory::GhaTelemetryAutonomousAgentInputFromUntrustedEvent,
+            path: None,
+            nodes_involved: nodes,
+            message: format!(
+                "Autonomous-agent step '{}' can receive untrusted event text in a job with write-class authority",
+                step.name
+            ),
+            recommendation: Recommendation::Manual {
+                action: "Keep autonomous-agent prompts and tool inputs generated from trusted state, require explicit maintainer approval before write tools run, and split analysis from git/API mutation into separate permission-scoped jobs.".into(),
+            },
+            source: FindingSource::BuiltIn,
+            extras: FindingExtras::default(),
+        });
+    }
+    findings
+}
+
+pub fn gha_workflow_run_artifact_to_blob_storage_token(graph: &AuthorityGraph) -> Vec<Finding> {
+    if !graph_is_platform(graph, "github-actions") || !graph_has_workflow_run_or_prt_trigger(graph)
+    {
+        return Vec::new();
+    }
+    let mut findings = Vec::new();
+    for step in graph.nodes_of_kind(NodeKind::Step) {
+        if !tca_blob_or_release_upload_sink(step) || !job_has_privileged_authority(graph, step) {
+            continue;
+        }
+        let Some(download_id) = artifact_downloaded_before_step(graph, step) else {
+            continue;
+        };
+        findings.push(Finding {
+            severity: Severity::High,
+            category: FindingCategory::GhaWorkflowRunArtifactToBlobStorageToken,
+            path: None,
+            nodes_involved: vec![download_id, step.id],
+            message: format!(
+                "workflow_run consumer step '{}' can upload downloaded artifact material to a blob, object, or release storage sink with privileged authority",
+                step.name
+            ),
+            recommendation: Recommendation::Manual {
+                action: "Treat workflow_run artifacts as untrusted input. Rebuild or verify artifact provenance in the trusted consumer before uploading to blob/object/release storage, and keep storage tokens unavailable until validation passes.".into(),
+            },
+            source: FindingSource::BuiltIn,
+            extras: FindingExtras::default(),
+        });
+    }
+    findings
+}
+
+pub fn gha_api_workflow_run_artifact_to_autonomous_agent_to_git_push(
+    graph: &AuthorityGraph,
+) -> Vec<Finding> {
+    if !graph_is_platform(graph, "github-actions") || !graph_has_workflow_run_or_prt_trigger(graph)
+    {
+        return Vec::new();
+    }
+    let mut findings = Vec::new();
+    for step in graph.nodes_of_kind(NodeKind::Step) {
+        if !tca_autonomous_agent_step(step) || !job_has_privileged_authority(graph, step) {
+            continue;
+        }
+        let Some(download_id) = artifact_downloaded_before_step(graph, step) else {
+            continue;
+        };
+        let Some(mutator) = same_job_steps_after(graph, step)
+            .find(|candidate| tca_mutating_api_or_git_step(candidate))
+        else {
+            continue;
+        };
+        findings.push(Finding {
+            severity: Severity::High,
+            category: FindingCategory::GhaApiWorkflowRunArtifactToAutonomousAgentToGitPush,
+            path: None,
+            nodes_involved: vec![download_id, step.id, mutator.id],
+            message: format!(
+                "workflow_run consumer downloads artifact input into autonomous-agent step '{}' before git or GitHub API mutation '{}'",
+                step.name, mutator.name
+            ),
+            recommendation: Recommendation::Manual {
+                action: "Keep workflow_run artifact contents out of autonomous-agent prompts and tool context unless they are schema-validated and provenance-checked; separate agent analysis from write-token git/API mutation behind an explicit maintainer gate.".into(),
+            },
+            source: FindingSource::BuiltIn,
+            extras: FindingExtras::default(),
+        });
+    }
+    findings
+}
+
+fn graph_has_pull_request_trigger(graph: &AuthorityGraph) -> bool {
+    triggers_contain_any(
+        graph.metadata.get(META_TRIGGERS),
+        &["pull_request", "pull_request_target"],
+    ) || graph
+        .metadata
+        .get(META_TRIGGER)
+        .map(|trigger| trigger == "pull_request" || trigger == "pull_request_target")
+        .unwrap_or(false)
+}
+
+fn graph_has_mac_manifest_trigger(graph: &AuthorityGraph) -> bool {
+    triggers_contain_any(
+        graph.metadata.get(META_TRIGGERS),
+        &[
+            "pull_request",
+            "pull_request_target",
+            "workflow_run",
+            "issue_comment",
+        ],
+    ) || graph
+        .metadata
+        .get(META_TRIGGER)
+        .map(|trigger| {
+            matches!(
+                trigger.as_str(),
+                "pull_request" | "pull_request_target" | "workflow_run" | "issue_comment"
+            )
+        })
+        .unwrap_or(false)
+}
+
+fn mac_line_has_command(line: &str, commands: &'static [&'static str]) -> Option<&'static str> {
+    let lower = line.trim().to_ascii_lowercase();
+    let lower = lower
+        .strip_prefix("sudo ")
+        .or_else(|| lower.strip_prefix("command "))
+        .unwrap_or(&lower);
+    commands.iter().copied().find(|command| {
+        lower == *command
+            || lower.starts_with(&format!("{command} "))
+            || lower.starts_with(&format!("{command}\t"))
+            || lower.contains(&format!("&& {command} "))
+            || lower.contains(&format!("; {command} "))
+            || lower.contains(&format!("| {command} "))
+    })
+}
+
+fn mac_body_has_npm_lifecycle_install(body: &str) -> Option<&'static str> {
+    body.lines().find_map(|line| {
+        let lower = line.to_ascii_lowercase();
+        if lower.contains("--ignore-scripts") {
+            return None;
+        }
+        [
+            "npm ci",
+            "npm install",
+            "pnpm install",
+            "yarn install",
+            "yarn --frozen-lockfile",
+            "yarn --immutable",
+        ]
+        .iter()
+        .copied()
+        .find(|needle| lower.contains(needle))
+        .or_else(|| {
+            let trimmed = lower.trim();
+            if trimmed == "yarn" || trimmed.ends_with("&& yarn") || trimmed.ends_with("; yarn") {
+                Some("yarn")
+            } else {
+                None
+            }
+        })
+    })
+}
+
+fn mac_body_has_python_build(body: &str) -> Option<&'static str> {
+    let lower = body.to_ascii_lowercase();
+    [
+        "python -m build",
+        "python3 -m build",
+        "python setup.py",
+        "python3 setup.py",
+        "pip install -e .",
+        "pip3 install -e .",
+        "pip install .",
+        "pip3 install .",
+        "pip wheel .",
+        "pip3 wheel .",
+        "cibuildwheel",
+        "maturin build",
+        "pdm build",
+        "poetry build",
+    ]
+    .iter()
+    .copied()
+    .find(|needle| lower.contains(needle))
+}
+
+fn mac_body_has_cargo_compile(body: &str) -> Option<&'static str> {
+    body.lines().find_map(|line| {
+        mac_line_has_command(
+            line,
+            &[
+                "cargo build",
+                "cargo test",
+                "cargo run",
+                "cargo doc",
+                "cargo install",
+                "cargo publish",
+                "cross build",
+                "cross test",
+            ],
+        )
+    })
+}
+
+fn mac_body_has_make(body: &str) -> Option<&'static str> {
+    body.lines()
+        .find_map(|line| mac_line_has_command(line, &["make", "gmake", "bmake"]))
+}
+
+fn delegated_workflow_uses<'a>(graph: &'a AuthorityGraph, step: &Node) -> Option<&'a str> {
+    graph
+        .edges_from(step.id)
+        .find(|edge| edge.kind == EdgeKind::DelegatesTo)
+        .and_then(|edge| graph.node(edge.to))
+        .map(|node| node.name.as_str())
+}
+
+fn reusable_workflow_ref(uses: &str) -> Option<(&str, &str)> {
+    let (target, reference) = uses.rsplit_once('@')?;
+    if target.starts_with("./") || !target.contains("/.github/workflows/") {
+        return None;
+    }
+    Some((target, reference))
+}
+
+fn reusable_workflow_ref_is_floating(reference: &str) -> bool {
+    let lower = reference.to_ascii_lowercase();
+    if lower.len() == 40 && lower.chars().all(|c| c.is_ascii_hexdigit()) {
+        return false;
+    }
+    matches!(lower.as_str(), "main" | "master" | "head")
+        || (lower.starts_with('v')
+            && lower[1..].chars().all(|c| c.is_ascii_digit())
+            && !lower[1..].is_empty())
+}
+
+pub fn gha_manifest_npm_lifecycle_hook_pr_trigger_with_token(
+    graph: &AuthorityGraph,
+) -> Vec<Finding> {
+    if !graph_is_platform(graph, "github-actions") || !graph_has_pull_request_trigger(graph) {
+        return Vec::new();
+    }
+    let mut findings = Vec::new();
+    for step in graph.nodes_of_kind(NodeKind::Step) {
+        let Some(body) = step.metadata.get(META_SCRIPT_BODY) else {
+            continue;
+        };
+        let Some(command) = mac_body_has_npm_lifecycle_install(body) else {
+            continue;
+        };
+        if !job_has_privileged_authority(graph, step) {
+            continue;
+        }
+        findings.push(Finding {
+            severity: Severity::High,
+            category: FindingCategory::GhaManifestNpmLifecycleHookPrTriggerWithToken,
+            path: None,
+            nodes_involved: vec![step.id],
+            message: format!(
+                "PR-reachable step '{}' runs npm-family lifecycle command '{}' while authority is present in the job",
+                step.name, command
+            ),
+            recommendation: Recommendation::Manual {
+                action: "Run npm/pnpm/yarn installs with `--ignore-scripts` in PR-reachable jobs that hold secrets, OIDC, registry/cloud credentials, or write tokens; move lifecycle execution to an authority-free job or a protected-ref rebuild.".into(),
+            },
+            source: FindingSource::BuiltIn,
+            extras: FindingExtras::default(),
+        });
+    }
+    findings
+}
+
+pub fn gha_manifest_python_m_build_with_pr_credentials(graph: &AuthorityGraph) -> Vec<Finding> {
+    if !graph_is_platform(graph, "github-actions") || !graph_has_mac_manifest_trigger(graph) {
+        return Vec::new();
+    }
+    let mut findings = Vec::new();
+    for step in graph.nodes_of_kind(NodeKind::Step) {
+        let Some(body) = step.metadata.get(META_SCRIPT_BODY) else {
+            continue;
+        };
+        let Some(command) = mac_body_has_python_build(body) else {
+            continue;
+        };
+        if !job_has_privileged_authority(graph, step) {
+            continue;
+        }
+        findings.push(Finding {
+            severity: Severity::High,
+            category: FindingCategory::GhaManifestPythonMBuildWithPrCredentials,
+            path: None,
+            nodes_involved: vec![step.id],
+            message: format!(
+                "PR-reachable step '{}' runs Python manifest/build command '{}' while publish or token authority is present",
+                step.name, command
+            ),
+            recommendation: Recommendation::Manual {
+                action: "Build Python artifacts from PR-controlled manifests in an authority-free job; publish only from a protected-ref rebuild or after artifact hash/provenance verification, with PyPI credentials and OIDC absent from the PR build.".into(),
+            },
+            source: FindingSource::BuiltIn,
+            extras: FindingExtras::default(),
+        });
+    }
+    findings
+}
+
+pub fn gha_manifest_cargo_build_rs_pull_request_with_token(graph: &AuthorityGraph) -> Vec<Finding> {
+    if !graph_is_platform(graph, "github-actions") || !graph_has_pull_request_trigger(graph) {
+        return Vec::new();
+    }
+    let mut findings = Vec::new();
+    for step in graph.nodes_of_kind(NodeKind::Step) {
+        let Some(body) = step.metadata.get(META_SCRIPT_BODY) else {
+            continue;
+        };
+        let Some(command) = mac_body_has_cargo_compile(body) else {
+            continue;
+        };
+        if !job_has_privileged_authority(graph, step) {
+            continue;
+        }
+        findings.push(Finding {
+            severity: Severity::High,
+            category: FindingCategory::GhaManifestCargoBuildRsPullRequestWithToken,
+            path: None,
+            nodes_involved: vec![step.id],
+            message: format!(
+                "PR-reachable step '{}' runs Cargo compile command '{}' while authority is present in the job",
+                step.name, command
+            ),
+            recommendation: Recommendation::Manual {
+                action: "Run Cargo compile/test commands for PR-controlled code without secrets, OIDC, registry credentials, or write tokens; protect build.rs/proc-macro dependency changes with CODEOWNERS and rebuild release artifacts from protected refs.".into(),
+            },
+            source: FindingSource::BuiltIn,
+            extras: FindingExtras::default(),
+        });
+    }
+    findings
+}
+
+pub fn gha_manifest_makefile_with_pr_trigger_and_secrets(graph: &AuthorityGraph) -> Vec<Finding> {
+    if !graph_is_platform(graph, "github-actions") || !graph_has_mac_manifest_trigger(graph) {
+        return Vec::new();
+    }
+    let mut findings = Vec::new();
+    for step in graph.nodes_of_kind(NodeKind::Step) {
+        let Some(body) = step.metadata.get(META_SCRIPT_BODY) else {
+            continue;
+        };
+        let Some(command) = mac_body_has_make(body) else {
+            continue;
+        };
+        if !job_has_privileged_authority(graph, step) {
+            continue;
+        }
+        findings.push(Finding {
+            severity: Severity::High,
+            category: FindingCategory::GhaManifestMakefileWithPrTriggerAndSecrets,
+            path: None,
+            nodes_involved: vec![step.id],
+            message: format!(
+                "PR/workflow_run-reachable step '{}' invokes '{}' while authority is present in the job",
+                step.name, command
+            ),
+            recommendation: Recommendation::Manual {
+                action: "Treat Makefiles as executable manifest code: run PR-reachable make targets without secrets/OIDC/write tokens, gate Makefile changes with CODEOWNERS, and rebuild privileged artifacts from protected refs.".into(),
+            },
+            source: FindingSource::BuiltIn,
+            extras: FindingExtras::default(),
+        });
+    }
+    findings
+}
+
+pub fn gha_manifest_submodules_recursive_with_pr_authority(graph: &AuthorityGraph) -> Vec<Finding> {
+    if !graph_is_platform(graph, "github-actions") || !graph_has_mac_manifest_trigger(graph) {
+        return Vec::new();
+    }
+    let mut findings = Vec::new();
+    for step in graph.nodes_of_kind(NodeKind::Step) {
+        if !gha_action_is(step, "actions/checkout") || !job_has_privileged_authority(graph, step) {
+            continue;
+        }
+        let submodules = gha_with_value(step, "submodules")
+            .map(|value| value.trim().to_ascii_lowercase())
+            .unwrap_or_default();
+        if !matches!(submodules.as_str(), "true" | "recursive") {
+            continue;
+        }
+        findings.push(Finding {
+            severity: Severity::High,
+            category: FindingCategory::GhaManifestSubmodulesRecursiveWithPrAuthority,
+            path: None,
+            nodes_involved: vec![step.id],
+            message: format!(
+                "PR-reachable checkout step '{}' enables recursive submodules while authority is present in the job",
+                step.name
+            ),
+            recommendation: Recommendation::Manual {
+                action: "Keep recursive submodule checkout out of credential-bearing PR jobs; validate .gitmodules against a protected allowlist and clone required submodules at pinned SHAs before privileged build steps.".into(),
+            },
+            source: FindingSource::BuiltIn,
+            extras: FindingExtras::default(),
+        });
+    }
+    findings
+}
+
+pub fn gha_crossrepo_workflow_call_floating_ref_cascade(graph: &AuthorityGraph) -> Vec<Finding> {
+    if !graph_is_platform(graph, "github-actions") {
+        return Vec::new();
+    }
+    let mut findings = Vec::new();
+    for step in graph.nodes_of_kind(NodeKind::Step) {
+        let Some(uses) = delegated_workflow_uses(graph, step) else {
+            continue;
+        };
+        let Some((_target, reference)) = reusable_workflow_ref(uses) else {
+            continue;
+        };
+        if !reusable_workflow_ref_is_floating(reference) {
+            continue;
+        }
+        findings.push(Finding {
+            severity: Severity::High,
+            category: FindingCategory::GhaCrossrepoWorkflowCallFloatingRefCascade,
+            path: None,
+            nodes_involved: vec![step.id],
+            message: format!(
+                "Reusable workflow call '{}' delegates to cross-repo callable workflow '{}' at mutable ref '{}'",
+                step.name, uses, reference
+            ),
+            recommendation: Recommendation::Manual {
+                action: "Pin cross-repo reusable workflow calls to a reviewed SHA, or document and continuously verify that the producer repo branch protection and CODEOWNERS are at least as strong as the consumer workflow's authority boundary.".into(),
+            },
+            source: FindingSource::BuiltIn,
+            extras: FindingExtras::default(),
+        });
+    }
+    findings
+}
+
+pub fn gha_crossrepo_secrets_inherit_unreviewed_callee(graph: &AuthorityGraph) -> Vec<Finding> {
+    if !graph_is_platform(graph, "github-actions") {
+        return Vec::new();
+    }
+    let mut findings = Vec::new();
+    for step in graph.nodes_of_kind(NodeKind::Step) {
+        if step.metadata.get(META_SECRETS_INHERIT).map(String::as_str) != Some("true") {
+            continue;
+        }
+        let Some(uses) = delegated_workflow_uses(graph, step) else {
+            continue;
+        };
+        if reusable_workflow_ref(uses).is_none() {
+            continue;
+        }
+        findings.push(Finding {
+            severity: Severity::High,
+            category: FindingCategory::GhaCrossrepoSecretsInheritUnreviewedCallee,
+            path: None,
+            nodes_involved: vec![step.id],
+            message: format!(
+                "Reusable workflow call '{}' forwards all caller secrets to cross-repo callee '{}'",
+                step.name, uses
+            ),
+            recommendation: Recommendation::Manual {
+                action: "Replace `secrets: inherit` with an explicit named secret map, pin the callee workflow ref to a SHA, and audit the callee repo's branch protection/CODEOWNERS before forwarding deployment, registry, package, signing, or cloud authority.".into(),
+            },
+            source: FindingSource::BuiltIn,
+            extras: FindingExtras::default(),
+        });
+    }
+    findings
+}
+
+pub fn gha_issue_comment_command_to_write_token(graph: &AuthorityGraph) -> Vec<Finding> {
+    if !graph_is_platform(graph, "github-actions")
+        || !triggers_contain_any(graph.metadata.get(META_TRIGGERS), &["issue_comment"])
+    {
+        return Vec::new();
+    }
+    let mut findings = Vec::new();
+    for step in graph.nodes_of_kind(NodeKind::Step) {
+        let Some(body) = step.metadata.get(META_SCRIPT_BODY) else {
+            continue;
+        };
+        let lower = body.to_ascii_lowercase();
+        let comment_source = lower.contains("github.event.comment.body")
+            || lower.contains("github.event.issue.")
+            || lower.contains("gh issue view")
+            || lower.contains("gh pr view");
+        let command_sink = body_contains_gh_cli(body)
+            || lower.contains("repository_dispatch")
+            || lower.contains("workflow_dispatch")
+            || lower.contains("git push")
+            || lower.contains("gh api");
+        if !(comment_source && command_sink && job_has_privileged_authority(graph, step)) {
+            continue;
+        }
+        findings.push(Finding {
+            severity: Severity::High,
+            category: FindingCategory::GhaIssueCommentCommandToWriteToken,
+            path: None,
+            nodes_involved: vec![step.id],
+            message: format!(
+                "Issue-comment workflow step '{}' uses comment/issue-controlled input near write-token command sinks",
+                step.name
+            ),
+            recommendation: Recommendation::Manual {
+                action: "Parse issue-comment commands with a strict allowlist, require maintainer authorization, and move write-token operations to a separate gated workflow.".into(),
+            },
+            source: FindingSource::BuiltIn,
+            extras: FindingExtras::default(),
+        });
+    }
+    findings
+}
+
+pub fn gha_pr_build_pushes_publishable_image(graph: &AuthorityGraph) -> Vec<Finding> {
+    if !graph_is_platform(graph, "github-actions") {
+        return Vec::new();
+    }
+    let Some(trigger) = graph.metadata.get(META_TRIGGER) else {
+        return Vec::new();
+    };
+    if !trigger_includes_pull_request(trigger) {
+        return Vec::new();
+    }
+    let mut findings = Vec::new();
+    for step in graph.nodes_of_kind(NodeKind::Step) {
+        let action_push =
+            gha_action_is(step, "docker/build-push-action") && gha_with_truthy(step, "push");
+        let shell_push = step_script_contains_any(
+            step,
+            &[
+                "docker push",
+                "docker buildx build --push",
+                "buildctl build",
+            ],
+        );
+        if !(action_push || shell_push) || !job_has_privileged_authority(graph, step) {
+            continue;
+        }
+        findings.push(Finding {
+            severity: Severity::High,
+            category: FindingCategory::GhaPrBuildPushesPublishableImage,
+            path: None,
+            nodes_involved: vec![step.id],
+            message: format!(
+                "PR-triggered workflow step '{}' builds and pushes a container image while publish authority is in scope",
+                step.name
+            ),
+            recommendation: Recommendation::Manual {
+                action: "Do not push publishable images from PR-context builds; split PR build/test from protected-branch publish and require fork checks before registry credentials are available.".into(),
+            },
+            source: FindingSource::BuiltIn,
+            extras: FindingExtras::default(),
+        });
+    }
+    findings
+}
+
+pub fn gha_manual_dispatch_ref_to_privileged_checkout(graph: &AuthorityGraph) -> Vec<Finding> {
+    if !graph_is_platform(graph, "github-actions")
+        || !triggers_contain_any(graph.metadata.get(META_TRIGGERS), &["workflow_dispatch"])
+    {
+        return Vec::new();
+    }
+    let mut findings = Vec::new();
+    for step in graph.nodes_of_kind(NodeKind::Step) {
+        if !gha_action_is(step, "actions/checkout") {
+            continue;
+        }
+        let Some(reference) = gha_with_value(step, "ref") else {
+            continue;
+        };
+        let lower = reference.to_ascii_lowercase();
+        if !(lower.contains("inputs.") || lower.contains("github.event.inputs.")) {
+            continue;
+        }
+        if !job_has_privileged_authority(graph, step) {
+            continue;
+        }
+        findings.push(Finding {
+            severity: Severity::High,
+            category: FindingCategory::GhaManualDispatchRefToPrivilegedCheckout,
+            path: None,
+            nodes_involved: vec![step.id],
+            message: format!(
+                "workflow_dispatch input controls actions/checkout ref in privileged job step '{}'",
+                step.name
+            ),
+            recommendation: Recommendation::Manual {
+                action: "Use a choice allowlist for dispatch refs, map choices to trusted refs server-side, and keep write-token or secret authority out of jobs that checkout operator-supplied refs.".into(),
+            },
+            source: FindingSource::BuiltIn,
+            extras: FindingExtras::default(),
+        });
+    }
+    findings
 }
 
 // ── GitLab CI rules ─────────────────────────────────────────
@@ -8509,7 +11437,10 @@ fn apply_compensating_controls(graph: &AuthorityGraph, findings: &mut [Finding])
     let fork_check_universal = any_authority_step_seen && all_authority_steps_have_fork_check;
 
     // For Suppression 1, build per-job: does any step in the job have
-    // access to a Secret/Identity OR write to the env gate?
+    // access to a Secret or a non-implicit Identity OR write to the env
+    // gate? Platform-implicit tokens (ADO System.AccessToken, CI_JOB_TOKEN,
+    // omitted-permissions GITHUB_TOKEN) are modeled separately elsewhere and
+    // should not keep a read-only checkout job at High by themselves.
     use std::collections::{BTreeMap, BTreeSet};
     let mut job_has_privileged_step: BTreeMap<String, bool> = BTreeMap::new();
     for step in graph.nodes_of_kind(NodeKind::Step) {
@@ -8518,11 +11449,21 @@ fn apply_compensating_controls(graph: &AuthorityGraph, findings: &mut [Finding])
             None => continue,
         };
         let privileged = graph.edges_from(step.id).any(|e| {
-            e.kind == EdgeKind::HasAccessTo
-                && graph
-                    .node(e.to)
-                    .map(|n| matches!(n.kind, NodeKind::Secret | NodeKind::Identity))
-                    .unwrap_or(false)
+            if e.kind != EdgeKind::HasAccessTo {
+                return false;
+            }
+            graph
+                .node(e.to)
+                .map(|n| match n.kind {
+                    NodeKind::Secret => true,
+                    NodeKind::Identity => n
+                        .metadata
+                        .get(META_IMPLICIT)
+                        .map(|v| v != "true")
+                        .unwrap_or(true),
+                    _ => false,
+                })
+                .unwrap_or(false)
         }) || step
             .metadata
             .get(META_WRITES_ENV_GATE)
@@ -12462,6 +15403,154 @@ mod tests {
         g.add_node_with_metadata(NodeKind::Step, name, TrustZone::FirstParty, meta)
     }
 
+    fn add_download_step_in_job(g: &mut AuthorityGraph, name: &str, job: &str) -> NodeId {
+        let mut meta = std::collections::HashMap::new();
+        meta.insert(META_DOWNLOADS_ARTIFACT.into(), "true".into());
+        meta.insert(META_JOB_NAME.into(), job.into());
+        g.add_node_with_metadata(NodeKind::Step, name, TrustZone::FirstParty, meta)
+    }
+
+    fn add_interpreter_step_in_job(
+        g: &mut AuthorityGraph,
+        name: &str,
+        job: &str,
+        body: &str,
+    ) -> NodeId {
+        let mut meta = std::collections::HashMap::new();
+        meta.insert(META_SCRIPT_BODY.into(), body.into());
+        meta.insert(META_JOB_NAME.into(), job.into());
+        meta.insert(META_INTERPRETS_ARTIFACT.into(), "true".into());
+        g.add_node_with_metadata(NodeKind::Step, name, TrustZone::FirstParty, meta)
+    }
+
+    fn attach_write_token(g: &mut AuthorityGraph, step: NodeId) {
+        let mut meta = std::collections::HashMap::new();
+        meta.insert(META_PERMISSIONS.into(), "{ contents: write }".into());
+        let token = g.add_node_with_metadata(
+            NodeKind::Identity,
+            "GITHUB_TOKEN",
+            TrustZone::FirstParty,
+            meta,
+        );
+        g.add_edge(step, token, EdgeKind::HasAccessTo);
+    }
+
+    fn gha_workflow_run_graph() -> AuthorityGraph {
+        let mut g = graph_with_platform("github-actions", ".github/workflows/consumer.yml");
+        g.metadata
+            .insert(META_TRIGGER.into(), "workflow_run".into());
+        g.metadata
+            .insert(META_TRIGGERS.into(), "workflow_run".into());
+        g
+    }
+
+    #[test]
+    fn exploit_rule_artifact_metadata_to_privileged_api_fires() {
+        let mut g = gha_workflow_run_graph();
+        add_download_step_in_job(&mut g, "download artifact", "consumer");
+        let step = add_interpreter_step_in_job(
+            &mut g,
+            "comment",
+            "consumer",
+            "PR_NUMBER=$(cat pr_number)\n\
+             node -e \"github.rest.issues.createComment({issue_number: process.env.PR_NUMBER})\"",
+        );
+        attach_write_token(&mut g, step);
+
+        let findings = gha_workflow_run_artifact_metadata_to_privileged_api(&g);
+        assert_eq!(findings.len(), 1, "got: {findings:#?}");
+        assert_eq!(
+            findings[0].category,
+            FindingCategory::GhaWorkflowRunArtifactMetadataToPrivilegedApi
+        );
+    }
+
+    #[test]
+    fn exploit_rule_artifact_report_to_pr_comment_fires() {
+        let mut g = gha_workflow_run_graph();
+        add_download_step_in_job(&mut g, "download artifact", "consumer");
+        let step = add_interpreter_step_in_job(
+            &mut g,
+            "coverage comment",
+            "consumer",
+            "const fs = require('fs');\n\
+             const body = fs.readFileSync('coverage.md', 'utf8');\n\
+             await github.rest.issues.createComment({body});",
+        );
+        attach_write_token(&mut g, step);
+
+        let findings = gha_workflow_run_artifact_report_to_pr_comment(&g);
+        assert_eq!(findings.len(), 1, "got: {findings:#?}");
+        assert_eq!(
+            findings[0].category,
+            FindingCategory::GhaWorkflowRunArtifactReportToPrComment
+        );
+    }
+
+    #[test]
+    fn exploit_rule_artifact_to_build_scan_publish_fires() {
+        let mut g = gha_workflow_run_graph();
+        add_download_step_in_job(&mut g, "download artifact", "consumer");
+        let step = add_interpreter_step_in_job(
+            &mut g,
+            "publish build scan",
+            "consumer",
+            "SCAN_TAG=$(jq -r .tag metadata.json)\n./gradlew build --scan",
+        );
+        attach_write_token(&mut g, step);
+
+        let findings = gha_workflow_run_artifact_to_build_scan_publish(&g);
+        assert_eq!(findings.len(), 1, "got: {findings:#?}");
+        assert_eq!(
+            findings[0].category,
+            FindingCategory::GhaWorkflowRunArtifactToBuildScanPublish
+        );
+    }
+
+    #[test]
+    fn exploit_rule_floating_remote_script_before_publish_fires() {
+        let mut g = graph_with_platform("github-actions", ".github/workflows/publish.yml");
+        let remote = add_script_step_in_job(
+            &mut g,
+            "install remote tool",
+            "publish",
+            "curl -fsSL https://raw.githubusercontent.com/org/tools/master/install.sh | sh",
+        );
+        attach_write_token(&mut g, remote);
+        add_script_step_in_job(
+            &mut g,
+            "publish image",
+            "publish",
+            "docker push repo/app:latest",
+        );
+
+        let findings = gha_floating_remote_script_before_publish_sink(&g);
+        assert_eq!(findings.len(), 1, "got: {findings:#?}");
+        assert_eq!(
+            findings[0].category,
+            FindingCategory::GhaFloatingRemoteScriptBeforePublishSink
+        );
+    }
+
+    #[test]
+    fn exploit_rule_token_remote_url_trace_exposure_fires() {
+        let mut g = graph_with_platform("github-actions", ".github/workflows/release.yml");
+        add_script_step_in_job(
+            &mut g,
+            "push release",
+            "release",
+            "export GIT_TRACE=1\n\
+             git push https://x:${{ secrets.GITHUB_TOKEN }}@github.com/org/repo.git HEAD:main",
+        );
+
+        let findings = gha_token_remote_url_with_trace_or_process_exposure(&g);
+        assert_eq!(findings.len(), 1, "got: {findings:#?}");
+        assert_eq!(
+            findings[0].category,
+            FindingCategory::GhaTokenRemoteUrlWithTraceOrProcessExposure
+        );
+    }
+
     #[test]
     fn tf_output_setvariable_fires_on_solarwinds_corpus_pattern() {
         // Faithful reproduction of the
@@ -12681,6 +15770,43 @@ mod tests {
             findings[0].severity, pre,
             "must NOT downgrade when same job has privileged steps"
         );
+    }
+
+    #[test]
+    fn suppression_checkout_pr_downgraded_when_job_only_has_implicit_identity() {
+        let mut g = graph_with_platform("azure-devops", "azure-pipelines.yml");
+        g.metadata.insert(META_TRIGGER.into(), "pr".into());
+
+        let checkout = step_with_meta(
+            &mut g,
+            "build[0]",
+            &[(META_JOB_NAME, "build"), (META_CHECKOUT_SELF, "true")],
+        );
+        let step = step_with_meta(&mut g, "build[1]", &[(META_JOB_NAME, "build")]);
+
+        let mut implicit_meta = std::collections::HashMap::new();
+        implicit_meta.insert(META_IMPLICIT.into(), "true".into());
+        let implicit = g.add_node_with_metadata(
+            NodeKind::Identity,
+            "System.AccessToken",
+            TrustZone::FirstParty,
+            implicit_meta,
+        );
+        g.add_edge(checkout, implicit, EdgeKind::HasAccessTo);
+        g.add_edge(step, implicit, EdgeKind::HasAccessTo);
+
+        let mut findings = checkout_self_pr_exposure(&g);
+        assert_eq!(findings.len(), 1);
+        assert_eq!(findings[0].severity, Severity::High);
+
+        apply_compensating_controls(&g, &mut findings);
+
+        assert_eq!(
+            findings[0].severity,
+            Severity::Info,
+            "implicit platform identity alone must not keep checkout_self_pr_exposure at High"
+        );
+        assert!(findings[0].message.contains("downgraded"));
     }
 
     #[test]
@@ -13125,6 +16251,545 @@ mod tests {
             fp_a, fp_b,
             "two sensitive-value-in-job-output findings on the same job must produce \
              distinct fingerprints (v3 anchor contract)"
+        );
+    }
+
+    fn gha_two_step_authority_graph(writer_body: &str, sink_body: Option<&str>) -> AuthorityGraph {
+        let mut g = AuthorityGraph::new(source("ci.yml"));
+        g.metadata
+            .insert(META_PLATFORM.into(), "github-actions".into());
+
+        let mut writer_meta = std::collections::HashMap::new();
+        writer_meta.insert(META_JOB_NAME.into(), "deploy".into());
+        writer_meta.insert(META_SCRIPT_BODY.into(), writer_body.into());
+        g.add_node_with_metadata(
+            NodeKind::Step,
+            "mutate env",
+            TrustZone::FirstParty,
+            writer_meta,
+        );
+
+        let mut sink_meta = std::collections::HashMap::new();
+        sink_meta.insert(META_JOB_NAME.into(), "deploy".into());
+        if let Some(body) = sink_body {
+            sink_meta.insert(META_SCRIPT_BODY.into(), body.into());
+        } else {
+            sink_meta.insert(META_GHA_ACTION.into(), "azure/login".into());
+        }
+        let sink = g.add_node_with_metadata(
+            NodeKind::Step,
+            "authority sink",
+            TrustZone::ThirdParty,
+            sink_meta,
+        );
+        let secret = g.add_node(NodeKind::Secret, "DEPLOY_SECRET", TrustZone::FirstParty);
+        g.add_edge(sink, secret, EdgeKind::HasAccessTo);
+        g
+    }
+
+    #[test]
+    fn env_config_redirect_before_authority_fires() {
+        let g = gha_two_step_authority_graph(
+            "echo KUBECONFIG=$GITHUB_WORKSPACE/kubeconfig >> $GITHUB_ENV",
+            Some("kubectl apply -f deploy.yml"),
+        );
+        let findings = gha_env_credential_helper_config_redirect_before_authority(&g);
+        assert_eq!(findings.len(), 1);
+        assert_eq!(
+            findings[0].category,
+            FindingCategory::GhaEnvCredentialHelperConfigRedirectBeforeAuthority
+        );
+    }
+
+    #[test]
+    fn node_options_startup_injection_before_node_authority_fires() {
+        let g = gha_two_step_authority_graph(
+            "echo NODE_OPTIONS=--require=$GITHUB_WORKSPACE/hook.js >> $GITHUB_ENV",
+            Some("npm publish"),
+        );
+        let findings = gha_env_node_options_code_injection_before_node_authority(&g);
+        assert_eq!(findings.len(), 1);
+        assert_eq!(
+            findings[0].category,
+            FindingCategory::GhaEnvNodeOptionsCodeInjectionBeforeNodeAuthority
+        );
+    }
+
+    #[test]
+    fn node_options_memory_tuning_does_not_fire() {
+        let g = gha_two_step_authority_graph(
+            "echo NODE_OPTIONS=--max-old-space-size=4096 >> $GITHUB_ENV",
+            Some("npm publish"),
+        );
+        let findings = gha_env_node_options_code_injection_before_node_authority(&g);
+        assert!(findings.is_empty());
+    }
+
+    #[test]
+    fn dynamic_loader_before_credential_helper_fires() {
+        let g = gha_two_step_authority_graph(
+            "echo LD_PRELOAD=$GITHUB_WORKSPACE/libhook.so >> $GITHUB_ENV",
+            Some("aws sts get-caller-identity"),
+        );
+        let findings = gha_env_dyld_or_ld_library_path_before_credential_helper(&g);
+        assert_eq!(findings.len(), 1);
+        assert_eq!(
+            findings[0].category,
+            FindingCategory::GhaEnvDyldOrLdLibraryPathBeforeCredentialHelper
+        );
+    }
+
+    #[test]
+    fn reusable_call_image_input_with_secrets_inherit_fires() {
+        let mut g = AuthorityGraph::new(source("caller.yml"));
+        g.metadata
+            .insert(META_PLATFORM.into(), "github-actions".into());
+        let mut meta = std::collections::HashMap::new();
+        meta.insert(META_JOB_NAME.into(), "call".into());
+        meta.insert(META_SECRETS_INHERIT.into(), "true".into());
+        meta.insert(
+            META_GHA_WITH_INPUTS.into(),
+            "container_image=${{ github.event.comment.body }}".into(),
+        );
+        g.add_node_with_metadata(NodeKind::Step, "call reusable", TrustZone::FirstParty, meta);
+        let findings = gha_workflow_call_container_image_input_secrets_inherit(&g);
+        assert_eq!(findings.len(), 1);
+        assert_eq!(
+            findings[0].category,
+            FindingCategory::GhaWorkflowCallContainerImageInputSecretsInherit
+        );
+    }
+
+    #[test]
+    fn reusable_call_runner_input_with_secrets_inherit_fires() {
+        let mut g = AuthorityGraph::new(source("caller.yml"));
+        g.metadata
+            .insert(META_PLATFORM.into(), "github-actions".into());
+        let mut meta = std::collections::HashMap::new();
+        meta.insert(META_JOB_NAME.into(), "call".into());
+        meta.insert(META_SECRETS_INHERIT.into(), "true".into());
+        meta.insert(
+            META_GHA_WITH_INPUTS.into(),
+            "runner=${{ inputs.runner }}".into(),
+        );
+        g.add_node_with_metadata(NodeKind::Step, "call reusable", TrustZone::FirstParty, meta);
+        let findings = gha_workflow_call_runner_label_input_privilege_escalation(&g);
+        assert_eq!(findings.len(), 1);
+        assert_eq!(
+            findings[0].category,
+            FindingCategory::GhaWorkflowCallRunnerLabelInputPrivilegeEscalation
+        );
+    }
+
+    #[test]
+    fn runner_label_rule_skips_ordinary_matrix_os() {
+        let mut g = AuthorityGraph::new(source("release.yml"));
+        g.metadata
+            .insert(META_PLATFORM.into(), "github-actions".into());
+        let mut meta = std::collections::HashMap::new();
+        meta.insert(META_JOB_NAME.into(), "release".into());
+        meta.insert(META_GHA_RUNS_ON.into(), "${{ matrix.os }}".into());
+        let step = g.add_node_with_metadata(NodeKind::Step, "build", TrustZone::FirstParty, meta);
+        let secret = g.add_node(NodeKind::Secret, "RELEASE_TOKEN", TrustZone::FirstParty);
+        g.add_edge(step, secret, EdgeKind::HasAccessTo);
+
+        let findings = gha_workflow_call_runner_label_input_privilege_escalation(&g);
+        assert!(
+            findings.is_empty(),
+            "plain matrix.os release matrices must not be runner-placement findings; got: {findings:#?}"
+        );
+    }
+
+    #[test]
+    fn attacker_influenced_container_with_secret_env_fires() {
+        let mut g = AuthorityGraph::new(source("container.yml"));
+        g.metadata
+            .insert(META_PLATFORM.into(), "github-actions".into());
+        let mut image_meta = std::collections::HashMap::new();
+        image_meta.insert(META_CONTAINER.into(), "true".into());
+        let image = g.add_node_with_metadata(
+            NodeKind::Image,
+            "${{ inputs.image }}",
+            TrustZone::Untrusted,
+            image_meta,
+        );
+        let mut step_meta = std::collections::HashMap::new();
+        step_meta.insert(META_JOB_NAME.into(), "deploy".into());
+        let step =
+            g.add_node_with_metadata(NodeKind::Step, "deploy", TrustZone::FirstParty, step_meta);
+        let secret = g.add_node(NodeKind::Secret, "REGISTRY_TOKEN", TrustZone::FirstParty);
+        g.add_edge(step, image, EdgeKind::UsesImage);
+        g.add_edge(step, secret, EdgeKind::HasAccessTo);
+
+        let findings = gha_container_image_attacker_influenced_with_secret_env(&g);
+        assert_eq!(findings.len(), 1);
+        assert_eq!(
+            findings[0].category,
+            FindingCategory::GhaContainerImageAttackerInfluencedWithSecretEnv
+        );
+    }
+
+    fn attach_attestation_token(g: &mut AuthorityGraph, step: NodeId) {
+        let mut meta = std::collections::HashMap::new();
+        meta.insert(
+            META_PERMISSIONS.into(),
+            "{ attestations: write, id-token: write }".into(),
+        );
+        meta.insert(META_OIDC.into(), "true".into());
+        let token = g.add_node_with_metadata(
+            NodeKind::Identity,
+            "GITHUB_TOKEN",
+            TrustZone::FirstParty,
+            meta,
+        );
+        g.add_edge(step, token, EdgeKind::HasAccessTo);
+    }
+
+    fn gha_action_step_in_job(
+        g: &mut AuthorityGraph,
+        name: &str,
+        job: &str,
+        action: &str,
+        inputs: &str,
+    ) -> NodeId {
+        let mut meta = std::collections::HashMap::new();
+        meta.insert(META_JOB_NAME.into(), job.into());
+        meta.insert(META_GHA_ACTION.into(), action.into());
+        meta.insert(META_GHA_WITH_INPUTS.into(), inputs.into());
+        g.add_node_with_metadata(NodeKind::Step, name, TrustZone::ThirdParty, meta)
+    }
+
+    #[test]
+    fn tca_attestation_subject_digest_from_output_fires() {
+        let mut g = graph_with_platform("github-actions", ".github/workflows/release.yml");
+        let step = gha_action_step_in_job(
+            &mut g,
+            "attest",
+            "release",
+            "actions/attest-build-provenance",
+            "subject-digest=${{ steps.hash.outputs.digest }}",
+        );
+        attach_attestation_token(&mut g, step);
+
+        let findings = gha_attestation_subject_digest_from_step_output_unverified(&g);
+        assert_eq!(findings.len(), 1, "got: {findings:#?}");
+        assert_eq!(
+            findings[0].category,
+            FindingCategory::GhaAttestationSubjectDigestFromStepOutputUnverified
+        );
+    }
+
+    #[test]
+    fn tca_attestation_subject_path_glob_with_pr_trigger_fires() {
+        let mut g = graph_with_platform("github-actions", ".github/workflows/ci.yml");
+        g.metadata
+            .insert(META_TRIGGERS.into(), "pull_request".into());
+        let step = gha_action_step_in_job(
+            &mut g,
+            "attest",
+            "build",
+            "actions/attest-build-provenance",
+            "subject-path=dist/**/*.tgz",
+        );
+        attach_attestation_token(&mut g, step);
+
+        let findings = gha_attestation_subject_path_workspace_glob_with_pr_trigger(&g);
+        assert_eq!(findings.len(), 1, "got: {findings:#?}");
+        assert_eq!(
+            findings[0].category,
+            FindingCategory::GhaAttestationSubjectPathWorkspaceGlobWithPrTrigger
+        );
+    }
+
+    #[test]
+    fn tca_attestation_config_driven_gate_fires() {
+        let mut g = graph_with_platform("github-actions", ".github/workflows/release.yml");
+        let mut meta = std::collections::HashMap::new();
+        meta.insert(META_JOB_NAME.into(), "release".into());
+        meta.insert(
+            META_GHA_ACTION.into(),
+            "actions/attest-build-provenance".into(),
+        );
+        meta.insert(META_GHA_WITH_INPUTS.into(), "subject-path=dist/app".into());
+        meta.insert(
+            META_CONDITION.into(),
+            "${{ fromJSON(needs.plan.outputs.pr_run_mode).attest }}".into(),
+        );
+        let step = g.add_node_with_metadata(NodeKind::Step, "attest", TrustZone::ThirdParty, meta);
+        attach_attestation_token(&mut g, step);
+
+        let findings = gha_attestation_config_driven_gate_from_workspace_file(&g);
+        assert_eq!(findings.len(), 1, "got: {findings:#?}");
+        assert_eq!(
+            findings[0].category,
+            FindingCategory::GhaAttestationConfigDrivenGateFromWorkspaceFile
+        );
+    }
+
+    #[test]
+    fn tca_telemetry_event_text_to_external_sink_fires() {
+        let mut g = graph_with_platform("github-actions", ".github/workflows/notify.yml");
+        let mut meta = std::collections::HashMap::new();
+        meta.insert(META_JOB_NAME.into(), "notify".into());
+        meta.insert(
+            META_GHA_ACTION.into(),
+            "slackapi/slack-github-action".into(),
+        );
+        meta.insert(
+            META_GHA_WITH_INPUTS.into(),
+            "payload=${{ github.event.pull_request.body }}".into(),
+        );
+        g.add_node_with_metadata(NodeKind::Step, "notify slack", TrustZone::ThirdParty, meta);
+
+        let findings = gha_telemetry_pr_or_issue_text_to_external_sink(&g);
+        assert_eq!(findings.len(), 1, "got: {findings:#?}");
+        assert_eq!(
+            findings[0].category,
+            FindingCategory::GhaTelemetryPrOrIssueTextToExternalSink
+        );
+    }
+
+    #[test]
+    fn tca_debug_flag_with_secret_env_fires_once_per_job() {
+        let mut g = graph_with_platform("github-actions", ".github/workflows/debug.yml");
+        let mut meta = std::collections::HashMap::new();
+        meta.insert(META_JOB_NAME.into(), "deploy".into());
+        meta.insert(
+            META_GHA_ENV_ASSIGNMENTS.into(),
+            "ACTIONS_STEP_DEBUG=true".into(),
+        );
+        let step = g.add_node_with_metadata(NodeKind::Step, "debug", TrustZone::FirstParty, meta);
+        let secret = g.add_node(NodeKind::Secret, "DEPLOY_TOKEN", TrustZone::FirstParty);
+        g.add_edge(step, secret, EdgeKind::HasAccessTo);
+
+        let findings = gha_telemetry_debug_flag_with_secret_env(&g);
+        assert_eq!(findings.len(), 1, "got: {findings:#?}");
+        assert_eq!(
+            findings[0].category,
+            FindingCategory::GhaTelemetryDebugFlagWithSecretEnv
+        );
+    }
+
+    #[test]
+    fn tca_autonomous_agent_event_input_to_write_authority_fires() {
+        let mut g = graph_with_platform("github-actions", ".github/workflows/agent.yml");
+        g.metadata
+            .insert(META_TRIGGERS.into(), "pull_request_target".into());
+        let mut meta = std::collections::HashMap::new();
+        meta.insert(META_JOB_NAME.into(), "agent".into());
+        meta.insert(
+            META_GHA_ACTION.into(),
+            "anthropics/claude-code-action".into(),
+        );
+        meta.insert(
+            META_GHA_WITH_INPUTS.into(),
+            "prompt=${{ github.event.pull_request.body }}".into(),
+        );
+        let step = g.add_node_with_metadata(NodeKind::Step, "agent", TrustZone::ThirdParty, meta);
+        attach_write_token(&mut g, step);
+
+        let findings = gha_telemetry_autonomous_agent_input_from_untrusted_event(&g);
+        assert_eq!(findings.len(), 1, "got: {findings:#?}");
+        assert_eq!(
+            findings[0].category,
+            FindingCategory::GhaTelemetryAutonomousAgentInputFromUntrustedEvent
+        );
+    }
+
+    #[test]
+    fn tca_workflow_run_artifact_to_blob_storage_fires() {
+        let mut g = gha_workflow_run_graph();
+        add_download_step_in_job(&mut g, "download artifact", "publish");
+        let upload = add_script_step_in_job(
+            &mut g,
+            "upload preview",
+            "publish",
+            "aws s3 cp preview.tar.gz s3://preview-bucket/preview.tar.gz",
+        );
+        attach_write_token(&mut g, upload);
+
+        let findings = gha_workflow_run_artifact_to_blob_storage_token(&g);
+        assert_eq!(findings.len(), 1, "got: {findings:#?}");
+        assert_eq!(
+            findings[0].category,
+            FindingCategory::GhaWorkflowRunArtifactToBlobStorageToken
+        );
+    }
+
+    #[test]
+    fn tca_workflow_run_artifact_to_agent_to_git_push_fires() {
+        let mut g = gha_workflow_run_graph();
+        add_download_step_in_job(&mut g, "download artifact", "agent");
+        let agent = gha_action_step_in_job(
+            &mut g,
+            "agent",
+            "agent",
+            "anthropics/claude-code-action",
+            "prompt-file=artifact/report.md",
+        );
+        attach_write_token(&mut g, agent);
+        add_script_step_in_job(&mut g, "push fixes", "agent", "git push origin HEAD:main");
+
+        let findings = gha_api_workflow_run_artifact_to_autonomous_agent_to_git_push(&g);
+        assert_eq!(findings.len(), 1, "got: {findings:#?}");
+        assert_eq!(
+            findings[0].category,
+            FindingCategory::GhaApiWorkflowRunArtifactToAutonomousAgentToGitPush
+        );
+    }
+
+    #[test]
+    fn mac_npm_lifecycle_pr_with_token_fires() {
+        let mut g = graph_with_platform("github-actions", ".github/workflows/pr.yml");
+        g.metadata
+            .insert(META_TRIGGER.into(), "pull_request".into());
+        g.metadata
+            .insert(META_TRIGGERS.into(), "pull_request".into());
+        let step = add_script_step_in_job(&mut g, "install", "build", "npm ci");
+        attach_write_token(&mut g, step);
+
+        let findings = gha_manifest_npm_lifecycle_hook_pr_trigger_with_token(&g);
+        assert_eq!(findings.len(), 1, "got: {findings:#?}");
+        assert_eq!(
+            findings[0].category,
+            FindingCategory::GhaManifestNpmLifecycleHookPrTriggerWithToken
+        );
+    }
+
+    #[test]
+    fn mac_npm_lifecycle_pr_ignore_scripts_suppresses() {
+        let mut g = graph_with_platform("github-actions", ".github/workflows/pr.yml");
+        g.metadata
+            .insert(META_TRIGGER.into(), "pull_request".into());
+        g.metadata
+            .insert(META_TRIGGERS.into(), "pull_request".into());
+        let step = add_script_step_in_job(&mut g, "install", "build", "npm ci --ignore-scripts");
+        attach_write_token(&mut g, step);
+
+        assert!(gha_manifest_npm_lifecycle_hook_pr_trigger_with_token(&g).is_empty());
+    }
+
+    #[test]
+    fn mac_python_build_with_credentials_fires() {
+        let mut g = graph_with_platform("github-actions", ".github/workflows/wheels.yml");
+        g.metadata
+            .insert(META_TRIGGER.into(), "pull_request_target".into());
+        g.metadata
+            .insert(META_TRIGGERS.into(), "pull_request_target".into());
+        let step = add_script_step_in_job(&mut g, "build wheel", "release", "python -m build");
+        attach_write_token(&mut g, step);
+
+        let findings = gha_manifest_python_m_build_with_pr_credentials(&g);
+        assert_eq!(findings.len(), 1, "got: {findings:#?}");
+        assert_eq!(
+            findings[0].category,
+            FindingCategory::GhaManifestPythonMBuildWithPrCredentials
+        );
+    }
+
+    #[test]
+    fn mac_cargo_build_rs_pr_with_token_fires() {
+        let mut g = graph_with_platform("github-actions", ".github/workflows/rust.yml");
+        g.metadata
+            .insert(META_TRIGGER.into(), "pull_request".into());
+        g.metadata
+            .insert(META_TRIGGERS.into(), "pull_request".into());
+        let step = add_script_step_in_job(&mut g, "cargo test", "build", "cargo test --locked");
+        attach_write_token(&mut g, step);
+
+        let findings = gha_manifest_cargo_build_rs_pull_request_with_token(&g);
+        assert_eq!(findings.len(), 1, "got: {findings:#?}");
+        assert_eq!(
+            findings[0].category,
+            FindingCategory::GhaManifestCargoBuildRsPullRequestWithToken
+        );
+    }
+
+    #[test]
+    fn mac_makefile_with_pr_trigger_and_secrets_fires() {
+        let mut g = gha_workflow_run_graph();
+        let step = add_script_step_in_job(&mut g, "build", "release", "make docker-build");
+        attach_write_token(&mut g, step);
+
+        let findings = gha_manifest_makefile_with_pr_trigger_and_secrets(&g);
+        assert_eq!(findings.len(), 1, "got: {findings:#?}");
+        assert_eq!(
+            findings[0].category,
+            FindingCategory::GhaManifestMakefileWithPrTriggerAndSecrets
+        );
+    }
+
+    #[test]
+    fn mac_recursive_submodules_with_authority_fires() {
+        let mut g = graph_with_platform("github-actions", ".github/workflows/pr.yml");
+        g.metadata
+            .insert(META_TRIGGER.into(), "pull_request".into());
+        g.metadata
+            .insert(META_TRIGGERS.into(), "pull_request".into());
+        let step = gha_action_step_in_job(
+            &mut g,
+            "checkout",
+            "build",
+            "actions/checkout",
+            "submodules=recursive",
+        );
+        attach_write_token(&mut g, step);
+
+        let findings = gha_manifest_submodules_recursive_with_pr_authority(&g);
+        assert_eq!(findings.len(), 1, "got: {findings:#?}");
+        assert_eq!(
+            findings[0].category,
+            FindingCategory::GhaManifestSubmodulesRecursiveWithPrAuthority
+        );
+    }
+
+    #[test]
+    fn mac_crossrepo_workflow_call_floating_ref_fires() {
+        let mut g = graph_with_platform("github-actions", ".github/workflows/release.yml");
+        let step = step_with_meta(
+            &mut g,
+            "release",
+            &[(META_JOB_NAME, "release"), (META_GHA_ACTION, "org/build")],
+        );
+        let callee = g.add_node(
+            NodeKind::Image,
+            "org/build/.github/workflows/release.yml@main",
+            TrustZone::Untrusted,
+        );
+        g.add_edge(step, callee, EdgeKind::DelegatesTo);
+
+        let findings = gha_crossrepo_workflow_call_floating_ref_cascade(&g);
+        assert_eq!(findings.len(), 1, "got: {findings:#?}");
+        assert_eq!(
+            findings[0].category,
+            FindingCategory::GhaCrossrepoWorkflowCallFloatingRefCascade
+        );
+    }
+
+    #[test]
+    fn mac_crossrepo_secrets_inherit_callee_fires() {
+        let mut g = graph_with_platform("github-actions", ".github/workflows/release.yml");
+        let step = step_with_meta(
+            &mut g,
+            "release",
+            &[
+                (META_JOB_NAME, "release"),
+                (META_GHA_ACTION, "org/build"),
+                (META_SECRETS_INHERIT, "true"),
+            ],
+        );
+        let callee = g.add_node(
+            NodeKind::Image,
+            "org/build/.github/workflows/release.yml@8b7e3a1c4f5d6e7f8a9b0c1d2e3f4a5b6c7d8e9f",
+            TrustZone::ThirdParty,
+        );
+        g.add_edge(step, callee, EdgeKind::DelegatesTo);
+
+        let findings = gha_crossrepo_secrets_inherit_unreviewed_callee(&g);
+        assert_eq!(findings.len(), 1, "got: {findings:#?}");
+        assert_eq!(
+            findings[0].category,
+            FindingCategory::GhaCrossrepoSecretsInheritUnreviewedCallee
         );
     }
 }

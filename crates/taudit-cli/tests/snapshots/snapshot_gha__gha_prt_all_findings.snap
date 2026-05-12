@@ -43,6 +43,19 @@ expression: findings
     - untrusted_checkout
     - untrusted_step
   cve_relationship: same_authority_shape
+- severity: critical
+  category: gha_script_injection_to_privileged_shell
+  nodes_involved:
+    - 3
+  message: "Step 'check[1]' interpolates attacker-controlled GitHub context directly into a privileged script while secrets, OIDC, or write-token authority is in the job"
+  recommendation:
+    type: manual
+    action: "Bind attacker-controlled values through step-level `env:` and reference them as data (`\"$VAR\"` or `process.env.VAR`); keep write tokens and secrets out of the injection-capable job."
+  source: built-in
+  confidence_scope: yaml_only
+  attacker_surface_kinds:
+    - script_sink
+    - untrusted_step
 - severity: high
   category: over_privileged_identity
   nodes_involved:

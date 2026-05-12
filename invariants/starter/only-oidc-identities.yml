@@ -15,7 +15,7 @@
 # federated workload-identity service connections. Anything else — a static
 # PAT, a username/password service connection — fires.
 #
-# Scoped to `trust_zone: first_party` to skip platform-implicit tokens
+# Platform-implicit tokens are excluded explicitly via `implicit != true`
 # (System.AccessToken on ADO carries `implicit: true`, which is a separate
 # structural concern handled by the built-in `over_privileged_identity` rule).
 #
@@ -48,6 +48,9 @@ match:
   standalone:
     node_type: identity
     trust_zone: first_party
+    metadata:
+      implicit:
+        not_equals: "true"
     not:
       metadata:
         oidc: "true"

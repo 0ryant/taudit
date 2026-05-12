@@ -75,12 +75,14 @@ graph:
       metadata:
         checkout_self: "true"
         gha_action: actions/checkout
+        gha_runs_on: ubuntu-latest
         job_name: test
       name: "test[0]"
       trust_zone: third_party
     - id: 3
       kind: step
       metadata:
+        gha_runs_on: ubuntu-latest
         job_name: test
         script_body: cargo test
       name: Run tests

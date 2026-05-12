@@ -767,6 +767,13 @@ mod tests {
             C::InteractiveDebugActionInAuthorityWorkflow,
             C::PrSpecificCacheKeyInDefaultBranchConsumer,
             C::GhCliWithDefaultTokenEscalating,
+            C::GhaScriptInjectionToPrivilegedShell,
+            C::GhaWorkflowRunArtifactPoisoningToPrivilegedConsumer,
+            C::GhaRemoteScriptInAuthorityJob,
+            C::GhaPatRemoteUrlWrite,
+            C::GhaIssueCommentCommandToWriteToken,
+            C::GhaPrBuildPushesPublishableImage,
+            C::GhaManualDispatchRefToPrivilegedCheckout,
             C::CiJobTokenToExternalApi,
             C::IdTokenAudienceOverscoped,
             C::UntrustedCiVarInShellInterpolation,
@@ -795,6 +802,20 @@ mod tests {
             C::GhaDockerSetupQemuPrivilegedDockerHelper,
             C::GhaToolInstallerThenShellHelperAuthority,
             C::GhaWorkflowShellAuthorityConcentration,
+            C::GhaActionTokenEnvBeforeBareDownloadHelper,
+            C::GhaPostActionInputRetargetToCacheSave,
+            C::GhaTerraformWrapperSensitiveOutput,
+            C::GhaCompositeBareHelperAfterPathInstallWithSecretEnv,
+            C::GhaPulumiPathResolvedCliWithAuthority,
+            C::GhaPypiPublishOidcAfterPathMutation,
+            C::GhaChangesetsPublishCommandWithAuthority,
+            C::GhaRubygemsReleaseGitTokenAndOidcHelper,
+            C::GhaCompositeEntrypointPathShadowWithSecretEnv,
+            C::GhaDockerBuildxAuthorityPathHandoff,
+            C::GhaGoogleDeployGcloudCredentialPath,
+            C::GhaDatadogTestVisibilityInstallerAuthority,
+            C::GhaKubernetesHelperKubeconfigAuthority,
+            C::GhaAzureCompanionHelperAuthority,
             C::GhaCreatePrGitTokenPathHandoff,
             C::GhaImportGpgPrivateKeyHelperPath,
             C::GhaSshAgentPrivateKeyToPathHelper,
@@ -808,13 +829,13 @@ mod tests {
             C::MissingAuditTrail,
         ];
 
-        // Sanity guard: 84 is the wire-contract count the schema
+        // Sanity guard: 93 is the wire-contract count the schema
         // generator emits. A drift between this list and the enum is the
         // exact failure class this test exists to catch.
         assert_eq!(
             all.len(),
-            84,
-            "FindingCategory enumeration is out of sync with the schema generator (expected 84, got {})",
+            105,
+            "FindingCategory enumeration is out of sync with the schema generator (expected 105, got {})",
             all.len()
         );
 

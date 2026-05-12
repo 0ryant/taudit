@@ -324,12 +324,15 @@ graph:
       metadata:
         checkout_self: "true"
         gha_action: actions/checkout
+        gha_runs_on: ubuntu-latest
         job_name: build
       name: "build[0]"
       trust_zone: untrusted
     - id: 3
       kind: step
       metadata:
+        gha_env_assignments: "AWS_ACCESS_KEY_ID=${{ secrets.AWS_ACCESS_KEY_ID }}\nAWS_SECRET_ACCESS_KEY=${{ secrets.AWS_SECRET_ACCESS_KEY }}\nUNUSED_SECRET=${{ secrets.UNUSED_SECRET }}"
+        gha_runs_on: ubuntu-latest
         job_name: build
         script_body: make build
       name: Build
@@ -358,6 +361,7 @@ graph:
       kind: step
       metadata:
         gha_action: some-org/deploy-action
+        gha_runs_on: ubuntu-latest
         gha_with_inputs: "token=${{ secrets.DEPLOY_TOKEN }}"
         job_name: deploy
       name: "deploy[0]"

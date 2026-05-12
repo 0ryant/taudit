@@ -2,18 +2,21 @@
 source: crates/taudit-cli/tests/snapshot_gha.rs
 expression: finding
 ---
-severity: critical
-category: pr_trigger_with_floating_action_ref
+severity: high
+category: over_privileged_identity
 nodes_involved:
-  - 1
-message: "Workflow trigger 'pull_request_target' runs in privileged base-repo context and step uses unpinned action 'actions/checkout@v4' — anyone who can push to that action's branch executes arbitrary code with full repo write token"
+  - 0
+  - 2
+  - 3
+message: "[oidc_identity_in_untrusted_context] OIDC identity 'GITHUB_TOKEN' is reachable from untrusted trigger steps [check[0], check[1]]"
 recommendation:
-  type: pin_action
-  current: actions/checkout@v4
-  pinned: actions/checkout@<sha256-digest>
+  type: manual
+  action: Move OIDC credential minting to a trusted-ref workflow or protect it with environment approvals and provider-side subject/audience conditions that exclude fork pull requests and untrusted merge requests.
 source: built-in
+fingerprint_anchor: identity=GITHUB_TOKEN
 confidence_scope: yaml_only
 runtime_preconditions:
-  - "the referenced mutable branch, tag, include, or image can change independently of this repository"
-attacker_surface_kinds:
-  - mutable_dependency_ref
+  - downstream identity provider accepts the issued OIDC token
+  - the configured audience or cloud role grants useful authority
+authority_kinds:
+  - oidc_identity

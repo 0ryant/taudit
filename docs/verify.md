@@ -14,6 +14,10 @@ acceptable, and exits accordingly.
 taudit verify [PATH...] --policy <FILE_OR_DIR>
               [--format text|json|sarif]
               [--platform auto|github-actions|azure-devops|gitlab]
+              [--ado-org <ORG_URL_OR_NAME> --ado-project <NAME> --ado-pat <PAT>]
+              [--ignore-file <FILE>]
+              [--suppressions <FILE>]
+              [--suppression-mode downgrade|suppress]
               [--strict]
               [--include-builtin]
               [--severity-threshold critical|high|medium|low|info]
@@ -36,6 +40,13 @@ Exit `2` is reserved for "we couldn't make a decision" — never conflate it
 with "the policy passed". A required CI check that treats `2` as success will
 silently let unscanned pipelines through.
 
+If `verify` appears to exit `0` despite printed violations, check the wrapper
+you invoked before assuming a CLI bug. This repository's own dogfood path runs
+`taudit verify` in advisory mode in [`scripts/quality-gate.sh`](../scripts/quality-gate.sh)
+and documents that choice in [`docs/contributing/dogfood-taudit-verify.md`](contributing/dogfood-taudit-verify.md);
+the `verify` command itself still returns `1` when violations are present,
+including findings from `--include-builtin`.
+
 ## Discovered-file parse/read errors and `--strict`
 
 When `PATH` includes a directory, `verify` discovers `*.yml` / `*.yaml` files
@@ -55,10 +66,29 @@ recursively.
 | Exit code | 0/1 driven by `--severity-threshold` over all findings | 0/1/2 contract above |
 | Primary audience | Engineers triaging risk | CI required checks, merge gates |
 | Output formats | `terminal`, `json`, `sarif`, `cloudevents` | `text`, `json`, `sarif` |
+| Ignore file | Honors `.tauditignore` / `--ignore-file` | Honors `.tauditignore` / `--ignore-file` before gate evaluation |
 
 `verify` is intentionally minimal: load policy, evaluate, exit. It does not
-emit telemetry, write receipts, or honour `.tauditignore`. If you want any of
-that, run `scan` separately.
+emit telemetry or write receipts. It does honor `.tauditignore` and
+suppression waivers because those directly affect the gate decision; run
+`scan` separately when you want the richer reporting surface.
+
+## Ignore files and suppressions
+
+`verify` applies noise-control layers in this order:
+
+1. `.tauditignore` or `--ignore-file <FILE>`.
+2. `.taudit-suppressions.yml` / `.taudit/suppressions.yml` or `--suppressions <FILE>`.
+3. `--severity-threshold <level>`.
+
+When a suppression file is discovered or explicitly loaded, `verify` prints the
+loaded path to stderr. If a suppression entry matched no finding in the current
+run, `verify` warns so stale fingerprints do not fail silently.
+
+`--suppression-mode downgrade` can change the gate outcome by lowering severity.
+`--suppression-mode suppress` is tag-only in `verify`: it marks matched
+findings as suppressed for downstream consumers, but they still count toward
+exit `1` unless another filter removes them.
 
 ## Required argument: `--policy`
 
@@ -167,11 +197,39 @@ is byte-compatible with SARIF emitted by `scan`.
 | `--policy <FILE_OR_DIR>` | Required. Source of invariants. |
 | `--format text\|json\|sarif` | Output format. Default `text`. |
 | `--platform auto\|github-actions\|azure-devops\|gitlab` | Pipeline format. Default `auto`. |
+| `--ado-org <ORG_URL_OR_NAME>` | Optional ADO enrichment input. Accepts `https://dev.azure.com/<org>` or `<org>`. Requires `--ado-project` and `--ado-pat`. |
+| `--ado-project <NAME>` | Optional ADO project for variable-group lookup. Requires `--ado-org` and `--ado-pat`. |
+| `--ado-pat <PAT>` | Optional PAT for ADO variable-group read. Never logged or persisted. Requires `--ado-org` and `--ado-project`. |
+| `--ignore-file <FILE>` | Load ignore rules from this path. If omitted, `verify` also auto-discovers `.tauditignore` in the current working directory. |
+| `--suppressions <FILE>` | Load per-finding suppressions from this path. If omitted, `verify` auto-discovers `.taudit-suppressions.yml` and `.taudit/suppressions.yml`. |
+| `--suppression-mode downgrade\|suppress` | Apply matched suppressions by lowering severity (`downgrade`, default) or tagging only (`suppress`). |
 | `--include-builtin` | Also run the 61 built-in rules; their findings count toward violations. |
 | `--severity-threshold <level>` | Only count violations at or above this severity. |
 | `--max-hops <N>` | Cap propagation BFS depth (default `taudit_core::propagation::DEFAULT_MAX_HOPS`). |
 | `--no-color` | Disable ANSI in `text` output. Also honoured via `NO_COLOR`. |
 | `-o, --output <FILE>` | Write report to file instead of stdout. Exit code is unaffected. |
+
+### ADO-aware mode (`--ado-org` / `--ado-project` / `--ado-pat`)
+
+When all three ADO flags are provided and a file resolves to
+`--platform azure-devops`, taudit attempts a read-only lookup of ADO variable
+groups using:
+
+```text
+GET {org}/{project}/_apis/distributedtask/variablegroups?api-version=7.1
+```
+
+Resolution semantics:
+
+- `isSecret: true` entries are modelled as `Secret` nodes.
+- `isSecret: false` entries are treated as plain variables (no `Secret` node).
+- If enrichment fails (network/auth/permissions/response shape), taudit emits a
+  partial warning and falls back to static opaque-group modelling.
+
+Security and scope:
+
+- Requires only **Variable Groups (Read)** scope.
+- PAT values are never written to graph metadata, findings, or logs.
 
 ## Authoring a policy file
 

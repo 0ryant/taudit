@@ -13,7 +13,7 @@ use taudit_core::ports::ReportSink;
 use taudit_core::propagation::DEFAULT_MAX_HOPS;
 use taudit_core::rules;
 use taudit_core::summary;
-use taudit_parse_ado::AdoParser;
+use taudit_parse_ado::{AdoParser, AdoParserContext};
 use taudit_parse_bitbucket::BitbucketParser;
 use taudit_parse_gha::GhaParser;
 use taudit_parse_gitlab::GitlabParser;
@@ -57,6 +57,7 @@ macro_rules! try_println {
     after_long_help = include_str!("../static/after-long-help.txt"),
     version
 )]
+#[allow(clippy::large_enum_variant)]
 enum Cli {
     /// Scan pipeline file(s) for authority findings
     #[command(long_about = "Scan pipeline file(s) for authority findings.\n\n\
@@ -193,6 +194,21 @@ enum Cli {
         #[arg(long, default_value = "auto")]
         platform: Platform,
 
+        /// Optional Azure DevOps organization for variable-group enrichment
+        /// (Phase 3A scaffolding; no API call yet).
+        #[arg(long)]
+        ado_org: Option<String>,
+
+        /// Optional Azure DevOps project for variable-group enrichment
+        /// (Phase 3A scaffolding; no API call yet).
+        #[arg(long)]
+        ado_project: Option<String>,
+
+        /// Optional Azure DevOps PAT for variable-group enrichment
+        /// (Phase 3A scaffolding; never logged).
+        #[arg(long)]
+        ado_pat: Option<String>,
+
         /// Write the report to this file instead of stdout.
         #[arg(long, short = 'o')]
         output: Option<PathBuf>,
@@ -267,11 +283,12 @@ enum Cli {
         rich_labels: bool,
     },
 
-    /// Emit the canonical authority graph (JSON, DOT, or Mermaid).
+    /// Emit graph views (JSON, DOT, Mermaid, or summary).
     ///
     /// Unlike `taudit map` (human-readable table), this command emits the full
     /// `AuthorityGraph`: by default as JSON (`schemas/authority-graph.v1.json`)
     /// for downstream tools, or as Graphviz DOT / Mermaid for documentation.
+    /// Use `--view exploit` for mutable-state to helper-authority paths.
     ///
     /// Formats:
     ///   json (default) — schema-validated; canonical machine interchange.
@@ -300,6 +317,10 @@ enum Cli {
         /// `mermaid` (GitHub-flavored Markdown `flowchart`), or `summary` (propagation rollup JSON).
         #[arg(long, default_value = "json")]
         format: GraphFormat,
+
+        /// Graph view: `authority` (canonical graph) or `exploit` (mutable-state/helper path graph).
+        #[arg(long, default_value = "authority")]
+        view: GraphView,
 
         /// Maximum propagation depth for `--format summary` (same meaning as `taudit scan`).
         #[arg(long, default_value_t = DEFAULT_MAX_HOPS)]
@@ -501,6 +522,21 @@ enum Cli {
         #[arg(long, default_value = "auto")]
         platform: Platform,
 
+        /// Optional Azure DevOps organization for variable-group enrichment
+        /// (Phase 3A scaffolding; no API call yet).
+        #[arg(long)]
+        ado_org: Option<String>,
+
+        /// Optional Azure DevOps project for variable-group enrichment
+        /// (Phase 3A scaffolding; no API call yet).
+        #[arg(long)]
+        ado_project: Option<String>,
+
+        /// Optional Azure DevOps PAT for variable-group enrichment
+        /// (Phase 3A scaffolding; never logged).
+        #[arg(long)]
+        ado_pat: Option<String>,
+
         /// Maximum propagation depth for BFS analysis.
         #[arg(long, default_value_t = DEFAULT_MAX_HOPS)]
         max_hops: usize,
@@ -524,11 +560,22 @@ enum Cli {
         #[arg(long, short = 'o')]
         output: Option<PathBuf>,
 
-        /// Path to `.taudit-suppressions.yml`. See `docs/suppressions.md`.
+            /// Path to ignore file. Same YAML format and semantics as
+            /// `taudit scan --ignore-file`; matching findings are removed from
+            /// the verify output and exit tally.
+            #[arg(long)]
+            ignore_file: Option<PathBuf>,
+
+            /// Path to `.taudit-suppressions.yml`. When omitted, taudit looks for
+            /// `.taudit-suppressions.yml` in CWD then `.taudit/suppressions.yml`.
+            /// See `docs/suppressions.md`.
         #[arg(long)]
         suppressions: Option<PathBuf>,
 
-        /// How to apply matched suppressions. See `taudit scan --help`.
+            /// How to apply matched suppressions. `downgrade` lowers severity by
+            /// one tier. `suppress` is tag-only: it sets `extras.suppressed = true`
+            /// but findings still count toward `verify` exit 1 unless another
+            /// filter (`--ignore-file`, threshold, baseline) removes them.
         #[arg(long, default_value = "downgrade")]
         suppression_mode: SuppressionModeArg,
 
@@ -681,7 +728,8 @@ enum SuppressionModeArg {
     /// Default — drop severity one tier (Critical -> High -> ... -> Info).
     #[default]
     Downgrade,
-    /// Set `extras.suppressed = true`; leave severity unchanged.
+    /// Tag-only mode: set `extras.suppressed = true`; leave severity unchanged.
+    /// Findings still count toward `verify` exit 1 unless another filter drops them.
     Suppress,
 }
 
@@ -921,6 +969,14 @@ enum GraphFormat {
     Dot,
     Mermaid,
     Summary,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, clap::ValueEnum)]
+enum GraphView {
+    /// Canonical authority graph view.
+    Authority,
+    /// Mutable-state to helper-authority path graph view.
+    Exploit,
 }
 
 /// Dimension for org-scale collapsed graph views (ADR 0002 Phase 4).
@@ -1224,6 +1280,9 @@ struct ScanOpts {
     receipt_dir: Option<PathBuf>,
     log_dir: Option<PathBuf>,
     platform: Platform,
+    ado_org: Option<String>,
+    ado_project: Option<String>,
+    ado_pat: Option<String>,
     output: Option<PathBuf>,
     invariants_dir: Option<PathBuf>,
     invariants_allow_external_symlinks: bool,
@@ -1296,6 +1355,9 @@ fn run() -> Result<()> {
             receipt_dir,
             log_dir,
             platform,
+            ado_org,
+            ado_project,
+            ado_pat,
             output,
             invariants_dir,
             invariants_allow_external_symlinks,
@@ -1330,6 +1392,9 @@ fn run() -> Result<()> {
                 receipt_dir,
                 log_dir,
                 platform,
+                ado_org,
+                ado_project,
+                ado_pat,
                 output,
                 invariants_dir,
                 invariants_allow_external_symlinks,
@@ -1384,6 +1449,7 @@ fn run() -> Result<()> {
             paths,
             platform,
             format,
+            view,
             max_hops,
             force_scan_dense,
             job,
@@ -1395,6 +1461,7 @@ fn run() -> Result<()> {
             paths,
             platform,
             format,
+            view,
             max_hops,
             force_scan_dense,
             job,
@@ -1436,11 +1503,15 @@ fn run() -> Result<()> {
             policy,
             format,
             platform,
+            ado_org,
+            ado_project,
+            ado_pat,
             max_hops,
             include_builtin,
             severity_threshold,
             no_color,
             output,
+            ignore_file,
             suppressions,
             suppression_mode,
             gate_on_all,
@@ -1458,10 +1529,14 @@ fn run() -> Result<()> {
                 policy,
                 format,
                 platform,
+                ado_org,
+                ado_project,
+                ado_pat,
                 max_hops,
                 include_builtin,
                 severity_threshold,
                 output,
+                ignore_file,
                 suppressions,
                 suppression_mode,
                 gate_on_all,
@@ -1731,6 +1806,9 @@ fn cmd_scan(opts: ScanOpts) -> Result<()> {
         receipt_dir,
         log_dir,
         platform,
+        ado_org,
+        ado_project,
+        ado_pat,
         output,
         invariants_dir,
         invariants_allow_external_symlinks,
@@ -1777,6 +1855,7 @@ fn cmd_scan(opts: ScanOpts) -> Result<()> {
     // used, parsers are built per-file inside the loop after detecting from content.
     let parser_box = make_parser(&platform);
     let parser = parser_box.as_ref();
+    let ado_parser_context = build_ado_parser_context(ado_org, ado_project, ado_pat);
     let stdout_handle = std::io::stdout();
     let mut writer: Box<dyn std::io::Write> = match output.as_ref() {
         Some(path) => Box::new(std::io::BufWriter::new(
@@ -1825,7 +1904,16 @@ fn cmd_scan(opts: ScanOpts) -> Result<()> {
     // Load .taudit-suppressions.yml. Empty config when no file present.
     // The applicator runs after .tauditignore + baseline so a waiver only
     // takes effect on findings that are still in scope.
-    let suppression_config = load_suppression_config(suppressions_path.clone())?;
+        let loaded_suppressions = load_suppression_config(suppressions_path.clone())?;
+        let suppression_config = loaded_suppressions.config;
+        if let Some(path) = loaded_suppressions.path.as_ref() {
+            eprintln!(
+                "loaded {} suppression{} from {}",
+                suppression_config.suppressions.len(),
+                if suppression_config.suppressions.len() == 1 { "" } else { "s" },
+                path.display()
+            );
+        }
     let suppression_mode_core = suppression_mode.to_core();
     let suppression_today = today_local();
 
@@ -1868,6 +1956,7 @@ fn cmd_scan(opts: ScanOpts) -> Result<()> {
         Vec<taudit_core::finding::Finding>,
     )> = Vec::new();
     let mut skipped_total = 0usize;
+    let mut matched_suppressions: HashSet<String> = HashSet::new();
 
     for tagged_path in &resolved {
         let path = tagged_path.path();
@@ -1888,9 +1977,21 @@ fn cmd_scan(opts: ScanOpts) -> Result<()> {
                 let resolved_platform = resolve_platform(&platform, &content, None);
                 let per_file_parser = make_parser(&resolved_platform);
                 resolved_for_file = resolved_platform;
-                parse_content(per_file_parser.as_ref(), content, "<stdin>".to_string())?
+                parse_content_with_optional_ado_context(
+                    per_file_parser.as_ref(),
+                    content,
+                    "<stdin>".to_string(),
+                    &resolved_for_file,
+                    ado_parser_context.as_ref(),
+                )?
             } else {
-                parse_content(parser, content, "<stdin>".to_string())?
+                parse_content_with_optional_ado_context(
+                    parser,
+                    content,
+                    "<stdin>".to_string(),
+                    &platform,
+                    ado_parser_context.as_ref(),
+                )?
             }
         } else {
             // Read the file once. When auto-detecting, sniff the content to pick
@@ -1916,13 +2017,21 @@ fn cmd_scan(opts: ScanOpts) -> Result<()> {
                 let resolved_platform = resolve_platform(&platform, &content, Some(path.as_path()));
                 let per_file_parser = make_parser(&resolved_platform);
                 resolved_for_file = resolved_platform;
-                parse_content(
+                parse_content_with_optional_ado_context(
                     per_file_parser.as_ref(),
                     content,
                     path.display().to_string(),
+                    &resolved_for_file,
+                    ado_parser_context.as_ref(),
                 )
             } else {
-                parse_content(parser, content, path.display().to_string())
+                parse_content_with_optional_ado_context(
+                    parser,
+                    content,
+                    path.display().to_string(),
+                    &platform,
+                    ado_parser_context.as_ref(),
+                )
             };
             match parse_result {
                 Ok(g) => g,
@@ -2016,12 +2125,13 @@ fn cmd_scan(opts: ScanOpts) -> Result<()> {
                 eprintln!("{CRITICAL_WAIVER_EXPIRY}");
                 std::process::exit(2);
             }
-            let (waived, warnings) = suppression_config.apply(
+            let (waived, warnings, matched_here) = suppression_config.apply(
                 findings,
                 suppression_mode_core,
                 &fingerprints,
                 suppression_today,
             );
+            matched_suppressions.extend(matched_here);
             for w in warnings {
                 eprintln!("{w}");
             }
@@ -2186,6 +2296,10 @@ fn cmd_scan(opts: ScanOpts) -> Result<()> {
         }
     }
 
+    for warning in suppression_config.unmatched_warnings(&matched_suppressions) {
+        eprintln!("{warning}");
+    }
+
     // Emit the single aggregated SARIF document now that all files have been scanned.
     if !sarif_buffer.is_empty() && matches!(format, OutputFormat::Sarif) {
         let items: Vec<_> = sarif_buffer
@@ -2277,10 +2391,14 @@ struct VerifyOpts {
     policy: PathBuf,
     format: VerifyFormat,
     platform: Platform,
+    ado_org: Option<String>,
+    ado_project: Option<String>,
+    ado_pat: Option<String>,
     max_hops: usize,
     include_builtin: bool,
     severity_threshold: Option<SeverityLevel>,
     output: Option<PathBuf>,
+    ignore_file: Option<PathBuf>,
     suppressions: Option<PathBuf>,
     suppression_mode: SuppressionModeArg,
     /// Force every violation to drive exit 1, ignoring per-pipeline
@@ -2321,6 +2439,11 @@ struct VerifyPipelineModeling {
     completeness: AuthorityCompleteness,
     completeness_gaps: Vec<String>,
     gap_kinds: Vec<GapKind>,
+}
+
+struct LoadedSuppressionConfig {
+    config: taudit_core::suppressions::SuppressionConfig,
+    path: Option<PathBuf>,
 }
 
 /// `taudit verify` entrypoint. Computes the exit code via `run_verify_io`
@@ -2403,19 +2526,45 @@ fn run_verify_io<W: std::io::Write>(opts: &VerifyOpts, writer: &mut W) -> i32 {
 
     let parser_box = make_parser(&opts.platform);
     let parser = parser_box.as_ref();
+    let ado_parser_context = build_ado_parser_context(
+        opts.ado_org.clone(),
+        opts.ado_project.clone(),
+        opts.ado_pat.clone(),
+    );
     let threshold = opts.severity_threshold.as_ref().map(|s| s.to_severity());
-
-    // Load .taudit-suppressions.yml — verify honors the same waiver file
-    // as scan so policy-gated CI runs see consistent severity levels.
-    let suppression_config = match load_suppression_config(opts.suppressions.clone()) {
+    let ignore_config = match load_ignore_config(opts.ignore_file.clone()) {
         Ok(c) => c,
         Err(err) => {
             eprintln!("error: {err:#}");
             return 2;
         }
     };
+
+    // Load .taudit-suppressions.yml — verify honors the same waiver file
+    // as scan so policy-gated CI runs see consistent severity levels.
+    let loaded_suppressions = match load_suppression_config(opts.suppressions.clone()) {
+        Ok(c) => c,
+        Err(err) => {
+            eprintln!("error: {err:#}");
+            return 2;
+        }
+    };
+    let suppression_config = loaded_suppressions.config;
+    if let Some(path) = loaded_suppressions.path.as_ref() {
+        eprintln!(
+            "loaded {} suppression{} from {}",
+            suppression_config.suppressions.len(),
+            if suppression_config.suppressions.len() == 1 { "" } else { "s" },
+            path.display()
+        );
+    }
     let suppression_mode_core = opts.suppression_mode.to_core();
     let suppression_today = today_local();
+    if opts.suppression_mode == SuppressionModeArg::Suppress {
+        eprintln!(
+            "warning: --suppression-mode suppress is tag-only in verify; matched findings still count toward exit 1 unless another filter drops them"
+        );
+    }
 
     let mut violations: Vec<Violation> = Vec::new();
     let mut sarif_buffer: Vec<(
@@ -2423,6 +2572,7 @@ fn run_verify_io<W: std::io::Write>(opts: &VerifyOpts, writer: &mut W) -> i32 {
         Vec<taudit_core::finding::Finding>,
     )> = Vec::new();
     let mut pipeline_modeling: Vec<VerifyPipelineModeling> = Vec::new();
+    let mut matched_suppressions: HashSet<String> = HashSet::new();
 
     // Step 3: parse each pipeline file and evaluate the loaded invariants.
     // For explicitly-named files a parse error is fatal (exit 2). For files
@@ -2456,13 +2606,21 @@ fn run_verify_io<W: std::io::Write>(opts: &VerifyOpts, writer: &mut W) -> i32 {
             let resolved_platform =
                 resolve_platform(&opts.platform, &content, Some(path.as_path()));
             let per_file_parser = make_parser(&resolved_platform);
-            parse_content(
+            parse_content_with_optional_ado_context(
                 per_file_parser.as_ref(),
                 content,
                 path.display().to_string(),
+                &resolved_platform,
+                ado_parser_context.as_ref(),
             )
         } else {
-            parse_content(parser, content, path.display().to_string())
+            parse_content_with_optional_ado_context(
+                parser,
+                content,
+                path.display().to_string(),
+                &opts.platform,
+                ado_parser_context.as_ref(),
+            )
         };
 
         let graph = match parse_result {
@@ -2505,6 +2663,9 @@ fn run_verify_io<W: std::io::Write>(opts: &VerifyOpts, writer: &mut W) -> i32 {
             findings.extend(rules::run_all_rules(&graph, opts.max_hops));
         }
 
+        let ignore_result = ignore_config.apply(findings, &graph.source.file);
+        let mut findings = ignore_result.findings;
+
         // BUG-6: --ignore-partial suppresses findings whose nodes_involved
         // include a variable-group Secret (unresolvable without ADO API).
         // Only active when the graph is non-Complete AND --ignore-partial set.
@@ -2544,12 +2705,13 @@ fn run_verify_io<W: std::io::Write>(opts: &VerifyOpts, writer: &mut W) -> i32 {
             eprintln!("{CRITICAL_WAIVER_EXPIRY}");
             return 2;
         }
-        let (waived, warnings) = suppression_config.apply(
+        let (waived, warnings, matched_here) = suppression_config.apply(
             findings,
             suppression_mode_core,
             &fingerprints,
             suppression_today,
         );
+        matched_suppressions.extend(matched_here);
         for w in warnings {
             eprintln!("{w}");
         }
@@ -2620,6 +2782,10 @@ fn run_verify_io<W: std::io::Write>(opts: &VerifyOpts, writer: &mut W) -> i32 {
             });
         }
         sarif_buffer.push((graph, findings));
+    }
+
+    for warning in suppression_config.unmatched_warnings(&matched_suppressions) {
+        eprintln!("{warning}");
     }
 
     // Step 4: emit the report in the requested format.
@@ -3046,7 +3212,7 @@ fn append_line(path: &PathBuf, line: &str) -> Result<()> {
 ///   4. Empty config.
 fn load_suppression_config(
     explicit_path: Option<PathBuf>,
-) -> Result<taudit_core::suppressions::SuppressionConfig> {
+) -> Result<LoadedSuppressionConfig> {
     let path = if let Some(p) = explicit_path {
         // Operator named a path explicitly — fail if missing rather than
         // silently fall through to a different file.
@@ -3064,8 +3230,15 @@ fn load_suppression_config(
 
     match path {
         Some(p) => taudit_core::suppressions::SuppressionConfig::load_from_path(&p)
+            .map(|config| LoadedSuppressionConfig {
+                config,
+                path: Some(p),
+            })
             .map_err(|e| anyhow::anyhow!(e.to_string())),
-        None => Ok(taudit_core::suppressions::SuppressionConfig::default()),
+        None => Ok(LoadedSuppressionConfig {
+            config: taudit_core::suppressions::SuppressionConfig::default(),
+            path: None,
+        }),
     }
 }
 
@@ -3794,6 +3967,7 @@ fn cmd_graph(
     paths: Vec<PathBuf>,
     platform: Platform,
     format: GraphFormat,
+    view: GraphView,
     max_hops: usize,
     force_scan_dense: bool,
     job: Option<String>,
@@ -3802,16 +3976,27 @@ fn cmd_graph(
     collapse_by: Option<GraphCollapseBy>,
     risk_only: bool,
 ) -> Result<()> {
-    warn_graph_phase4_flags(collapse_by, risk_only, format);
+    if view == GraphView::Authority {
+        warn_graph_phase4_flags(collapse_by, risk_only, format);
+    } else if collapse_by.is_some() || risk_only {
+        anyhow::bail!("`--collapse-by` and `--risk-only` apply only to `--view authority`");
+    }
+
+    if rich_labels && view != GraphView::Authority {
+        anyhow::bail!("`--rich-labels` applies only to `--view authority`");
+    }
 
     if rich_labels && matches!(format, GraphFormat::Json | GraphFormat::Summary) {
         anyhow::bail!("`--rich-labels` applies only to `--format dot` and `--format mermaid`");
     }
 
     if matches!(format, GraphFormat::Summary) && job.is_some() {
-        anyhow::bail!(
-            "`--job` does not apply to `--format summary` (summary is always computed on the full parsed graph)"
-        );
+        match view {
+            GraphView::Authority => anyhow::bail!(
+                "`--job` does not apply to `--format summary` (summary is always computed on the full parsed graph)"
+            ),
+            GraphView::Exploit => {}
+        }
     }
 
     // Validate `--rules-dir` early so a bad directory fails fast, even
@@ -3895,8 +4080,54 @@ fn cmd_graph(
             map::DiagramLabelDetail::Compact
         };
 
-        match format {
-            GraphFormat::Summary => {
+        match (view, format) {
+            (GraphView::Exploit, GraphFormat::Json) => {
+                let mut json = taudit_core::exploit_path::render_json_pretty(
+                    &graph,
+                    taudit_core::exploit_path::ExploitGraphOptions {
+                        job: job.as_deref(),
+                    },
+                )
+                .map_err(|e| anyhow::anyhow!("exploit graph JSON error: {e}"))?
+                .into_bytes();
+                json.push(b'\n');
+                try_write_stdout(&json)?;
+            }
+            (GraphView::Exploit, GraphFormat::Summary) => {
+                let mut json = taudit_core::exploit_path::render_summary_pretty(
+                    &graph,
+                    taudit_core::exploit_path::ExploitGraphOptions {
+                        job: job.as_deref(),
+                    },
+                )
+                .map_err(|e| anyhow::anyhow!("exploit graph summary JSON error: {e}"))?
+                .into_bytes();
+                json.push(b'\n');
+                try_write_stdout(&json)?;
+            }
+            (GraphView::Exploit, GraphFormat::Dot) => {
+                let mut dot = taudit_core::exploit_path::render_dot(
+                    &graph,
+                    taudit_core::exploit_path::ExploitGraphOptions {
+                        job: job.as_deref(),
+                    },
+                )
+                .into_bytes();
+                dot.push(b'\n');
+                try_write_stdout(&dot)?;
+            }
+            (GraphView::Exploit, GraphFormat::Mermaid) => {
+                let mut mer = taudit_core::exploit_path::render_mermaid(
+                    &graph,
+                    taudit_core::exploit_path::ExploitGraphOptions {
+                        job: job.as_deref(),
+                    },
+                )
+                .into_bytes();
+                mer.push(b'\n');
+                try_write_stdout(&mer)?;
+            }
+            (GraphView::Authority, GraphFormat::Summary) => {
                 let doc = summary::build_authority_propagation_summary(
                     &graph,
                     max_hops,
@@ -3911,7 +4142,7 @@ fn cmd_graph(
                 json.push(b'\n');
                 try_write_stdout(&json)?;
             }
-            GraphFormat::Json => {
+            (GraphView::Authority, GraphFormat::Json) => {
                 // Note: --job only filters diagram output (DOT / Mermaid); the
                 // JSON export emits the full graph for every matched file. This
                 // matches user expectation that the schema-validated JSON
@@ -3924,7 +4155,7 @@ fn cmd_graph(
                 json.push(b'\n');
                 try_write_stdout(&json)?;
             }
-            GraphFormat::Dot => {
+            (GraphView::Authority, GraphFormat::Dot) => {
                 let job_collapse = if collapse_by == Some(GraphCollapseBy::Job) {
                     map::DotJobCollapse::On
                 } else {
@@ -3936,7 +4167,7 @@ fn cmd_graph(
                 dot.push(b'\n');
                 try_write_stdout(&dot)?;
             }
-            GraphFormat::Mermaid => {
+            (GraphView::Authority, GraphFormat::Mermaid) => {
                 let mut mer =
                     map::render_mermaid(&graph, job.as_deref(), diagram_label_detail).into_bytes();
                 mer.push(b'\n');
@@ -4282,7 +4513,7 @@ fn cmd_suppressions_list(suppressions_path: Option<PathBuf>) -> Result<()> {
     use colored::Colorize;
     use std::io::Write;
 
-    let cfg = load_suppression_config(suppressions_path)?;
+    let cfg = load_suppression_config(suppressions_path)?.config;
     let stdout = std::io::stdout();
     let mut out = SilenceBrokenPipe {
         inner: stdout.lock(),
@@ -4443,7 +4674,7 @@ fn cmd_suppressions_review(suppressions_path: Option<PathBuf>) -> Result<()> {
     use colored::Colorize;
     use std::io::Write;
 
-    let cfg = load_suppression_config(suppressions_path)?;
+    let cfg = load_suppression_config(suppressions_path)?.config;
     let stdout = std::io::stdout();
     let mut out = SilenceBrokenPipe {
         inner: stdout.lock(),
@@ -4723,6 +4954,61 @@ fn parse_content(
              hint: confirm the file is valid CI YAML for the selected --platform (use `auto` to detect); see `taudit scan --help`"
         )
     })
+}
+
+fn build_ado_parser_context(
+    ado_org: Option<String>,
+    ado_project: Option<String>,
+    ado_pat: Option<String>,
+) -> Option<AdoParserContext> {
+    let ctx = AdoParserContext {
+        org: ado_org.and_then(trim_to_option),
+        project: ado_project.and_then(trim_to_option),
+        pat: ado_pat.and_then(trim_to_option),
+    };
+    if ctx.org.is_none() && ctx.project.is_none() && ctx.pat.is_none() {
+        None
+    } else {
+        Some(ctx)
+    }
+}
+
+fn trim_to_option(s: String) -> Option<String> {
+    let trimmed = s.trim();
+    if trimmed.is_empty() {
+        None
+    } else {
+        Some(trimmed.to_string())
+    }
+}
+
+fn parse_content_with_optional_ado_context(
+    parser: &dyn taudit_core::ports::PipelineParser,
+    content: String,
+    source_file: String,
+    resolved_platform: &Platform,
+    ado_ctx: Option<&AdoParserContext>,
+) -> Result<taudit_core::graph::AuthorityGraph> {
+    if *resolved_platform != Platform::AzureDevOps {
+        return parse_content(parser, content, source_file);
+    }
+
+    let source = PipelineSource {
+        file: source_file.clone(),
+        repo: None,
+        git_ref: None,
+        commit_sha: None,
+    };
+    let content = normalise_line_endings(content);
+    let ado_parser = AdoParser;
+    ado_parser
+        .parse_with_context(&content, &source, ado_ctx)
+        .with_context(|| {
+            format!(
+                "Failed to parse {source_file}\n\
+                 hint: confirm the file is valid CI YAML for the selected --platform (use `auto` to detect); see `taudit scan --help`"
+            )
+        })
 }
 
 fn parse_file(
@@ -5393,6 +5679,102 @@ mod tests {
     }
 
     #[test]
+    fn scan_cli_parses_optional_ado_enrichment_flags() {
+        let cli = Cli::try_parse_from([
+            "taudit",
+            "scan",
+            "pipeline.yml",
+            "--ado-org",
+            "example-org",
+            "--ado-project",
+            "example-project",
+            "--ado-pat",
+            "example-pat",
+        ])
+        .expect("cli parse");
+
+        match cli {
+            Cli::Scan {
+                ado_org,
+                ado_project,
+                ado_pat,
+                ..
+            } => {
+                assert_eq!(ado_org.as_deref(), Some("example-org"));
+                assert_eq!(ado_project.as_deref(), Some("example-project"));
+                assert_eq!(ado_pat.as_deref(), Some("example-pat"));
+            }
+            _ => panic!("expected Cli::Scan"),
+        }
+    }
+
+    #[test]
+    fn verify_cli_parses_optional_ado_enrichment_flags() {
+        let cli = Cli::try_parse_from([
+            "taudit",
+            "verify",
+            "pipeline.yml",
+            "--policy",
+            "policy.yml",
+            "--ado-org",
+            "example-org",
+            "--ado-project",
+            "example-project",
+            "--ado-pat",
+            "example-pat",
+        ])
+        .expect("cli parse");
+
+        match cli {
+            Cli::Verify {
+                ado_org,
+                ado_project,
+                ado_pat,
+                ..
+            } => {
+                assert_eq!(ado_org.as_deref(), Some("example-org"));
+                assert_eq!(ado_project.as_deref(), Some("example-project"));
+                assert_eq!(ado_pat.as_deref(), Some("example-pat"));
+            }
+            _ => panic!("expected Cli::Verify"),
+        }
+    }
+
+    #[test]
+    fn parse_wrapper_threads_ado_context_without_storing_pat() {
+        let parser = make_parser(&Platform::AzureDevOps);
+        let graph = parse_content_with_optional_ado_context(
+            parser.as_ref(),
+            "steps:\n  - script: echo hi\n".to_string(),
+            "ado.yml".to_string(),
+            &Platform::AzureDevOps,
+            Some(&AdoParserContext {
+                org: Some("org-a".to_string()),
+                project: Some("project-a".to_string()),
+                pat: Some("super-secret-pat".to_string()),
+            }),
+        )
+        .expect("parse succeeds");
+
+        assert_eq!(graph.metadata.get("ado_org"), Some(&"org-a".to_string()));
+        assert_eq!(
+            graph.metadata.get("ado_project"),
+            Some(&"project-a".to_string())
+        );
+        assert_eq!(
+            graph.metadata.get("ado_pat_present"),
+            Some(&"true".to_string())
+        );
+        assert!(
+            !graph
+                .metadata
+                .values()
+                .any(|value| value.contains("super-secret-pat")),
+            "PAT must never be materialized in metadata"
+        );
+    }
+
+    #[test]
     fn resolve_runtime_artifact_paths_prefers_explicit_values() {
         let telemetry = PathBuf::from("/tmp/telemetry-explicit");
         let receipt = PathBuf::from("/tmp/receipt-explicit");
@@ -5603,10 +5985,14 @@ mod tests {
             policy,
             format: VerifyFormat::Text,
             platform: Platform::GithubActions,
+            ado_org: None,
+            ado_project: None,
+            ado_pat: None,
             max_hops: DEFAULT_MAX_HOPS,
             include_builtin: false,
             severity_threshold: None,
             output: None,
+            ignore_file: None,
             suppressions: None,
             suppression_mode: SuppressionModeArg::Downgrade,
             gate_on_all: false,
@@ -5642,10 +6028,14 @@ mod tests {
             policy,
             format: VerifyFormat::Text,
             platform: Platform::GithubActions,
+            ado_org: None,
+            ado_project: None,
+            ado_pat: None,
             max_hops: DEFAULT_MAX_HOPS,
             include_builtin: false,
             severity_threshold: None,
             output: None,
+            ignore_file: None,
             suppressions: None,
             suppression_mode: SuppressionModeArg::Downgrade,
             gate_on_all: false,
@@ -5675,10 +6065,14 @@ mod tests {
             policy: PathBuf::from("/nonexistent/path/policy.yml"),
             format: VerifyFormat::Text,
             platform: Platform::GithubActions,
+            ado_org: None,
+            ado_project: None,
+            ado_pat: None,
             max_hops: DEFAULT_MAX_HOPS,
             include_builtin: false,
             severity_threshold: None,
             output: None,
+            ignore_file: None,
             suppressions: None,
             suppression_mode: SuppressionModeArg::Downgrade,
             gate_on_all: false,
@@ -5702,10 +6096,14 @@ mod tests {
             policy,
             format: VerifyFormat::Json,
             platform: Platform::GithubActions,
+            ado_org: None,
+            ado_project: None,
+            ado_pat: None,
             max_hops: DEFAULT_MAX_HOPS,
             include_builtin: false,
             severity_threshold: None,
             output: None,
+            ignore_file: None,
             suppressions: None,
             suppression_mode: SuppressionModeArg::Downgrade,
             gate_on_all: false,
@@ -5741,10 +6139,14 @@ mod tests {
             policy,
             format: VerifyFormat::Text,
             platform: Platform::GithubActions,
+            ado_org: None,
+            ado_project: None,
+            ado_pat: None,
             max_hops: DEFAULT_MAX_HOPS,
             include_builtin: false,
             severity_threshold: Some(SeverityLevel::Critical),
             output: None,
+            ignore_file: None,
             suppressions: None,
             suppression_mode: SuppressionModeArg::Downgrade,
             gate_on_all: false,
@@ -5794,10 +6196,14 @@ mod tests {
             policy,
             format: VerifyFormat::Text,
             platform: Platform::GithubActions,
+            ado_org: None,
+            ado_project: None,
+            ado_pat: None,
             max_hops: DEFAULT_MAX_HOPS,
             include_builtin: false,
             severity_threshold: None,
             output: None,
+            ignore_file: None,
             suppressions: None,
             suppression_mode: SuppressionModeArg::Downgrade,
             gate_on_all: false,
@@ -5860,10 +6266,14 @@ mod tests {
             policy,
             format: VerifyFormat::Text,
             platform: Platform::GithubActions,
+            ado_org: None,
+            ado_project: None,
+            ado_pat: None,
             max_hops: DEFAULT_MAX_HOPS,
             include_builtin: false,
             severity_threshold: None,
             output: None,
+            ignore_file: None,
             suppressions: None,
             suppression_mode: SuppressionModeArg::Downgrade,
             gate_on_all: false,
@@ -5925,10 +6335,14 @@ mod tests {
             policy,
             format: VerifyFormat::Text,
             platform: Platform::GithubActions,
+            ado_org: None,
+            ado_project: None,
+            ado_pat: None,
             max_hops: DEFAULT_MAX_HOPS,
             include_builtin: false,
             severity_threshold: None,
             output: None,
+            ignore_file: None,
             suppressions: None,
             suppression_mode: SuppressionModeArg::Downgrade,
             gate_on_all: false,
@@ -5970,10 +6384,14 @@ mod tests {
             policy,
             format: VerifyFormat::Text,
             platform: Platform::GithubActions,
+            ado_org: None,
+            ado_project: None,
+            ado_pat: None,
             max_hops: DEFAULT_MAX_HOPS,
             include_builtin: false,
             severity_threshold: None,
             output: None,
+            ignore_file: None,
             suppressions: None,
             suppression_mode: SuppressionModeArg::Downgrade,
             gate_on_all: true, // bypass baseline suppression
@@ -6045,10 +6463,14 @@ mod tests {
             policy,
             format: VerifyFormat::Text,
             platform: Platform::Auto,
+            ado_org: None,
+            ado_project: None,
+            ado_pat: None,
             max_hops: DEFAULT_MAX_HOPS,
             include_builtin: false,
             severity_threshold: None,
             output: None,
+            ignore_file: None,
             suppressions: None,
             suppression_mode: SuppressionModeArg::Downgrade,
             gate_on_all: false,
@@ -6084,10 +6506,14 @@ mod tests {
             policy,
             format: VerifyFormat::Text,
             platform: Platform::Auto,
+            ado_org: None,
+            ado_project: None,
+            ado_pat: None,
             max_hops: DEFAULT_MAX_HOPS,
             include_builtin: false,
             severity_threshold: None,
             output: None,
+            ignore_file: None,
             suppressions: None,
             suppression_mode: SuppressionModeArg::Downgrade,
             gate_on_all: false,

@@ -1,0 +1,318 @@
+# Algol Authority-Confusion Extensions — per-action variants (rc6+)
+#
+# Compatible:  taudit 1.1.0-rc.6 and later (CustomRule schema as shipped in
+#              rc.6 — `gha_action` metadata is now populated on Step nodes
+#              by `taudit-parse-gha`).
+# Provenance:  Algol disclosure program corpus hunt 2026-05-05/06.
+# Author:      rytilcock
+#
+# These per-action rules use STANDALONE mode (no propagation walk) so they
+# fire on every step that uses the named action family — gating the action
+# choice itself rather than waiting for the propagation engine to terminate
+# at an Image node. Pair with the propagation rules in
+# `algol-authority-confusion-extensions.yml` (the `_with_authority`
+# signature rule especially) for a full authority-confusion gate.
+#
+# Severity rationale:
+#   `high` is used for action families where the upstream behaviour reaches
+#   PATH-resolved helpers with deploy / publish authority and the bare
+#   helper hand-off has been corpus-confirmed.
+#   `medium` is used for families where the bare hand-off is real but the
+#   blast radius is bounded (test-only authority, dry-run modes, etc.).
+
+# ---------------------------------------------------------------------------
+# AI/ML publish helper family
+# ---------------------------------------------------------------------------
+id: algol_huggingface_action_in_use
+name: Hugging Face publish action used in this workflow
+description: >
+  This step uses a Hugging Face publish action (`huggingface/`). The action
+  delegates to a bare-name `hf` / `huggingface-cli` invocation that
+  resolves through whatever PATH `setup-python` / `setup-uv` mutated.
+  authority_delta_type: contract-boundary-violation. Pair with
+  `algol_github_path_mutator_with_authority` from the active bundle to
+  confirm the precondition fires in the same graph.
+severity: high
+category: authority_propagation
+match:
+  standalone:
+    node_type: step
+    metadata:
+      gha_action: { contains: huggingface }
+---
+id: algol_modal_action_in_use
+name: Modal publish action used in this workflow
+description: >
+  This step uses `modal-labs/setup-modal` or an inline `modal deploy`
+  invocation. Modal's CLI resolves through PATH and `$MODAL_CONFIG_PATH`
+  inherited from earlier setup-python steps in the same job.
+  authority_delta_type: contract-boundary-violation.
+severity: high
+category: authority_propagation
+match:
+  standalone:
+    node_type: step
+    metadata:
+      gha_action: { contains: modal-labs }
+---
+id: algol_replicate_action_in_use
+name: Replicate publish action used in this workflow
+description: >
+  This step uses a `replicate/` org action. Replicate's CLI is a Python
+  helper invoked by bare name after `setup-python` mutates PATH.
+  authority_delta_type: contract-boundary-violation.
+severity: high
+category: authority_propagation
+match:
+  standalone:
+    node_type: step
+    metadata:
+      gha_action: { contains: replicate/ }
+
+# ---------------------------------------------------------------------------
+# Edge / niche-cloud deploy helper family
+# ---------------------------------------------------------------------------
+---
+id: algol_vercel_action_in_use
+name: Vercel deploy action used in this workflow
+description: >
+  This step uses `vercel/action` or `amondnet/vercel-action`. The Vercel
+  CLI is invoked by bare name after `setup-node` mutates PATH.
+  authority_delta_type: contract-boundary-violation.
+severity: high
+category: authority_propagation
+match:
+  standalone:
+    node_type: step
+    metadata:
+      gha_action: { contains: vercel }
+---
+id: algol_netlify_action_in_use
+name: Netlify deploy action used in this workflow
+description: >
+  This step uses a Netlify deploy action (`netlify/actions/cli`,
+  `nwtgck/actions-netlify`, `jsmrcaga/action-netlify-deploy`). The Netlify
+  CLI is invoked by bare name after `setup-node` mutates PATH.
+  authority_delta_type: contract-boundary-violation.
+severity: high
+category: authority_propagation
+match:
+  standalone:
+    node_type: step
+    metadata:
+      gha_action: { contains: netlify }
+---
+id: algol_flyio_action_in_use
+name: Fly.io flyctl action used in this workflow
+description: >
+  This step uses `superfly/flyctl-actions` (setup-flyctl or fly-deploy).
+  flyctl is added to GITHUB_PATH by the setup action and invoked by bare
+  name in deploy steps in the same job. authority_delta_type:
+  contract-boundary-violation.
+severity: high
+category: authority_propagation
+match:
+  standalone:
+    node_type: step
+    metadata:
+      gha_action: { contains: superfly/flyctl-actions }
+---
+id: algol_digitalocean_doctl_action_in_use
+name: DigitalOcean doctl action used in this workflow
+description: >
+  This step uses `digitalocean/action-doctl`. doctl is installed onto
+  runner PATH by the setup action and invoked by bare name from later
+  steps that pass `DIGITALOCEAN_ACCESS_TOKEN`. authority_delta_type:
+  contract-boundary-violation.
+severity: high
+category: authority_propagation
+match:
+  standalone:
+    node_type: step
+    metadata:
+      gha_action: { contains: digitalocean/action-doctl }
+---
+id: algol_supabase_cli_action_in_use
+name: Supabase CLI action used in this workflow
+description: >
+  This step uses `supabase/setup-cli`. supabase is added to GITHUB_PATH
+  by the setup action and invoked by bare name in later branches/db
+  steps with `SUPABASE_ACCESS_TOKEN`. authority_delta_type:
+  contract-boundary-violation.
+severity: high
+category: authority_propagation
+match:
+  standalone:
+    node_type: step
+    metadata:
+      gha_action: { contains: supabase/setup-cli }
+---
+id: algol_jfrog_cli_action_in_use
+name: JFrog CLI action used in this workflow
+description: >
+  This step uses `jfrog/setup-jfrog-cli`. The jfrog CLI is added to
+  GITHUB_PATH by the setup action and invoked by bare name in
+  `jfrog rt build-promote` etc. with Artifactory authority.
+  authority_delta_type: contract-boundary-violation.
+severity: high
+category: authority_propagation
+match:
+  standalone:
+    node_type: step
+    metadata:
+      gha_action: { contains: jfrog/setup-jfrog-cli }
+
+# ---------------------------------------------------------------------------
+# Kubernetes deploy helper family
+# ---------------------------------------------------------------------------
+---
+id: algol_helm_action_in_use
+name: Helm/Kustomize deploy action used in this workflow
+description: >
+  This step uses `azure/setup-helm`, `helm/`, or `helm/chart-releaser-action`.
+  Helm CLIs are added to GITHUB_PATH by setup actions and invoked by bare
+  name in deploy steps carrying kubeconfig authority. authority_delta_type:
+  contract-boundary-violation.
+severity: high
+category: authority_propagation
+match:
+  standalone:
+    node_type: step
+    metadata:
+      gha_action: { contains: helm }
+---
+id: algol_argocd_flux_action_in_use
+name: ArgoCD/Flux deploy action used in this workflow
+description: >
+  This step uses `argoproj/`, `argoproj-labs/`, `fluxcd/`, or
+  `weaveworks/` deploy actions. These actions install argocd/flux CLIs to
+  mutable PATH and run bootstrap/sync commands carrying cluster-admin
+  authority. authority_delta_type: contract-boundary-violation.
+severity: high
+category: authority_propagation
+match:
+  standalone:
+    node_type: step
+    metadata:
+      gha_action: { contains: fluxcd }
+
+# ---------------------------------------------------------------------------
+# Secret-manager fetch helper family
+# ---------------------------------------------------------------------------
+---
+id: algol_vault_action_in_use
+name: HashiCorp Vault action used in this workflow
+description: >
+  This step uses `hashicorp/vault-action`. The action fetches Vault
+  secrets and writes them to $GITHUB_ENV (writes_env_gate); later steps
+  invoke `vault` CLI by bare name. authority_delta_type:
+  contract-boundary-violation.
+severity: high
+category: authority_propagation
+match:
+  standalone:
+    node_type: step
+    metadata:
+      gha_action: { contains: hashicorp/vault-action }
+---
+id: algol_doppler_action_in_use
+name: Doppler CLI action used in this workflow
+description: >
+  This step uses `dopplerhq/cli-action`. Doppler CLI is installed onto
+  GITHUB_PATH and `doppler secrets` is invoked by bare name to fetch
+  additional credentials. authority_delta_type:
+  contract-boundary-violation.
+severity: high
+category: authority_propagation
+match:
+  standalone:
+    node_type: step
+    metadata:
+      gha_action: { contains: dopplerhq/cli-action }
+---
+id: algol_1password_load_secrets_action_in_use
+name: 1Password load-secrets action used in this workflow
+description: >
+  This step uses `1Password/load-secrets-action`. The action fetches
+  secrets via the 1Password Connect API and writes them to $GITHUB_ENV;
+  later steps invoke `op` by bare name. authority_delta_type:
+  contract-boundary-violation.
+severity: high
+category: authority_propagation
+match:
+  standalone:
+    node_type: step
+    metadata:
+      gha_action: { contains: 1password/load-secrets-action }
+
+# ---------------------------------------------------------------------------
+# DB-migration / data-platform helper family
+# ---------------------------------------------------------------------------
+---
+id: algol_atlas_action_in_use
+name: Ariga Atlas action used in this workflow
+description: >
+  This step uses `ariga/setup-atlas` or `ariga/atlas-action`. atlas is
+  added to GITHUB_PATH by setup-atlas; later steps run `atlas migrate
+  apply` by bare name with database URL authority.
+  authority_delta_type: contract-boundary-violation.
+severity: high
+category: authority_propagation
+match:
+  standalone:
+    node_type: step
+    metadata:
+      gha_action: { contains: ariga }
+---
+id: algol_databricks_action_in_use
+name: Databricks CLI action used in this workflow
+description: >
+  This step uses `databricks/setup-cli` or
+  `microsoft/azure-databricks-actions`. Databricks CLI is added to
+  GITHUB_PATH; later steps invoke `databricks` by bare name. The CLI
+  also reads `~/.databrickscfg` writable by any earlier same-job step.
+  authority_delta_type: contract-boundary-violation.
+severity: high
+category: authority_propagation
+match:
+  standalone:
+    node_type: step
+    metadata:
+      gha_action: { contains: databricks/setup-cli }
+---
+id: algol_snowflake_action_in_use
+name: Snowflake CLI action used in this workflow
+description: >
+  This step uses `snowflakedb/snowflake-cli-action`. Snowflake CLI is
+  added to GITHUB_PATH; later steps invoke `snow` by bare name with
+  account/warehouse-admin authority. authority_delta_type:
+  contract-boundary-violation.
+severity: high
+category: authority_propagation
+match:
+  standalone:
+    node_type: step
+    metadata:
+      gha_action: { contains: snowflakedb/snowflake-cli-action }
+
+# ---------------------------------------------------------------------------
+# Sigstore signer in env-gate-writing workflow (exploit shape)
+# ---------------------------------------------------------------------------
+---
+id: algol_sigstore_signer_with_env_gate_writer
+name: Sigstore signing helper alongside env-gate writer in same graph
+description: >
+  This step uses a `sigstore/` org action AND writes the env gate (the
+  gha_action substring matches sigstore/* and writes_env_gate is true).
+  The sigstore signer resolves cosign plugins and sub-helpers through
+  the mutable runner state. authority_delta_type:
+  cross-principal-escalation when the workflow is PR-triggered,
+  intra-workflow-escalation otherwise.
+severity: high
+category: self_mutating_pipeline
+match:
+  standalone:
+    node_type: step
+    metadata:
+      gha_action: { contains: sigstore/ }
+      writes_env_gate: "true"

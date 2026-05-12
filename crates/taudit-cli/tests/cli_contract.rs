@@ -23,7 +23,11 @@ fn workspace_root() -> PathBuf {
 }
 
 fn taudit() -> Command {
-    Command::new(env!("CARGO_BIN_EXE_taudit"))
+    let mut cmd = Command::new(env!("CARGO_BIN_EXE_taudit"));
+    // Keep CLI-contract tests deterministic: avoid network-dependent update
+    // probe behavior in spawned subprocesses.
+    cmd.env("TAUDIT_NO_UPDATE_CHECK", "1");
+    cmd
 }
 
 fn unique_tmp_dir(label: &str) -> PathBuf {
@@ -203,6 +207,44 @@ fn verify_discovered_parse_error_is_fatal_with_strict_flag() {
     assert!(
         stderr.contains("error:") && stderr.contains("malformed.yml"),
         "expected fatal parse/read error mentioning malformed file; got stderr:\n{stderr}"
+    );
+}
+
+#[test]
+fn verify_include_builtin_exit_one_when_builtin_findings_exist() {
+    let fixture = workspace_root().join("tests/fixtures/propagation-leaky.yml");
+    assert!(fixture.exists(), "fixture must exist: {}", fixture.display());
+
+    let missing_policy = unique_tmp_dir("verify-missing-policy").join("policy.yml");
+    assert!(
+        !missing_policy.exists(),
+        "test requires missing policy path: {}",
+        missing_policy.display()
+    );
+
+    let output = taudit()
+        .arg("verify")
+        .arg("--include-builtin")
+        .arg("--policy")
+        .arg(&missing_policy)
+        .arg("--platform")
+        .arg("github-actions")
+        .arg(&fixture)
+        .output()
+        .expect("spawn taudit verify");
+
+    assert_eq!(
+        output.status.code(),
+        Some(1),
+        "builtin findings must drive verify exit 1 even when custom policy path is absent; stderr: {}\nstdout: {}",
+        String::from_utf8_lossy(&output.stderr),
+        String::from_utf8_lossy(&output.stdout)
+    );
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(
+        stdout.contains("verify:") && stdout.contains("violation"),
+        "verify output should report the builtin violations; got stdout:\n{stdout}"
     );
 }
 
@@ -518,23 +560,84 @@ fn invariants_dir_does_not_emit_deprecation_warning() {
     );
 }
 
+#[test]
+fn verify_bundled_strict_policy_skips_implicit_ado_identity() {
+    let tmp = unique_tmp_dir("verify-ado-implicit-oidc");
+    let pipeline = tmp.join("azure-pipelines.yml");
+    std::fs::write(
+        &pipeline,
+        "pr:\n  - main\nsteps:\n  - script: echo hi\n",
+    )
+    .expect("write ado pipeline");
+
+    let policy = workspace_root().join("invariants/starter/bundled-strict-policy.yml");
+    assert!(policy.exists(), "bundled strict policy must exist");
+
+    let output = taudit()
+        .arg("verify")
+        .arg("--policy")
+        .arg(&policy)
+        .arg("--platform")
+        .arg("azure-devops")
+        .arg(&pipeline)
+        .output()
+        .expect("spawn taudit verify");
+
+    assert_eq!(
+        output.status.code(),
+        Some(0),
+        "implicit ADO System.AccessToken must not trip strict_only_oidc_identities; stderr: {}\nstdout: {}",
+        String::from_utf8_lossy(&output.stderr),
+        String::from_utf8_lossy(&output.stdout)
+    );
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(
+        stdout.contains("verify: 0 violations"),
+        "expected zero violations from bundled strict policy on implicit-only ADO pipeline; got stdout:\n{stdout}"
+    );
+}
+
 // ── .taudit-suppressions.yml end-to-end ──────────────────────────────────
 
 /// Helper: scan the fixture once with `--format json --suppressions <none>`,
 /// pluck out the first finding fingerprint, and return it. Used by the
 /// suppression tests below to learn a real fingerprint to waive against.
 fn first_fingerprint_for(fixture: &std::path::Path) -> (String, String) {
-    let output = taudit()
-        .arg("scan")
-        .arg("--format")
-        .arg("json")
-        .arg(fixture)
-        .output()
-        .expect("spawn taudit");
+    let mut last = None;
+    for _ in 0..2 {
+        let output = taudit()
+            .arg("scan")
+            .arg("--format")
+            .arg("json")
+            .arg(fixture)
+            .output()
+            .expect("spawn taudit");
+        if output.status.success() {
+            let report: serde_json::Value =
+                serde_json::from_slice(&output.stdout).expect("parse JSON");
+            let findings = report["findings"].as_array().expect("findings array");
+            assert!(!findings.is_empty(), "fixture must have findings");
+            let fp = findings[0]["fingerprint"]
+                .as_str()
+                .expect("first finding fingerprint")
+                .to_string();
+            let category = findings[0]["category"]
+                .as_str()
+                .expect("first finding category")
+                .to_string();
+            return (fp, category);
+        }
+        last = Some(output);
+    }
+
+    let output = last.expect("at least one attempt recorded");
     assert!(
         output.status.success(),
-        "scan must succeed; stderr: {}",
-        String::from_utf8_lossy(&output.stderr)
+        "scan must succeed; status: {:?}; stderr: {}; stdout: {}",
+        output.status.code(),
+        String::from_utf8_lossy(&output.stderr),
+        String::from_utf8_lossy(&output.stdout)
     );
     let report: serde_json::Value = serde_json::from_slice(&output.stdout).expect("parse JSON");
     let findings = report["findings"].as_array().expect("findings array");
@@ -791,6 +894,155 @@ fn suppressions_list_emits_loaded_entries() {
     assert!(stdout.contains("deadbeefdeadbeef"));
     assert!(stdout.contains("unpinned_action"));
     assert!(stdout.contains("alice@example.com"));
+}
+
+#[test]
+fn verify_ignore_file_suppresses_matching_rule_from_exit_tally() {
+    let fixture = workspace_root().join("tests/fixtures/propagation-leaky.yml");
+    let dir = unique_tmp_dir("verify-ignore-file");
+    let policy = dir.join("policy.yml");
+    std::fs::write(
+        &policy,
+        "id: any_to_untrusted\nname: Authority reaches untrusted sink\ndescription: catch-all for untrusted propagation\nseverity: high\ncategory: authority_propagation\nmatch:\n  sink:\n    trust_zone: untrusted\n",
+    )
+    .expect("write policy");
+    let ignore = dir.join(".tauditignore");
+    std::fs::write(
+        &ignore,
+        "ignore:\n  - category: authority_propagation\n    reason: accepted for test\n",
+    )
+    .expect("write ignore file");
+
+    let output = taudit()
+        .arg("verify")
+        .arg("--policy")
+        .arg(&policy)
+        .arg("--platform")
+        .arg("github-actions")
+        .arg("--ignore-file")
+        .arg(&ignore)
+        .arg(&fixture)
+        .output()
+        .expect("spawn taudit verify");
+
+    assert_eq!(
+        output.status.code(),
+        Some(0),
+        "verify ignore-file should suppress matching findings from the exit tally; stderr: {}\nstdout: {}",
+        String::from_utf8_lossy(&output.stderr),
+        String::from_utf8_lossy(&output.stdout)
+    );
+}
+
+#[test]
+fn verify_auto_discovers_suppressions_and_logs_loaded_path() {
+    let dir = unique_tmp_dir("verify-auto-discovers-suppressions");
+    let fixture = workspace_root().join("tests/fixtures/clean.yml");
+    let policy = dir.join("policy.yml");
+    std::fs::write(
+        &policy,
+        "id: never_fires\nname: never\ndescription: no-op policy\nseverity: info\ncategory: authority_propagation\nmatch:\n  sink:\n    trust_zone: untrusted\n",
+    )
+    .expect("write policy");
+    let supp_path = dir.join(".taudit-suppressions.yml");
+    std::fs::write(
+        &supp_path,
+        "suppressions:\n  - fingerprint: \"deadbeefdeadbeef\"\n    rule_id: \"authority_propagation\"\n    reason: \"auto-discover test\"\n    accepted_by: \"test@example.com\"\n    accepted_at: \"2026-04-26\"\n    expires_at: \"2099-01-01\"\n",
+    )
+    .expect("write suppressions file");
+
+    let output = taudit()
+        .current_dir(&dir)
+        .arg("verify")
+        .arg("--policy")
+        .arg(&policy)
+        .arg("--platform")
+        .arg("github-actions")
+        .arg(&fixture)
+        .output()
+        .expect("spawn taudit verify");
+
+    assert_eq!(output.status.code(), Some(0));
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains("loaded 1 suppression") && stderr.contains(".taudit-suppressions.yml"),
+        "verify should log the discovered suppressions path; got stderr:\n{stderr}"
+    );
+}
+
+#[test]
+fn verify_warns_on_orphaned_suppression_fingerprint() {
+    let dir = unique_tmp_dir("verify-orphan-suppression");
+    let fixture = workspace_root().join("tests/fixtures/propagation-leaky.yml");
+    let policy = dir.join("policy.yml");
+    std::fs::write(
+        &policy,
+        "id: any_to_untrusted\nname: Authority reaches untrusted sink\ndescription: catch-all for untrusted propagation\nseverity: high\ncategory: authority_propagation\nmatch:\n  sink:\n    trust_zone: untrusted\n",
+    )
+    .expect("write policy");
+    let supp_path = dir.join(".taudit-suppressions.yml");
+    std::fs::write(
+        &supp_path,
+        "suppressions:\n  - fingerprint: \"deadbeef0000000000000000000000ff\"\n    rule_id: \"over_privileged_identity\"\n    reason: \"orphan test\"\n    accepted_by: \"test@example.com\"\n    accepted_at: \"2026-04-26\"\n    expires_at: \"2099-01-01\"\n",
+    )
+    .expect("write suppressions file");
+
+    let output = taudit()
+        .arg("verify")
+        .arg("--policy")
+        .arg(&policy)
+        .arg("--platform")
+        .arg("github-actions")
+        .arg("--suppressions")
+        .arg(&supp_path)
+        .arg(&fixture)
+        .output()
+        .expect("spawn taudit verify");
+
+    assert_eq!(output.status.code(), Some(1));
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains("matched no finding in this run") && stderr.contains("unexpected for this build"),
+        "verify should warn on orphan suppressions with a fingerprint-length hint; got stderr:\n{stderr}"
+    );
+}
+
+#[test]
+fn verify_warns_that_suppress_mode_is_tag_only() {
+    let fixture = workspace_root().join("tests/fixtures/propagation-leaky.yml");
+    let (fp, rule) = first_fingerprint_for(&fixture);
+    let dir = unique_tmp_dir("verify-suppress-warning");
+    let supp_path = dir.join(".taudit-suppressions.yml");
+    std::fs::write(
+        &supp_path,
+        format!(
+            "suppressions:\n  - fingerprint: \"{fp}\"\n    rule_id: \"{rule}\"\n    reason: \"suppress mode test\"\n    accepted_by: \"test@example.com\"\n    accepted_at: \"2026-04-26\"\n    expires_at: \"2099-01-01\"\n"
+        ),
+    )
+    .expect("write suppressions file");
+    let missing_policy = dir.join("missing-policy.yml");
+
+    let output = taudit()
+        .arg("verify")
+        .arg("--include-builtin")
+        .arg("--policy")
+        .arg(&missing_policy)
+        .arg("--platform")
+        .arg("github-actions")
+        .arg("--suppressions")
+        .arg(&supp_path)
+        .arg("--suppression-mode")
+        .arg("suppress")
+        .arg(&fixture)
+        .output()
+        .expect("spawn taudit verify");
+
+    assert_eq!(output.status.code(), Some(1));
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains("tag-only") && stderr.contains("still count toward exit 1"),
+        "verify should warn that suppress mode is tag-only; got stderr:\n{stderr}"
+    );
 }
 
 // ── GapKind surfacing in verify JSON output ─────────────────────────────

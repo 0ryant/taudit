@@ -2,19 +2,16 @@
 source: crates/taudit-cli/tests/snapshot_gha.rs
 expression: finding
 ---
-severity: high
-category: over_privileged_identity
+severity: critical
+category: gha_script_injection_to_privileged_shell
 nodes_involved:
-  - 0
-  - 2
   - 3
-message: "GITHUB_TOKEN has broad scope (permissions: 'write-all') — likely broader than needed"
+message: "Step 'check[1]' interpolates attacker-controlled GitHub context directly into a privileged script while secrets, OIDC, or write-token authority is in the job"
 recommendation:
-  type: reduce_permissions
-  current: write-all
-  minimum: "{ contents: read }"
+  type: manual
+  action: "Bind attacker-controlled values through step-level `env:` and reference them as data (`\"$VAR\"` or `process.env.VAR`); keep write tokens and secrets out of the injection-capable job."
 source: built-in
-time_to_fix: small
 confidence_scope: yaml_only
-authority_kinds:
-  - oidc_identity
+attacker_surface_kinds:
+  - script_sink
+  - untrusted_step

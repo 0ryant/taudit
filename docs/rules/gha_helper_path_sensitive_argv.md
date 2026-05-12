@@ -9,7 +9,10 @@
 
 Fires when a same-job earlier step writes to `GITHUB_PATH` and a later known helper-delegating GitHub Action passes sensitive material to a bare helper through argv.
 
-Current action coverage includes `azure/login`, `aws-actions/amazon-ecr-login`, `cachix/cachix-action`, and `google-github-actions/setup-gcloud` when `skip_install: true`.
+Current action coverage includes `azure/login`, `aws-actions/amazon-ecr-login`,
+`cachix/cachix-action`, `google-github-actions/setup-gcloud` when
+`skip_install: true`, `google-github-actions/deploy-appengine`, and
+`google-github-actions/deploy-cloudrun`.
 
 ## Risk
 

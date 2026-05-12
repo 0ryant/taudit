@@ -157,7 +157,7 @@ should treat the §4 additions as "may rename before v1".
 
 | Field | Location in codebase | Type | Stability |
 |-------|----------------------|------|-----------|
-| `CloudEventV1.correlationid` | `crates/taudit-sink-cloudevents/src/lib.rs` | `String` (UUIDv4 minted per `emit` call) | stable — same value applied to every finding event in one sink emission; documented as "shared correlation key for a single operator flow" |
+| `CloudEventV1.correlationid` | `crates/taudit-sink-cloudevents/src/lib.rs` | `String` (caller-supplied non-empty id via sink constructor or `TAUDIT_CORRELATION_ID`; UUIDv4 fallback per `emit` call) | stable — same value applied to every finding event in one sink emission; documented as "shared correlation key for a single operator flow" |
 | `CloudEventV1.tauditfindingfingerprint` | `crates/taudit-sink-cloudevents/src/lib.rs`; computed by `compute_fingerprint` in `taudit-core/src/finding.rs` | `String` (16-hex SHA-256) | stable — byte-identical to SARIF `partialFingerprints[primaryLocationLineHash]`, JSON `findings[].fingerprint`, and `BaselineFinding.fingerprint`; **the** cross-run dedup key |
 | `CloudEventV1.tauditfindinggroup` | `crates/taudit-sink-cloudevents/src/lib.rs`; computed by `compute_finding_group_id` | `String` (UUIDv5 over namespace + fingerprint) | stable — collapses per-hop findings against the same authority root |
 | `CloudEventV1.tauditcompleteness` | `crates/taudit-sink-cloudevents/src/lib.rs` | `String` (`"complete"` / `"partial"` / `"unknown"`) | stable |
@@ -178,7 +178,7 @@ should treat the §4 additions as "may rename before v1".
 | `Baseline.captured_at` / `captured_by` | `crates/taudit-core/src/baselines.rs` | `DateTime<Utc>` / `String` | stable |
 
 Notes:
-- taudit has a **real** `correlationid` field already (the only repo of the four with this name in source today), but it is minted **per `emit` call** by the sink — it is a *flow* id, not a *seam* id received from upstream. taudit currently has no path to consume an inbound `correlationId` from CellOS or tsafe.
+- taudit has a **real** `correlationid` field already (the only repo of the four with this name in source today). The sink can now consume a caller-supplied non-empty id through `CloudEventsJsonlSink::with_correlation_id` or `TAUDIT_CORRELATION_ID`; otherwise it mints one UUIDv4 per `emit` call.
 - taudit has **no** persistent "scan run ID" or "pipeline run ID" stored anywhere — each invocation is stateless from the tool's perspective; the only persistent identity is `Baseline.pipeline_content_hash` (which keys *what was scanned*, not *which scan*).
 - taudit has **no** parent-event pointer on findings or baselines.
 
@@ -186,7 +186,7 @@ Notes:
 
 | Proposed field | Status in taudit |
 |----------------|-----------------|
-| `correlationId` | **present as `correlationid` (sink-minted), but not seam-compliant.** The field name matches §4 (lowercase, no separators — already CloudEvents-1.0-correct). The shape is `UUIDv4` not the proposed `urn:<tool>:corr:<ulid>`. Critically, taudit only **produces** this id, never **consumes** an upstream one — to satisfy §4 the sink must accept an injected `correlationId` (env var, CLI flag, or sink ctor arg) and use it instead of `Uuid::new_v4()` when present. |
+| `correlationId` | **present as `correlationid` with inbound support.** The field name matches §4 (lowercase, no separators — already CloudEvents-1.0-correct). The sink accepts an injected non-empty id through constructor arg or `TAUDIT_CORRELATION_ID`, and falls back to `Uuid::new_v4()` when absent. The remaining gap is shape: taudit does not enforce the proposed `urn:<tool>:corr:<ulid>` form. |
 | `provenance.parent` | **absent.** No `parent` / `parent_id` field on `CloudEventV1`, `Finding`, or `Baseline`. The flat `provenance{repo,producer,version,kind}` quartet describes *self*, not *causation*. For G2/G4, taudit needs `provenanceparent` (or a nested `provenance` object once §4 lands). |
 | `subject` URN | **present as a free-form string, not URN.** `subject = graph.source.file` (file path). Needs to become `urn:taudit:pipeline:<contentHash>` or `urn:taudit:finding:<fingerprint>` to match §4. The file path is also a leak vector for absolute-path local-dev runs. |
 
@@ -198,5 +198,4 @@ Notes:
 - **`scanRunId`** — taudit needs a per-invocation run id distinct from `correlationid` so multiple sinks emitted from the same scan share the run, while `correlationid` remains the *operator-flow* key (which may span multiple scans). Today `correlationid` conflates the two roles.
 - **`findingFingerprint` as a seam field** — `tauditfindingfingerprint` (and SARIF/JSON equivalents) is taudit's stable cross-run dedup key. For G2 (provenance graph build), CellOS/tencrypt receipts that reference a taudit finding should carry the fingerprint as `provenance.parent = urn:taudit:finding:<fingerprint>` rather than the per-emission `CloudEvent.id`.
 - **`baselineCapturedWith` as seam-visible provenance** — `Baseline.captured_with.{taudit_version,rules_version}` is currently baseline-internal. For seam-level reproducibility (taudit → SIEM → re-run), the rules_version should appear on each emitted CloudEvent (not just in the on-disk baseline), so consumers can answer "would re-running today produce the same finding set?" without parsing the baseline file.
-- **Inbound `correlationId` channel** — `CloudEventsJsonlSink::emit` must accept a caller-supplied correlation id (constructor arg or env var, e.g. `TAUDIT_CORRELATION_ID`) and fall back to `Uuid::new_v4()` only when absent. Without this, taudit can never be a downstream consumer of CellOS/tsafe correlation.
-
+- **Inbound `correlationId` channel** — shipped for the CloudEvents sink: `CloudEventsJsonlSink::with_correlation_id(Some(non_empty))` and `TAUDIT_CORRELATION_ID` both feed `correlationid`; empty values fall back to `Uuid::new_v4()`.

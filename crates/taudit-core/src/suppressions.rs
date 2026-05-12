@@ -63,6 +63,7 @@ use serde::{Deserialize, Serialize};
 use crate::finding::{downgrade_severity, Finding};
 
 const MAX_CONFIG_BYTES: u64 = 2 * 1024 * 1024;
+const CURRENT_FINGERPRINT_HEX_LEN: usize = 16;
 
 /// Mode controlling how the suppression applicator modifies a matched
 /// finding. `Downgrade` (default) drops severity one tier; `Suppress`
@@ -271,7 +272,7 @@ impl SuppressionConfig {
         mode: SuppressionMode,
         fingerprints: &[String],
         today: chrono::NaiveDate,
-    ) -> (Vec<Finding>, Vec<String>) {
+    ) -> (Vec<Finding>, Vec<String>, std::collections::HashSet<String>) {
         // Index suppressions by fingerprint for O(1) lookup. If two
         // entries share a fingerprint (operator confusion), the first
         // wins — keep the loader's order so behaviour is predictable.
@@ -283,6 +284,7 @@ impl SuppressionConfig {
 
         let mut warnings = Vec::new();
         let mut out: Vec<Finding> = Vec::with_capacity(findings.len());
+        let mut matched: std::collections::HashSet<String> = std::collections::HashSet::new();
 
         for (i, mut finding) in findings.into_iter().enumerate() {
             let fp = fingerprints.get(i).map(String::as_str);
@@ -290,6 +292,7 @@ impl SuppressionConfig {
                 out.push(finding);
                 continue;
             };
+            matched.insert(entry.fingerprint.clone());
 
             // Expired? Emit a warning, do not apply.
             if let Some(ref expiry) = entry.expires_at {
@@ -335,7 +338,38 @@ impl SuppressionConfig {
             out.push(finding);
         }
 
-        (out, warnings)
+        (out, warnings, matched)
+    }
+
+    /// Warnings for suppression entries that matched nothing in the current
+    /// run. Silent no-op waivers are operationally dangerous because they look
+    /// configured but do not affect the gate.
+    pub fn unmatched_warnings(
+        &self,
+        matched_fingerprints: &std::collections::HashSet<String>,
+    ) -> Vec<String> {
+        let mut warnings = Vec::new();
+        for entry in &self.suppressions {
+            if matched_fingerprints.contains(&entry.fingerprint) {
+                continue;
+            }
+
+            let mut warning = format!(
+                "warning: suppression for fingerprint {} (rule {}) matched no finding in this run",
+                entry.fingerprint, entry.rule_id
+            );
+
+            if entry.fingerprint.len() != CURRENT_FINGERPRINT_HEX_LEN {
+                warning.push_str(&format!(
+                    " — fingerprint length {} hex chars is unexpected for this build (expected {})",
+                    entry.fingerprint.len(),
+                    CURRENT_FINGERPRINT_HEX_LEN
+                ));
+            }
+
+            warnings.push(warning);
+        }
+        warnings
     }
 
     /// Compute the runtime status of a single suppression entry.
@@ -534,9 +568,10 @@ suppressions:
 
         let f = finding(Severity::High, "msg");
         let fingerprints = vec!["deadbeef00000000".to_string()];
-        let (out, warnings) =
+        let (out, warnings, matched) =
             cfg.apply(vec![f], SuppressionMode::Downgrade, &fingerprints, today());
         assert!(warnings.is_empty());
+        assert!(matched.contains("deadbeef00000000"));
         assert_eq!(out[0].severity, Severity::Medium);
         assert_eq!(out[0].extras.original_severity, Some(Severity::High));
         assert_eq!(
@@ -560,8 +595,10 @@ suppressions:
         };
         let f = finding(Severity::High, "msg");
         let fingerprints = vec!["deadbeef00000000".to_string()];
-        let (out, _w) = cfg.apply(vec![f], SuppressionMode::Suppress, &fingerprints, today());
+        let (out, _w, matched) =
+            cfg.apply(vec![f], SuppressionMode::Suppress, &fingerprints, today());
         assert_eq!(out[0].severity, Severity::High);
+        assert!(matched.contains("deadbeef00000000"));
         assert!(out[0].extras.suppressed);
         assert_eq!(out[0].extras.original_severity, Some(Severity::High));
     }
@@ -580,10 +617,11 @@ suppressions:
         };
         let f = finding(Severity::High, "msg");
         let fingerprints = vec!["deadbeef00000000".to_string()];
-        let (out, warnings) =
+        let (out, warnings, matched) =
             cfg.apply(vec![f], SuppressionMode::Downgrade, &fingerprints, today());
         // Severity unchanged.
         assert_eq!(out[0].severity, Severity::High);
+        assert!(matched.contains("deadbeef00000000"));
         // Warning surfaced.
         assert_eq!(warnings.len(), 1);
         assert!(
@@ -633,6 +671,42 @@ suppressions:
         let critical = ["cafebabecafebabe"];
         cfg.validate_critical_waivers(critical.iter().copied())
             .expect("expiring waiver should pass");
+    }
+
+    #[test]
+    fn unmatched_warning_reports_orphaned_suppression() {
+        let cfg = SuppressionConfig {
+            suppressions: vec![Suppression {
+                fingerprint: "deadbeef00000000".into(),
+                rule_id: "unpinned_action".into(),
+                reason: "orphaned".into(),
+                accepted_by: "alice@example.com".into(),
+                accepted_at: "2026-04-26".into(),
+                expires_at: Some("2026-07-26".into()),
+            }],
+        };
+
+        let warnings = cfg.unmatched_warnings(&std::collections::HashSet::new());
+        assert_eq!(warnings.len(), 1);
+        assert!(warnings[0].contains("matched no finding"));
+    }
+
+    #[test]
+    fn unmatched_warning_hints_on_unexpected_fingerprint_length() {
+        let cfg = SuppressionConfig {
+            suppressions: vec![Suppression {
+                fingerprint: "deadbeef0000000000000000000000ff".into(),
+                rule_id: "unpinned_action".into(),
+                reason: "wrong length".into(),
+                accepted_by: "alice@example.com".into(),
+                accepted_at: "2026-04-26".into(),
+                expires_at: Some("2026-07-26".into()),
+            }],
+        };
+
+        let warnings = cfg.unmatched_warnings(&std::collections::HashSet::new());
+        assert_eq!(warnings.len(), 1);
+        assert!(warnings[0].contains("unexpected for this build"));
     }
 
     #[test]

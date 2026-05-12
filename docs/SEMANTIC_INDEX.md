@@ -42,6 +42,7 @@ Core domain vocabulary:
 
 - `crates/taudit-api/src/lib.rs`: stable wire types and metadata constants.
 - `schemas/authority-graph.v1.json`: graph export schema.
+- `schemas/exploit-graph.v1.json`: exploit-path graph projection schema.
 - `schemas/authority-propagation-summary.v1.json`: propagation rollup schema.
 - `schemas/finding.v1.json`: single finding schema.
 - `schemas/baseline.v1.json`: baseline file schema.

@@ -113,6 +113,12 @@ impl PipelineParser for GhaParser {
                     .metadata
                     .insert(META_DISPATCH_INPUTS.into(), inputs.join(","));
             }
+            let call_inputs = collect_workflow_call_inputs(triggers);
+            if !call_inputs.is_empty() {
+                graph
+                    .metadata
+                    .insert(META_GHA_WORKFLOW_CALL_INPUTS.into(), call_inputs.join(","));
+            }
         }
 
         // Workflow-level permissions -> GITHUB_TOKEN identity node. When the
@@ -216,6 +222,31 @@ impl PipelineParser for GhaParser {
                 let job_step_id = graph.add_node(NodeKind::Step, job_name, TrustZone::FirstParty);
                 if let Some(node) = graph.nodes.get_mut(job_step_id) {
                     node.metadata.insert(META_JOB_NAME.into(), job_name.clone());
+                    node.metadata.insert(
+                        META_GHA_ACTION.into(),
+                        uses.split('@').next().unwrap_or(uses).into(),
+                    );
+                    if let Some(runs_on) = job.runs_on.as_ref().and_then(yaml_value_compact) {
+                        node.metadata.insert(META_GHA_RUNS_ON.into(), runs_on);
+                    }
+                    let condition = combined_condition(job.if_cond.as_deref(), None);
+                    if let Some(condition) = condition {
+                        node.metadata.insert(META_CONDITION.into(), condition);
+                    }
+                    if let Some(with) = job.with.as_ref() {
+                        let mut entries: Vec<(&String, &serde_yaml::Value)> = with.iter().collect();
+                        entries.sort_by(|a, b| a.0.cmp(b.0));
+                        let rendered: Vec<String> = entries
+                            .into_iter()
+                            .filter_map(|(key, value)| {
+                                yaml_scalar_to_string(value).map(|scalar| format!("{key}={scalar}"))
+                            })
+                            .collect();
+                        if !rendered.is_empty() {
+                            node.metadata
+                                .insert(META_GHA_WITH_INPUTS.into(), rendered.join("\n"));
+                        }
+                    }
                     // Stamp `secrets: inherit` so downstream rules can flag wide-open
                     // secret forwarding. The `secrets:` block on a reusable-workflow
                     // call is either the literal string "inherit" or a mapping —
@@ -326,6 +357,11 @@ impl PipelineParser for GhaParser {
                 };
                 let mut meta = HashMap::new();
                 meta.insert(META_CONTAINER.into(), "true".into());
+                if let Some(options) = container.options() {
+                    if !options.is_empty() {
+                        meta.insert(META_GHA_CONTAINER_OPTIONS.into(), options.to_string());
+                    }
+                }
                 if pinned {
                     if let Some(digest) = image_str.split("@sha256:").nth(1) {
                         meta.insert(META_DIGEST.into(), format!("sha256:{digest}"));
@@ -362,6 +398,14 @@ impl PipelineParser for GhaParser {
                 // the actual command text the runner will execute.
                 if let Some(node) = graph.nodes.get_mut(step_id) {
                     node.metadata.insert(META_JOB_NAME.into(), job_name.clone());
+                    if let Some(runs_on) = job.runs_on.as_ref().and_then(yaml_value_compact) {
+                        node.metadata.insert(META_GHA_RUNS_ON.into(), runs_on);
+                    }
+                    let condition =
+                        combined_condition(job.if_cond.as_deref(), step.if_cond.as_deref());
+                    if let Some(condition) = condition {
+                        node.metadata.insert(META_CONDITION.into(), condition);
+                    }
                     if let Some(ref uses) = step.uses {
                         let action = uses.split('@').next().unwrap_or(uses);
                         node.metadata.insert(META_GHA_ACTION.into(), action.into());
@@ -692,6 +736,16 @@ impl PipelineParser for GhaParser {
 
                 let mut effective_entries: Vec<(&String, &String)> = effective_env.iter().collect();
                 effective_entries.sort_by(|a, b| a.0.cmp(b.0));
+                if !effective_entries.is_empty() {
+                    let rendered_env: Vec<String> = effective_entries
+                        .iter()
+                        .map(|(k, v)| format!("{k}={v}"))
+                        .collect();
+                    if let Some(node) = graph.nodes.get_mut(step_id) {
+                        node.metadata
+                            .insert(META_GHA_ENV_ASSIGNMENTS.into(), rendered_env.join("\n"));
+                    }
+                }
                 for (_k, env_val) in effective_entries {
                     // Walk every `secrets.X` reference inside the value's
                     // template spans — concatenated multi-secret values
@@ -1054,6 +1108,31 @@ fn collect_dispatch_inputs(triggers: &serde_yaml::Value) -> Vec<String> {
         None => return Vec::new(),
     };
     let inputs = match dispatch.get("inputs").and_then(|v| v.as_mapping()) {
+        Some(m) => m,
+        None => return Vec::new(),
+    };
+    inputs
+        .iter()
+        .filter_map(|(k, _)| k.as_str().map(str::to_string))
+        .collect()
+}
+
+/// Extract the list of `workflow_call.inputs.<name>` keys declared by a
+/// reusable workflow. Returns an empty Vec if `on:` is not a mapping, has no
+/// `workflow_call` trigger, or the trigger has no `inputs:` mapping.
+fn collect_workflow_call_inputs(triggers: &serde_yaml::Value) -> Vec<String> {
+    let map = match triggers {
+        serde_yaml::Value::Mapping(m) => m,
+        _ => return Vec::new(),
+    };
+    let call = match map
+        .iter()
+        .find(|(k, _)| k.as_str() == Some("workflow_call"))
+    {
+        Some((_, v)) => v,
+        None => return Vec::new(),
+    };
+    let inputs = match call.get("inputs").and_then(|v| v.as_mapping()) {
         Some(m) => m,
         None => return Vec::new(),
     };
@@ -1450,6 +1529,49 @@ fn yaml_scalar_to_string(value: &serde_yaml::Value) -> Option<String> {
     }
 }
 
+fn yaml_value_compact(value: &serde_yaml::Value) -> Option<String> {
+    match value {
+        serde_yaml::Value::Sequence(seq) => {
+            let parts: Vec<String> = seq.iter().filter_map(yaml_scalar_to_string).collect();
+            if parts.is_empty() {
+                None
+            } else {
+                Some(parts.join(","))
+            }
+        }
+        serde_yaml::Value::Mapping(map) => {
+            let mut parts: Vec<String> = map
+                .iter()
+                .filter_map(|(k, v)| {
+                    Some(format!(
+                        "{}={}",
+                        yaml_scalar_to_string(k)?,
+                        yaml_value_compact(v)?
+                    ))
+                })
+                .collect();
+            parts.sort();
+            if parts.is_empty() {
+                None
+            } else {
+                Some(parts.join(","))
+            }
+        }
+        scalar => yaml_scalar_to_string(scalar),
+    }
+}
+
+fn combined_condition(job_if: Option<&str>, step_if: Option<&str>) -> Option<String> {
+    match (job_if, step_if) {
+        (Some(job), Some(step)) if !job.is_empty() && !step.is_empty() => {
+            Some(format!("{job} AND {step}"))
+        }
+        (Some(job), _) if !job.is_empty() => Some(job.to_string()),
+        (_, Some(step)) if !step.is_empty() => Some(step.to_string()),
+        _ => None,
+    }
+}
+
 fn yaml_scalar_strings(value: &serde_yaml::Value) -> Vec<String> {
     match value {
         serde_yaml::Value::Sequence(seq) => seq.iter().filter_map(yaml_scalar_to_string).collect(),
@@ -1510,14 +1632,25 @@ pub struct GhaWorkflow {
 #[serde(untagged)]
 pub enum ContainerConfig {
     Image(String),
-    Full { image: String },
+    Full {
+        image: String,
+        #[serde(default)]
+        options: Option<String>,
+    },
 }
 
 impl ContainerConfig {
     pub fn image(&self) -> &str {
         match self {
             ContainerConfig::Image(s) => s,
-            ContainerConfig::Full { image } => image,
+            ContainerConfig::Full { image, .. } => image,
+        }
+    }
+
+    pub fn options(&self) -> Option<&str> {
+        match self {
+            ContainerConfig::Image(_) => None,
+            ContainerConfig::Full { options, .. } => options.as_deref(),
         }
     }
 }
@@ -1536,6 +1669,9 @@ pub struct GhaJob {
     /// Reusable workflow reference — `uses: owner/repo/.github/workflows/foo.yml@ref`
     #[serde(default)]
     pub uses: Option<String>,
+    /// `with:` inputs passed to a reusable workflow call.
+    #[serde(rename = "with", default)]
+    pub with: Option<HashMap<String, serde_yaml::Value>>,
     /// `secrets:` block on a reusable-workflow `uses:` call. Polymorphic:
     /// the literal string `inherit` (`secrets: inherit`) or a mapping of
     /// secret-name → expression (`secrets: { TOKEN: ${{ secrets.X }} }`).
@@ -1723,6 +1859,93 @@ jobs:
             .expect("with inputs");
         assert!(inputs.contains("mask-password=false"));
         assert!(inputs.contains("registries=123456789012"));
+    }
+
+    #[test]
+    fn parser_stamps_new_exploit_rule_metadata() {
+        let yaml = r#"
+on:
+  workflow_call:
+    inputs:
+      image:
+        type: string
+jobs:
+  call:
+    uses: org/repo/.github/workflows/reuse.yml@main
+    runs-on: ${{ inputs.runner }}
+    secrets: inherit
+    with:
+      image: ${{ inputs.image }}
+  deploy:
+    runs-on: [ubuntu-latest]
+    if: ${{ needs.plan.outputs.pr_run_mode == 'upload' }}
+    env:
+      NODE_OPTIONS: --require=./hook.js
+    container:
+      image: ${{ inputs.image }}
+      options: --privileged
+    steps:
+      - name: Publish
+        if: ${{ github.event_name == 'push' }}
+        run: npm publish
+"#;
+        let graph = parse(yaml);
+        assert_eq!(
+            graph
+                .metadata
+                .get(META_GHA_WORKFLOW_CALL_INPUTS)
+                .map(String::as_str),
+            Some("image")
+        );
+
+        let call = graph
+            .nodes_of_kind(NodeKind::Step)
+            .find(|n| n.name == "call")
+            .expect("synthetic reusable call step");
+        assert_eq!(
+            call.metadata.get(META_SECRETS_INHERIT).map(String::as_str),
+            Some("true")
+        );
+        assert!(
+            call.metadata
+                .get(META_GHA_WITH_INPUTS)
+                .map(|v| v.contains("image=${{ inputs.image }}"))
+                .unwrap_or(false),
+            "reusable-call with inputs should be stamped"
+        );
+        assert_eq!(
+            call.metadata.get(META_GHA_RUNS_ON).map(String::as_str),
+            Some("${{ inputs.runner }}")
+        );
+
+        let publish = graph
+            .nodes_of_kind(NodeKind::Step)
+            .find(|n| n.name == "Publish")
+            .expect("publish step");
+        assert!(
+            publish
+                .metadata
+                .get(META_GHA_ENV_ASSIGNMENTS)
+                .map(|v| v.contains("NODE_OPTIONS=--require=./hook.js"))
+                .unwrap_or(false),
+            "effective env assignments should be stamped on steps"
+        );
+        assert_eq!(
+            publish.metadata.get(META_CONDITION).map(String::as_str),
+            Some("${{ needs.plan.outputs.pr_run_mode == 'upload' }} AND ${{ github.event_name == 'push' }}")
+        );
+
+        let container = graph
+            .nodes_of_kind(NodeKind::Image)
+            .find(|n| n.metadata.get(META_CONTAINER).map(String::as_str) == Some("true"))
+            .expect("container image node");
+        assert_eq!(
+            container
+                .metadata
+                .get(META_GHA_CONTAINER_OPTIONS)
+                .map(String::as_str),
+            Some("--privileged")
+        );
     }
 
     #[test]

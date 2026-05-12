@@ -9,7 +9,10 @@
 
 Fires when a same-job earlier step writes to `GITHUB_PATH` and a later known helper-delegating action invokes a bare helper while sensitive env authority is in scope.
 
-Current action coverage includes `teleport-actions/database-tunnel`, `cloudflare/wrangler-action`, `JS-DevTools/npm-publish`, and `cachix/cachix-action`.
+Current action coverage includes `FirebaseExtended/action-hosting-deploy`,
+`teleport-actions/database-tunnel`, `cloudflare/wrangler-action`,
+`JS-DevTools/npm-publish`, `google-github-actions/deploy-appengine`,
+`google-github-actions/deploy-cloudrun`, and `cachix/cachix-action`.
 
 ## Risk
 

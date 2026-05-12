@@ -8,15 +8,13 @@ nodes_involved:
   - 0
   - 2
   - 3
-message: "[oidc_identity_in_untrusted_context] OIDC identity 'GITHUB_TOKEN' is reachable from untrusted trigger steps [check[0], check[1]]"
+message: "GITHUB_TOKEN has broad scope (permissions: 'write-all') — likely broader than needed"
 recommendation:
-  type: manual
-  action: Move OIDC credential minting to a trusted-ref workflow or protect it with environment approvals and provider-side subject/audience conditions that exclude fork pull requests and untrusted merge requests.
+  type: reduce_permissions
+  current: write-all
+  minimum: "{ contents: read }"
 source: built-in
-fingerprint_anchor: identity=GITHUB_TOKEN
+time_to_fix: small
 confidence_scope: yaml_only
-runtime_preconditions:
-  - downstream identity provider accepts the issued OIDC token
-  - the configured audience or cloud role grants useful authority
 authority_kinds:
   - oidc_identity

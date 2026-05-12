@@ -2,7 +2,7 @@
 
 Three horizons. Each is a superset of the previous.
 
-**Current state (v1.0.x):** Multi-crate workspace, 60+ built-in authority invariants + custom YAML invariant DSL, 3 parsers (GHA + ADO + GitLab CI), commands include **scan**, **verify**, **graph** (`json` / `dot` / `mermaid` / **`summary`**), **map**, **diff**, **baseline**, **suppressions**, **remediate** (unstable), etc. Machine contracts: [`schemas/authority-graph.v1.json`](../schemas/authority-graph.v1.json) (graph JSON + optional edge summaries), [`schemas/authority-propagation-summary.v1.json`](../schemas/authority-propagation-summary.v1.json) (propagation rollup), scan/report schemas under [`contracts/schemas/`](../contracts/schemas/). Per-pipeline baselines under `.taudit/baselines/` (opt-in). Reference consumers in `examples/consumers/`. **Golden paths** (blessed demo commands): [`golden-paths.md`](golden-paths.md); CI + `just golden-paths` smoke them. Remaining v1.0 charter gap is mostly **parity at `Complete`** across platforms and **DSL/schema publication polish** — see table below.
+**Current state (v1.0.x):** Multi-crate workspace, 60+ built-in authority invariants + custom YAML invariant DSL, 3 parsers (GHA + ADO + GitLab CI), commands include **scan**, **verify**, **graph** (`json` / `dot` / `mermaid` / **`summary`**), **map**, **diff**, **baseline**, **suppressions**, **remediate** (unstable), etc. Machine contracts: [`schemas/authority-graph.v1.json`](../schemas/authority-graph.v1.json) (graph JSON + optional edge summaries), [`schemas/exploit-graph.v1.json`](../schemas/exploit-graph.v1.json) (exploit-path graph projection), [`schemas/authority-propagation-summary.v1.json`](../schemas/authority-propagation-summary.v1.json) (propagation rollup), scan/report schemas under [`contracts/schemas/`](../contracts/schemas/). Per-pipeline baselines under `.taudit/baselines/` (opt-in). Reference consumers in `examples/consumers/`. **Golden paths** (blessed demo commands): [`golden-paths.md`](golden-paths.md); CI + `just golden-paths` smoke them. Remaining v1.0 charter gap is mostly **parity at `Complete`** across platforms and **DSL/schema publication polish** — see table below.
 
 **Effort key:** S = hours, M = days, L = week+
 
@@ -350,4 +350,3 @@ Documented incompleteness — not bugs, but places where the graph underapproxim
 
 **Still open:**
 - Scope propagation escalation nuance (cloud OIDC identity to pinned ThirdParty sink)
-

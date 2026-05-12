@@ -945,6 +945,350 @@ pub const RULE_DEFS: &[RuleDef] = &[
         tags: &["security", "privilege-escalation", "github-actions"],
     },
     RuleDef {
+        id: "gha_script_injection_to_privileged_shell",
+        name: "GhaScriptInjectionToPrivilegedShell",
+        short_description: "Untrusted GitHub context reaches privileged shell script.",
+        full_description:
+            "A run/script body interpolates attacker-controlled GitHub context directly \
+             into shell or JavaScript while the job holds secrets, OIDC, or write-token \
+             authority. This is the high-confidence subset of script injection leads.",
+        default_level: "error",
+        security_severity: "9.0",
+        tags: &["security", "injection", "github-actions"],
+    },
+    RuleDef {
+        id: "gha_workflow_run_artifact_poisoning_to_privileged_consumer",
+        name: "GhaWorkflowRunArtifactPoisoningToPrivilegedConsumer",
+        short_description: "PR artifact is interpreted by privileged workflow_run consumer.",
+        full_description:
+            "A workflow_run or pull_request_target consumer downloads PR-context artifact \
+             content, interprets it, and holds write-token or non-default authority. This \
+             is the high-confidence artifact-poisoning lane.",
+        default_level: "error",
+        security_severity: "9.0",
+        tags: &["security", "artifact", "github-actions"],
+    },
+    RuleDef {
+        id: "gha_remote_script_in_authority_job",
+        name: "GhaRemoteScriptInAuthorityJob",
+        short_description: "Mutable remote script executes inside authority-bearing job.",
+        full_description:
+            "A curl/wget/deno remote-script execution pattern pinned to mutable branch \
+             content runs in a job with secrets, OIDC, cloud, registry, package, signing, \
+             or write-token authority.",
+        default_level: "error",
+        security_severity: "9.0",
+        tags: &["security", "supply-chain", "github-actions"],
+    },
+    RuleDef {
+        id: "gha_pat_remote_url_write",
+        name: "GhaPatRemoteUrlWrite",
+        short_description: "Git remote URL embeds token material during write operation.",
+        full_description:
+            "A GitHub Actions shell step embeds token material in a GitHub remote URL and \
+             performs write-capable git operations, exposing the token through argv, logs, \
+             shell history, or .git/config.",
+        default_level: "error",
+        security_severity: "7.5",
+        tags: &["security", "credentials", "github-actions"],
+    },
+    RuleDef {
+        id: "gha_env_credential_helper_config_redirect_before_authority",
+        name: "GhaEnvCredentialHelperConfigRedirectBeforeAuthority",
+        short_description:
+            "Credential-helper config env is redirected before authority-bearing helpers run.",
+        full_description:
+            "An earlier same-job step writes credential-helper configuration environment \
+             such as AWS_CONFIG_FILE, KUBECONFIG, DOCKER_CONFIG, NPM_CONFIG_USERCONFIG, \
+             or GOOGLE_APPLICATION_CREDENTIALS through GITHUB_ENV before a later cloud, \
+             registry, package, signing, or write-token helper boundary runs.",
+        default_level: "error",
+        security_severity: "7.8",
+        tags: &["security", "credentials", "github-actions"],
+    },
+    RuleDef {
+        id: "gha_env_node_options_code_injection_before_node_authority",
+        name: "GhaEnvNodeOptionsCodeInjectionBeforeNodeAuthority",
+        short_description: "NODE_OPTIONS startup injection precedes Node authority.",
+        full_description:
+            "An earlier same-job step writes NODE_OPTIONS startup injection flags such as \
+             --require, --import, or --experimental-loader through GITHUB_ENV before a \
+             later Node, npm, npx, pnpm, yarn, or JavaScript action boundary runs with \
+             package, cloud, OIDC, or write-token authority.",
+        default_level: "error",
+        security_severity: "8.0",
+        tags: &["security", "injection", "github-actions"],
+    },
+    RuleDef {
+        id: "gha_env_dyld_or_ld_library_path_before_credential_helper",
+        name: "GhaEnvDyldOrLdLibraryPathBeforeCredentialHelper",
+        short_description: "Dynamic-loader env state precedes credential helpers.",
+        full_description:
+            "An earlier same-job step writes LD_PRELOAD, LD_LIBRARY_PATH, DYLD_INSERT_LIBRARIES, \
+             or DYLD_LIBRARY_PATH through GITHUB_ENV before a later credential helper runs \
+             with cloud, registry, package, signing, or write-token authority.",
+        default_level: "error",
+        security_severity: "8.0",
+        tags: &["security", "injection", "github-actions"],
+    },
+    RuleDef {
+        id: "gha_workflow_call_container_image_input_secrets_inherit",
+        name: "GhaWorkflowCallContainerImageInputSecretsInherit",
+        short_description: "Reusable workflow inherits secrets with caller-controlled image input.",
+        full_description:
+            "A reusable workflow call or callee allows caller-controlled container image \
+             selection while secrets: inherit, OIDC, cloud, registry, package, or write-token \
+             authority is available across the caller/callee boundary.",
+        default_level: "error",
+        security_severity: "7.8",
+        tags: &["security", "privilege-escalation", "github-actions"],
+    },
+    RuleDef {
+        id: "gha_workflow_call_runner_label_input_privilege_escalation",
+        name: "GhaWorkflowCallRunnerLabelInputPrivilegeEscalation",
+        short_description: "Reusable workflow accepts caller-controlled runner labels with authority.",
+        full_description:
+            "A reusable workflow call or callee allows caller-controlled runner label \
+             selection while secrets, OIDC, cloud, registry, package, or write-token authority \
+             is available. Dynamic runner selection can become runner-placement authority.",
+        default_level: "error",
+        security_severity: "7.8",
+        tags: &["security", "privilege-escalation", "github-actions"],
+    },
+    RuleDef {
+        id: "gha_container_image_attacker_influenced_with_secret_env",
+        name: "GhaContainerImageAttackerInfluencedWithSecretEnv",
+        short_description: "Authority-bearing job uses attacker-influenced container image.",
+        full_description:
+            "A job container image is selected from inputs, matrix, event, or needs output \
+             state while secret, OIDC, registry, cloud, package, or write-token authority \
+             is present in the same job.",
+        default_level: "error",
+        security_severity: "7.8",
+        tags: &["security", "supply-chain", "github-actions"],
+    },
+    RuleDef {
+        id: "gha_attestation_subject_digest_from_step_output_unverified",
+        name: "GhaAttestationSubjectDigestFromStepOutputUnverified",
+        short_description: "Attestation signs a digest supplied by mutable workflow output state.",
+        full_description:
+            "An attestation action signs subject-digest from earlier step, needs, input, or \
+             matrix output state while id-token: write and attestations: write authority are \
+             present. The rule identifies attestation trusted-channel candidates, not confirmed \
+             downstream verifier impact.",
+        default_level: "error",
+        security_severity: "7.8",
+        tags: &["security", "attestation", "github-actions"],
+    },
+    RuleDef {
+        id: "gha_attestation_subject_path_workspace_glob_with_pr_trigger",
+        name: "GhaAttestationSubjectPathWorkspaceGlobWithPrTrigger",
+        short_description: "PR-reachable attestation signs workspace/glob subject paths.",
+        full_description:
+            "A PR-capable or workflow_run workflow invokes an attestation action with a \
+             workspace or glob subject-path while attestation authority is present. This \
+             surfaces cases where PR-controlled workspace bytes may affect the trusted \
+             attestation channel.",
+        default_level: "error",
+        security_severity: "7.8",
+        tags: &["security", "attestation", "github-actions"],
+    },
+    RuleDef {
+        id: "gha_attestation_config_driven_gate_from_workspace_file",
+        name: "GhaAttestationConfigDrivenGateFromWorkspaceFile",
+        short_description: "Attestation gate is driven by config or output state.",
+        full_description:
+            "An attestation step is gated by needs/step output state that appears to be \
+             derived from config, artifact, publishing, or dist metadata while attestation \
+             authority is present. Release-grade gates should come from protected event \
+             state or explicit approval, not workspace-derived outputs.",
+        default_level: "error",
+        security_severity: "7.8",
+        tags: &["security", "attestation", "github-actions"],
+    },
+    RuleDef {
+        id: "gha_telemetry_pr_or_issue_text_to_external_sink",
+        name: "GhaTelemetryPrOrIssueTextToExternalSink",
+        short_description: "Untrusted PR, issue, or comment text reaches external telemetry.",
+        full_description:
+            "A workflow sends attacker-controlled pull-request, issue, review, commit, or \
+             comment text to Slack, Discord, webhook, Sentry, Datadog, Honeycomb, or similar \
+             telemetry sinks. Escape, cap, and separate this text from authority-bearing logs.",
+        default_level: "warning",
+        security_severity: "5.5",
+        tags: &["security", "telemetry", "github-actions"],
+    },
+    RuleDef {
+        id: "gha_telemetry_debug_flag_with_secret_env",
+        name: "GhaTelemetryDebugFlagWithSecretEnv",
+        short_description: "Actions debug logging is enabled while secrets are present.",
+        full_description:
+            "A job enables ACTIONS_STEP_DEBUG or ACTIONS_RUNNER_DEBUG while secret, token, \
+             OIDC, cloud, registry, package, or signing authority is present. Debug telemetry \
+             can widen exposure through logs and retained artifacts.",
+        default_level: "error",
+        security_severity: "7.0",
+        tags: &["security", "telemetry", "github-actions"],
+    },
+    RuleDef {
+        id: "gha_telemetry_autonomous_agent_input_from_untrusted_event",
+        name: "GhaTelemetryAutonomousAgentInputFromUntrustedEvent",
+        short_description: "Autonomous agent receives untrusted event text with write authority nearby.",
+        full_description:
+            "An autonomous coding or repair agent receives PR, issue, comment, or workflow_run \
+             context while write-class tools, tokens, or later git/API mutation are available. \
+             Split analysis from mutation and gate write tools explicitly.",
+        default_level: "error",
+        security_severity: "8.0",
+        tags: &["security", "autonomous-agent", "github-actions"],
+    },
+    RuleDef {
+        id: "gha_workflow_run_artifact_to_blob_storage_token",
+        name: "GhaWorkflowRunArtifactToBlobStorageToken",
+        short_description: "workflow_run artifact is uploaded to blob/object storage with authority.",
+        full_description:
+            "A workflow_run or pull_request_target consumer downloads artifact content and \
+             uploads it to blob, object, or release storage while write-token or deploy authority \
+             is available. Treat upstream artifacts as untrusted until rebuilt or provenance-checked.",
+        default_level: "error",
+        security_severity: "8.0",
+        tags: &["security", "artifact", "github-actions"],
+    },
+    RuleDef {
+        id: "gha_api_workflow_run_artifact_to_autonomous_agent_to_git_push",
+        name: "GhaApiWorkflowRunArtifactToAutonomousAgentToGitPush",
+        short_description: "workflow_run artifact reaches autonomous agent before git/API mutation.",
+        full_description:
+            "A workflow_run or pull_request_target consumer downloads lower-trust artifact data, \
+             feeds or colocates it with an autonomous agent, then performs git or GitHub API \
+             mutation under write authority in the same job.",
+        default_level: "error",
+        security_severity: "8.5",
+        tags: &["security", "artifact", "autonomous-agent", "github-actions"],
+    },
+    RuleDef {
+        id: "gha_manifest_npm_lifecycle_hook_pr_trigger_with_token",
+        name: "GhaManifestNpmLifecycleHookPrTriggerWithToken",
+        short_description: "PR-reachable npm-family install runs lifecycle hooks with authority.",
+        full_description:
+            "A pull_request or pull_request_target workflow invokes npm, pnpm, or yarn \
+             install commands without --ignore-scripts while secrets, OIDC, registry/cloud \
+             credentials, or write-token authority are present in the same job.",
+        default_level: "error",
+        security_severity: "8.0",
+        tags: &["security", "manifest-as-code", "npm", "github-actions"],
+    },
+    RuleDef {
+        id: "gha_manifest_python_m_build_with_pr_credentials",
+        name: "GhaManifestPythonMBuildWithPrCredentials",
+        short_description: "PR-reachable Python build/install runs with publish authority.",
+        full_description:
+            "A PR-reachable workflow invokes Python build, setup.py, pip install, wheel, \
+             cibuildwheel, maturin, pdm, or poetry build paths while publish credentials, \
+             OIDC, or write-token authority are available. Build artifacts should be \
+             produced without publish authority and rebuilt or verified before release.",
+        default_level: "error",
+        security_severity: "8.0",
+        tags: &["security", "manifest-as-code", "python", "github-actions"],
+    },
+    RuleDef {
+        id: "gha_manifest_cargo_build_rs_pull_request_with_token",
+        name: "GhaManifestCargoBuildRsPullRequestWithToken",
+        short_description: "PR-reachable Cargo build/test can run build.rs with authority.",
+        full_description:
+            "A pull_request or pull_request_target workflow invokes Cargo compile paths \
+             while secrets, OIDC, registry/cloud credentials, or write-token authority are \
+             present. Cargo build.rs, build-dependencies, and proc-macros are executable \
+             manifest-controlled code.",
+        default_level: "error",
+        security_severity: "8.0",
+        tags: &["security", "manifest-as-code", "rust", "github-actions"],
+    },
+    RuleDef {
+        id: "gha_manifest_makefile_with_pr_trigger_and_secrets",
+        name: "GhaManifestMakefileWithPrTriggerAndSecrets",
+        short_description: "PR/workflow_run-reachable make runs with secret authority.",
+        full_description:
+            "A pull_request, pull_request_target, workflow_run, or issue_comment workflow \
+             invokes make/gmake/bmake while secrets, OIDC, registry/cloud credentials, or \
+             write-token authority are present. Makefile recipes are workspace-controlled \
+             shell and should run without authority unless protected and verified.",
+        default_level: "error",
+        security_severity: "8.0",
+        tags: &["security", "manifest-as-code", "make", "github-actions"],
+    },
+    RuleDef {
+        id: "gha_manifest_submodules_recursive_with_pr_authority",
+        name: "GhaManifestSubmodulesRecursiveWithPrAuthority",
+        short_description: "Recursive submodule checkout runs in PR-reachable authority job.",
+        full_description:
+            "A PR/workflow_run-reachable job invokes actions/checkout with submodules: \
+             true or recursive while authority is present. PR-mutable .gitmodules can \
+             redirect workspace content unless URLs and SHAs are allowlisted.",
+        default_level: "error",
+        security_severity: "8.0",
+        tags: &["security", "manifest-as-code", "git", "github-actions"],
+    },
+    RuleDef {
+        id: "gha_crossrepo_workflow_call_floating_ref_cascade",
+        name: "GhaCrossrepoWorkflowCallFloatingRefCascade",
+        short_description: "Cross-repo reusable workflow call uses a mutable ref.",
+        full_description:
+            "A reusable workflow call uses org/repo/.github/workflows/file.yml@main, \
+             @master, @HEAD, or a floating major tag. The producer repo's branch \
+             protection becomes the effective security boundary for the consumer workflow.",
+        default_level: "error",
+        security_severity: "8.0",
+        tags: &["security", "manifest-as-code", "workflow-call", "github-actions"],
+    },
+    RuleDef {
+        id: "gha_crossrepo_secrets_inherit_unreviewed_callee",
+        name: "GhaCrossrepoSecretsInheritUnreviewedCallee",
+        short_description: "Cross-repo reusable workflow inherits all caller secrets.",
+        full_description:
+            "A reusable workflow call forwards secrets: inherit to a cross-repo callee. \
+             Replace it with an explicit named secret map and pin/audit the callee before \
+             forwarding deploy, package, cloud, signing, or registry authority.",
+        default_level: "error",
+        security_severity: "8.0",
+        tags: &["security", "manifest-as-code", "workflow-call", "github-actions"],
+    },
+    RuleDef {
+        id: "gha_issue_comment_command_to_write_token",
+        name: "GhaIssueCommentCommandToWriteToken",
+        short_description: "Issue comment input reaches write-token command sink.",
+        full_description:
+            "An issue_comment workflow reads comment or issue-controlled input near gh, \
+             git, dispatch, or API mutation sinks while write-token authority is present.",
+        default_level: "error",
+        security_severity: "7.5",
+        tags: &["security", "privilege-escalation", "github-actions"],
+    },
+    RuleDef {
+        id: "gha_pr_build_pushes_publishable_image",
+        name: "GhaPrBuildPushesPublishableImage",
+        short_description: "PR-triggered build pushes image with publish authority.",
+        full_description:
+            "A pull_request or pull_request_target workflow builds and pushes a container \
+             image while registry or cloud publish authority is present. This is the \
+             publishable-image subset of PR image build leads.",
+        default_level: "error",
+        security_severity: "7.5",
+        tags: &["security", "supply-chain", "github-actions"],
+    },
+    RuleDef {
+        id: "gha_manual_dispatch_ref_to_privileged_checkout",
+        name: "GhaManualDispatchRefToPrivilegedCheckout",
+        short_description: "workflow_dispatch input controls privileged checkout ref.",
+        full_description:
+            "A workflow_dispatch input controls actions/checkout ref in a job that holds \
+             write-token, secret, OIDC, or deploy authority. Dispatch permission becomes \
+             code-selection authority on a privileged runner.",
+        default_level: "error",
+        security_severity: "7.5",
+        tags: &["security", "injection", "github-actions"],
+    },
+    RuleDef {
         id: "ci_job_token_to_external_api",
         name: "CiJobTokenToExternalApi",
         short_description:
@@ -1367,6 +1711,177 @@ pub const RULE_DEFS: &[RuleDef] = &[
         default_level: "warning",
         security_severity: "5.0",
         tags: &["security", "workflow-shell", "github-actions"],
+    },
+    RuleDef {
+        id: "gha_action_token_env_before_bare_download_helper",
+        name: "GhaActionTokenEnvBeforeBareDownloadHelper",
+        short_description: "Token-bearing action resolves download helpers after PATH mutation.",
+        full_description:
+            "A reviewed upload/release action receives token authority after an earlier \
+             same-job GITHUB_PATH mutation and invokes bare download or verification \
+             helpers such as curl, wget, gpg, or checksum tools. Treat this as an \
+             authority-boundary lead unless source or witness evidence upgrades it.",
+        default_level: "error",
+        security_severity: "7.0",
+        tags: &["security", "credentials", "github-actions"],
+    },
+    RuleDef {
+        id: "gha_post_action_input_retarget_to_cache_save",
+        name: "GhaPostActionInputRetargetToCacheSave",
+        short_description: "Cache post-save boundary can be retargeted by later env mutation.",
+        full_description:
+            "An actions/cache restore/save boundary is followed by same-job environment \
+             mutation of cache path, key, or INPUT_-style variables. This flags a \
+             post-action retargeting lead, not a vulnerability claim.",
+        default_level: "warning",
+        security_severity: "5.2",
+        tags: &["security", "cache", "github-actions"],
+    },
+    RuleDef {
+        id: "gha_terraform_wrapper_sensitive_output",
+        name: "GhaTerraformWrapperSensitiveOutput",
+        short_description: "Terraform wrapper stdout/stderr outputs are consumed later.",
+        full_description:
+            "hashicorp/setup-terraform wrapper mode captures Terraform stdout/stderr as \
+             step outputs. A later step consuming those outputs can accidentally move \
+             sensitive plan or output material across the workflow.",
+        default_level: "warning",
+        security_severity: "5.4",
+        tags: &["security", "credentials", "github-actions"],
+    },
+    RuleDef {
+        id: "gha_composite_bare_helper_after_path_install_with_secret_env",
+        name: "GhaCompositeBareHelperAfterPathInstallWithSecretEnv",
+        short_description: "Bare helper runs after PATH mutation with secret env authority.",
+        full_description:
+            "A workflow or composite-style shell step invokes bare package, deploy, \
+             signing, cloud, or release helpers after earlier GITHUB_PATH mutation while \
+             secret authority is in scope. This is a deterministic hardening classifier.",
+        default_level: "warning",
+        security_severity: "5.6",
+        tags: &["security", "workflow-shell", "github-actions"],
+    },
+    RuleDef {
+        id: "gha_pulumi_path_resolved_cli_with_authority",
+        name: "GhaPulumiPathResolvedCliWithAuthority",
+        short_description: "Pulumi authority reaches PATH-resolved CLI helper.",
+        full_description:
+            "pulumi/actions receives Pulumi token, cloud, or stack authority after an \
+             earlier same-job GITHUB_PATH mutation and delegates to a PATH-resolved \
+             pulumi helper.",
+        default_level: "error",
+        security_severity: "7.4",
+        tags: &["security", "credentials", "github-actions"],
+    },
+    RuleDef {
+        id: "gha_pypi_publish_oidc_after_path_mutation",
+        name: "GhaPypiPublishOidcAfterPathMutation",
+        short_description: "PyPI publish/OIDC authority follows PATH mutation.",
+        full_description:
+            "pypa/gh-action-pypi-publish receives PyPI token or trusted-publishing \
+             OIDC authority after an earlier same-job GITHUB_PATH mutation and reaches \
+             Python packaging helper resolution.",
+        default_level: "error",
+        security_severity: "7.4",
+        tags: &["security", "credentials", "github-actions"],
+    },
+    RuleDef {
+        id: "gha_changesets_publish_command_with_authority",
+        name: "GhaChangesetsPublishCommandWithAuthority",
+        short_description: "Changesets publish command runs after PATH mutation with package authority.",
+        full_description:
+            "changesets/action has a publish command and package/GitHub token authority \
+             after an earlier same-job GITHUB_PATH mutation. The action may delegate to \
+             npm, pnpm, or yarn helpers selected through PATH.",
+        default_level: "error",
+        security_severity: "7.2",
+        tags: &["security", "credentials", "github-actions"],
+    },
+    RuleDef {
+        id: "gha_rubygems_release_git_token_and_oidc_helper",
+        name: "GhaRubygemsReleaseGitTokenAndOidcHelper",
+        short_description: "RubyGems release authority reaches PATH helpers.",
+        full_description:
+            "rubygems/release-gem receives RubyGems token, GitHub token, or OIDC release \
+             authority after an earlier same-job GITHUB_PATH mutation and can delegate \
+             to gem, bundle, or git helpers.",
+        default_level: "error",
+        security_severity: "7.2",
+        tags: &["security", "credentials", "github-actions"],
+    },
+    RuleDef {
+        id: "gha_composite_entrypoint_path_shadow_with_secret_env",
+        name: "GhaCompositeEntrypointPathShadowWithSecretEnv",
+        short_description: "Local/composite action runs after PATH mutation with secret env.",
+        full_description:
+            "A local/composite action reference runs after an earlier same-job GITHUB_PATH \
+             mutation while secret authority is directly attached to the action step. \
+             taudit does not inline local action internals, so this is emitted as a \
+             review lead for entrypoint and helper resolution.",
+        default_level: "warning",
+        security_severity: "5.6",
+        tags: &["security", "workflow-shell", "github-actions"],
+    },
+    RuleDef {
+        id: "gha_docker_buildx_authority_path_handoff",
+        name: "GhaDockerBuildxAuthorityPathHandoff",
+        short_description: "Docker Buildx authority reaches helpers after PATH mutation.",
+        full_description:
+            "docker/build-push-action or docker/setup-buildx-action runs after an \
+             earlier same-job GITHUB_PATH mutation while registry, SSH, build-secret, \
+             or publish authority is in scope. Treat this as a Docker helper-boundary \
+             authority lead.",
+        default_level: "error",
+        security_severity: "7.2",
+        tags: &["security", "docker", "github-actions"],
+    },
+    RuleDef {
+        id: "gha_google_deploy_gcloud_credential_path",
+        name: "GhaGoogleDeployGcloudCredentialPath",
+        short_description: "Google deploy credential reaches PATH-resolved gcloud.",
+        full_description:
+            "Google deploy actions for App Engine or Cloud Run run after earlier \
+             same-job GITHUB_PATH mutation while Google deploy credentials, ADC, OIDC, \
+             or service-account authority is present, then delegate to gcloud.",
+        default_level: "error",
+        security_severity: "7.6",
+        tags: &["security", "credentials", "github-actions"],
+    },
+    RuleDef {
+        id: "gha_datadog_test_visibility_installer_authority",
+        name: "GhaDatadogTestVisibilityInstallerAuthority",
+        short_description: "Datadog test visibility helper runs with API key authority.",
+        full_description:
+            "datadog/test-visibility-github-action runs after earlier same-job \
+             GITHUB_PATH mutation while Datadog API key or test visibility upload \
+             authority is present around installer/runtime helper resolution.",
+        default_level: "warning",
+        security_severity: "5.8",
+        tags: &["security", "credentials", "github-actions"],
+    },
+    RuleDef {
+        id: "gha_kubernetes_helper_kubeconfig_authority",
+        name: "GhaKubernetesHelperKubeconfigAuthority",
+        short_description: "Kubernetes helpers run with kubeconfig authority after PATH mutation.",
+        full_description:
+            "A workflow shell step invokes kubectl or helm deploy helpers after earlier \
+             same-job GITHUB_PATH mutation while kubeconfig or cluster deploy authority \
+             is present. This identifies Kubernetes helper-resolution authority leads.",
+        default_level: "error",
+        security_severity: "7.2",
+        tags: &["security", "kubernetes", "github-actions"],
+    },
+    RuleDef {
+        id: "gha_azure_companion_helper_authority",
+        name: "GhaAzureCompanionHelperAuthority",
+        short_description: "Azure companion helpers run after PATH mutation with cloud authority.",
+        full_description:
+            "A workflow shell step invokes Azure companion helpers such as sqlcmd, \
+             SqlPackage, kubelogin, pwsh, or powershell after earlier same-job \
+             GITHUB_PATH mutation and after Azure login or cloud authority is present.",
+        default_level: "error",
+        security_severity: "7.2",
+        tags: &["security", "azure", "github-actions"],
     },
     RuleDef {
         id: "gha_create_pr_git_token_path_handoff",
@@ -2223,6 +2738,13 @@ mod tests {
             FindingCategory::InteractiveDebugActionInAuthorityWorkflow,
             FindingCategory::PrSpecificCacheKeyInDefaultBranchConsumer,
             FindingCategory::GhCliWithDefaultTokenEscalating,
+            FindingCategory::GhaScriptInjectionToPrivilegedShell,
+            FindingCategory::GhaWorkflowRunArtifactPoisoningToPrivilegedConsumer,
+            FindingCategory::GhaRemoteScriptInAuthorityJob,
+            FindingCategory::GhaPatRemoteUrlWrite,
+            FindingCategory::GhaIssueCommentCommandToWriteToken,
+            FindingCategory::GhaPrBuildPushesPublishableImage,
+            FindingCategory::GhaManualDispatchRefToPrivilegedCheckout,
             FindingCategory::CiJobTokenToExternalApi,
             FindingCategory::IdTokenAudienceOverscoped,
             FindingCategory::UntrustedCiVarInShellInterpolation,
@@ -2251,11 +2773,32 @@ mod tests {
             FindingCategory::GhaDockerSetupQemuPrivilegedDockerHelper,
             FindingCategory::GhaToolInstallerThenShellHelperAuthority,
             FindingCategory::GhaWorkflowShellAuthorityConcentration,
+            FindingCategory::GhaActionTokenEnvBeforeBareDownloadHelper,
+            FindingCategory::GhaPostActionInputRetargetToCacheSave,
+            FindingCategory::GhaTerraformWrapperSensitiveOutput,
+            FindingCategory::GhaCompositeBareHelperAfterPathInstallWithSecretEnv,
+            FindingCategory::GhaPulumiPathResolvedCliWithAuthority,
+            FindingCategory::GhaPypiPublishOidcAfterPathMutation,
+            FindingCategory::GhaChangesetsPublishCommandWithAuthority,
+            FindingCategory::GhaRubygemsReleaseGitTokenAndOidcHelper,
+            FindingCategory::GhaCompositeEntrypointPathShadowWithSecretEnv,
+            FindingCategory::GhaDockerBuildxAuthorityPathHandoff,
+            FindingCategory::GhaGoogleDeployGcloudCredentialPath,
+            FindingCategory::GhaDatadogTestVisibilityInstallerAuthority,
+            FindingCategory::GhaKubernetesHelperKubeconfigAuthority,
+            FindingCategory::GhaAzureCompanionHelperAuthority,
             FindingCategory::GhaCreatePrGitTokenPathHandoff,
             FindingCategory::GhaImportGpgPrivateKeyHelperPath,
             FindingCategory::GhaSshAgentPrivateKeyToPathHelper,
             FindingCategory::GhaMacosCodesignCertSecurityPath,
             FindingCategory::GhaPagesDeployTokenUrlToGitHelper,
+            FindingCategory::GhaManifestNpmLifecycleHookPrTriggerWithToken,
+            FindingCategory::GhaManifestPythonMBuildWithPrCredentials,
+            FindingCategory::GhaManifestCargoBuildRsPullRequestWithToken,
+            FindingCategory::GhaManifestMakefileWithPrTriggerAndSecrets,
+            FindingCategory::GhaManifestSubmodulesRecursiveWithPrAuthority,
+            FindingCategory::GhaCrossrepoWorkflowCallFloatingRefCascade,
+            FindingCategory::GhaCrossrepoSecretsInheritUnreviewedCallee,
             FindingCategory::GhaToolcacheAbsolutePathDowngrade,
         ];
 

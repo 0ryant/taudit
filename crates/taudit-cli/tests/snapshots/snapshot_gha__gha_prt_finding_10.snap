@@ -5,9 +5,9 @@ expression: finding
 severity: critical
 category: untrusted_with_authority
 nodes_involved:
-  - 3
+  - 2
   - 0
-message: "Untrusted step 'check[1]' has direct access to identity 'GITHUB_TOKEN'"
+message: "Untrusted step 'check[0]' has direct access to identity 'GITHUB_TOKEN'"
 recommendation:
   type: reduce_permissions
   current: write-all
@@ -17,5 +17,5 @@ confidence_scope: yaml_only
 authority_kinds:
   - oidc_identity
 attacker_surface_kinds:
-  - script_sink
+  - untrusted_checkout
   - untrusted_step

@@ -317,6 +317,27 @@ pub enum FindingCategory {
     /// `workflow_run` — runtime privilege escalation that static permission
     /// checks miss.
     GhCliWithDefaultTokenEscalating,
+    /// Attacker-controlled GitHub context is interpolated directly into a
+    /// privileged shell/script step that holds secrets, OIDC, or write token.
+    GhaScriptInjectionToPrivilegedShell,
+    /// Workflow-run or pull-request-target consumer downloads a PR artifact,
+    /// interprets it, and holds write-token or non-default authority.
+    GhaWorkflowRunArtifactPoisoningToPrivilegedConsumer,
+    /// Mutable remote script execution happens inside a job with secrets,
+    /// OIDC, cloud, registry, package, signing, or write-token authority.
+    GhaRemoteScriptInAuthorityJob,
+    /// A GitHub Actions shell step embeds a PAT/token in a git remote URL and
+    /// performs a write-capable git operation.
+    GhaPatRemoteUrlWrite,
+    /// An issue-comment workflow turns comment body or issue metadata into a
+    /// command path while write-token authority is present.
+    GhaIssueCommentCommandToWriteToken,
+    /// PR-triggered workflow builds and pushes a container image while registry
+    /// or cloud publish authority is present.
+    GhaPrBuildPushesPublishableImage,
+    /// workflow_dispatch input selects the checkout ref in a workflow with
+    /// write-token, secret, or deploy authority.
+    GhaManualDispatchRefToPrivilegedCheckout,
     /// GitLab CI `$CI_JOB_TOKEN` (or `gitlab-ci-token:$CI_JOB_TOKEN`) used as a
     /// bearer credential against an external HTTP API or fed to `docker login`
     /// for `registry.gitlab.com`. CI_JOB_TOKEN's default scope (registry write,
@@ -459,6 +480,48 @@ pub enum FindingCategory {
     /// Shell command sequence concentrates publish, deploy, signing, registry,
     /// or release authority in a workflow step.
     GhaWorkflowShellAuthorityConcentration,
+    /// A token-bearing action boundary invokes bare download or verification
+    /// helpers after an earlier same-job `GITHUB_PATH` mutation.
+    GhaActionTokenEnvBeforeBareDownloadHelper,
+    /// A post action can retarget cache-save cleanup from ambient action input
+    /// or environment state after a later same-job mutation.
+    GhaPostActionInputRetargetToCacheSave,
+    /// `hashicorp/setup-terraform` wrapper outputs are consumed by a later
+    /// step, potentially moving sensitive Terraform stdout/stderr material.
+    GhaTerraformWrapperSensitiveOutput,
+    /// A workflow or composite-style shell step invokes a bare helper after
+    /// mutable PATH setup while secret environment authority is in scope.
+    GhaCompositeBareHelperAfterPathInstallWithSecretEnv,
+    /// Pulumi action/CLI authority is delegated to a PATH-resolved `pulumi`
+    /// helper after an earlier same-job `GITHUB_PATH` mutation.
+    GhaPulumiPathResolvedCliWithAuthority,
+    /// PyPI publish authority or OIDC publishing capability reaches PyPI
+    /// helper resolution after an earlier same-job `GITHUB_PATH` mutation.
+    GhaPypiPublishOidcAfterPathMutation,
+    /// Changesets publish authority reaches package-manager helper resolution
+    /// after an earlier same-job `GITHUB_PATH` mutation.
+    GhaChangesetsPublishCommandWithAuthority,
+    /// RubyGems release token or OIDC authority reaches gem/bundle/git helper
+    /// resolution after an earlier same-job `GITHUB_PATH` mutation.
+    GhaRubygemsReleaseGitTokenAndOidcHelper,
+    /// A local/composite action entrypoint can be path-shadowed before it runs
+    /// with secret environment authority.
+    GhaCompositeEntrypointPathShadowWithSecretEnv,
+    /// Docker Buildx setup/build-push authority reaches Docker/buildx helpers
+    /// after an earlier same-job `GITHUB_PATH` mutation.
+    GhaDockerBuildxAuthorityPathHandoff,
+    /// Google deploy actions receive generated Google/cloud authority before
+    /// delegating to `gcloud` after mutable PATH setup.
+    GhaGoogleDeployGcloudCredentialPath,
+    /// Datadog test visibility setup runs installer/helper flow with API key
+    /// authority after mutable PATH setup.
+    GhaDatadogTestVisibilityInstallerAuthority,
+    /// Kubernetes or Helm helper commands run with kubeconfig/deploy authority
+    /// after mutable PATH setup.
+    GhaKubernetesHelperKubeconfigAuthority,
+    /// Azure companion helpers such as sqlcmd, SqlPackage, kubelogin, or pwsh
+    /// run with Azure login authority after mutable PATH setup.
+    GhaAzureCompanionHelperAuthority,
     /// `peter-evans/create-pull-request` receives PR token authority after an
     /// earlier same-job `GITHUB_PATH` mutation and delegates to `git`.
     GhaCreatePrGitTokenPathHandoff,
@@ -474,6 +537,83 @@ pub enum FindingCategory {
     /// Pages deploy actions compose token/deploy-key Git authority after an
     /// earlier same-job `GITHUB_PATH` mutation.
     GhaPagesDeployTokenUrlToGitHelper,
+    /// A `workflow_run` / `pull_request_target` consumer downloads a
+    /// PR-context artifact, then uses artifact-derived PR metadata near a
+    /// write-class GitHub API/comment sink.
+    GhaWorkflowRunArtifactMetadataToPrivilegedApi,
+    /// A `workflow_run` / `pull_request_target` consumer downloads a
+    /// PR-context artifact, reads report content, and posts it to a PR or
+    /// review comment sink.
+    GhaWorkflowRunArtifactReportToPrComment,
+    /// A `workflow_run` / `pull_request_target` consumer downloads a
+    /// PR-context artifact and feeds artifact-derived data into a build-scan
+    /// or Develocity publication path.
+    GhaWorkflowRunArtifactToBuildScanPublish,
+    /// A mutable remote script is executed before a publish/deploy/release
+    /// sink in the same authority-bearing GitHub Actions job.
+    GhaFloatingRemoteScriptBeforePublishSink,
+    /// A token-bearing Git remote URL is used while trace/debug/process
+    /// exposure is enabled, making the token observable through argv, logs, or
+    /// process inspection.
+    GhaTokenRemoteUrlWithTraceOrProcessExposure,
+    /// Earlier same-job env state redirects a credential helper's config file
+    /// before later cloud, registry, package, or signing authority is present.
+    GhaEnvCredentialHelperConfigRedirectBeforeAuthority,
+    /// Earlier same-job `NODE_OPTIONS` startup injection reaches a later
+    /// Node/npm/npx/yarn authority boundary.
+    GhaEnvNodeOptionsCodeInjectionBeforeNodeAuthority,
+    /// Earlier same-job dynamic-loader env state reaches a later
+    /// credential-bearing helper boundary.
+    GhaEnvDyldOrLdLibraryPathBeforeCredentialHelper,
+    /// A reusable workflow accepts caller-controlled container image input
+    /// while secrets are inherited across the caller/callee boundary.
+    GhaWorkflowCallContainerImageInputSecretsInherit,
+    /// A reusable workflow accepts caller-controlled runner labels while
+    /// secrets, OIDC, or write-token authority is available.
+    GhaWorkflowCallRunnerLabelInputPrivilegeEscalation,
+    /// A job runs in an attacker-influenced container image while secret or
+    /// token authority is present in that job.
+    GhaContainerImageAttackerInfluencedWithSecretEnv,
+    /// Attestation action signs a caller/step-provided subject digest rather
+    /// than a digest it independently computed from a workspace file.
+    GhaAttestationSubjectDigestFromStepOutputUnverified,
+    /// PR-reachable workflow signs files selected by a workspace glob.
+    GhaAttestationSubjectPathWorkspaceGlobWithPrTrigger,
+    /// Attestation reachability is gated by a workspace/config-derived output.
+    GhaAttestationConfigDrivenGateFromWorkspaceFile,
+    /// PR, issue, or comment text is sent to an external telemetry sink.
+    GhaTelemetryPrOrIssueTextToExternalSink,
+    /// Debug logging is enabled while secret-bearing environment is present.
+    GhaTelemetryDebugFlagWithSecretEnv,
+    /// Autonomous coding agent receives untrusted event text while mutation
+    /// authority is available.
+    GhaTelemetryAutonomousAgentInputFromUntrustedEvent,
+    /// Workflow-run artifact bytes are published to blob/object storage under
+    /// token authority.
+    GhaWorkflowRunArtifactToBlobStorageToken,
+    /// Workflow-run artifact or failure data reaches an autonomous agent before
+    /// a GitHub or git mutation step.
+    GhaApiWorkflowRunArtifactToAutonomousAgentToGitPush,
+    /// PR-reachable npm-family install runs manifest lifecycle hooks while
+    /// token, secret, OIDC, registry, cloud, or write authority is present.
+    GhaManifestNpmLifecycleHookPrTriggerWithToken,
+    /// PR-reachable Python build/install path executes project manifest code
+    /// while publish credentials or OIDC authority are present.
+    GhaManifestPythonMBuildWithPrCredentials,
+    /// PR-reachable Cargo compile path can run build.rs/proc-macro code while
+    /// token, secret, OIDC, registry, cloud, or write authority is present.
+    GhaManifestCargoBuildRsPullRequestWithToken,
+    /// PR/workflow_run/issue_comment-reachable Makefile execution occurs while
+    /// secret, token, OIDC, registry, cloud, or write authority is present.
+    GhaManifestMakefileWithPrTriggerAndSecrets,
+    /// Recursive checkout submodules are enabled in a PR-reachable authority
+    /// job, letting PR-mutable .gitmodules influence workspace code.
+    GhaManifestSubmodulesRecursiveWithPrAuthority,
+    /// A cross-repo reusable workflow call uses a mutable branch/tag ref.
+    GhaCrossrepoWorkflowCallFloatingRefCascade,
+    /// A cross-repo reusable workflow call forwards the caller's full secret
+    /// surface with `secrets: inherit`.
+    GhaCrossrepoSecretsInheritUnreviewedCallee,
     /// Precision guard for actions that install a helper into the toolcache
     /// and invoke that absolute path instead of resolving a bare helper from
     /// runner `PATH`.
@@ -862,6 +1002,22 @@ pub const META_GHA_ACTION: &str = "gha_action";
 /// omitted. Consumed by action-specific rules that need precision controls
 /// such as `mask-password: false` or `skip_install: true`.
 pub const META_GHA_WITH_INPUTS: &str = "gha_with_inputs";
+/// Step-level metadata: sorted effective GitHub Actions `env:` assignments
+/// after workflow ⊕ job ⊕ step merge, encoded as newline-delimited `key=value`
+/// records. Values are the literal YAML/template strings, not secret values.
+/// Consumed by env-config and runtime-startup-injection rules.
+pub const META_GHA_ENV_ASSIGNMENTS: &str = "gha_env_assignments";
+/// Graph-level metadata: comma-joined list of `workflow_call.inputs.*` names
+/// declared by a reusable workflow. Empty / absent for ordinary workflows.
+pub const META_GHA_WORKFLOW_CALL_INPUTS: &str = "gha_workflow_call_inputs";
+/// Step-level metadata: raw `jobs.<id>.runs-on` value rendered into a compact
+/// deterministic string. Set on every step in the job and on synthetic
+/// reusable-workflow caller steps.
+pub const META_GHA_RUNS_ON: &str = "gha_runs_on";
+/// Image-node metadata: raw `jobs.<id>.container.options` value, when present.
+/// Kept separate from the image name because container options can carry
+/// runtime privilege flags even when the image is pinned.
+pub const META_GHA_CONTAINER_OPTIONS: &str = "gha_container_options";
 /// Graph-level metadata: JSON-encoded array of `resources.repositories[]`
 /// entries declared by the pipeline. Each entry is an object with fields
 /// `alias`, `repo_type`, `name`, optional `ref`, and `used` (true when the

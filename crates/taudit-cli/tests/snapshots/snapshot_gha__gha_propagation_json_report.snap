@@ -395,12 +395,15 @@ graph:
       metadata:
         checkout_self: "true"
         gha_action: actions/checkout
+        gha_runs_on: ubuntu-latest
         job_name: build
       name: "build[0]"
       trust_zone: third_party
     - id: 3
       kind: step
       metadata:
+        gha_env_assignments: "SIGNING_KEY=${{ secrets.SIGNING_KEY }}"
+        gha_runs_on: ubuntu-latest
         job_name: build
         script_body: make release
       name: Build with secrets
@@ -419,6 +422,7 @@ graph:
       kind: step
       metadata:
         gha_action: actions/upload-artifact
+        gha_runs_on: ubuntu-latest
         gha_with_inputs: "name=release-bundle\npath=dist/"
         job_name: build
       name: "build[2]"
@@ -438,6 +442,7 @@ graph:
       metadata:
         downloads_artifact: "true"
         gha_action: actions/download-artifact
+        gha_runs_on: ubuntu-latest
         gha_with_inputs: name=release-bundle
         job_name: publish
       name: "publish[0]"
@@ -451,6 +456,7 @@ graph:
       kind: step
       metadata:
         gha_action: untrusted-org/publish-action
+        gha_runs_on: ubuntu-latest
         gha_with_inputs: "api-key=${{ secrets.PUBLISH_API_KEY }}\nartifact-path=dist/"
         job_name: publish
       name: "publish[1]"

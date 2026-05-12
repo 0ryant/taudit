@@ -54,6 +54,7 @@
 pub mod baselines;
 pub mod custom_rules;
 pub mod error;
+pub mod exploit_path;
 pub mod finding;
 pub mod graph;
 pub mod ignore;

@@ -29,6 +29,10 @@ Looked up in this order:
 
 Both `taudit scan` and `taudit verify` resolve the file the same way, so policy-gated CI sees the same severity levels as informational scans.
 
+When a suppression file is loaded, taudit prints the discovered path to stderr.
+If an entry matched no finding in the current run, taudit also warns so stale
+or mistyped fingerprints do not fail silently.
+
 ## File format
 
 ```yaml
@@ -80,6 +84,10 @@ Critical -> High -> Medium -> Low -> Info
 
 Severity is unchanged, but `extras.suppressed = true` is set on the finding. Consumers (SIEMs, dashboards) filter on the boolean. `extras.original_severity` and `extras.suppression_reason` are still populated for the audit trail.
 
+In `taudit verify`, `suppress` is tag-only: matched findings still count toward
+exit `1` unless another filter removes them (`.tauditignore`, baseline, or
+`--severity-threshold`).
+
 Pick `downgrade` when you want the waiver to influence severity-threshold gating; pick `suppress` when you want to keep severity legible to humans but signal "acknowledged" to machines.
 
 ## Hard rules
@@ -107,6 +115,13 @@ WARNING: suppression for fingerprint 5edb30f4db3b5fa3 expired on 2026-03-01;
 ```
 
 The finding appears at its rule-emitted severity. CI gating resumes. Update `expires_at` (after re-reviewing the risk) to renew.
+
+### 3. Unmatched waivers emit a warning
+
+If a suppression entry matched no finding in the current run, taudit prints a
+warning naming the fingerprint and rule id. This catches stale suppressions,
+copy-paste mistakes, and fingerprint values from a different build or older
+fingerprint format.
 
 ## CLI commands
 
