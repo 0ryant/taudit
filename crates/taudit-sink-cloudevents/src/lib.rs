@@ -1,4 +1,5 @@
 use serde::Serialize;
+use taudit_core::baselines::compute_pipeline_identity_material_hash;
 use taudit_core::error::TauditError;
 use taudit_core::finding::{
     compute_finding_group_id, compute_fingerprint, rule_id_for, Finding, FindingCategory,
@@ -75,6 +76,17 @@ pub struct CloudEventV1 {
     pub tauditfindinggroup: String,
     /// Shared correlation key for a single operator flow.
     pub correlationid: String,
+    /// Stable pipeline identifier URN. Prefer caller/parser-supplied
+    /// `graph.metadata["pipeline_content_hash"]` /
+    /// `graph.metadata["pipeline_identity_material_hash"]` when present,
+    /// otherwise fall back to deterministic derivation from authority-graph
+    /// identity material. Shape: `urn:taudit:pipeline:sha256:<64-hex>`.
+    pub tauditpipelineid: String,
+    /// Per-invocation scan-run identifier shared by all findings emitted in a
+    /// single `emit` call. Distinct from `correlationid`, which is the
+    /// cross-tool operator-flow join key and may intentionally span multiple
+    /// scans.
+    pub tauditscanrunid: String,
     /// Repository that emitted the event.
     pub provenancerepo: String,
     /// Binary, command, or subsystem that produced the event.
@@ -90,6 +102,27 @@ const EVENT_SOURCE: &str = "taudit";
 const PROVENANCE_REPO: &str = "taudit";
 const PROVENANCE_PRODUCER: &str = "taudit-sink-cloudevents";
 const PROVENANCE_KIND: &str = "finding";
+
+fn is_sha256_prefixed_digest(value: &str) -> bool {
+    value
+        .strip_prefix("sha256:")
+        .map(|hex| hex.len() == 64 && hex.chars().all(|c| c.is_ascii_hexdigit()))
+        .unwrap_or(false)
+}
+
+fn derive_pipeline_id(graph: &AuthorityGraph) -> String {
+    // Prefer explicit identity hashes if upstream code stamped them into graph
+    // metadata. Fall back to deterministic graph identity material derivation
+    // so sink-only call sites still emit a stable pipeline identifier.
+    let hash = ["pipeline_content_hash", "pipeline_identity_material_hash"]
+        .iter()
+        .filter_map(|key| graph.metadata.get(*key))
+        .find(|value| is_sha256_prefixed_digest(value))
+        .cloned()
+        .unwrap_or_else(|| compute_pipeline_identity_material_hash(graph));
+
+    format!("urn:taudit:pipeline:{hash}")
+}
 
 /// Map a FindingCategory to a CloudEvents type string.
 fn event_type(category: FindingCategory) -> String {
@@ -388,6 +421,8 @@ fn finding_to_event(
     finding: &Finding,
     graph: &AuthorityGraph,
     correlation_id: &str,
+    pipeline_id: &str,
+    scan_run_id: &str,
 ) -> CloudEventV1 {
     let data = serde_json::to_value(finding)
         .unwrap_or_else(|_| serde_json::Value::String(finding.message.clone()));
@@ -449,6 +484,8 @@ fn finding_to_event(
             .clone()
             .unwrap_or_else(|| compute_finding_group_id(&compute_fingerprint(finding, graph))),
         correlationid: correlation_id.to_string(),
+        tauditpipelineid: pipeline_id.to_string(),
+        tauditscanrunid: scan_run_id.to_string(),
         provenancerepo: PROVENANCE_REPO.into(),
         provenanceproducer: PROVENANCE_PRODUCER.into(),
         provenanceversion: env!("CARGO_PKG_VERSION").into(),
@@ -473,6 +510,10 @@ fn finding_to_event(
 ///   2. `TAUDIT_CORRELATION_ID` env var — for CLI / CI use.
 ///   3. `Uuid::new_v4()` — preserves prior behaviour for unconfigured callers.
 pub const CORRELATION_ID_ENV: &str = "TAUDIT_CORRELATION_ID";
+/// Environment variable used as the inbound channel for a caller-supplied
+/// scan-run id. This is distinct from `TAUDIT_CORRELATION_ID`: one operator
+/// flow may execute multiple scans, each with a distinct scan run id.
+pub const SCAN_RUN_ID_ENV: &str = "TAUDIT_SCAN_RUN_ID";
 
 /// JSONL CloudEvents sink — one event per finding.
 ///
@@ -485,6 +526,9 @@ pub struct CloudEventsJsonlSink {
     /// Caller-supplied correlation id. When `Some`, takes precedence over
     /// the `TAUDIT_CORRELATION_ID` env var and the minted UUID fallback.
     correlation_id: Option<String>,
+    /// Caller-supplied scan-run id. When `Some`, takes precedence over
+    /// the `TAUDIT_SCAN_RUN_ID` env var and the minted UUID fallback.
+    scan_run_id: Option<String>,
 }
 
 impl CloudEventsJsonlSink {
@@ -498,7 +542,21 @@ impl CloudEventsJsonlSink {
     /// `Some(id)` overrides both the `TAUDIT_CORRELATION_ID` env var and
     /// the UUID fallback; `None` defers to env var, then UUID.
     pub fn with_correlation_id(correlation_id: Option<String>) -> Self {
-        Self { correlation_id }
+        Self {
+            correlation_id,
+            scan_run_id: None,
+        }
+    }
+
+    /// Construct a sink with explicit caller-supplied identifiers.
+    ///
+    /// `correlation_id` and `scan_run_id` each override their corresponding
+    /// env var and UUID fallback when set.
+    pub fn with_ids(correlation_id: Option<String>, scan_run_id: Option<String>) -> Self {
+        Self {
+            correlation_id,
+            scan_run_id,
+        }
     }
 
     /// Resolve the correlation id for one `emit` call using the documented
@@ -507,7 +565,25 @@ impl CloudEventsJsonlSink {
     fn resolve_correlation_id(&self) -> String {
         self.correlation_id
             .clone()
-            .or_else(|| std::env::var(CORRELATION_ID_ENV).ok())
+            .or_else(|| {
+                std::env::var(CORRELATION_ID_ENV)
+                    .ok()
+                    .filter(|v| !v.trim().is_empty())
+            })
+            .unwrap_or_else(|| uuid::Uuid::new_v4().to_string())
+    }
+
+    /// Resolve the scan run id for one `emit` call using the documented
+    /// precedence: explicit ctor arg → `TAUDIT_SCAN_RUN_ID` env var →
+    /// minted `Uuid::new_v4()`.
+    fn resolve_scan_run_id(&self) -> String {
+        self.scan_run_id
+            .clone()
+            .or_else(|| {
+                std::env::var(SCAN_RUN_ID_ENV)
+                    .ok()
+                    .filter(|v| !v.trim().is_empty())
+            })
             .unwrap_or_else(|| uuid::Uuid::new_v4().to_string())
     }
 }
@@ -520,9 +596,12 @@ impl<W: std::io::Write> ReportSink<W> for CloudEventsJsonlSink {
         findings: &[Finding],
     ) -> Result<(), TauditError> {
         let correlation_id = self.resolve_correlation_id();
+        let scan_run_id = self.resolve_scan_run_id();
+        let pipeline_id = derive_pipeline_id(graph);
 
         for finding in findings {
-            let event = finding_to_event(finding, graph, &correlation_id);
+            let event =
+                finding_to_event(finding, graph, &correlation_id, &pipeline_id, &scan_run_id);
             serde_json::to_writer(&mut *w, &event)
                 .map_err(|e| TauditError::Report(format!("CloudEvents serialization: {e}")))?;
             writeln!(w).map_err(|e| TauditError::Report(e.to_string()))?;
@@ -539,7 +618,11 @@ impl<W: std::io::Write> ReportSink<W> for CloudEventsJsonlSink {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::{fs, path::PathBuf};
+    use std::{
+        fs,
+        path::PathBuf,
+        sync::{Mutex, OnceLock},
+    };
     use taudit_core::finding::{FindingExtras, Recommendation, Severity};
     use taudit_core::graph::{GapKind, PipelineSource};
 
@@ -575,6 +658,23 @@ mod tests {
             .unwrap_or_else(|err| panic!("failed to read {}: {err}", path.display()));
         serde_json::from_str(&text)
             .unwrap_or_else(|err| panic!("failed to parse {}: {err}", path.display()))
+    }
+
+    fn env_lock() -> &'static Mutex<()> {
+        static LOCK: OnceLock<Mutex<()>> = OnceLock::new();
+        LOCK.get_or_init(|| Mutex::new(()))
+    }
+
+    fn cleanup_correlation_env() {
+        unsafe {
+            std::env::remove_var(CORRELATION_ID_ENV);
+        }
+    }
+
+    fn cleanup_scan_run_env() {
+        unsafe {
+            std::env::remove_var(SCAN_RUN_ID_ENV);
+        }
     }
 
     #[test]
@@ -622,6 +722,8 @@ mod tests {
         assert!(event["data"].is_object());
         assert_eq!(event["tauditcompleteness"], "complete");
         assert!(event["correlationid"].is_string());
+        assert!(event["tauditpipelineid"].is_string());
+        assert!(event["tauditscanrunid"].is_string());
         assert_eq!(event["provenancerepo"], "taudit");
         assert_eq!(event["provenanceproducer"], "taudit-sink-cloudevents");
         assert_eq!(event["provenancekind"], "finding");
@@ -883,6 +985,173 @@ mod tests {
     }
 
     #[test]
+    fn findings_from_same_emit_share_scan_run_id() {
+        let graph = AuthorityGraph::new(test_source());
+        let findings = vec![
+            test_finding(FindingCategory::UnpinnedAction, Severity::Medium),
+            test_finding(FindingCategory::AuthorityPropagation, Severity::Critical),
+        ];
+
+        let mut buf = Vec::new();
+        CloudEventsJsonlSink::default()
+            .emit(&mut buf, &graph, &findings)
+            .unwrap();
+
+        let output = String::from_utf8(buf).unwrap();
+        let scan_run_ids: Vec<String> = output
+            .lines()
+            .map(|line| {
+                let event: serde_json::Value = serde_json::from_str(line).unwrap();
+                event["tauditscanrunid"].as_str().unwrap().to_string()
+            })
+            .collect();
+
+        assert_eq!(scan_run_ids.len(), 2);
+        assert_eq!(scan_run_ids[0], scan_run_ids[1]);
+    }
+
+    #[test]
+    fn correlation_id_uses_non_empty_env_value_when_set() {
+        let _guard = env_lock().lock().unwrap();
+        cleanup_correlation_env();
+        unsafe {
+            std::env::set_var(CORRELATION_ID_ENV, "corr-from-env");
+        }
+
+        let sink = CloudEventsJsonlSink::default();
+        assert_eq!(sink.resolve_correlation_id(), "corr-from-env");
+
+        cleanup_correlation_env();
+    }
+
+    #[test]
+    fn correlation_id_empty_env_value_falls_back_to_uuid() {
+        let _guard = env_lock().lock().unwrap();
+        cleanup_correlation_env();
+        unsafe {
+            std::env::set_var(CORRELATION_ID_ENV, "   ");
+        }
+
+        let sink = CloudEventsJsonlSink::default();
+        let resolved = sink.resolve_correlation_id();
+        assert!(
+            uuid::Uuid::parse_str(&resolved).is_ok(),
+            "empty env must fall back to a minted UUID"
+        );
+
+        cleanup_correlation_env();
+    }
+
+    #[test]
+    fn correlation_id_unset_env_falls_back_to_uuid() {
+        let _guard = env_lock().lock().unwrap();
+        cleanup_correlation_env();
+
+        let sink = CloudEventsJsonlSink::default();
+        let resolved = sink.resolve_correlation_id();
+        assert!(
+            uuid::Uuid::parse_str(&resolved).is_ok(),
+            "unset env must fall back to a minted UUID"
+        );
+    }
+
+    #[test]
+    fn scan_run_id_uses_non_empty_env_value_when_set() {
+        let _guard = env_lock().lock().unwrap();
+        cleanup_scan_run_env();
+        unsafe {
+            std::env::set_var(SCAN_RUN_ID_ENV, "scan-run-from-env");
+        }
+
+        let sink = CloudEventsJsonlSink::default();
+        assert_eq!(sink.resolve_scan_run_id(), "scan-run-from-env");
+
+        cleanup_scan_run_env();
+    }
+
+    #[test]
+    fn scan_run_id_empty_env_value_falls_back_to_uuid() {
+        let _guard = env_lock().lock().unwrap();
+        cleanup_scan_run_env();
+        unsafe {
+            std::env::set_var(SCAN_RUN_ID_ENV, "   ");
+        }
+
+        let sink = CloudEventsJsonlSink::default();
+        let resolved = sink.resolve_scan_run_id();
+        assert!(
+            uuid::Uuid::parse_str(&resolved).is_ok(),
+            "empty env must fall back to a minted UUID"
+        );
+
+        cleanup_scan_run_env();
+    }
+
+    #[test]
+    fn scan_run_id_unset_env_falls_back_to_uuid() {
+        let _guard = env_lock().lock().unwrap();
+        cleanup_scan_run_env();
+
+        let sink = CloudEventsJsonlSink::default();
+        let resolved = sink.resolve_scan_run_id();
+        assert!(
+            uuid::Uuid::parse_str(&resolved).is_ok(),
+            "unset env must fall back to a minted UUID"
+        );
+    }
+
+    #[test]
+    fn pipeline_id_uses_metadata_pipeline_content_hash_when_present() {
+        let mut graph = AuthorityGraph::new(test_source());
+        graph.metadata.insert(
+            "pipeline_content_hash".into(),
+            "sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef".into(),
+        );
+
+        let findings = vec![test_finding(
+            FindingCategory::AuthorityPropagation,
+            Severity::High,
+        )];
+
+        let mut buf = Vec::new();
+        CloudEventsJsonlSink::default()
+            .emit(&mut buf, &graph, &findings)
+            .unwrap();
+
+        let event: serde_json::Value =
+            serde_json::from_str(std::str::from_utf8(&buf).unwrap().lines().next().unwrap())
+                .unwrap();
+        assert_eq!(
+            event["tauditpipelineid"],
+            "urn:taudit:pipeline:sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
+        );
+    }
+
+    #[test]
+    fn pipeline_id_is_stable_across_emits_for_same_graph() {
+        let graph = AuthorityGraph::new(test_source());
+        let findings = vec![test_finding(
+            FindingCategory::AuthorityPropagation,
+            Severity::High,
+        )];
+
+        let sink = CloudEventsJsonlSink::default();
+        let mut buf_a = Vec::new();
+        let mut buf_b = Vec::new();
+        sink.emit(&mut buf_a, &graph, &findings).unwrap();
+        sink.emit(&mut buf_b, &graph, &findings).unwrap();
+
+        let event_a: serde_json::Value =
+            serde_json::from_str(std::str::from_utf8(&buf_a).unwrap().lines().next().unwrap())
+                .unwrap();
+        let event_b: serde_json::Value =
+            serde_json::from_str(std::str::from_utf8(&buf_b).unwrap().lines().next().unwrap())
+                .unwrap();
+
+        assert_eq!(event_a["tauditpipelineid"], event_b["tauditpipelineid"]);
+    }
+
+    #[test]
     fn empty_findings_produces_empty_output() {
         let graph = AuthorityGraph::new(test_source());
 
@@ -1045,6 +1314,7 @@ mod tests {
             if let Some(obj) = v.as_object_mut() {
                 obj.remove("id");
                 obj.remove("time");
+                obj.remove("tauditscanrunid");
             }
             serde_json::to_vec(&v).unwrap()
         }

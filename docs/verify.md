@@ -14,6 +14,7 @@ acceptable, and exits accordingly.
 taudit verify [PATH...] --policy <FILE_OR_DIR>
               [--format text|json|sarif]
               [--platform auto|github-actions|azure-devops|gitlab]
+              [--ado-org <ORG_URL_OR_NAME> --ado-project <NAME> --ado-pat <PAT>]
               [--strict]
               [--include-builtin]
               [--severity-threshold critical|high|medium|low|info]
@@ -35,6 +36,13 @@ Exit codes are part of the contract. Wire them straight into CI:
 Exit `2` is reserved for "we couldn't make a decision" — never conflate it
 with "the policy passed". A required CI check that treats `2` as success will
 silently let unscanned pipelines through.
+
+If `verify` appears to exit `0` despite printed violations, check the wrapper
+you invoked before assuming a CLI bug. This repository's own dogfood path runs
+`taudit verify` in advisory mode in [`scripts/quality-gate.sh`](../scripts/quality-gate.sh)
+and documents that choice in [`docs/contributing/dogfood-taudit-verify.md`](contributing/dogfood-taudit-verify.md);
+the `verify` command itself still returns `1` when violations are present,
+including findings from `--include-builtin`.
 
 ## Discovered-file parse/read errors and `--strict`
 
@@ -167,11 +175,36 @@ is byte-compatible with SARIF emitted by `scan`.
 | `--policy <FILE_OR_DIR>` | Required. Source of invariants. |
 | `--format text\|json\|sarif` | Output format. Default `text`. |
 | `--platform auto\|github-actions\|azure-devops\|gitlab` | Pipeline format. Default `auto`. |
+| `--ado-org <ORG_URL_OR_NAME>` | Optional ADO enrichment input. Accepts `https://dev.azure.com/<org>` or `<org>`. Requires `--ado-project` and `--ado-pat`. |
+| `--ado-project <NAME>` | Optional ADO project for variable-group lookup. Requires `--ado-org` and `--ado-pat`. |
+| `--ado-pat <PAT>` | Optional PAT for ADO variable-group read. Never logged or persisted. Requires `--ado-org` and `--ado-project`. |
 | `--include-builtin` | Also run the 61 built-in rules; their findings count toward violations. |
 | `--severity-threshold <level>` | Only count violations at or above this severity. |
 | `--max-hops <N>` | Cap propagation BFS depth (default `taudit_core::propagation::DEFAULT_MAX_HOPS`). |
 | `--no-color` | Disable ANSI in `text` output. Also honoured via `NO_COLOR`. |
 | `-o, --output <FILE>` | Write report to file instead of stdout. Exit code is unaffected. |
+
+### ADO-aware mode (`--ado-org` / `--ado-project` / `--ado-pat`)
+
+When all three ADO flags are provided and a file resolves to
+`--platform azure-devops`, taudit attempts a read-only lookup of ADO variable
+groups using:
+
+```text
+GET {org}/{project}/_apis/distributedtask/variablegroups?api-version=7.1
+```
+
+Resolution semantics:
+
+- `isSecret: true` entries are modelled as `Secret` nodes.
+- `isSecret: false` entries are treated as plain variables (no `Secret` node).
+- If enrichment fails (network/auth/permissions/response shape), taudit emits a
+  partial warning and falls back to static opaque-group modelling.
+
+Security and scope:
+
+- Requires only **Variable Groups (Read)** scope.
+- PAT values are never written to graph metadata, findings, or logs.
 
 ## Authoring a policy file
 

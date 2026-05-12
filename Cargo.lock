@@ -2038,12 +2038,14 @@ dependencies = [
 name = "taudit-parse-ado"
 version = "1.1.0-rc.6"
 dependencies = [
+ "base64",
  "criterion",
  "serde",
  "serde_json",
  "serde_yaml",
  "taudit-core",
  "thiserror",
+ "ureq",
 ]
 
 [[package]]

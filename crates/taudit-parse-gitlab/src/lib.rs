@@ -319,6 +319,19 @@ fn build_graph_from_root(
         }
     }
 
+    // Top-level default: can inject authority-relevant settings into every
+    // job (image/services/variables/secrets/id_tokens/scripts/cache/artifacts).
+    // We currently do not materialize that inheritance chain, so mark Partial
+    // to avoid false completeness.
+    if let Some(default_map) = mapping.get("default").and_then(|v| v.as_mapping()) {
+        if default_contains_authority_relevant_keys(default_map) {
+            graph.mark_partial(
+                GapKind::Structural,
+                "default: contains inherited authority-relevant job settings — inheritance not fully resolved".to_string(),
+            );
+        }
+    }
+
     // Global variables
     let global_secrets = process_variables(mapping.get("variables"), &mut graph, "pipeline");
 
@@ -367,6 +380,15 @@ fn build_graph_from_root(
             graph.mark_partial(
                 GapKind::Structural,
                 format!("job '{job_name}' uses extends: — inherited configuration not resolved"),
+            );
+        }
+
+        // inherit: controls whether job receives top-level `default:` and
+        // `variables:`. We don't model the inheritance matrix yet.
+        if job_map.contains_key("inherit") {
+            graph.mark_partial(
+                GapKind::Structural,
+                format!("job '{job_name}' uses inherit: — inheritance scope not resolved"),
             );
         }
 
@@ -1418,6 +1440,24 @@ fn extract_extends_list(v: Option<&Value>) -> Vec<String> {
     }
 }
 
+/// Returns true when `default:` carries keys that can change authority
+/// interpretation for jobs inheriting it.
+fn default_contains_authority_relevant_keys(m: &serde_yaml::Mapping) -> bool {
+    [
+        "image",
+        "services",
+        "variables",
+        "secrets",
+        "id_tokens",
+        "before_script",
+        "after_script",
+        "cache",
+        "artifacts",
+    ]
+    .iter()
+    .any(|k| m.contains_key(*k))
+}
+
 /// Returns true when any entry in `services:` has an image name matching
 /// `docker:*-dind` (or bare `docker:dind`). Recognises both shapes:
 /// `services: [docker:dind]` and `services: [{name: docker:dind}]`.
@@ -1737,6 +1777,54 @@ build:
         let graph = parse(yaml);
         assert_eq!(graph.completeness, AuthorityCompleteness::Partial);
         assert_eq!(graph.completeness_gap_kinds[0], GapKind::Structural);
+    }
+
+    #[test]
+    fn default_with_authority_relevant_keys_marks_partial() {
+        let yaml = r#"
+default:
+    image: alpine:latest
+    before_script:
+        - echo from default
+
+build:
+    script:
+        - make
+"#;
+        let graph = parse(yaml);
+        assert_eq!(graph.completeness, AuthorityCompleteness::Partial);
+        assert!(
+            graph
+                .completeness_gaps
+                .iter()
+                .any(|r| r.contains("default:") && r.contains("inherit")),
+            "expected default-inheritance partial reason, got: {:?}",
+            graph.completeness_gaps
+        );
+    }
+
+    #[test]
+    fn inherit_key_marks_partial() {
+        let yaml = r#"
+variables:
+    DEPLOY_TOKEN: "$CI_DEPLOY_TOKEN"
+
+deploy:
+    inherit:
+        variables: false
+    script:
+        - deploy.sh
+"#;
+        let graph = parse(yaml);
+        assert_eq!(graph.completeness, AuthorityCompleteness::Partial);
+        assert!(
+            graph
+                .completeness_gaps
+                .iter()
+                .any(|r| r.contains("job 'deploy' uses inherit:")),
+            "expected inherit partial reason, got: {:?}",
+            graph.completeness_gaps
+        );
     }
 
     #[test]

@@ -13,7 +13,7 @@ use taudit_core::ports::ReportSink;
 use taudit_core::propagation::DEFAULT_MAX_HOPS;
 use taudit_core::rules;
 use taudit_core::summary;
-use taudit_parse_ado::AdoParser;
+use taudit_parse_ado::{AdoParser, AdoParserContext};
 use taudit_parse_bitbucket::BitbucketParser;
 use taudit_parse_gha::GhaParser;
 use taudit_parse_gitlab::GitlabParser;
@@ -57,6 +57,7 @@ macro_rules! try_println {
     after_long_help = include_str!("../static/after-long-help.txt"),
     version
 )]
+#[allow(clippy::large_enum_variant)]
 enum Cli {
     /// Scan pipeline file(s) for authority findings
     #[command(long_about = "Scan pipeline file(s) for authority findings.\n\n\
@@ -192,6 +193,21 @@ enum Cli {
         /// CI/CD platform. Default: auto (detects from YAML content)
         #[arg(long, default_value = "auto")]
         platform: Platform,
+
+        /// Optional Azure DevOps organization for variable-group enrichment
+        /// (Phase 3A scaffolding; no API call yet).
+        #[arg(long)]
+        ado_org: Option<String>,
+
+        /// Optional Azure DevOps project for variable-group enrichment
+        /// (Phase 3A scaffolding; no API call yet).
+        #[arg(long)]
+        ado_project: Option<String>,
+
+        /// Optional Azure DevOps PAT for variable-group enrichment
+        /// (Phase 3A scaffolding; never logged).
+        #[arg(long)]
+        ado_pat: Option<String>,
 
         /// Write the report to this file instead of stdout.
         #[arg(long, short = 'o')]
@@ -505,6 +521,21 @@ enum Cli {
         /// CI/CD platform. Default: auto (detects from YAML content)
         #[arg(long, default_value = "auto")]
         platform: Platform,
+
+        /// Optional Azure DevOps organization for variable-group enrichment
+        /// (Phase 3A scaffolding; no API call yet).
+        #[arg(long)]
+        ado_org: Option<String>,
+
+        /// Optional Azure DevOps project for variable-group enrichment
+        /// (Phase 3A scaffolding; no API call yet).
+        #[arg(long)]
+        ado_project: Option<String>,
+
+        /// Optional Azure DevOps PAT for variable-group enrichment
+        /// (Phase 3A scaffolding; never logged).
+        #[arg(long)]
+        ado_pat: Option<String>,
 
         /// Maximum propagation depth for BFS analysis.
         #[arg(long, default_value_t = DEFAULT_MAX_HOPS)]
@@ -1237,6 +1268,9 @@ struct ScanOpts {
     receipt_dir: Option<PathBuf>,
     log_dir: Option<PathBuf>,
     platform: Platform,
+    ado_org: Option<String>,
+    ado_project: Option<String>,
+    ado_pat: Option<String>,
     output: Option<PathBuf>,
     invariants_dir: Option<PathBuf>,
     invariants_allow_external_symlinks: bool,
@@ -1309,6 +1343,9 @@ fn run() -> Result<()> {
             receipt_dir,
             log_dir,
             platform,
+            ado_org,
+            ado_project,
+            ado_pat,
             output,
             invariants_dir,
             invariants_allow_external_symlinks,
@@ -1343,6 +1380,9 @@ fn run() -> Result<()> {
                 receipt_dir,
                 log_dir,
                 platform,
+                ado_org,
+                ado_project,
+                ado_pat,
                 output,
                 invariants_dir,
                 invariants_allow_external_symlinks,
@@ -1451,6 +1491,9 @@ fn run() -> Result<()> {
             policy,
             format,
             platform,
+            ado_org,
+            ado_project,
+            ado_pat,
             max_hops,
             include_builtin,
             severity_threshold,
@@ -1473,6 +1516,9 @@ fn run() -> Result<()> {
                 policy,
                 format,
                 platform,
+                ado_org,
+                ado_project,
+                ado_pat,
                 max_hops,
                 include_builtin,
                 severity_threshold,
@@ -1746,6 +1792,9 @@ fn cmd_scan(opts: ScanOpts) -> Result<()> {
         receipt_dir,
         log_dir,
         platform,
+        ado_org,
+        ado_project,
+        ado_pat,
         output,
         invariants_dir,
         invariants_allow_external_symlinks,
@@ -1792,6 +1841,7 @@ fn cmd_scan(opts: ScanOpts) -> Result<()> {
     // used, parsers are built per-file inside the loop after detecting from content.
     let parser_box = make_parser(&platform);
     let parser = parser_box.as_ref();
+    let ado_parser_context = build_ado_parser_context(ado_org, ado_project, ado_pat);
     let stdout_handle = std::io::stdout();
     let mut writer: Box<dyn std::io::Write> = match output.as_ref() {
         Some(path) => Box::new(std::io::BufWriter::new(
@@ -1903,9 +1953,21 @@ fn cmd_scan(opts: ScanOpts) -> Result<()> {
                 let resolved_platform = resolve_platform(&platform, &content, None);
                 let per_file_parser = make_parser(&resolved_platform);
                 resolved_for_file = resolved_platform;
-                parse_content(per_file_parser.as_ref(), content, "<stdin>".to_string())?
+                parse_content_with_optional_ado_context(
+                    per_file_parser.as_ref(),
+                    content,
+                    "<stdin>".to_string(),
+                    &resolved_for_file,
+                    ado_parser_context.as_ref(),
+                )?
             } else {
-                parse_content(parser, content, "<stdin>".to_string())?
+                parse_content_with_optional_ado_context(
+                    parser,
+                    content,
+                    "<stdin>".to_string(),
+                    &platform,
+                    ado_parser_context.as_ref(),
+                )?
             }
         } else {
             // Read the file once. When auto-detecting, sniff the content to pick
@@ -1931,13 +1993,21 @@ fn cmd_scan(opts: ScanOpts) -> Result<()> {
                 let resolved_platform = resolve_platform(&platform, &content, Some(path.as_path()));
                 let per_file_parser = make_parser(&resolved_platform);
                 resolved_for_file = resolved_platform;
-                parse_content(
+                parse_content_with_optional_ado_context(
                     per_file_parser.as_ref(),
                     content,
                     path.display().to_string(),
+                    &resolved_for_file,
+                    ado_parser_context.as_ref(),
                 )
             } else {
-                parse_content(parser, content, path.display().to_string())
+                parse_content_with_optional_ado_context(
+                    parser,
+                    content,
+                    path.display().to_string(),
+                    &platform,
+                    ado_parser_context.as_ref(),
+                )
             };
             match parse_result {
                 Ok(g) => g,
@@ -2292,6 +2362,9 @@ struct VerifyOpts {
     policy: PathBuf,
     format: VerifyFormat,
     platform: Platform,
+    ado_org: Option<String>,
+    ado_project: Option<String>,
+    ado_pat: Option<String>,
     max_hops: usize,
     include_builtin: bool,
     severity_threshold: Option<SeverityLevel>,
@@ -2418,6 +2491,11 @@ fn run_verify_io<W: std::io::Write>(opts: &VerifyOpts, writer: &mut W) -> i32 {
 
     let parser_box = make_parser(&opts.platform);
     let parser = parser_box.as_ref();
+    let ado_parser_context = build_ado_parser_context(
+        opts.ado_org.clone(),
+        opts.ado_project.clone(),
+        opts.ado_pat.clone(),
+    );
     let threshold = opts.severity_threshold.as_ref().map(|s| s.to_severity());
 
     // Load .taudit-suppressions.yml — verify honors the same waiver file
@@ -2471,13 +2549,21 @@ fn run_verify_io<W: std::io::Write>(opts: &VerifyOpts, writer: &mut W) -> i32 {
             let resolved_platform =
                 resolve_platform(&opts.platform, &content, Some(path.as_path()));
             let per_file_parser = make_parser(&resolved_platform);
-            parse_content(
+            parse_content_with_optional_ado_context(
                 per_file_parser.as_ref(),
                 content,
                 path.display().to_string(),
+                &resolved_platform,
+                ado_parser_context.as_ref(),
             )
         } else {
-            parse_content(parser, content, path.display().to_string())
+            parse_content_with_optional_ado_context(
+                parser,
+                content,
+                path.display().to_string(),
+                &opts.platform,
+                ado_parser_context.as_ref(),
+            )
         };
 
         let graph = match parse_result {
@@ -4798,6 +4884,61 @@ fn parse_content(
     })
 }
 
+fn build_ado_parser_context(
+    ado_org: Option<String>,
+    ado_project: Option<String>,
+    ado_pat: Option<String>,
+) -> Option<AdoParserContext> {
+    let ctx = AdoParserContext {
+        org: ado_org.and_then(trim_to_option),
+        project: ado_project.and_then(trim_to_option),
+        pat: ado_pat.and_then(trim_to_option),
+    };
+    if ctx.org.is_none() && ctx.project.is_none() && ctx.pat.is_none() {
+        None
+    } else {
+        Some(ctx)
+    }
+}
+
+fn trim_to_option(s: String) -> Option<String> {
+    let trimmed = s.trim();
+    if trimmed.is_empty() {
+        None
+    } else {
+        Some(trimmed.to_string())
+    }
+}
+
+fn parse_content_with_optional_ado_context(
+    parser: &dyn taudit_core::ports::PipelineParser,
+    content: String,
+    source_file: String,
+    resolved_platform: &Platform,
+    ado_ctx: Option<&AdoParserContext>,
+) -> Result<taudit_core::graph::AuthorityGraph> {
+    if *resolved_platform != Platform::AzureDevOps {
+        return parse_content(parser, content, source_file);
+    }
+
+    let source = PipelineSource {
+        file: source_file.clone(),
+        repo: None,
+        git_ref: None,
+        commit_sha: None,
+    };
+    let content = normalise_line_endings(content);
+    let ado_parser = AdoParser;
+    ado_parser
+        .parse_with_context(&content, &source, ado_ctx)
+        .with_context(|| {
+            format!(
+                "Failed to parse {source_file}\n\
+                 hint: confirm the file is valid CI YAML for the selected --platform (use `auto` to detect); see `taudit scan --help`"
+            )
+        })
+}
+
 fn parse_file(
     parser: &dyn taudit_core::ports::PipelineParser,
     path: &Path,
@@ -5466,6 +5607,102 @@ mod tests {
     }
 
     #[test]
+    fn scan_cli_parses_optional_ado_enrichment_flags() {
+        let cli = Cli::try_parse_from([
+            "taudit",
+            "scan",
+            "pipeline.yml",
+            "--ado-org",
+            "example-org",
+            "--ado-project",
+            "example-project",
+            "--ado-pat",
+            "example-pat",
+        ])
+        .expect("cli parse");
+
+        match cli {
+            Cli::Scan {
+                ado_org,
+                ado_project,
+                ado_pat,
+                ..
+            } => {
+                assert_eq!(ado_org.as_deref(), Some("example-org"));
+                assert_eq!(ado_project.as_deref(), Some("example-project"));
+                assert_eq!(ado_pat.as_deref(), Some("example-pat"));
+            }
+            _ => panic!("expected Cli::Scan"),
+        }
+    }
+
+    #[test]
+    fn verify_cli_parses_optional_ado_enrichment_flags() {
+        let cli = Cli::try_parse_from([
+            "taudit",
+            "verify",
+            "pipeline.yml",
+            "--policy",
+            "policy.yml",
+            "--ado-org",
+            "example-org",
+            "--ado-project",
+            "example-project",
+            "--ado-pat",
+            "example-pat",
+        ])
+        .expect("cli parse");
+
+        match cli {
+            Cli::Verify {
+                ado_org,
+                ado_project,
+                ado_pat,
+                ..
+            } => {
+                assert_eq!(ado_org.as_deref(), Some("example-org"));
+                assert_eq!(ado_project.as_deref(), Some("example-project"));
+                assert_eq!(ado_pat.as_deref(), Some("example-pat"));
+            }
+            _ => panic!("expected Cli::Verify"),
+        }
+    }
+
+    #[test]
+    fn parse_wrapper_threads_ado_context_without_storing_pat() {
+        let parser = make_parser(&Platform::AzureDevOps);
+        let graph = parse_content_with_optional_ado_context(
+            parser.as_ref(),
+            "steps:\n  - script: echo hi\n".to_string(),
+            "ado.yml".to_string(),
+            &Platform::AzureDevOps,
+            Some(&AdoParserContext {
+                org: Some("org-a".to_string()),
+                project: Some("project-a".to_string()),
+                pat: Some("super-secret-pat".to_string()),
+            }),
+        )
+        .expect("parse succeeds");
+
+        assert_eq!(graph.metadata.get("ado_org"), Some(&"org-a".to_string()));
+        assert_eq!(
+            graph.metadata.get("ado_project"),
+            Some(&"project-a".to_string())
+        );
+        assert_eq!(
+            graph.metadata.get("ado_pat_present"),
+            Some(&"true".to_string())
+        );
+        assert!(
+            !graph
+                .metadata
+                .values()
+                .any(|value| value.contains("super-secret-pat")),
+            "PAT must never be materialized in metadata"
+        );
+    }
+
+    #[test]
     fn resolve_runtime_artifact_paths_prefers_explicit_values() {
         let telemetry = PathBuf::from("/tmp/telemetry-explicit");
         let receipt = PathBuf::from("/tmp/receipt-explicit");
@@ -5676,6 +5913,9 @@ mod tests {
             policy,
             format: VerifyFormat::Text,
             platform: Platform::GithubActions,
+            ado_org: None,
+            ado_project: None,
+            ado_pat: None,
             max_hops: DEFAULT_MAX_HOPS,
             include_builtin: false,
             severity_threshold: None,
@@ -5715,6 +5955,9 @@ mod tests {
             policy,
             format: VerifyFormat::Text,
             platform: Platform::GithubActions,
+            ado_org: None,
+            ado_project: None,
+            ado_pat: None,
             max_hops: DEFAULT_MAX_HOPS,
             include_builtin: false,
             severity_threshold: None,
@@ -5748,6 +5991,9 @@ mod tests {
             policy: PathBuf::from("/nonexistent/path/policy.yml"),
             format: VerifyFormat::Text,
             platform: Platform::GithubActions,
+            ado_org: None,
+            ado_project: None,
+            ado_pat: None,
             max_hops: DEFAULT_MAX_HOPS,
             include_builtin: false,
             severity_threshold: None,
@@ -5775,6 +6021,9 @@ mod tests {
             policy,
             format: VerifyFormat::Json,
             platform: Platform::GithubActions,
+            ado_org: None,
+            ado_project: None,
+            ado_pat: None,
             max_hops: DEFAULT_MAX_HOPS,
             include_builtin: false,
             severity_threshold: None,
@@ -5814,6 +6063,9 @@ mod tests {
             policy,
             format: VerifyFormat::Text,
             platform: Platform::GithubActions,
+            ado_org: None,
+            ado_project: None,
+            ado_pat: None,
             max_hops: DEFAULT_MAX_HOPS,
             include_builtin: false,
             severity_threshold: Some(SeverityLevel::Critical),
@@ -5867,6 +6119,9 @@ mod tests {
             policy,
             format: VerifyFormat::Text,
             platform: Platform::GithubActions,
+            ado_org: None,
+            ado_project: None,
+            ado_pat: None,
             max_hops: DEFAULT_MAX_HOPS,
             include_builtin: false,
             severity_threshold: None,
@@ -5933,6 +6188,9 @@ mod tests {
             policy,
             format: VerifyFormat::Text,
             platform: Platform::GithubActions,
+            ado_org: None,
+            ado_project: None,
+            ado_pat: None,
             max_hops: DEFAULT_MAX_HOPS,
             include_builtin: false,
             severity_threshold: None,
@@ -5998,6 +6256,9 @@ mod tests {
             policy,
             format: VerifyFormat::Text,
             platform: Platform::GithubActions,
+            ado_org: None,
+            ado_project: None,
+            ado_pat: None,
             max_hops: DEFAULT_MAX_HOPS,
             include_builtin: false,
             severity_threshold: None,
@@ -6043,6 +6304,9 @@ mod tests {
             policy,
             format: VerifyFormat::Text,
             platform: Platform::GithubActions,
+            ado_org: None,
+            ado_project: None,
+            ado_pat: None,
             max_hops: DEFAULT_MAX_HOPS,
             include_builtin: false,
             severity_threshold: None,
@@ -6118,6 +6382,9 @@ mod tests {
             policy,
             format: VerifyFormat::Text,
             platform: Platform::Auto,
+            ado_org: None,
+            ado_project: None,
+            ado_pat: None,
             max_hops: DEFAULT_MAX_HOPS,
             include_builtin: false,
             severity_threshold: None,
@@ -6157,6 +6424,9 @@ mod tests {
             policy,
             format: VerifyFormat::Text,
             platform: Platform::Auto,
+            ado_org: None,
+            ado_project: None,
+            ado_pat: None,
             max_hops: DEFAULT_MAX_HOPS,
             include_builtin: false,
             severity_threshold: None,

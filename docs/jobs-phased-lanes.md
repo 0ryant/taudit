@@ -128,7 +128,7 @@ flowchart TB
 |------|-----|---------------|------------|-----------|
 | **1A** | **Publish / govern custom-rule DSL schema** | `contracts/schemas/authority-invariant-v1.schema.json`, `scripts/generate-authority-invariant-schema.py`, `scripts/validate-authority-invariant-yaml.py`, CI in `quality.yml` | — | **Shipped:** generator `--check` vs Rust `FindingCategory`; starter dir validated in CI. Iterate semver governance in docs as needed. |
 | **1B** | **GitLab parser → `Complete`** (incremental) | `crates/taudit-parse-gitlab/`, tests | — | Roadmap R3 items landed or explicitly documented as Partial with typed gaps: `include:` resolution, protected-branch boundaries, variable scope. |
-| **1C** | **ADO parser → `Complete`** (static YAML) | `crates/taudit-parse-ado/`, tests | — | Unsupported constructs emit typed partial gaps; no silent under-modeling. |
+| **1C** | **ADO parser → `Complete`** (static YAML) | `crates/taudit-parse-ado/`, tests | — | **Increment shipped:** explicit `dependsOn` partial signaling landed. Continue closing remaining unsupported constructs with typed gaps; no silent under-modeling. |
 | **1D** | **Contract & adoption docs** | `docs/authority-graph.md`, `docs/golden-paths.md`, `CHANGELOG.md`, ADRs as needed | 1A beneficial | Golden paths smoke clean; breaking vs additive schema changes called out in CHANGELOG. |
 
 **Parallelism:** **1B** and **1C** are different crates — safe for two agents. **1A** touches schemas and loader — pair with **one** of 1B/1C if CI bandwidth is limited. **1D** can run as docs-only PRs in parallel if it does not restate unmerged schema filenames.
@@ -143,7 +143,7 @@ flowchart TB
 
 | Lane | Job | Primary paths | Depends on | Done when |
 |------|-----|---------------|------------|-----------|
-| **2A** | **Inbound correlation ID** | `crates/taudit-sink-cloudevents/src/lib.rs`, CLI/env (`TAUDIT_CORRELATION_ID` or documented flag), tests | — | When set, sink uses caller id for `correlationid`; else preserves current UUID behavior. Never logs secret values. |
+| **2A** | **Inbound correlation ID** | `crates/taudit-sink-cloudevents/src/lib.rs`, CLI/env (`TAUDIT_CORRELATION_ID` or documented flag), tests | — | **Increment shipped:** sink honors non-empty `TAUDIT_CORRELATION_ID` env override for `correlationid`; fallback UUID behavior preserved and value is not logged. |
 | **2B** | **Seam-shaped stable identifiers** | Sink + optional `taudit-core` helpers | 2A optional | **`pipelineId`** URN derived from existing pipeline content hash; documented mapping. Optional **`scanRunId`** per invocation documented (distinct from operator-flow correlation). |
 | **2C** | **`rules_version` / reproducibility on events** | Sink, baseline metadata if needed | — | Each emitted finding event carries enough to answer “same rules as baseline?” without opening `.taudit/baselines/` (fields align with seam appendix intent). |
 | **2D** | **`subject` URN + `provenance.parent` readiness** | Sink, CloudEvents schema docs under `contracts/` | 2A–2C coordinated | `subject` uses stable URN form where feasible (avoid absolute-path leakage); optional **`provenanceparent`** / nested provenance **additive** — schema + one fixture example. |
@@ -160,7 +160,7 @@ flowchart TB
 
 | Lane | Job | Primary paths | Depends on | Done when |
 |------|-----|---------------|------------|-----------|
-| **3A** | **`--ado-org` / `--ado-project` / `--ado-pat`** + REST client | ADO parser context, `ureq`, `taudit-cli` | — | Opt-in; Variable Groups Read scope; graceful fallback with **warning** on API failure; no PAT in logs or disk. |
+| **3A** | **`--ado-org` / `--ado-project` / `--ado-pat`** + REST client | ADO parser context, `ureq`, `taudit-cli` | — | **Increment shipped:** opt-in flag/context wiring + variable-groups REST fetch + warning fallback path landed; PAT still never logged/persisted. |
 | **3B** | **Tests & fixtures** | `tests/`, parser tests | 3A | Mock or recorded responses for secret vs plain vars; failure modes covered. |
 | **3C** | **Documentation** | `docs/verify.md`, `docs/baselines.md`, optional `TODOS.md` status | 3A | Reproducibility caveat documented (live ADO state vs static YAML). |
 

@@ -10,7 +10,7 @@ MoSCoW: **Must** | **Should** | **Could** | **Won't**
 
 ### `--ado-pat`: ADO variable group resolution at scan time
 
-**Status:** Not started  
+**Status:** In progress; pre-req static increment shipped (`dependsOn` explicit partial signaling) and API enrichment runtime path landed with graceful fallback.  
 **Effort:** Medium (1–2 weeks)  
 **Impact:** High noise reduction for ADO pipelines with variable groups
 
