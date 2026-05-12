@@ -213,7 +213,11 @@ fn verify_discovered_parse_error_is_fatal_with_strict_flag() {
 #[test]
 fn verify_include_builtin_exit_one_when_builtin_findings_exist() {
     let fixture = workspace_root().join("tests/fixtures/propagation-leaky.yml");
-    assert!(fixture.exists(), "fixture must exist: {}", fixture.display());
+    assert!(
+        fixture.exists(),
+        "fixture must exist: {}",
+        fixture.display()
+    );
 
     let missing_policy = unique_tmp_dir("verify-missing-policy").join("policy.yml");
     assert!(
@@ -564,11 +568,8 @@ fn invariants_dir_does_not_emit_deprecation_warning() {
 fn verify_bundled_strict_policy_skips_implicit_ado_identity() {
     let tmp = unique_tmp_dir("verify-ado-implicit-oidc");
     let pipeline = tmp.join("azure-pipelines.yml");
-    std::fs::write(
-        &pipeline,
-        "pr:\n  - main\nsteps:\n  - script: echo hi\n",
-    )
-    .expect("write ado pipeline");
+    std::fs::write(&pipeline, "pr:\n  - main\nsteps:\n  - script: echo hi\n")
+        .expect("write ado pipeline");
 
     let policy = workspace_root().join("invariants/starter/bundled-strict-policy.yml");
     assert!(policy.exists(), "bundled strict policy must exist");
@@ -871,7 +872,7 @@ fn suppressions_list_emits_loaded_entries() {
     let supp_path = dir.join(".taudit-suppressions.yml");
     std::fs::write(
         &supp_path,
-        "suppressions:\n  - fingerprint: \"deadbeefdeadbeef\"\n    rule_id: \"unpinned_action\"\n    reason: \"internal action\"\n    accepted_by: \"alice@example.com\"\n    accepted_at: \"2026-04-26\"\n",
+        "suppressions:\n  - fingerprint: \"deadbeefdeadbeefdeadbeefdeadbeef\"\n    rule_id: \"unpinned_action\"\n    reason: \"internal action\"\n    accepted_by: \"alice@example.com\"\n    accepted_at: \"2026-04-26\"\n",
     )
     .unwrap();
 
@@ -891,7 +892,7 @@ fn suppressions_list_emits_loaded_entries() {
         String::from_utf8_lossy(&output.stderr)
     );
     let stdout = String::from_utf8_lossy(&output.stdout);
-    assert!(stdout.contains("deadbeefdeadbeef"));
+    assert!(stdout.contains("deadbeefdeadbeefdeadbeefdeadbeef"));
     assert!(stdout.contains("unpinned_action"));
     assert!(stdout.contains("alice@example.com"));
 }
@@ -947,7 +948,7 @@ fn verify_auto_discovers_suppressions_and_logs_loaded_path() {
     let supp_path = dir.join(".taudit-suppressions.yml");
     std::fs::write(
         &supp_path,
-        "suppressions:\n  - fingerprint: \"deadbeefdeadbeef\"\n    rule_id: \"authority_propagation\"\n    reason: \"auto-discover test\"\n    accepted_by: \"test@example.com\"\n    accepted_at: \"2026-04-26\"\n    expires_at: \"2099-01-01\"\n",
+        "suppressions:\n  - fingerprint: \"deadbeefdeadbeefdeadbeefdeadbeef\"\n    rule_id: \"authority_propagation\"\n    reason: \"auto-discover test\"\n    accepted_by: \"test@example.com\"\n    accepted_at: \"2026-04-26\"\n    expires_at: \"2099-01-01\"\n",
     )
     .expect("write suppressions file");
 
@@ -983,7 +984,7 @@ fn verify_warns_on_orphaned_suppression_fingerprint() {
     let supp_path = dir.join(".taudit-suppressions.yml");
     std::fs::write(
         &supp_path,
-        "suppressions:\n  - fingerprint: \"deadbeef0000000000000000000000ff\"\n    rule_id: \"over_privileged_identity\"\n    reason: \"orphan test\"\n    accepted_by: \"test@example.com\"\n    accepted_at: \"2026-04-26\"\n    expires_at: \"2099-01-01\"\n",
+        "suppressions:\n  - fingerprint: \"deadbeefdeadbeef\"\n    rule_id: \"over_privileged_identity\"\n    reason: \"orphan test\"\n    accepted_by: \"test@example.com\"\n    accepted_at: \"2026-04-26\"\n    expires_at: \"2099-01-01\"\n",
     )
     .expect("write suppressions file");
 

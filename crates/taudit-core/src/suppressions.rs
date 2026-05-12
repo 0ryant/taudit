@@ -24,7 +24,7 @@
 //!
 //! ```yaml
 //! suppressions:
-//!   - fingerprint: "5edb30f4db3b5fa3"
+//!   - fingerprint: "5edb30f4db3b5fa3d7fe7289374b7155"
 //!     rule_id: "untrusted_with_authority"
 //!     reason: "Internal-only action; threat-modeled and accepted by security team."
 //!     accepted_by: "ryan@example.com"
@@ -63,7 +63,7 @@ use serde::{Deserialize, Serialize};
 use crate::finding::{downgrade_severity, Finding};
 
 const MAX_CONFIG_BYTES: u64 = 2 * 1024 * 1024;
-const CURRENT_FINGERPRINT_HEX_LEN: usize = 16;
+const CURRENT_FINGERPRINT_HEX_LEN: usize = 32;
 
 /// Mode controlling how the suppression applicator modifies a matched
 /// finding. `Downgrade` (default) drops severity one tier; `Suppress`
@@ -88,7 +88,7 @@ pub enum SuppressionMode {
 /// are non-breaking, removals require a major taudit version.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Suppression {
-    /// 16-char hex fingerprint of the finding being waived. Matches
+    /// 32-char hex fingerprint of the finding being waived. Matches
     /// the value in JSON `findings[].fingerprint`, SARIF
     /// `partialFingerprints[primaryLocationLineHash]`, and CloudEvents
     /// `tauditfindingfingerprint`.
@@ -507,13 +507,13 @@ mod tests {
     fn loader_parses_canonical_yaml() {
         let yaml = r#"
 suppressions:
-  - fingerprint: "5edb30f4db3b5fa3"
+  - fingerprint: "5edb30f4db3b5fa3d7fe7289374b7155"
     rule_id: "untrusted_with_authority"
     reason: "Internal-only action; threat-modeled and accepted by security team."
     accepted_by: "ryan@example.com"
     accepted_at: "2026-04-26"
     expires_at: "2026-07-26"
-  - fingerprint: "a3c8d9e1f2b4c5d6"
+  - fingerprint: "a3c8d9e1f2b4c5d6a3c8d9e1f2b4c5d6"
     rule_id: "long_lived_credential"
     reason: "External SaaS does not support OIDC yet; rotation policy in place."
     accepted_by: "ryan@example.com"
@@ -524,7 +524,10 @@ suppressions:
         std::fs::write(&path, yaml).unwrap();
         let cfg = SuppressionConfig::load_from_path(&path).expect("parse OK");
         assert_eq!(cfg.suppressions.len(), 2);
-        assert_eq!(cfg.suppressions[0].fingerprint, "5edb30f4db3b5fa3");
+        assert_eq!(
+            cfg.suppressions[0].fingerprint,
+            "5edb30f4db3b5fa3d7fe7289374b7155"
+        );
         assert_eq!(
             cfg.suppressions[0].expires_at.as_deref(),
             Some("2026-07-26")
@@ -695,7 +698,7 @@ suppressions:
     fn unmatched_warning_hints_on_unexpected_fingerprint_length() {
         let cfg = SuppressionConfig {
             suppressions: vec![Suppression {
-                fingerprint: "deadbeef0000000000000000000000ff".into(),
+                fingerprint: "deadbeefdeadbeef".into(),
                 rule_id: "unpinned_action".into(),
                 reason: "wrong length".into(),
                 accepted_by: "alice@example.com".into(),
@@ -776,7 +779,7 @@ suppressions:
     #[test]
     fn render_entry_yaml_round_trips() {
         let entry = Suppression {
-            fingerprint: "5edb30f4db3b5fa3".into(),
+            fingerprint: "5edb30f4db3b5fa3d7fe7289374b7155".into(),
             rule_id: "untrusted_with_authority".into(),
             reason: "internal action; risk accepted".into(),
             accepted_by: "alice@example.com".into(),

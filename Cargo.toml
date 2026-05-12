@@ -26,7 +26,7 @@ keywords = ["security", "authority-graph", "github-actions", "azure-devops", "gi
 categories = ["command-line-utilities", "development-tools", "development-tools::testing"]
 
 [workspace.dependencies]
-taudit-api = { version = "0.3", path = "crates/taudit-api" }
+taudit-api = { version = "0.4", path = "crates/taudit-api" }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 serde_yaml = "0.9"

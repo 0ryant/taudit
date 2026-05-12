@@ -39,14 +39,14 @@ or mistyped fingerprints do not fail silently.
 # .taudit-suppressions.yml
 # Each entry waives one finding by stable fingerprint.
 suppressions:
-  - fingerprint: "5edb30f4db3b5fa3"
+  - fingerprint: "5edb30f4db3b5fa3d7fe7289374b7155"
     rule_id: "untrusted_with_authority"
     reason: "Internal-only action; threat-modeled and accepted by security team."
     accepted_by: "ryan@example.com"
     accepted_at: "2026-04-26"
     expires_at: "2026-07-26"  # optional; required for critical waivers
 
-  - fingerprint: "a3c8d9e1f2b4c5d6"
+  - fingerprint: "a3c8d9e1f2b4c5d6a3c8d9e1f2b4c5d6"
     rule_id: "long_lived_credential"
     reason: "External SaaS does not support OIDC yet; rotation policy in place."
     accepted_by: "ryan@example.com"
@@ -59,7 +59,7 @@ suppressions:
 
 | Field | Required | Type | Notes |
 |-------|----------|------|-------|
-| `fingerprint` | yes | 16-char hex | Same value as JSON `findings[].fingerprint`, SARIF `partialFingerprints[primaryLocationLineHash]`, CloudEvents `tauditfindingfingerprint`. |
+| `fingerprint` | yes | 32-char hex | Same value as JSON `findings[].fingerprint`, SARIF `partialFingerprints[primaryLocationLineHash]`, CloudEvents `tauditfindingfingerprint`. |
 | `rule_id` | yes | string | Snake-case rule id or custom rule id. Used for human display. |
 | `reason` | yes | string | Operator justification. Empty values are rejected — the audit trail is the point. |
 | `accepted_by` | yes | string | Identity of the approver: email, GitHub handle, employee id. |
@@ -110,7 +110,7 @@ This rule exists so a critical finding can never silently disappear forever. If 
 When `expires_at` is in the past relative to the current date, the waiver is skipped:
 
 ```
-WARNING: suppression for fingerprint 5edb30f4db3b5fa3 expired on 2026-03-01;
+WARNING: suppression for fingerprint 5edb30f4db3b5fa3d7fe7289374b7155 expired on 2026-03-01;
          finding restored to original severity
 ```
 
@@ -133,9 +133,9 @@ Print every loaded entry with its computed status:
 $ taudit suppressions list
 taudit suppressions — 2 suppressions
 
-  5edb30f4db3b5fa3  untrusted_with_authority  active            expires=2026-07-26    by=ryan@example.com
+  5edb30f4db3b5fa3d7fe7289374b7155  untrusted_with_authority  active            expires=2026-07-26    by=ryan@example.com
     reason: Internal-only action; threat-modeled and accepted by security team.
-  a3c8d9e1f2b4c5d6  long_lived_credential     stale-for-review  expires=(no expiry)   by=ryan@example.com
+  a3c8d9e1f2b4c5d6a3c8d9e1f2b4c5d6  long_lived_credential     stale-for-review  expires=(no expiry)   by=ryan@example.com
     reason: External SaaS does not support OIDC yet; rotation policy in place.
 ```
 
@@ -145,7 +145,7 @@ Append a new entry. Pass all fields via flags (scriptable / CI-bot-friendly):
 
 ```
 $ taudit suppressions add \
-    --fingerprint 5edb30f4db3b5fa3 \
+    --fingerprint 5edb30f4db3b5fa3d7fe7289374b7155 \
     --rule-id untrusted_with_authority \
     --reason "Internal-only action; threat-modeled" \
     --accepted-by ryan@example.com \
@@ -165,7 +165,7 @@ taudit suppressions review — review 2 suppressions
 
   a3c8d9e1f2b4c5d6  rule=long_lived_credential     status=stale-for-review  accepted_at=2026-01-15  by=ryan@example.com
     reason: External SaaS does not support OIDC yet; rotation policy in place.
-  5edb30f4db3b5fa3  rule=untrusted_with_authority  status=active            accepted_at=2026-04-26  by=ryan@example.com
+  5edb30f4db3b5fa3d7fe7289374b7155  rule=untrusted_with_authority  status=active            accepted_at=2026-04-26  by=ryan@example.com
     expires_at: 2026-07-26
     reason: Internal-only action; threat-modeled and accepted by security team.
 
@@ -180,7 +180,7 @@ Every output format that emits findings also emits the suppression metadata when
 
 ```json
 {
-  "fingerprint": "5edb30f4db3b5fa3",
+  "fingerprint": "5edb30f4db3b5fa3d7fe7289374b7155",
   "severity": "high",
   "original_severity": "critical",
   "suppression_reason": "Internal-only action; threat-modeled.",
@@ -202,7 +202,7 @@ The CloudEvent envelope's `data` payload (the full Finding) includes the new fie
 ```yaml
 # .taudit-suppressions.yml — accepts a small set of waivers
 suppressions:
-  - fingerprint: "5edb30f4db3b5fa3"
+  - fingerprint: "5edb30f4db3b5fa3d7fe7289374b7155"
     rule_id: "untrusted_with_authority"
     reason: "Internal action; risk owned by platform team."
     accepted_by: "platform@example.com"
@@ -219,6 +219,6 @@ The waived finding drops from Critical to High (via `downgrade` mode), falls bel
 
 ## See also
 
-- [`docs/finding-fingerprint.md`](finding-fingerprint.md) — how the 16-hex-char fingerprint is computed.
+- [`docs/finding-fingerprint.md`](finding-fingerprint.md) — how the 32-hex-char fingerprint is computed.
 - [`docs/finding-output-enhancements.md`](finding-output-enhancements.md) — `finding_group_id`, `time_to_fix`, `compensating_controls` fields.
 - `MEMORY/WORK/.../blueteam-corpus-defense.md` Section 5 — the SOC-integration analysis that motivated this feature.

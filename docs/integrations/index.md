@@ -124,7 +124,7 @@ invariants port unchanged when axiom lands.
 
 ## Cross-format finding dedup
 
-Every finding taudit emits carries the same stable 16-hex
+Every finding taudit emits carries the same stable 32-hex
 **fingerprint** in three different output formats:
 
 | Format       | Field                                                        |

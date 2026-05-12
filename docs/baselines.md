@@ -79,13 +79,13 @@ schema lives at [`schemas/baseline.v1.json`](../schemas/baseline.v1.json).
   },
   "baseline_findings": [
     {
-      "fingerprint": "5edb30f4db3b5fa3",
+      "fingerprint": "5edb30f4db3b5fa3d7fe7289374b7155",
       "rule_id": "untrusted_with_authority",
       "severity": "high",
       "first_seen_at": "2026-04-26T12:00:00Z"
     },
     {
-      "fingerprint": "a3c8d9e1f2b4c5d6",
+      "fingerprint": "a3c8d9e1f2b4c5d6a3c8d9e1f2b4c5d6",
       "rule_id": "trigger_context_mismatch",
       "severity": "critical",
       "first_seen_at": "2026-04-20T10:00:00Z",
@@ -213,7 +213,7 @@ taudit verify --policy invariants/ --include-builtin .github/workflows/
 # Read the fingerprint from the verify failure output, then:
 taudit baseline accept \
   --pipeline .github/workflows/release.yml \
-  --fingerprint 5edb30f4db3b5fa3 \
+  --fingerprint 5edb30f4db3b5fa3d7fe7289374b7155 \
   --rule-id untrusted_with_authority \
   --severity high \
   --reason "Vendor action audited 2026-04 — see SECURITY.md#vendor-allowlist"

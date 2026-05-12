@@ -1,5 +1,6 @@
 ---
 source: crates/taudit-cli/tests/snapshot_gha.rs
+assertion_line: 215
 expression: findings
 ---
 - severity: critical
@@ -32,7 +33,7 @@ expression: findings
   message: "PR-triggered pipeline checks out the repository at step 'check[0]' — attacker-controlled code from the fork lands on the runner and is readable by all subsequent steps"
   recommendation:
     type: manual
-    action: "Use `persist-credentials: false` and avoid reading workspace files in subsequent privileged steps. Consider `checkout: none` for jobs that only need pipeline config, not source code."
+    action: "Use `persist-credentials: false` (GitHub Actions) or `persistCredentials: false` (Azure DevOps) to stop writing the repo token to disk, and avoid reading workspace files in subsequent privileged steps. Consider `checkout: none` or omitting checkout for jobs that only need pipeline config, not source code."
   source: built-in
   time_to_fix: medium
   confidence_scope: yaml_only

@@ -1,5 +1,6 @@
 ---
 source: crates/taudit-cli/tests/snapshot_ado.rs
+assertion_line: 99
 expression: json
 ---
 findings:
@@ -15,7 +16,7 @@ findings:
       - 2
     portal_control_dependency: true
     recommendation:
-      action: "Use `persist-credentials: false` and avoid reading workspace files in subsequent privileged steps. Consider `checkout: none` for jobs that only need pipeline config, not source code."
+      action: "Use `persist-credentials: false` (GitHub Actions) or `persistCredentials: false` (Azure DevOps) to stop writing the repo token to disk, and avoid reading workspace files in subsequent privileged steps. Consider `checkout: none` or omitting checkout for jobs that only need pipeline config, not source code."
       type: manual
     rule_id: checkout_self_pr_exposure
     runtime_preconditions:

@@ -158,7 +158,7 @@ should treat the §4 additions as "may rename before v1".
 | Field | Location in codebase | Type | Stability |
 |-------|----------------------|------|-----------|
 | `CloudEventV1.correlationid` | `crates/taudit-sink-cloudevents/src/lib.rs` | `String` (caller-supplied non-empty id via sink constructor or `TAUDIT_CORRELATION_ID`; UUIDv4 fallback per `emit` call) | stable — same value applied to every finding event in one sink emission; documented as "shared correlation key for a single operator flow" |
-| `CloudEventV1.tauditfindingfingerprint` | `crates/taudit-sink-cloudevents/src/lib.rs`; computed by `compute_fingerprint` in `taudit-core/src/finding.rs` | `String` (16-hex SHA-256) | stable — byte-identical to SARIF `partialFingerprints[primaryLocationLineHash]`, JSON `findings[].fingerprint`, and `BaselineFinding.fingerprint`; **the** cross-run dedup key |
+| `CloudEventV1.tauditfindingfingerprint` | `crates/taudit-sink-cloudevents/src/lib.rs`; computed by `compute_fingerprint` in `taudit-core/src/finding.rs` | `String` (32-hex SHA-256) | stable — byte-identical to SARIF `partialFingerprints[primaryLocationLineHash]`, JSON `findings[].fingerprint`, and `BaselineFinding.fingerprint`; **the** cross-run dedup key |
 | `CloudEventV1.tauditfindinggroup` | `crates/taudit-sink-cloudevents/src/lib.rs`; computed by `compute_finding_group_id` | `String` (UUIDv5 over namespace + fingerprint) | stable — collapses per-hop findings against the same authority root |
 | `CloudEventV1.tauditcompleteness` | `crates/taudit-sink-cloudevents/src/lib.rs` | `String` (`"complete"` / `"partial"` / `"unknown"`) | stable |
 | `CloudEventV1.tauditcompletenessgaps` | `crates/taudit-sink-cloudevents/src/lib.rs` | `Option<Vec<{kind, reason}>>` | stable — typed `GapKind` (`expression`/`structural`/`opaque`) paired with prose reason; omitted entirely on Complete/Unknown |
@@ -173,7 +173,7 @@ should treat the §4 additions as "may rename before v1".
 | `CloudEventV1.ty` | `crates/taudit-sink-cloudevents/src/lib.rs` (`io.taudit.finding.<category_snake>`) | `String` | stable per category |
 | `Baseline.pipeline_content_hash` | `crates/taudit-core/src/baselines.rs` (`pub struct Baseline`) | `String` (`sha256:<hex>`) | stable — primary baseline join key, survives renames |
 | `Baseline.pipeline_identity_material_hash` | `crates/taudit-core/src/baselines.rs` | `Option<String>` | stable (additive since v1.1.0) — hash of include/template/repository/delegation material to invalidate suppressions on identity drift |
-| `BaselineFinding.fingerprint` | `crates/taudit-core/src/baselines.rs` | `String` (16-hex SHA-256) | stable — same fingerprint as in CloudEvents/SARIF/JSON |
+| `BaselineFinding.fingerprint` | `crates/taudit-core/src/baselines.rs` | `String` (32-hex SHA-256) | stable — same fingerprint as in CloudEvents/SARIF/JSON |
 | `Baseline.captured_with.{taudit_version,rules_version}` | `crates/taudit-core/src/baselines.rs` (`pub struct CapturedWith`) | `String` × 2 | stable — tool/rules provenance at `init` time |
 | `Baseline.captured_at` / `captured_by` | `crates/taudit-core/src/baselines.rs` | `DateTime<Utc>` / `String` | stable |
 

@@ -326,7 +326,7 @@ fn terminal_sink_strips_all_control_bytes_from_hostile_input() {
 /// Cross-sink fingerprint parity under hostile input. Sanitisation MUST
 /// NOT shift fingerprints — `compute_fingerprint` operates on the RAW
 /// pre-sanitisation finding fields, so JSON / SARIF / CloudEvents (any
-/// sink that emits a fingerprint) all agree on the same 16-hex value
+/// sink that emits a fingerprint) all agree on the same 32-hex value
 /// regardless of whether downstream rendering sanitises or not.
 #[test]
 fn fingerprint_unchanged_by_sanitisation() {

@@ -560,22 +560,22 @@ enum Cli {
         #[arg(long, short = 'o')]
         output: Option<PathBuf>,
 
-            /// Path to ignore file. Same YAML format and semantics as
-            /// `taudit scan --ignore-file`; matching findings are removed from
-            /// the verify output and exit tally.
-            #[arg(long)]
-            ignore_file: Option<PathBuf>,
+        /// Path to ignore file. Same YAML format and semantics as
+        /// `taudit scan --ignore-file`; matching findings are removed from
+        /// the verify output and exit tally.
+        #[arg(long)]
+        ignore_file: Option<PathBuf>,
 
-            /// Path to `.taudit-suppressions.yml`. When omitted, taudit looks for
-            /// `.taudit-suppressions.yml` in CWD then `.taudit/suppressions.yml`.
-            /// See `docs/suppressions.md`.
+        /// Path to `.taudit-suppressions.yml`. When omitted, taudit looks for
+        /// `.taudit-suppressions.yml` in CWD then `.taudit/suppressions.yml`.
+        /// See `docs/suppressions.md`.
         #[arg(long)]
         suppressions: Option<PathBuf>,
 
-            /// How to apply matched suppressions. `downgrade` lowers severity by
-            /// one tier. `suppress` is tag-only: it sets `extras.suppressed = true`
-            /// but findings still count toward `verify` exit 1 unless another
-            /// filter (`--ignore-file`, threshold, baseline) removes them.
+        /// How to apply matched suppressions. `downgrade` lowers severity by
+        /// one tier. `suppress` is tag-only: it sets `extras.suppressed = true`
+        /// but findings still count toward `verify` exit 1 unless another
+        /// filter (`--ignore-file`, threshold, baseline) removes them.
         #[arg(long, default_value = "downgrade")]
         suppression_mode: SuppressionModeArg,
 
@@ -754,7 +754,7 @@ enum SuppressionsAction {
     /// Append a new suppression entry. Either pass all fields via flags
     /// (non-interactive, scriptable) or run with no flags to be prompted.
     Add {
-        /// 16-char hex fingerprint to waive.
+        /// 32-char hex fingerprint to waive.
         #[arg(long)]
         fingerprint: Option<String>,
         /// Snake-case rule id (or custom rule id) being waived.
@@ -829,7 +829,7 @@ enum BaselineAction {
         #[arg(long)]
         pipeline: PathBuf,
 
-        /// 16-hex finding fingerprint to waive.
+        /// 32-hex finding fingerprint to waive.
         #[arg(long)]
         fingerprint: String,
 
@@ -1904,16 +1904,20 @@ fn cmd_scan(opts: ScanOpts) -> Result<()> {
     // Load .taudit-suppressions.yml. Empty config when no file present.
     // The applicator runs after .tauditignore + baseline so a waiver only
     // takes effect on findings that are still in scope.
-        let loaded_suppressions = load_suppression_config(suppressions_path.clone())?;
-        let suppression_config = loaded_suppressions.config;
-        if let Some(path) = loaded_suppressions.path.as_ref() {
-            eprintln!(
-                "loaded {} suppression{} from {}",
-                suppression_config.suppressions.len(),
-                if suppression_config.suppressions.len() == 1 { "" } else { "s" },
-                path.display()
-            );
-        }
+    let loaded_suppressions = load_suppression_config(suppressions_path.clone())?;
+    let suppression_config = loaded_suppressions.config;
+    if let Some(path) = loaded_suppressions.path.as_ref() {
+        eprintln!(
+            "loaded {} suppression{} from {}",
+            suppression_config.suppressions.len(),
+            if suppression_config.suppressions.len() == 1 {
+                ""
+            } else {
+                "s"
+            },
+            path.display()
+        );
+    }
     let suppression_mode_core = suppression_mode.to_core();
     let suppression_today = today_local();
 
@@ -2554,7 +2558,11 @@ fn run_verify_io<W: std::io::Write>(opts: &VerifyOpts, writer: &mut W) -> i32 {
         eprintln!(
             "loaded {} suppression{} from {}",
             suppression_config.suppressions.len(),
-            if suppression_config.suppressions.len() == 1 { "" } else { "s" },
+            if suppression_config.suppressions.len() == 1 {
+                ""
+            } else {
+                "s"
+            },
             path.display()
         );
     }
@@ -3210,9 +3218,7 @@ fn append_line(path: &PathBuf, line: &str) -> Result<()> {
 ///   2. `.taudit-suppressions.yml` in CWD.
 ///   3. `.taudit/suppressions.yml` in CWD.
 ///   4. Empty config.
-fn load_suppression_config(
-    explicit_path: Option<PathBuf>,
-) -> Result<LoadedSuppressionConfig> {
+fn load_suppression_config(explicit_path: Option<PathBuf>) -> Result<LoadedSuppressionConfig> {
     let path = if let Some(p) = explicit_path {
         // Operator named a path explicitly — fail if missing rather than
         // silently fall through to a different file.
@@ -4590,7 +4596,7 @@ fn cmd_suppressions_add(opts: SuppressionsAddOpts) -> Result<()> {
             .unwrap_or_else(|| PathBuf::from(".taudit-suppressions.yml"))
     });
 
-    let fingerprint = prompt_or_value(opts.fingerprint, "fingerprint (16 hex chars)")?;
+    let fingerprint = prompt_or_value(opts.fingerprint, "fingerprint (32 hex chars)")?;
     let rule_id = prompt_or_value(opts.rule_id, "rule_id (snake_case)")?;
     let reason = prompt_or_value(opts.reason, "reason (one-line justification)")?;
     let accepted_by = prompt_or_value(opts.accepted_by, "accepted_by (email or handle)")?;

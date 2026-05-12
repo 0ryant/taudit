@@ -51,7 +51,7 @@ adds report metadata intended to make high-volume triage more explicit.
 - JSON and SARIF consumers should tolerate the additive fields introduced during
   the v1.1 prerelease cycle.
 - Existing `taudit-api = "0.1"` integrations should review the additive
-  `taudit-api 0.3.0` wire types before moving to the v1.1 crate family.
+  `taudit-api 0.4.0` wire types before moving to the v1.1 crate family.
 - Implementation crates (`taudit-core`, parsers, reporters, and sinks) publish
   as `2.0.0` in this product release because their Rust library surfaces are
   not semver-compatible with `1.0.12`. End users of the CLI are unaffected;

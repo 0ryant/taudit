@@ -87,7 +87,7 @@ pub enum BaselineError {
     CriticalWaiverNoReason,
 }
 
-/// One entry in a baseline. Keyed on `fingerprint` (16-hex SHA-256 truncation
+/// One entry in a baseline. Keyed on `fingerprint` (32-hex SHA-256 truncation
 /// computed by [`compute_fingerprint`](crate::finding::compute_fingerprint)).
 ///
 /// Two waiver shapes:
@@ -102,7 +102,7 @@ pub enum BaselineError {
 ///   is rejected at load time and the critical falls through to exit 1.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct BaselineFinding {
-    /// 16-hex SHA-256 fingerprint matching the SARIF/JSON/CloudEvents value.
+    /// 32-hex SHA-256 fingerprint matching the SARIF/JSON/CloudEvents value.
     pub fingerprint: String,
     /// Snake-case rule id (custom rule id if present, else
     /// `FindingCategory` snake_case form).

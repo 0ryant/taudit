@@ -2415,9 +2415,9 @@ fn finding_to_result(
             cve_relationship,
         },
         partial_fingerprints: SarifPartialFingerprints {
-            // Both keys carry the SAME 16-hex value today. They diverge only
-            // when the fingerprint formula bumps to v2 in a future major —
-            // at which point the second key becomes `taudit/v2` and old
+            // Both keys carry the SAME 32-hex value today. They diverge only
+            // when the fingerprint formula bumps in a future major —
+            // at which point the second key changes and old
             // suppressions stored against `taudit/v1` correctly fail to
             // carry over. See docs/finding-fingerprint.md.
             primary_location_line_hash: fingerprint.clone(),

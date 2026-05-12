@@ -567,7 +567,11 @@ impl CloudEventsJsonlSink {
         self.correlation_id
             .clone()
             .and_then(non_empty_env_value)
-            .or_else(|| std::env::var(CORRELATION_ID_ENV).ok().and_then(non_empty_env_value))
+            .or_else(|| {
+                std::env::var(CORRELATION_ID_ENV)
+                    .ok()
+                    .and_then(non_empty_env_value)
+            })
             .unwrap_or_else(|| uuid::Uuid::new_v4().to_string())
     }
 
