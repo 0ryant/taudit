@@ -896,6 +896,155 @@ fn suppressions_list_emits_loaded_entries() {
     assert!(stdout.contains("alice@example.com"));
 }
 
+#[test]
+fn verify_ignore_file_suppresses_matching_rule_from_exit_tally() {
+    let fixture = workspace_root().join("tests/fixtures/propagation-leaky.yml");
+    let dir = unique_tmp_dir("verify-ignore-file");
+    let policy = dir.join("policy.yml");
+    std::fs::write(
+        &policy,
+        "id: any_to_untrusted\nname: Authority reaches untrusted sink\ndescription: catch-all for untrusted propagation\nseverity: high\ncategory: authority_propagation\nmatch:\n  sink:\n    trust_zone: untrusted\n",
+    )
+    .expect("write policy");
+    let ignore = dir.join(".tauditignore");
+    std::fs::write(
+        &ignore,
+        "ignore:\n  - category: authority_propagation\n    reason: accepted for test\n",
+    )
+    .expect("write ignore file");
+
+    let output = taudit()
+        .arg("verify")
+        .arg("--policy")
+        .arg(&policy)
+        .arg("--platform")
+        .arg("github-actions")
+        .arg("--ignore-file")
+        .arg(&ignore)
+        .arg(&fixture)
+        .output()
+        .expect("spawn taudit verify");
+
+    assert_eq!(
+        output.status.code(),
+        Some(0),
+        "verify ignore-file should suppress matching findings from the exit tally; stderr: {}\nstdout: {}",
+        String::from_utf8_lossy(&output.stderr),
+        String::from_utf8_lossy(&output.stdout)
+    );
+}
+
+#[test]
+fn verify_auto_discovers_suppressions_and_logs_loaded_path() {
+    let dir = unique_tmp_dir("verify-auto-discovers-suppressions");
+    let fixture = workspace_root().join("tests/fixtures/clean.yml");
+    let policy = dir.join("policy.yml");
+    std::fs::write(
+        &policy,
+        "id: never_fires\nname: never\ndescription: no-op policy\nseverity: info\ncategory: authority_propagation\nmatch:\n  sink:\n    trust_zone: untrusted\n",
+    )
+    .expect("write policy");
+    let supp_path = dir.join(".taudit-suppressions.yml");
+    std::fs::write(
+        &supp_path,
+        "suppressions:\n  - fingerprint: \"deadbeefdeadbeef\"\n    rule_id: \"authority_propagation\"\n    reason: \"auto-discover test\"\n    accepted_by: \"test@example.com\"\n    accepted_at: \"2026-04-26\"\n    expires_at: \"2099-01-01\"\n",
+    )
+    .expect("write suppressions file");
+
+    let output = taudit()
+        .current_dir(&dir)
+        .arg("verify")
+        .arg("--policy")
+        .arg(&policy)
+        .arg("--platform")
+        .arg("github-actions")
+        .arg(&fixture)
+        .output()
+        .expect("spawn taudit verify");
+
+    assert_eq!(output.status.code(), Some(0));
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains("loaded 1 suppression") && stderr.contains(".taudit-suppressions.yml"),
+        "verify should log the discovered suppressions path; got stderr:\n{stderr}"
+    );
+}
+
+#[test]
+fn verify_warns_on_orphaned_suppression_fingerprint() {
+    let dir = unique_tmp_dir("verify-orphan-suppression");
+    let fixture = workspace_root().join("tests/fixtures/propagation-leaky.yml");
+    let policy = dir.join("policy.yml");
+    std::fs::write(
+        &policy,
+        "id: any_to_untrusted\nname: Authority reaches untrusted sink\ndescription: catch-all for untrusted propagation\nseverity: high\ncategory: authority_propagation\nmatch:\n  sink:\n    trust_zone: untrusted\n",
+    )
+    .expect("write policy");
+    let supp_path = dir.join(".taudit-suppressions.yml");
+    std::fs::write(
+        &supp_path,
+        "suppressions:\n  - fingerprint: \"deadbeef0000000000000000000000ff\"\n    rule_id: \"over_privileged_identity\"\n    reason: \"orphan test\"\n    accepted_by: \"test@example.com\"\n    accepted_at: \"2026-04-26\"\n    expires_at: \"2099-01-01\"\n",
+    )
+    .expect("write suppressions file");
+
+    let output = taudit()
+        .arg("verify")
+        .arg("--policy")
+        .arg(&policy)
+        .arg("--platform")
+        .arg("github-actions")
+        .arg("--suppressions")
+        .arg(&supp_path)
+        .arg(&fixture)
+        .output()
+        .expect("spawn taudit verify");
+
+    assert_eq!(output.status.code(), Some(1));
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains("matched no finding in this run") && stderr.contains("unexpected for this build"),
+        "verify should warn on orphan suppressions with a fingerprint-length hint; got stderr:\n{stderr}"
+    );
+}
+
+#[test]
+fn verify_warns_that_suppress_mode_is_tag_only() {
+    let fixture = workspace_root().join("tests/fixtures/propagation-leaky.yml");
+    let (fp, rule) = first_fingerprint_for(&fixture);
+    let dir = unique_tmp_dir("verify-suppress-warning");
+    let supp_path = dir.join(".taudit-suppressions.yml");
+    std::fs::write(
+        &supp_path,
+        format!(
+            "suppressions:\n  - fingerprint: \"{fp}\"\n    rule_id: \"{rule}\"\n    reason: \"suppress mode test\"\n    accepted_by: \"test@example.com\"\n    accepted_at: \"2026-04-26\"\n    expires_at: \"2099-01-01\"\n"
+        ),
+    )
+    .expect("write suppressions file");
+    let missing_policy = dir.join("missing-policy.yml");
+
+    let output = taudit()
+        .arg("verify")
+        .arg("--include-builtin")
+        .arg("--policy")
+        .arg(&missing_policy)
+        .arg("--platform")
+        .arg("github-actions")
+        .arg("--suppressions")
+        .arg(&supp_path)
+        .arg("--suppression-mode")
+        .arg("suppress")
+        .arg(&fixture)
+        .output()
+        .expect("spawn taudit verify");
+
+    assert_eq!(output.status.code(), Some(1));
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains("tag-only") && stderr.contains("still count toward exit 1"),
+        "verify should warn that suppress mode is tag-only; got stderr:\n{stderr}"
+    );
+}
+
 // ── GapKind surfacing in verify JSON output ─────────────────────────────
 //
 // The verify JSON `pipelines[*].completeness_gaps` items must be objects with

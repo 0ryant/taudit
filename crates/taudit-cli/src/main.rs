@@ -560,11 +560,22 @@ enum Cli {
         #[arg(long, short = 'o')]
         output: Option<PathBuf>,
 
-        /// Path to `.taudit-suppressions.yml`. See `docs/suppressions.md`.
+            /// Path to ignore file. Same YAML format and semantics as
+            /// `taudit scan --ignore-file`; matching findings are removed from
+            /// the verify output and exit tally.
+            #[arg(long)]
+            ignore_file: Option<PathBuf>,
+
+            /// Path to `.taudit-suppressions.yml`. When omitted, taudit looks for
+            /// `.taudit-suppressions.yml` in CWD then `.taudit/suppressions.yml`.
+            /// See `docs/suppressions.md`.
         #[arg(long)]
         suppressions: Option<PathBuf>,
 
-        /// How to apply matched suppressions. See `taudit scan --help`.
+            /// How to apply matched suppressions. `downgrade` lowers severity by
+            /// one tier. `suppress` is tag-only: it sets `extras.suppressed = true`
+            /// but findings still count toward `verify` exit 1 unless another
+            /// filter (`--ignore-file`, threshold, baseline) removes them.
         #[arg(long, default_value = "downgrade")]
         suppression_mode: SuppressionModeArg,
 
@@ -717,7 +728,8 @@ enum SuppressionModeArg {
     /// Default — drop severity one tier (Critical -> High -> ... -> Info).
     #[default]
     Downgrade,
-    /// Set `extras.suppressed = true`; leave severity unchanged.
+    /// Tag-only mode: set `extras.suppressed = true`; leave severity unchanged.
+    /// Findings still count toward `verify` exit 1 unless another filter drops them.
     Suppress,
 }
 
@@ -1499,6 +1511,7 @@ fn run() -> Result<()> {
             severity_threshold,
             no_color,
             output,
+            ignore_file,
             suppressions,
             suppression_mode,
             gate_on_all,
@@ -1523,6 +1536,7 @@ fn run() -> Result<()> {
                 include_builtin,
                 severity_threshold,
                 output,
+                ignore_file,
                 suppressions,
                 suppression_mode,
                 gate_on_all,
@@ -1890,7 +1904,16 @@ fn cmd_scan(opts: ScanOpts) -> Result<()> {
     // Load .taudit-suppressions.yml. Empty config when no file present.
     // The applicator runs after .tauditignore + baseline so a waiver only
     // takes effect on findings that are still in scope.
-    let suppression_config = load_suppression_config(suppressions_path.clone())?;
+        let loaded_suppressions = load_suppression_config(suppressions_path.clone())?;
+        let suppression_config = loaded_suppressions.config;
+        if let Some(path) = loaded_suppressions.path.as_ref() {
+            eprintln!(
+                "loaded {} suppression{} from {}",
+                suppression_config.suppressions.len(),
+                if suppression_config.suppressions.len() == 1 { "" } else { "s" },
+                path.display()
+            );
+        }
     let suppression_mode_core = suppression_mode.to_core();
     let suppression_today = today_local();
 
@@ -1933,6 +1956,7 @@ fn cmd_scan(opts: ScanOpts) -> Result<()> {
         Vec<taudit_core::finding::Finding>,
     )> = Vec::new();
     let mut skipped_total = 0usize;
+    let mut matched_suppressions: HashSet<String> = HashSet::new();
 
     for tagged_path in &resolved {
         let path = tagged_path.path();
@@ -2101,12 +2125,13 @@ fn cmd_scan(opts: ScanOpts) -> Result<()> {
                 eprintln!("{CRITICAL_WAIVER_EXPIRY}");
                 std::process::exit(2);
             }
-            let (waived, warnings) = suppression_config.apply(
+            let (waived, warnings, matched_here) = suppression_config.apply(
                 findings,
                 suppression_mode_core,
                 &fingerprints,
                 suppression_today,
             );
+            matched_suppressions.extend(matched_here);
             for w in warnings {
                 eprintln!("{w}");
             }
@@ -2271,6 +2296,10 @@ fn cmd_scan(opts: ScanOpts) -> Result<()> {
         }
     }
 
+    for warning in suppression_config.unmatched_warnings(&matched_suppressions) {
+        eprintln!("{warning}");
+    }
+
     // Emit the single aggregated SARIF document now that all files have been scanned.
     if !sarif_buffer.is_empty() && matches!(format, OutputFormat::Sarif) {
         let items: Vec<_> = sarif_buffer
@@ -2369,6 +2398,7 @@ struct VerifyOpts {
     include_builtin: bool,
     severity_threshold: Option<SeverityLevel>,
     output: Option<PathBuf>,
+    ignore_file: Option<PathBuf>,
     suppressions: Option<PathBuf>,
     suppression_mode: SuppressionModeArg,
     /// Force every violation to drive exit 1, ignoring per-pipeline
@@ -2409,6 +2439,11 @@ struct VerifyPipelineModeling {
     completeness: AuthorityCompleteness,
     completeness_gaps: Vec<String>,
     gap_kinds: Vec<GapKind>,
+}
+
+struct LoadedSuppressionConfig {
+    config: taudit_core::suppressions::SuppressionConfig,
+    path: Option<PathBuf>,
 }
 
 /// `taudit verify` entrypoint. Computes the exit code via `run_verify_io`
@@ -2497,18 +2532,39 @@ fn run_verify_io<W: std::io::Write>(opts: &VerifyOpts, writer: &mut W) -> i32 {
         opts.ado_pat.clone(),
     );
     let threshold = opts.severity_threshold.as_ref().map(|s| s.to_severity());
-
-    // Load .taudit-suppressions.yml — verify honors the same waiver file
-    // as scan so policy-gated CI runs see consistent severity levels.
-    let suppression_config = match load_suppression_config(opts.suppressions.clone()) {
+    let ignore_config = match load_ignore_config(opts.ignore_file.clone()) {
         Ok(c) => c,
         Err(err) => {
             eprintln!("error: {err:#}");
             return 2;
         }
     };
+
+    // Load .taudit-suppressions.yml — verify honors the same waiver file
+    // as scan so policy-gated CI runs see consistent severity levels.
+    let loaded_suppressions = match load_suppression_config(opts.suppressions.clone()) {
+        Ok(c) => c,
+        Err(err) => {
+            eprintln!("error: {err:#}");
+            return 2;
+        }
+    };
+    let suppression_config = loaded_suppressions.config;
+    if let Some(path) = loaded_suppressions.path.as_ref() {
+        eprintln!(
+            "loaded {} suppression{} from {}",
+            suppression_config.suppressions.len(),
+            if suppression_config.suppressions.len() == 1 { "" } else { "s" },
+            path.display()
+        );
+    }
     let suppression_mode_core = opts.suppression_mode.to_core();
     let suppression_today = today_local();
+    if opts.suppression_mode == SuppressionModeArg::Suppress {
+        eprintln!(
+            "warning: --suppression-mode suppress is tag-only in verify; matched findings still count toward exit 1 unless another filter drops them"
+        );
+    }
 
     let mut violations: Vec<Violation> = Vec::new();
     let mut sarif_buffer: Vec<(
@@ -2516,6 +2572,7 @@ fn run_verify_io<W: std::io::Write>(opts: &VerifyOpts, writer: &mut W) -> i32 {
         Vec<taudit_core::finding::Finding>,
     )> = Vec::new();
     let mut pipeline_modeling: Vec<VerifyPipelineModeling> = Vec::new();
+    let mut matched_suppressions: HashSet<String> = HashSet::new();
 
     // Step 3: parse each pipeline file and evaluate the loaded invariants.
     // For explicitly-named files a parse error is fatal (exit 2). For files
@@ -2606,6 +2663,9 @@ fn run_verify_io<W: std::io::Write>(opts: &VerifyOpts, writer: &mut W) -> i32 {
             findings.extend(rules::run_all_rules(&graph, opts.max_hops));
         }
 
+        let ignore_result = ignore_config.apply(findings, &graph.source.file);
+        let mut findings = ignore_result.findings;
+
         // BUG-6: --ignore-partial suppresses findings whose nodes_involved
         // include a variable-group Secret (unresolvable without ADO API).
         // Only active when the graph is non-Complete AND --ignore-partial set.
@@ -2645,12 +2705,13 @@ fn run_verify_io<W: std::io::Write>(opts: &VerifyOpts, writer: &mut W) -> i32 {
             eprintln!("{CRITICAL_WAIVER_EXPIRY}");
             return 2;
         }
-        let (waived, warnings) = suppression_config.apply(
+        let (waived, warnings, matched_here) = suppression_config.apply(
             findings,
             suppression_mode_core,
             &fingerprints,
             suppression_today,
         );
+        matched_suppressions.extend(matched_here);
         for w in warnings {
             eprintln!("{w}");
         }
@@ -2721,6 +2782,10 @@ fn run_verify_io<W: std::io::Write>(opts: &VerifyOpts, writer: &mut W) -> i32 {
             });
         }
         sarif_buffer.push((graph, findings));
+    }
+
+    for warning in suppression_config.unmatched_warnings(&matched_suppressions) {
+        eprintln!("{warning}");
     }
 
     // Step 4: emit the report in the requested format.
@@ -3147,7 +3212,7 @@ fn append_line(path: &PathBuf, line: &str) -> Result<()> {
 ///   4. Empty config.
 fn load_suppression_config(
     explicit_path: Option<PathBuf>,
-) -> Result<taudit_core::suppressions::SuppressionConfig> {
+) -> Result<LoadedSuppressionConfig> {
     let path = if let Some(p) = explicit_path {
         // Operator named a path explicitly — fail if missing rather than
         // silently fall through to a different file.
@@ -3165,8 +3230,15 @@ fn load_suppression_config(
 
     match path {
         Some(p) => taudit_core::suppressions::SuppressionConfig::load_from_path(&p)
+            .map(|config| LoadedSuppressionConfig {
+                config,
+                path: Some(p),
+            })
             .map_err(|e| anyhow::anyhow!(e.to_string())),
-        None => Ok(taudit_core::suppressions::SuppressionConfig::default()),
+        None => Ok(LoadedSuppressionConfig {
+            config: taudit_core::suppressions::SuppressionConfig::default(),
+            path: None,
+        }),
     }
 }
 
@@ -4441,7 +4513,7 @@ fn cmd_suppressions_list(suppressions_path: Option<PathBuf>) -> Result<()> {
     use colored::Colorize;
     use std::io::Write;
 
-    let cfg = load_suppression_config(suppressions_path)?;
+    let cfg = load_suppression_config(suppressions_path)?.config;
     let stdout = std::io::stdout();
     let mut out = SilenceBrokenPipe {
         inner: stdout.lock(),
@@ -4602,7 +4674,7 @@ fn cmd_suppressions_review(suppressions_path: Option<PathBuf>) -> Result<()> {
     use colored::Colorize;
     use std::io::Write;
 
-    let cfg = load_suppression_config(suppressions_path)?;
+    let cfg = load_suppression_config(suppressions_path)?.config;
     let stdout = std::io::stdout();
     let mut out = SilenceBrokenPipe {
         inner: stdout.lock(),
@@ -5920,6 +5992,7 @@ mod tests {
             include_builtin: false,
             severity_threshold: None,
             output: None,
+            ignore_file: None,
             suppressions: None,
             suppression_mode: SuppressionModeArg::Downgrade,
             gate_on_all: false,
@@ -5962,6 +6035,7 @@ mod tests {
             include_builtin: false,
             severity_threshold: None,
             output: None,
+            ignore_file: None,
             suppressions: None,
             suppression_mode: SuppressionModeArg::Downgrade,
             gate_on_all: false,
@@ -5998,6 +6072,7 @@ mod tests {
             include_builtin: false,
             severity_threshold: None,
             output: None,
+            ignore_file: None,
             suppressions: None,
             suppression_mode: SuppressionModeArg::Downgrade,
             gate_on_all: false,
@@ -6028,6 +6103,7 @@ mod tests {
             include_builtin: false,
             severity_threshold: None,
             output: None,
+            ignore_file: None,
             suppressions: None,
             suppression_mode: SuppressionModeArg::Downgrade,
             gate_on_all: false,
@@ -6070,6 +6146,7 @@ mod tests {
             include_builtin: false,
             severity_threshold: Some(SeverityLevel::Critical),
             output: None,
+            ignore_file: None,
             suppressions: None,
             suppression_mode: SuppressionModeArg::Downgrade,
             gate_on_all: false,
@@ -6126,6 +6203,7 @@ mod tests {
             include_builtin: false,
             severity_threshold: None,
             output: None,
+            ignore_file: None,
             suppressions: None,
             suppression_mode: SuppressionModeArg::Downgrade,
             gate_on_all: false,
@@ -6195,6 +6273,7 @@ mod tests {
             include_builtin: false,
             severity_threshold: None,
             output: None,
+            ignore_file: None,
             suppressions: None,
             suppression_mode: SuppressionModeArg::Downgrade,
             gate_on_all: false,
@@ -6263,6 +6342,7 @@ mod tests {
             include_builtin: false,
             severity_threshold: None,
             output: None,
+            ignore_file: None,
             suppressions: None,
             suppression_mode: SuppressionModeArg::Downgrade,
             gate_on_all: false,
@@ -6311,6 +6391,7 @@ mod tests {
             include_builtin: false,
             severity_threshold: None,
             output: None,
+            ignore_file: None,
             suppressions: None,
             suppression_mode: SuppressionModeArg::Downgrade,
             gate_on_all: true, // bypass baseline suppression
@@ -6389,6 +6470,7 @@ mod tests {
             include_builtin: false,
             severity_threshold: None,
             output: None,
+            ignore_file: None,
             suppressions: None,
             suppression_mode: SuppressionModeArg::Downgrade,
             gate_on_all: false,
@@ -6431,6 +6513,7 @@ mod tests {
             include_builtin: false,
             severity_threshold: None,
             output: None,
+            ignore_file: None,
             suppressions: None,
             suppression_mode: SuppressionModeArg::Downgrade,
             gate_on_all: false,
