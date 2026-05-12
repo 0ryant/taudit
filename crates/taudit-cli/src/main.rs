@@ -4227,11 +4227,21 @@ fn check_latest_version() -> Option<String> {
         .ok()?;
     let json: serde_json::Value = resp.into_json().ok()?;
     let latest = json["crate"]["newest_version"].as_str()?.to_string();
-    if latest != current {
+    if is_version_newer(current, &latest) {
         Some(latest)
     } else {
         None
     }
+}
+
+fn is_version_newer(current: &str, candidate: &str) -> bool {
+    let Ok(current) = semver::Version::parse(current) else {
+        return false;
+    };
+    let Ok(candidate) = semver::Version::parse(candidate) else {
+        return false;
+    };
+    candidate > current
 }
 
 fn cmd_update() -> Result<()> {
@@ -5654,6 +5664,20 @@ mod tests {
         let report = version_report();
         assert!(report.starts_with("taudit "));
         assert!(report.contains(env!("CARGO_PKG_VERSION")));
+    }
+
+    #[test]
+    fn update_check_uses_semver_ordering() {
+        assert!(is_version_newer("1.1.0", "1.1.1"));
+        assert!(is_version_newer("1.1.0-rc.6", "1.1.0"));
+        assert!(!is_version_newer("1.1.0", "1.1.0-rc.6"));
+        assert!(!is_version_newer("1.1.0", "1.1.0"));
+    }
+
+    #[test]
+    fn update_check_ignores_unparseable_versions() {
+        assert!(!is_version_newer("1.1.0", "not-semver"));
+        assert!(!is_version_newer("not-semver", "1.1.1"));
     }
 
     #[test]

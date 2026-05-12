@@ -49,6 +49,12 @@ adds report metadata intended to make high-volume triage more explicit.
   script, and cross-provider parser/rule coverage from the v1.1 prerelease
   cycle.
 
+### Fixed
+
+- Stable update checks now use semantic version ordering, so a published
+  prerelease such as `1.1.0-rc.6` is not advertised as newer than stable
+  `1.1.0`.
+
 ### Migration notes
 
 - Expect more findings than `v1.0.12`. This is intentional coverage expansion,
