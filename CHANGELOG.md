@@ -18,6 +18,19 @@ _(none yet — populate this paragraph when adding entries that change finding b
 
 _(populate if any consumer-visible field, schema, or contract changes; remove subsection if none)_
 
+## v1.1.1 — 2026-05-13 (stable patch)
+
+### Detection delta (read first)
+
+No rule, parser, graph, report, or schema behaviour change versus `v1.1.0`.
+
+### Fixed
+
+- `taudit remediate apply` now clears inherited Git hook repository environment
+  variables before running its internal `git status` guard. This prevents
+  remediation checks from treating unrelated temporary files as dirty when
+  taudit is invoked from a Git hook or another Git-controlled subprocess.
+
 ## v1.1.0 — 2026-05-12 (stable)
 
 > **Stable promotion.** Promotes the `v1.1.0-rc.6` payload to crates.io stable.
