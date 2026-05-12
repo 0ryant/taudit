@@ -23,7 +23,11 @@ fn workspace_root() -> PathBuf {
 }
 
 fn taudit() -> Command {
-    Command::new(env!("CARGO_BIN_EXE_taudit"))
+    let mut cmd = Command::new(env!("CARGO_BIN_EXE_taudit"));
+    // Keep CLI-contract tests deterministic: avoid network-dependent update
+    // probe behavior in spawned subprocesses.
+    cmd.env("TAUDIT_NO_UPDATE_CHECK", "1");
+    cmd
 }
 
 fn unique_tmp_dir(label: &str) -> PathBuf {
@@ -203,6 +207,44 @@ fn verify_discovered_parse_error_is_fatal_with_strict_flag() {
     assert!(
         stderr.contains("error:") && stderr.contains("malformed.yml"),
         "expected fatal parse/read error mentioning malformed file; got stderr:\n{stderr}"
+    );
+}
+
+#[test]
+fn verify_include_builtin_exit_one_when_builtin_findings_exist() {
+    let fixture = workspace_root().join("tests/fixtures/propagation-leaky.yml");
+    assert!(fixture.exists(), "fixture must exist: {}", fixture.display());
+
+    let missing_policy = unique_tmp_dir("verify-missing-policy").join("policy.yml");
+    assert!(
+        !missing_policy.exists(),
+        "test requires missing policy path: {}",
+        missing_policy.display()
+    );
+
+    let output = taudit()
+        .arg("verify")
+        .arg("--include-builtin")
+        .arg("--policy")
+        .arg(&missing_policy)
+        .arg("--platform")
+        .arg("github-actions")
+        .arg(&fixture)
+        .output()
+        .expect("spawn taudit verify");
+
+    assert_eq!(
+        output.status.code(),
+        Some(1),
+        "builtin findings must drive verify exit 1 even when custom policy path is absent; stderr: {}\nstdout: {}",
+        String::from_utf8_lossy(&output.stderr),
+        String::from_utf8_lossy(&output.stdout)
+    );
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(
+        stdout.contains("verify:") && stdout.contains("violation"),
+        "verify output should report the builtin violations; got stdout:\n{stdout}"
     );
 }
 
@@ -518,23 +560,84 @@ fn invariants_dir_does_not_emit_deprecation_warning() {
     );
 }
 
+#[test]
+fn verify_bundled_strict_policy_skips_implicit_ado_identity() {
+    let tmp = unique_tmp_dir("verify-ado-implicit-oidc");
+    let pipeline = tmp.join("azure-pipelines.yml");
+    std::fs::write(
+        &pipeline,
+        "pr:\n  - main\nsteps:\n  - script: echo hi\n",
+    )
+    .expect("write ado pipeline");
+
+    let policy = workspace_root().join("invariants/starter/bundled-strict-policy.yml");
+    assert!(policy.exists(), "bundled strict policy must exist");
+
+    let output = taudit()
+        .arg("verify")
+        .arg("--policy")
+        .arg(&policy)
+        .arg("--platform")
+        .arg("azure-devops")
+        .arg(&pipeline)
+        .output()
+        .expect("spawn taudit verify");
+
+    assert_eq!(
+        output.status.code(),
+        Some(0),
+        "implicit ADO System.AccessToken must not trip strict_only_oidc_identities; stderr: {}\nstdout: {}",
+        String::from_utf8_lossy(&output.stderr),
+        String::from_utf8_lossy(&output.stdout)
+    );
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(
+        stdout.contains("verify: 0 violations"),
+        "expected zero violations from bundled strict policy on implicit-only ADO pipeline; got stdout:\n{stdout}"
+    );
+}
+
 // ── .taudit-suppressions.yml end-to-end ──────────────────────────────────
 
 /// Helper: scan the fixture once with `--format json --suppressions <none>`,
 /// pluck out the first finding fingerprint, and return it. Used by the
 /// suppression tests below to learn a real fingerprint to waive against.
 fn first_fingerprint_for(fixture: &std::path::Path) -> (String, String) {
-    let output = taudit()
-        .arg("scan")
-        .arg("--format")
-        .arg("json")
-        .arg(fixture)
-        .output()
-        .expect("spawn taudit");
+    let mut last = None;
+    for _ in 0..2 {
+        let output = taudit()
+            .arg("scan")
+            .arg("--format")
+            .arg("json")
+            .arg(fixture)
+            .output()
+            .expect("spawn taudit");
+        if output.status.success() {
+            let report: serde_json::Value =
+                serde_json::from_slice(&output.stdout).expect("parse JSON");
+            let findings = report["findings"].as_array().expect("findings array");
+            assert!(!findings.is_empty(), "fixture must have findings");
+            let fp = findings[0]["fingerprint"]
+                .as_str()
+                .expect("first finding fingerprint")
+                .to_string();
+            let category = findings[0]["category"]
+                .as_str()
+                .expect("first finding category")
+                .to_string();
+            return (fp, category);
+        }
+        last = Some(output);
+    }
+
+    let output = last.expect("at least one attempt recorded");
     assert!(
         output.status.success(),
-        "scan must succeed; stderr: {}",
-        String::from_utf8_lossy(&output.stderr)
+        "scan must succeed; status: {:?}; stderr: {}; stdout: {}",
+        output.status.code(),
+        String::from_utf8_lossy(&output.stderr),
+        String::from_utf8_lossy(&output.stdout)
     );
     let report: serde_json::Value = serde_json::from_slice(&output.stdout).expect("parse JSON");
     let findings = report["findings"].as_array().expect("findings array");

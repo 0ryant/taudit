@@ -1476,9 +1476,12 @@ pub fn checkout_self_pr_exposure(graph: &AuthorityGraph) -> Vec<Finding> {
             path: None,
             nodes_involved: vec![step.id],
             recommendation: Recommendation::Manual {
-                action: "Use `persist-credentials: false` and avoid reading workspace \
-                         files in subsequent privileged steps. Consider `checkout: none` \
-                         for jobs that only need pipeline config, not source code."
+                action: "Use `persist-credentials: false` (GitHub Actions) or \
+                         `persistCredentials: false` (Azure DevOps) to stop \
+                         writing the repo token to disk, and avoid reading \
+                         workspace files in subsequent privileged steps. \
+                         Consider `checkout: none` or omitting checkout for \
+                         jobs that only need pipeline config, not source code."
                     .into(),
             },
             source: FindingSource::BuiltIn,
@@ -8823,8 +8826,7 @@ pub fn gha_telemetry_debug_flag_with_secret_env(graph: &AuthorityGraph) -> Vec<F
             path: None,
             nodes_involved: vec![step.id],
             message: format!(
-                "Job '{}' enables GitHub Actions debug telemetry while secret or token authority is present",
-                job
+                "Job '{job}' enables GitHub Actions debug telemetry while secret or token authority is present"
             ),
             recommendation: Recommendation::Manual {
                 action: "Do not enable ACTIONS_STEP_DEBUG or ACTIONS_RUNNER_DEBUG in authority-bearing jobs. Move debug runs to read-only jobs with synthetic credentials, or require a temporary maintainer-only gate that removes deploy/package/cloud secrets.".into(),
@@ -11435,7 +11437,10 @@ fn apply_compensating_controls(graph: &AuthorityGraph, findings: &mut [Finding])
     let fork_check_universal = any_authority_step_seen && all_authority_steps_have_fork_check;
 
     // For Suppression 1, build per-job: does any step in the job have
-    // access to a Secret/Identity OR write to the env gate?
+    // access to a Secret or a non-implicit Identity OR write to the env
+    // gate? Platform-implicit tokens (ADO System.AccessToken, CI_JOB_TOKEN,
+    // omitted-permissions GITHUB_TOKEN) are modeled separately elsewhere and
+    // should not keep a read-only checkout job at High by themselves.
     use std::collections::{BTreeMap, BTreeSet};
     let mut job_has_privileged_step: BTreeMap<String, bool> = BTreeMap::new();
     for step in graph.nodes_of_kind(NodeKind::Step) {
@@ -11444,11 +11449,21 @@ fn apply_compensating_controls(graph: &AuthorityGraph, findings: &mut [Finding])
             None => continue,
         };
         let privileged = graph.edges_from(step.id).any(|e| {
-            e.kind == EdgeKind::HasAccessTo
-                && graph
-                    .node(e.to)
-                    .map(|n| matches!(n.kind, NodeKind::Secret | NodeKind::Identity))
-                    .unwrap_or(false)
+            if e.kind != EdgeKind::HasAccessTo {
+                return false;
+            }
+            graph
+                .node(e.to)
+                .map(|n| match n.kind {
+                    NodeKind::Secret => true,
+                    NodeKind::Identity => n
+                        .metadata
+                        .get(META_IMPLICIT)
+                        .map(|v| v != "true")
+                        .unwrap_or(true),
+                    _ => false,
+                })
+                .unwrap_or(false)
         }) || step
             .metadata
             .get(META_WRITES_ENV_GATE)
@@ -15755,6 +15770,43 @@ mod tests {
             findings[0].severity, pre,
             "must NOT downgrade when same job has privileged steps"
         );
+    }
+
+    #[test]
+    fn suppression_checkout_pr_downgraded_when_job_only_has_implicit_identity() {
+        let mut g = graph_with_platform("azure-devops", "azure-pipelines.yml");
+        g.metadata.insert(META_TRIGGER.into(), "pr".into());
+
+        let checkout = step_with_meta(
+            &mut g,
+            "build[0]",
+            &[(META_JOB_NAME, "build"), (META_CHECKOUT_SELF, "true")],
+        );
+        let step = step_with_meta(&mut g, "build[1]", &[(META_JOB_NAME, "build")]);
+
+        let mut implicit_meta = std::collections::HashMap::new();
+        implicit_meta.insert(META_IMPLICIT.into(), "true".into());
+        let implicit = g.add_node_with_metadata(
+            NodeKind::Identity,
+            "System.AccessToken",
+            TrustZone::FirstParty,
+            implicit_meta,
+        );
+        g.add_edge(checkout, implicit, EdgeKind::HasAccessTo);
+        g.add_edge(step, implicit, EdgeKind::HasAccessTo);
+
+        let mut findings = checkout_self_pr_exposure(&g);
+        assert_eq!(findings.len(), 1);
+        assert_eq!(findings[0].severity, Severity::High);
+
+        apply_compensating_controls(&g, &mut findings);
+
+        assert_eq!(
+            findings[0].severity,
+            Severity::Info,
+            "implicit platform identity alone must not keep checkout_self_pr_exposure at High"
+        );
+        assert!(findings[0].message.contains("downgraded"));
     }
 
     #[test]

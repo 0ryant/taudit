@@ -109,6 +109,29 @@ stored value with the current parse result:
 - Missing field (legacy `1.0.x` baseline): treated as compatible for backward
   compatibility.
 
+### ADO-aware mode reproducibility caveat
+
+When scanning Azure DevOps pipelines with all of:
+
+- `--ado-org`
+- `--ado-project`
+- `--ado-pat`
+
+taudit enriches variable-group members from the live ADO API response. This
+improves precision (secret vs plain variable classification), but baseline
+identity material is now influenced by current variable-group state.
+
+Implication:
+
+- Same YAML + changed variable-group membership can produce a different
+  `pipeline_identity_material_hash`.
+- This is expected in ADO-aware mode and may require re-baselining.
+
+Operational guidance:
+
+- Record capture context/date when running `baseline init` in ADO-aware mode.
+- Treat ADO-aware baselines as snapshots of both YAML and variable-group state.
+
 Entries are sorted ASC by `fingerprint` for stable git diffs. The
 `fingerprint` value is **byte-equal** to the SARIF
 `partialFingerprints.primaryLocationLineHash`, the JSON

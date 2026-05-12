@@ -72,6 +72,9 @@ match:
   standalone:
     node_type: identity
     trust_zone: first_party
+    metadata:
+      implicit:
+        not_equals: "true"
     not:
       metadata:
         oidc: "true"

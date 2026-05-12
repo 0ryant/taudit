@@ -77,6 +77,16 @@
       "minLength": 1,
       "description": "Shared correlation key for all events emitted from a single taudit scan"
     },
+    "tauditpipelineid": {
+      "type": "string",
+      "pattern": "^urn:taudit:pipeline:sha256:[0-9a-f]{64}$",
+      "description": "Stable pipeline identifier URN. Preferred source is parser/CLI-stamped `graph.metadata[\"pipeline_content_hash\"]` (`sha256:<64-hex>`); sink falls back to deterministic derivation from graph identity material when absent. Optional in v1 for backward-compat; always emitted by current taudit."
+    },
+    "tauditscanrunid": {
+      "type": "string",
+      "minLength": 1,
+      "description": "Per-invocation scan run identifier, shared by all events from a single sink `emit` call. Distinct from `correlationid` (operator-flow join key, which may intentionally span multiple scans). Optional in v1 for backward-compat; always emitted by current taudit."
+    },
     "provenancerepo": {
       "type": "string",
       "const": "taudit",

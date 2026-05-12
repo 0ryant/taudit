@@ -1,9 +1,38 @@
 use std::collections::{HashMap, HashSet};
 
+use base64::Engine;
 use serde::Deserialize;
 use taudit_core::error::TauditError;
 use taudit_core::graph::*;
 use taudit_core::ports::PipelineParser;
+
+/// Optional Azure DevOps enrichment inputs plumbed from CLI flags.
+///
+/// This is Phase 3A scaffolding only: parser wiring + metadata-safe handling.
+/// No network calls are performed yet.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct AdoParserContext {
+    /// Azure DevOps organization name (optional).
+    pub org: Option<String>,
+    /// Azure DevOps project name (optional).
+    pub project: Option<String>,
+    /// Azure DevOps PAT (optional). Never persisted into graph metadata.
+    pub pat: Option<String>,
+}
+
+impl AdoParserContext {
+    fn is_empty(&self) -> bool {
+        self.org.is_none() && self.project.is_none() && self.pat.is_none()
+    }
+}
+
+const META_ADO_ORG: &str = "ado_org";
+const META_ADO_PROJECT: &str = "ado_project";
+const META_ADO_PAT_PRESENT: &str = "ado_pat_present";
+const META_ADO_VG_ENRICHMENT_READY: &str = "ado_variable_group_enrichment_ready";
+const META_ADO_VG_ENRICHED: &str = "ado_variable_group_enriched";
+
+type AdoVariableGroupIndex = HashMap<String, HashMap<String, bool>>;
 
 /// Regex-free check: does `s` contain `terraform apply` followed by
 /// `-auto-approve` or `--auto-approve` (anywhere on the same line, or on a
@@ -41,12 +70,15 @@ fn script_does_terraform_auto_apply(s: &str) -> bool {
 /// Azure DevOps YAML pipeline parser.
 pub struct AdoParser;
 
-impl PipelineParser for AdoParser {
-    fn platform(&self) -> &str {
-        "azure-devops"
-    }
-
-    fn parse(&self, content: &str, source: &PipelineSource) -> Result<AuthorityGraph, TauditError> {
+impl AdoParser {
+    /// Parse an ADO pipeline with optional CLI-provided context for future
+    /// variable-group enrichment.
+    pub fn parse_with_context(
+        &self,
+        content: &str,
+        source: &PipelineSource,
+        ctx: Option<&AdoParserContext>,
+    ) -> Result<AuthorityGraph, TauditError> {
         let mut de = serde_yaml::Deserializer::from_str(content);
         let doc = de
             .next()
@@ -66,7 +98,7 @@ impl PipelineParser for AdoParser {
                     if let Some(recovered) = recover_after_leading_root_sequence(content) {
                         let pipeline: AdoPipeline = serde_yaml::from_str(recovered)
                             .map_err(|e| TauditError::Parse(format!("YAML parse error: {e}")))?;
-                        let mut graph = build_ado_graph(pipeline, false, source, content);
+                        let mut graph = build_ado_graph(pipeline, false, source, content, ctx);
                         graph.mark_partial(
                             GapKind::Structural,
                             "ADO file starts with a root-level sequence before the pipeline mapping — recovered by analyzing the later pipeline mapping only".to_string(),
@@ -86,6 +118,7 @@ impl PipelineParser for AdoParser {
                     graph
                         .metadata
                         .insert(META_PLATFORM.into(), "azure-devops".into());
+                    apply_parser_context_metadata(&mut graph, ctx);
                     graph.mark_partial(
                         GapKind::Structural,
                         "ADO template fragment with top-level parameter conditional — root structure depends on parent pipeline context".to_string(),
@@ -98,9 +131,19 @@ impl PipelineParser for AdoParser {
         };
         let extra_docs = de.next().is_some();
 
-        let mut graph = build_ado_graph(pipeline, extra_docs, source, content);
+        let mut graph = build_ado_graph(pipeline, extra_docs, source, content, ctx);
         graph.stamp_edge_authority_summaries();
         Ok(graph)
+    }
+}
+
+impl PipelineParser for AdoParser {
+    fn platform(&self) -> &str {
+        "azure-devops"
+    }
+
+    fn parse(&self, content: &str, source: &PipelineSource) -> Result<AuthorityGraph, TauditError> {
+        self.parse_with_context(content, source, None)
     }
 }
 
@@ -109,11 +152,13 @@ fn build_ado_graph(
     extra_docs: bool,
     source: &PipelineSource,
     content: &str,
+    ctx: Option<&AdoParserContext>,
 ) -> AuthorityGraph {
     let mut graph = AuthorityGraph::new(source.clone());
     graph
         .metadata
         .insert(META_PLATFORM.into(), "azure-devops".into());
+    apply_parser_context_metadata(&mut graph, ctx);
     if extra_docs {
         graph.mark_partial(
             GapKind::Expression,
@@ -209,6 +254,7 @@ fn build_ado_graph(
     // nodes from opaque groups (BUG-3).
     let mut pipeline_plain_vars: HashSet<String> = HashSet::new();
     let mut pipeline_has_variable_groups = false;
+    let variable_group_index = maybe_fetch_variable_group_index(ctx, &mut graph);
     let pipeline_secret_ids = process_variables(
         &pipeline.variables,
         &mut graph,
@@ -216,6 +262,7 @@ fn build_ado_graph(
         "pipeline",
         &mut pipeline_plain_vars,
         &mut pipeline_has_variable_groups,
+        variable_group_index.as_ref(),
     );
 
     // Determine pipeline structure: stages → jobs → steps, or jobs → steps, or steps only
@@ -238,6 +285,7 @@ fn build_ado_graph(
                 &stage_name,
                 &mut stage_plain_vars,
                 &mut stage_has_variable_groups,
+                variable_group_index.as_ref(),
             );
             let stage_scope_has_variable_groups =
                 pipeline_has_variable_groups || stage_has_variable_groups;
@@ -246,7 +294,8 @@ fn build_ado_graph(
             if let Some(c) = stage_condition {
                 mark_condition_partial(&mut graph, "stage", &stage_name, c);
             }
-            let stage_depends_on = stage.depends_on.as_ref().map(|d| d.as_csv());
+            let stage_depends_on =
+                explicit_depends_on_csv(&stage.depends_on, &mut graph, "stage", &stage_name);
 
             for job in &stage.jobs {
                 let job_name = job.effective_name();
@@ -259,6 +308,7 @@ fn build_ado_graph(
                     &job_name,
                     &mut job_plain_vars,
                     &mut job_has_variable_groups,
+                    variable_group_index.as_ref(),
                 );
                 let step_scope_has_variable_groups =
                     stage_scope_has_variable_groups || job_has_variable_groups;
@@ -283,11 +333,9 @@ fn build_ado_graph(
                 // are present (job-level wins for the job's own ordering); fall
                 // back to the stage-level value otherwise so the chain still
                 // surfaces on the steps.
-                let job_depends_on = job
-                    .depends_on
-                    .as_ref()
-                    .map(|d| d.as_csv())
-                    .or_else(|| stage_depends_on.clone());
+                let job_depends_on =
+                    explicit_depends_on_csv(&job.depends_on, &mut graph, "job", &job_name)
+                        .or_else(|| stage_depends_on.clone());
 
                 let outer_condition = join_conditions(stage_condition, job_condition);
 
@@ -326,6 +374,7 @@ fn build_ado_graph(
                 &job_name,
                 &mut job_plain_vars,
                 &mut job_has_variable_groups,
+                variable_group_index.as_ref(),
             );
             let step_scope_has_variable_groups =
                 pipeline_has_variable_groups || job_has_variable_groups;
@@ -345,7 +394,8 @@ fn build_ado_graph(
             if let Some(c) = job_condition {
                 mark_condition_partial(&mut graph, "job", &job_name, c);
             }
-            let job_depends_on = job.depends_on.as_ref().map(|d| d.as_csv());
+            let job_depends_on =
+                explicit_depends_on_csv(&job.depends_on, &mut graph, "job", &job_name);
 
             let job_steps = job.all_steps();
             process_steps(
@@ -407,6 +457,153 @@ fn build_ado_graph(
 
     graph.stamp_edge_authority_summaries();
     graph
+}
+
+fn apply_parser_context_metadata(graph: &mut AuthorityGraph, ctx: Option<&AdoParserContext>) {
+    let Some(ctx) = ctx.filter(|c| !c.is_empty()) else {
+        return;
+    };
+
+    if let Some(org) = ctx.org.as_ref().filter(|v| !v.trim().is_empty()) {
+        graph
+            .metadata
+            .insert(META_ADO_ORG.into(), org.trim().to_string());
+    }
+    if let Some(project) = ctx.project.as_ref().filter(|v| !v.trim().is_empty()) {
+        graph
+            .metadata
+            .insert(META_ADO_PROJECT.into(), project.trim().to_string());
+    }
+
+    let pat_present = ctx.pat.as_ref().is_some_and(|v| !v.trim().is_empty());
+    graph
+        .metadata
+        .insert(META_ADO_PAT_PRESENT.into(), pat_present.to_string());
+
+    let enrichment_ready = graph.metadata.contains_key(META_ADO_ORG)
+        && graph.metadata.contains_key(META_ADO_PROJECT)
+        && pat_present;
+    graph.metadata.insert(
+        META_ADO_VG_ENRICHMENT_READY.into(),
+        enrichment_ready.to_string(),
+    );
+}
+
+fn maybe_fetch_variable_group_index(
+    ctx: Option<&AdoParserContext>,
+    graph: &mut AuthorityGraph,
+) -> Option<AdoVariableGroupIndex> {
+    let ctx = ctx?;
+    if graph
+        .metadata
+        .get(META_ADO_VG_ENRICHMENT_READY)
+        .is_none_or(|v| v != "true")
+    {
+        return None;
+    }
+
+    match fetch_variable_group_index(ctx) {
+        Ok(index) => {
+            graph
+                .metadata
+                .insert(META_ADO_VG_ENRICHED.into(), "true".into());
+            Some(index)
+        }
+        Err(err) => {
+            graph
+                .metadata
+                .insert(META_ADO_VG_ENRICHED.into(), "false".into());
+            graph.mark_partial(
+                GapKind::Structural,
+                format!(
+                    "warning: ADO variable-group enrichment failed ({err}) — falling back to static variable-group modelling"
+                ),
+            );
+            None
+        }
+    }
+}
+
+fn fetch_variable_group_index(ctx: &AdoParserContext) -> Result<AdoVariableGroupIndex, String> {
+    let org = ctx
+        .org
+        .as_deref()
+        .map(str::trim)
+        .filter(|v| !v.is_empty())
+        .ok_or_else(|| "missing org".to_string())?;
+    let project = ctx
+        .project
+        .as_deref()
+        .map(str::trim)
+        .filter(|v| !v.is_empty())
+        .ok_or_else(|| "missing project".to_string())?;
+    let pat = ctx
+        .pat
+        .as_deref()
+        .map(str::trim)
+        .filter(|v| !v.is_empty())
+        .ok_or_else(|| "missing PAT".to_string())?;
+
+    let org_base = if org.starts_with("http://") || org.starts_with("https://") {
+        org.trim_end_matches('/').to_string()
+    } else {
+        format!("https://dev.azure.com/{}", org.trim_matches('/'))
+    };
+    let project_segment = project.replace(' ', "%20");
+    let url = format!(
+        "{org_base}/{project_segment}/_apis/distributedtask/variablegroups?api-version=7.1"
+    );
+    let auth = format!(
+        "Basic {}",
+        base64::engine::general_purpose::STANDARD.encode(format!(":{pat}"))
+    );
+
+    let response = ureq::get(&url)
+        .set("Accept", "application/json")
+        .set("Authorization", &auth)
+        .call()
+        .map_err(map_ureq_error)?;
+
+    let body: serde_json::Value = response
+        .into_json()
+        .map_err(|e| format!("invalid JSON response: {e}"))?;
+    parse_variable_group_index_from_json(&body)
+}
+
+fn map_ureq_error(err: ureq::Error) -> String {
+    match err {
+        ureq::Error::Status(code, _) => format!("HTTP {code} from variablegroups API"),
+        ureq::Error::Transport(t) => t.to_string(),
+    }
+}
+
+fn parse_variable_group_index_from_json(
+    body: &serde_json::Value,
+) -> Result<AdoVariableGroupIndex, String> {
+    let mut index: AdoVariableGroupIndex = HashMap::new();
+    let values = body
+        .get("value")
+        .and_then(|v| v.as_array())
+        .ok_or_else(|| "response missing 'value' array".to_string())?;
+
+    for item in values {
+        let Some(group_name) = item.get("name").and_then(|v| v.as_str()) else {
+            continue;
+        };
+        let mut group_vars: HashMap<String, bool> = HashMap::new();
+        if let Some(vars_obj) = item.get("variables").and_then(|v| v.as_object()) {
+            for (var_name, meta) in vars_obj {
+                let is_secret = meta
+                    .get("isSecret")
+                    .and_then(|v| v.as_bool())
+                    .unwrap_or(false);
+                group_vars.insert(var_name.clone(), is_secret);
+            }
+        }
+        index.insert(group_name.to_string(), group_vars);
+    }
+
+    Ok(index)
 }
 
 /// Returns `Some(trimmed)` when an ADO `condition:` value is present and
@@ -490,6 +687,72 @@ fn mark_condition_partial(
         GapKind::Expression,
         format!(
             "ADO {scope_kind} '{name}' condition: '{condition}' — runtime evaluation not modelled"
+        ),
+    );
+}
+
+/// Normalize explicit `dependsOn:` to a comma-joined predecessor list.
+///
+/// ADO accepts string and list-of-strings forms, both of which are statically
+/// representable and returned here. Any other YAML shape is usually a template
+/// expression or conditional object that resolves at runtime; in that case we
+/// return `None` and mark the graph Partial-Expression so completeness is not
+/// overstated.
+fn explicit_depends_on_csv(
+    depends_on: &Option<DependsOn>,
+    graph: &mut AuthorityGraph,
+    scope_kind: &str,
+    name: &str,
+) -> Option<String> {
+    let d = depends_on.as_ref()?;
+    match d {
+        DependsOn::Single(s) => {
+            let trimmed = s.trim();
+            if trimmed.is_empty() {
+                None
+            } else {
+                Some(trimmed.to_string())
+            }
+        }
+        DependsOn::Multiple(v) => {
+            let csv = v
+                .iter()
+                .map(|s| s.trim())
+                .filter(|s| !s.is_empty())
+                .collect::<Vec<_>>()
+                .join(",");
+            if csv.is_empty() {
+                None
+            } else {
+                Some(csv)
+            }
+        }
+        DependsOn::Other(raw) => {
+            mark_depends_on_partial(graph, scope_kind, name, raw);
+            None
+        }
+    }
+}
+
+fn mark_depends_on_partial(
+    graph: &mut AuthorityGraph,
+    scope_kind: &str,
+    name: &str,
+    raw: &serde_yaml::Value,
+) {
+    let shape = match raw {
+        serde_yaml::Value::Null => "null",
+        serde_yaml::Value::Bool(_) => "bool",
+        serde_yaml::Value::Number(_) => "number",
+        serde_yaml::Value::String(_) => "string",
+        serde_yaml::Value::Sequence(_) => "sequence",
+        serde_yaml::Value::Mapping(_) => "mapping",
+        serde_yaml::Value::Tagged(_) => "tagged",
+    };
+    graph.mark_partial(
+        GapKind::Expression,
+        format!(
+            "ADO {scope_kind} '{name}' dependsOn uses unsupported {shape} form — runtime expansion not modelled"
         ),
     );
 }
@@ -748,6 +1011,7 @@ fn process_variables(
     scope: &str,
     plain_vars: &mut HashSet<String>,
     has_variable_groups: &mut bool,
+    variable_group_index: Option<&AdoVariableGroupIndex>,
 ) -> Vec<NodeId> {
     let mut ids = Vec::new();
 
@@ -771,6 +1035,19 @@ fn process_variables(
                     );
                     continue;
                 }
+
+                if let Some(group_vars) = variable_group_index.and_then(|idx| idx.get(group)) {
+                    for (var_name, is_secret) in group_vars {
+                        if *is_secret {
+                            let id = find_or_create_secret(graph, cache, var_name);
+                            ids.push(id);
+                        } else {
+                            plain_vars.insert(var_name.clone());
+                        }
+                    }
+                    continue;
+                }
+
                 *has_variable_groups = true;
                 let mut meta = HashMap::new();
                 meta.insert(META_VARIABLE_GROUP.into(), "true".into());
@@ -859,11 +1136,9 @@ fn process_steps(
         // when present. Default behaviour (no key) inherits from the job —
         // and at the job level we already only stamped non-default values,
         // so absence at both layers means we stamp nothing.
-        let effective_depends_on = step
-            .depends_on
-            .as_ref()
-            .map(|d| d.as_csv())
-            .or_else(|| outer_depends_on.map(|s| s.to_string()));
+        let effective_depends_on =
+            explicit_depends_on_csv(&step.depends_on, graph, "step", &step_name)
+                .or_else(|| outer_depends_on.map(|s| s.to_string()));
 
         let step_id = graph.add_node(NodeKind::Step, &step_name, trust_zone);
 
@@ -2273,6 +2548,9 @@ fn is_root_pipeline_key_line(line: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::io::{Read, Write};
+    use std::net::TcpListener;
+    use std::thread;
 
     fn parse(yaml: &str) -> AuthorityGraph {
         let parser = AdoParser;
@@ -2283,6 +2561,36 @@ mod tests {
             commit_sha: None,
         };
         parser.parse(yaml, &source).unwrap()
+    }
+
+    fn parse_with_ctx(yaml: &str, ctx: &AdoParserContext) -> AuthorityGraph {
+        let parser = AdoParser;
+        let source = PipelineSource {
+            file: "azure-pipelines.yml".into(),
+            repo: None,
+            git_ref: None,
+            commit_sha: None,
+        };
+        parser.parse_with_context(yaml, &source, Some(ctx)).unwrap()
+    }
+
+    fn spawn_variable_groups_server(response_json: &'static str) -> String {
+        let listener = TcpListener::bind("127.0.0.1:0").expect("bind mock server");
+        let addr = listener.local_addr().expect("local addr");
+        thread::spawn(move || {
+            if let Ok((mut stream, _)) = listener.accept() {
+                let mut buf = [0_u8; 2048];
+                let _ = stream.read(&mut buf);
+                let body = response_json.as_bytes();
+                let header = format!(
+                    "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
+                    body.len()
+                );
+                let _ = stream.write_all(header.as_bytes());
+                let _ = stream.write_all(body);
+            }
+        });
+        format!("http://{addr}")
     }
 
     #[test]
@@ -2349,6 +2657,90 @@ steps:
             graph.completeness_gap_kinds.contains(&GapKind::Structural),
             "variable group gap must be Structural, got: {:?}",
             graph.completeness_gap_kinds
+        );
+    }
+
+    #[test]
+    fn variable_group_enrichment_resolves_plain_and_secret_vars() {
+        let yaml = r#"
+variables:
+  - group: MySecretGroup
+
+steps:
+  - script: |
+      echo $(PUBLIC_FLAG)
+      echo $(DB_PASSWORD)
+"#;
+        let org_url = spawn_variable_groups_server(
+            r#"{"value":[{"name":"MySecretGroup","variables":{"PUBLIC_FLAG":{"value":"1","isSecret":false},"DB_PASSWORD":{"isSecret":true}}}]}"#,
+        );
+        let ctx = AdoParserContext {
+            org: Some(org_url),
+            project: Some("DemoProject".to_string()),
+            pat: Some("dummy-pat".to_string()),
+        };
+
+        let graph = parse_with_ctx(yaml, &ctx);
+        let secrets: Vec<_> = graph.nodes_of_kind(NodeKind::Secret).collect();
+        assert!(
+            secrets.iter().any(|n| n.name == "DB_PASSWORD"),
+            "secret variable from enriched group must be modelled as Secret"
+        );
+        assert!(
+            !secrets.iter().any(|n| n.name == "MySecretGroup"),
+            "resolved group should not be represented as an opaque group-secret node"
+        );
+        assert!(
+            !graph
+                .completeness_gaps
+                .iter()
+                .any(|g| g.contains("MySecretGroup") && g.contains("unresolvable")),
+            "resolved group must not emit unresolvable-group partial gap"
+        );
+        assert_eq!(
+            graph.metadata.get(META_ADO_VG_ENRICHED),
+            Some(&"true".to_string())
+        );
+    }
+
+    #[test]
+    fn variable_group_enrichment_failure_falls_back_to_static_model() {
+        let yaml = r#"
+variables:
+  - group: MySecretGroup
+steps:
+  - script: echo hi
+"#;
+        let unused_port = {
+            let probe = TcpListener::bind("127.0.0.1:0").expect("bind probe listener");
+            let p = probe.local_addr().expect("probe addr").port();
+            drop(probe);
+            p
+        };
+        let ctx = AdoParserContext {
+            org: Some(format!("http://127.0.0.1:{unused_port}")),
+            project: Some("DemoProject".to_string()),
+            pat: Some("dummy-pat".to_string()),
+        };
+
+        let graph = parse_with_ctx(yaml, &ctx);
+        assert_eq!(graph.completeness, AuthorityCompleteness::Partial);
+        assert!(
+            graph
+                .completeness_gaps
+                .iter()
+                .any(|g| g.contains("enrichment failed")),
+            "failed enrichment should produce warning partial gap"
+        );
+        assert!(
+            graph
+                .nodes_of_kind(NodeKind::Secret)
+                .any(|n| n.name == "MySecretGroup"),
+            "on failure parser must fall back to opaque group-secret behaviour"
+        );
+        assert_eq!(
+            graph.metadata.get(META_ADO_VG_ENRICHED),
+            Some(&"false".to_string())
         );
     }
 
@@ -3826,6 +4218,51 @@ jobs:
     }
 
     #[test]
+    fn step_depends_on_mapping_marks_partial_expression() {
+        let yaml = "steps:\n  - script: echo hi\n    displayName: Mixed depends\n    dependsOn:\n      \"${{ if eq(parameters.extra, true) }}\":\n        - Prep\n";
+        let graph = parse(yaml);
+        let step = graph
+            .nodes_of_kind(NodeKind::Step)
+            .find(|n| n.name == "Mixed depends")
+            .expect("step exists");
+        assert!(
+            !step.metadata.contains_key(META_DEPENDS_ON),
+            "unresolved mapping dependsOn must not stamp META_DEPENDS_ON"
+        );
+        assert!(
+            graph.completeness_gap_kinds.contains(&GapKind::Expression),
+            "mapping dependsOn must mark Partial-Expression"
+        );
+        assert!(
+            graph.completeness_gaps.iter().any(|g| g.contains("step")
+                && g.contains("Mixed depends")
+                && g.contains("dependsOn")),
+            "gap reason must name scope, step, and dependsOn"
+        );
+    }
+
+    #[test]
+    fn stage_depends_on_mapping_does_not_fake_inherited_dependency() {
+        let yaml = "stages:\n  - stage: Build\n    jobs:\n      - job: BuildJob\n        steps:\n          - script: echo build\n  - stage: Deploy\n    dependsOn:\n      \"${{ if eq(parameters.release, true) }}\":\n        - Build\n    jobs:\n      - job: DeployJob\n        steps:\n          - script: echo deploy\n            displayName: Deploy step\n";
+        let graph = parse(yaml);
+        let step = graph
+            .nodes_of_kind(NodeKind::Step)
+            .find(|n| n.name == "Deploy step")
+            .expect("deploy step exists");
+        assert!(
+            !step.metadata.contains_key(META_DEPENDS_ON),
+            "unresolved stage dependsOn must not flow into child step metadata"
+        );
+        assert!(
+            graph
+                .completeness_gaps
+                .iter()
+                .any(|g| g.contains("stage") && g.contains("Deploy") && g.contains("dependsOn")),
+            "gap reason must cite stage-level dependsOn expression"
+        );
+    }
+
+    #[test]
     fn conditional_step_finding_is_downgraded_via_compensating_control() {
         // Untrusted task step (TrustZone::Untrusted) with access to a
         // pipeline secret would normally fire `untrusted_with_authority`
@@ -3936,6 +4373,61 @@ stages:
                 .any(|n| n.name == "SHARED_NAME"),
             "plain variable in one stage must not suppress same-name secret refs in another stage"
         );
+    }
+
+    #[test]
+    fn parser_context_stamps_only_safe_metadata() {
+        let yaml = "steps:\n  - script: echo hi\n";
+        let parser = AdoParser;
+        let source = PipelineSource {
+            file: "ctx.yml".to_string(),
+            repo: None,
+            git_ref: None,
+            commit_sha: None,
+        };
+        let ctx = AdoParserContext {
+            org: Some("org-a".to_string()),
+            project: Some("project-a".to_string()),
+            pat: Some("very-secret-pat".to_string()),
+        };
+
+        let graph = parser
+            .parse_with_context(yaml, &source, Some(&ctx))
+            .expect("parse succeeds");
+
+        assert_eq!(graph.metadata.get("ado_org"), Some(&"org-a".to_string()));
+        assert_eq!(
+            graph.metadata.get("ado_project"),
+            Some(&"project-a".to_string())
+        );
+        assert_eq!(
+            graph.metadata.get("ado_pat_present"),
+            Some(&"true".to_string())
+        );
+        assert_eq!(
+            graph.metadata.get("ado_variable_group_enrichment_ready"),
+            Some(&"true".to_string())
+        );
+        assert!(
+            !graph
+                .metadata
+                .values()
+                .any(|v| v.contains("very-secret-pat")),
+            "PAT must never be persisted into graph metadata"
+        );
+    }
+
+    #[test]
+    fn parser_context_absent_preserves_existing_metadata_shape() {
+        let yaml = "steps:\n  - script: echo hi\n";
+        let graph = parse(yaml);
+
+        assert!(!graph.metadata.contains_key("ado_org"));
+        assert!(!graph.metadata.contains_key("ado_project"));
+        assert!(!graph.metadata.contains_key("ado_pat_present"));
+        assert!(!graph
+            .metadata
+            .contains_key("ado_variable_group_enrichment_ready"));
     }
 
     #[test]

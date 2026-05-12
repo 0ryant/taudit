@@ -7,6 +7,8 @@
   "datacontenttype": "application/json",
   "time": "2026-04-19T00:00:00Z",
   "correlationid": "demo-flow-2026-04-19-001",
+  "tauditpipelineid": "urn:taudit:pipeline:sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
+  "tauditscanrunid": "demo-scan-run-2026-04-19-001",
   "provenancerepo": "taudit",
   "provenanceproducer": "taudit-sink-cloudevents",
   "provenanceversion": "0.1.1",
