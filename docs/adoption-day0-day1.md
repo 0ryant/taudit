@@ -72,7 +72,7 @@ Author **`.taudit-suppressions.yml`** (see [suppressions.md](suppressions.md)), 
 taudit scan --suppressions .taudit-suppressions.yml <paths>
 ```
 
-Tune **`--suppression-mode`** (`downgrade` vs `suppress`) as needed.
+Tune **`--suppression-mode`** (`downgrade` vs `tag-only`) as needed.
 
 ### 6. Optional ergonomics
 

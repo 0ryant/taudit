@@ -17,7 +17,7 @@ taudit verify [PATH...] --policy <FILE_OR_DIR>
               [--ado-org <ORG_URL_OR_NAME> --ado-project <NAME> --ado-pat <PAT>]
               [--ignore-file <FILE>]
               [--suppressions <FILE>]
-              [--suppression-mode downgrade|suppress]
+              [--suppression-mode downgrade|tag-only]
               [--strict]
               [--include-builtin]
               [--severity-threshold critical|high|medium|low|info]
@@ -86,7 +86,7 @@ loaded path to stderr. If a suppression entry matched no finding in the current
 run, `verify` warns so stale fingerprints do not fail silently.
 
 `--suppression-mode downgrade` can change the gate outcome by lowering severity.
-`--suppression-mode suppress` is tag-only in `verify`: it marks matched
+`--suppression-mode tag-only` is metadata-only in `verify`: it marks matched
 findings as suppressed for downstream consumers, but they still count toward
 exit `1` unless another filter removes them.
 
@@ -202,7 +202,7 @@ is byte-compatible with SARIF emitted by `scan`.
 | `--ado-pat <PAT>` | Optional PAT for ADO variable-group read. Never logged or persisted. Requires `--ado-org` and `--ado-project`. |
 | `--ignore-file <FILE>` | Load ignore rules from this path. If omitted, `verify` also auto-discovers `.tauditignore` in the current working directory. |
 | `--suppressions <FILE>` | Load per-finding suppressions from this path. If omitted, `verify` auto-discovers `.taudit-suppressions.yml` and `.taudit/suppressions.yml`. |
-| `--suppression-mode downgrade\|suppress` | Apply matched suppressions by lowering severity (`downgrade`, default) or tagging only (`suppress`). |
+| `--suppression-mode downgrade\|tag-only` | Apply matched suppressions by lowering severity (`downgrade`, default) or tagging only (`tag-only`; `suppress` remains accepted as a compatibility alias). |
 | `--include-builtin` | Also run the 61 built-in rules; their findings count toward violations. |
 | `--severity-threshold <level>` | Only count violations at or above this severity. |
 | `--max-hops <N>` | Cap propagation BFS depth (default `taudit_core::propagation::DEFAULT_MAX_HOPS`). |

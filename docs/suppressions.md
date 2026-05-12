@@ -80,15 +80,17 @@ Critical -> High -> Medium -> Low -> Info
 
 `extras.original_severity` records the rule-emitted severity. `extras.suppression_reason` records the operator reason. The full finding still appears in JSON, SARIF, and CloudEvents output — audit trail preserved.
 
-### `suppress` mode
+### `tag-only` mode
 
 Severity is unchanged, but `extras.suppressed = true` is set on the finding. Consumers (SIEMs, dashboards) filter on the boolean. `extras.original_severity` and `extras.suppression_reason` are still populated for the audit trail.
 
-In `taudit verify`, `suppress` is tag-only: matched findings still count toward
+In `taudit verify`, `tag-only` is metadata-only: matched findings still count toward
 exit `1` unless another filter removes them (`.tauditignore`, baseline, or
 `--severity-threshold`).
 
-Pick `downgrade` when you want the waiver to influence severity-threshold gating; pick `suppress` when you want to keep severity legible to humans but signal "acknowledged" to machines.
+`suppress` remains accepted as a backwards-compatible alias for `tag-only`.
+
+Pick `downgrade` when you want the waiver to influence severity-threshold gating; pick `tag-only` when you want to keep severity legible to humans but signal "acknowledged" to machines.
 
 ## Hard rules
 

@@ -124,7 +124,7 @@ Command concepts:
   critical waiver validation.
 - `crates/taudit-core/src/ignore.rs`: `.tauditignore` category/path matching.
 - `crates/taudit-core/src/suppressions.rs`: explicit suppression config,
-  downgrade/suppress modes, expiry validation.
+  downgrade/tag-only modes, expiry validation.
 - `docs/baselines.md`: rollout and baseline model.
 - `docs/suppressions.md`: suppression format and operating model.
 - `schemas/baseline.v1.json`: baseline contract.

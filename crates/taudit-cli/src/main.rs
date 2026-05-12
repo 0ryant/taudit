@@ -573,9 +573,9 @@ enum Cli {
         suppressions: Option<PathBuf>,
 
         /// How to apply matched suppressions. `downgrade` lowers severity by
-        /// one tier. `suppress` is tag-only: it sets `extras.suppressed = true`
-        /// but findings still count toward `verify` exit 1 unless another
-        /// filter (`--ignore-file`, threshold, baseline) removes them.
+        /// one tier. `tag-only` sets `extras.suppressed = true` but findings
+        /// still count toward `verify` exit 1 unless another filter
+        /// (`--ignore-file`, threshold, baseline) removes them.
         #[arg(long, default_value = "downgrade")]
         suppression_mode: SuppressionModeArg,
 
@@ -730,14 +730,15 @@ enum SuppressionModeArg {
     Downgrade,
     /// Tag-only mode: set `extras.suppressed = true`; leave severity unchanged.
     /// Findings still count toward `verify` exit 1 unless another filter drops them.
-    Suppress,
+    #[value(alias("suppress"))]
+    TagOnly,
 }
 
 impl SuppressionModeArg {
     fn to_core(self) -> taudit_core::suppressions::SuppressionMode {
         match self {
             SuppressionModeArg::Downgrade => taudit_core::suppressions::SuppressionMode::Downgrade,
-            SuppressionModeArg::Suppress => taudit_core::suppressions::SuppressionMode::Suppress,
+            SuppressionModeArg::TagOnly => taudit_core::suppressions::SuppressionMode::Suppress,
         }
     }
 }
@@ -2568,9 +2569,9 @@ fn run_verify_io<W: std::io::Write>(opts: &VerifyOpts, writer: &mut W) -> i32 {
     }
     let suppression_mode_core = opts.suppression_mode.to_core();
     let suppression_today = today_local();
-    if opts.suppression_mode == SuppressionModeArg::Suppress {
+    if opts.suppression_mode == SuppressionModeArg::TagOnly {
         eprintln!(
-            "warning: --suppression-mode suppress is tag-only in verify; matched findings still count toward exit 1 unless another filter drops them"
+            "warning: --suppression-mode tag-only is metadata-only in verify; matched findings still count toward exit 1 unless another filter drops them"
         );
     }
 

@@ -1009,15 +1009,53 @@ fn verify_warns_on_orphaned_suppression_fingerprint() {
 }
 
 #[test]
-fn verify_warns_that_suppress_mode_is_tag_only() {
+fn verify_warns_that_tag_only_mode_is_metadata_only() {
     let fixture = workspace_root().join("tests/fixtures/propagation-leaky.yml");
     let (fp, rule) = first_fingerprint_for(&fixture);
-    let dir = unique_tmp_dir("verify-suppress-warning");
+    let dir = unique_tmp_dir("verify-tag-only-warning");
     let supp_path = dir.join(".taudit-suppressions.yml");
     std::fs::write(
         &supp_path,
         format!(
-            "suppressions:\n  - fingerprint: \"{fp}\"\n    rule_id: \"{rule}\"\n    reason: \"suppress mode test\"\n    accepted_by: \"test@example.com\"\n    accepted_at: \"2026-04-26\"\n    expires_at: \"2099-01-01\"\n"
+            "suppressions:\n  - fingerprint: \"{fp}\"\n    rule_id: \"{rule}\"\n    reason: \"tag-only mode test\"\n    accepted_by: \"test@example.com\"\n    accepted_at: \"2026-04-26\"\n    expires_at: \"2099-01-01\"\n"
+        ),
+    )
+    .expect("write suppressions file");
+    let missing_policy = dir.join("missing-policy.yml");
+
+    let output = taudit()
+        .arg("verify")
+        .arg("--include-builtin")
+        .arg("--policy")
+        .arg(&missing_policy)
+        .arg("--platform")
+        .arg("github-actions")
+        .arg("--suppressions")
+        .arg(&supp_path)
+        .arg("--suppression-mode")
+        .arg("tag-only")
+        .arg(&fixture)
+        .output()
+        .expect("spawn taudit verify");
+
+    assert_eq!(output.status.code(), Some(1));
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains("tag-only") && stderr.contains("still count toward exit 1"),
+        "verify should warn that tag-only mode is metadata-only; got stderr:\n{stderr}"
+    );
+}
+
+#[test]
+fn verify_accepts_suppress_as_tag_only_compat_alias() {
+    let fixture = workspace_root().join("tests/fixtures/propagation-leaky.yml");
+    let (fp, rule) = first_fingerprint_for(&fixture);
+    let dir = unique_tmp_dir("verify-suppress-alias");
+    let supp_path = dir.join(".taudit-suppressions.yml");
+    std::fs::write(
+        &supp_path,
+        format!(
+            "suppressions:\n  - fingerprint: \"{fp}\"\n    rule_id: \"{rule}\"\n    reason: \"compat alias test\"\n    accepted_by: \"test@example.com\"\n    accepted_at: \"2026-04-26\"\n    expires_at: \"2099-01-01\"\n"
         ),
     )
     .expect("write suppressions file");
@@ -1042,7 +1080,7 @@ fn verify_warns_that_suppress_mode_is_tag_only() {
     let stderr = String::from_utf8_lossy(&output.stderr);
     assert!(
         stderr.contains("tag-only") && stderr.contains("still count toward exit 1"),
-        "verify should warn that suppress mode is tag-only; got stderr:\n{stderr}"
+        "verify should keep suppress as a tag-only alias; got stderr:\n{stderr}"
     );
 }
 
