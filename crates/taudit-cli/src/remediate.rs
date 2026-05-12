@@ -774,7 +774,7 @@ fn ensure_no_uncommitted_edits(plan: &[PlannedEdit]) -> Result<()> {
     }
 
     for item in plan {
-        let output = std::process::Command::new("git")
+        let output = git_command()
             .arg("status")
             .arg("--porcelain")
             .arg("--")
@@ -801,7 +801,7 @@ fn ensure_no_uncommitted_edits(plan: &[PlannedEdit]) -> Result<()> {
 }
 
 fn in_git_repo() -> Result<bool> {
-    let output = std::process::Command::new("git")
+    let output = git_command()
         .arg("rev-parse")
         .arg("--is-inside-work-tree")
         .output()
@@ -812,6 +812,22 @@ fn in_git_repo() -> Result<bool> {
     }
 
     Ok(String::from_utf8_lossy(&output.stdout).trim() == "true")
+}
+
+fn git_command() -> std::process::Command {
+    let mut cmd = std::process::Command::new("git");
+    for key in [
+        "GIT_DIR",
+        "GIT_WORK_TREE",
+        "GIT_INDEX_FILE",
+        "GIT_PREFIX",
+        "GIT_COMMON_DIR",
+        "GIT_OBJECT_DIRECTORY",
+        "GIT_ALTERNATE_OBJECT_DIRECTORIES",
+    ] {
+        cmd.env_remove(key);
+    }
+    cmd
 }
 
 fn run_verify_subprocess(policy: &Path, plan: &[PlannedEdit]) -> Result<VerifyRun> {
@@ -1211,6 +1227,27 @@ mod tests {
         let patch = render_unified_patch(".github/workflows/ci.yml", "a\n", "b\n");
         assert!(patch.contains("--- a/.github/workflows/ci.yml"));
         assert!(patch.contains("+++ b/.github/workflows/ci.yml"));
+    }
+
+    #[test]
+    fn git_command_clears_hook_repository_environment() {
+        let cmd = git_command();
+        let removed: std::collections::BTreeSet<_> = cmd
+            .get_envs()
+            .filter_map(|(key, value)| value.is_none().then_some(key.to_owned()))
+            .collect();
+
+        for key in [
+            "GIT_DIR",
+            "GIT_WORK_TREE",
+            "GIT_INDEX_FILE",
+            "GIT_PREFIX",
+            "GIT_COMMON_DIR",
+            "GIT_OBJECT_DIRECTORY",
+            "GIT_ALTERNATE_OBJECT_DIRECTORIES",
+        ] {
+            assert!(removed.contains(std::ffi::OsStr::new(key)));
+        }
     }
 
     #[test]
