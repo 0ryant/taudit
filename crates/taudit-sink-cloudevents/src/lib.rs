@@ -468,9 +468,9 @@ fn finding_to_event(
 /// unset.
 ///
 /// Precedence (highest → lowest):
-///   1. `CloudEventsJsonlSink { correlation_id: Some(_) }` — explicit
-///      constructor argument wins (programmatic embedders).
-///   2. `TAUDIT_CORRELATION_ID` env var — for CLI / CI use.
+///   1. `CloudEventsJsonlSink { correlation_id: Some(non_empty) }` —
+///      explicit constructor argument wins (programmatic embedders).
+///   2. Non-empty `TAUDIT_CORRELATION_ID` env var — for CLI / CI use.
 ///   3. `Uuid::new_v4()` — preserves prior behaviour for unconfigured callers.
 pub const CORRELATION_ID_ENV: &str = "TAUDIT_CORRELATION_ID";
 
@@ -495,8 +495,9 @@ impl CloudEventsJsonlSink {
     }
 
     /// Construct a sink with an explicit caller-supplied correlation id.
-    /// `Some(id)` overrides both the `TAUDIT_CORRELATION_ID` env var and
-    /// the UUID fallback; `None` defers to env var, then UUID.
+    /// `Some(non_empty_id)` overrides both the `TAUDIT_CORRELATION_ID` env
+    /// var and the UUID fallback; `None` or an empty string defers to env var,
+    /// then UUID.
     pub fn with_correlation_id(correlation_id: Option<String>) -> Self {
         Self { correlation_id }
     }
@@ -507,8 +508,21 @@ impl CloudEventsJsonlSink {
     fn resolve_correlation_id(&self) -> String {
         self.correlation_id
             .clone()
-            .or_else(|| std::env::var(CORRELATION_ID_ENV).ok())
+            .and_then(non_empty_correlation_id)
+            .or_else(|| {
+                std::env::var(CORRELATION_ID_ENV)
+                    .ok()
+                    .and_then(non_empty_correlation_id)
+            })
             .unwrap_or_else(|| uuid::Uuid::new_v4().to_string())
+    }
+}
+
+fn non_empty_correlation_id(value: String) -> Option<String> {
+    if value.trim().is_empty() {
+        None
+    } else {
+        Some(value)
     }
 }
 
@@ -539,9 +553,12 @@ impl<W: std::io::Write> ReportSink<W> for CloudEventsJsonlSink {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::sync::Mutex;
     use std::{fs, path::PathBuf};
     use taudit_core::finding::{FindingExtras, Recommendation, Severity};
     use taudit_core::graph::{GapKind, PipelineSource};
+
+    static ENV_LOCK: Mutex<()> = Mutex::new(());
 
     fn test_source() -> PipelineSource {
         PipelineSource {
@@ -880,6 +897,61 @@ mod tests {
 
         assert_eq!(correlation_ids.len(), 2);
         assert_eq!(correlation_ids[0], correlation_ids[1]);
+    }
+
+    #[test]
+    fn env_correlation_id_is_used_when_non_empty() {
+        let _guard = ENV_LOCK.lock().unwrap();
+        let prior = std::env::var(CORRELATION_ID_ENV).ok();
+        std::env::set_var(CORRELATION_ID_ENV, "flow-123");
+
+        let graph = AuthorityGraph::new(test_source());
+        let findings = vec![test_finding(
+            FindingCategory::UnpinnedAction,
+            Severity::Medium,
+        )];
+        let mut buf = Vec::new();
+        CloudEventsJsonlSink::default()
+            .emit(&mut buf, &graph, &findings)
+            .unwrap();
+
+        match prior {
+            Some(value) => std::env::set_var(CORRELATION_ID_ENV, value),
+            None => std::env::remove_var(CORRELATION_ID_ENV),
+        }
+
+        let event: serde_json::Value =
+            serde_json::from_str(std::str::from_utf8(&buf).unwrap().lines().next().unwrap())
+                .unwrap();
+        assert_eq!(event["correlationid"], "flow-123");
+    }
+
+    #[test]
+    fn empty_env_correlation_id_falls_back_to_uuid() {
+        let _guard = ENV_LOCK.lock().unwrap();
+        let prior = std::env::var(CORRELATION_ID_ENV).ok();
+        std::env::set_var(CORRELATION_ID_ENV, " ");
+
+        let graph = AuthorityGraph::new(test_source());
+        let findings = vec![test_finding(
+            FindingCategory::UnpinnedAction,
+            Severity::Medium,
+        )];
+        let mut buf = Vec::new();
+        CloudEventsJsonlSink::default()
+            .emit(&mut buf, &graph, &findings)
+            .unwrap();
+
+        match prior {
+            Some(value) => std::env::set_var(CORRELATION_ID_ENV, value),
+            None => std::env::remove_var(CORRELATION_ID_ENV),
+        }
+
+        let event: serde_json::Value =
+            serde_json::from_str(std::str::from_utf8(&buf).unwrap().lines().next().unwrap())
+                .unwrap();
+        let correlation_id = event["correlationid"].as_str().unwrap();
+        assert!(uuid::Uuid::parse_str(correlation_id).is_ok());
     }
 
     #[test]

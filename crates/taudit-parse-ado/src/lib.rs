@@ -121,6 +121,7 @@ fn build_ado_graph(
                 .to_string(),
         );
     }
+    mark_unresolved_top_level_carriers(content, &mut graph);
 
     // Detect PR trigger — sets graph-level META_TRIGGER for trigger_context_mismatch.
     // A genuine ADO PR trigger is always a mapping (`pr:\n  branches:...`) or a
@@ -431,6 +432,48 @@ fn join_conditions(outer: Option<&str>, inner: Option<&str>) -> Option<String> {
         (None, Some(i)) => Some(i.to_string()),
         (Some(o), Some(i)) => Some(format!("{o} AND {i}")),
     }
+}
+
+/// Top-level `stages:` and `jobs:` carriers may be supplied as template
+/// expressions (for example `stages: ${{ parameters.stages }}`). The serde
+/// model accepts those shapes so parsing can continue, but they hide the
+/// authority-carrying job/step graph until runtime. Mark them explicitly
+/// Partial instead of returning a clean Complete graph with no steps.
+fn mark_unresolved_top_level_carriers(content: &str, graph: &mut AuthorityGraph) {
+    let mut de = serde_yaml::Deserializer::from_str(content);
+    let Some(doc) = de.next() else {
+        return;
+    };
+    let Ok(value) = serde_yaml::Value::deserialize(doc) else {
+        return;
+    };
+    let Some(map) = value.as_mapping() else {
+        return;
+    };
+
+    for key in ["stages", "jobs"] {
+        let Some(value) = map.get(key) else {
+            continue;
+        };
+        if is_ado_template_expression_scalar(value) {
+            graph.mark_partial(
+                GapKind::Expression,
+                format!(
+                    "ADO top-level `{key}:` uses a template expression — {key} cannot be enumerated statically"
+                ),
+            );
+        }
+    }
+}
+
+fn is_ado_template_expression_scalar(value: &serde_yaml::Value) -> bool {
+    value
+        .as_str()
+        .map(|s| {
+            let trimmed = s.trim();
+            trimmed.starts_with("${{") && trimmed.ends_with("}}")
+        })
+        .unwrap_or(false)
 }
 
 /// Mark the graph Partial with `GapKind::Expression` and a reason that names
@@ -3175,12 +3218,12 @@ jobs:
     }
 
     #[test]
-    fn stages_as_template_expression_parses_with_no_stages() {
+    fn stages_as_template_expression_marks_partial_expression_gap() {
         // Real-world repro from dotnet/diagnostics templatePublic.yml:
         // `stages: ${{ parameters.stages }}` resolves at runtime. The static
-        // parser cannot enumerate stages from a template expression — we
-        // accept the file without crashing and the resulting graph simply
-        // contains no stages from the template-expression scope.
+        // parser cannot enumerate stages from a template expression. Accept
+        // the file without crashing, but expose the under-modelled authority
+        // carrier as a typed Partial-Expression gap.
         let yaml = r#"
 parameters:
   - name: stages
@@ -3191,6 +3234,47 @@ stages: ${{ parameters.stages }}
         let graph = parse(yaml);
         // Graph must exist (no crash).
         assert!(graph.parameters.contains_key("stages"));
+        assert_eq!(graph.completeness, AuthorityCompleteness::Partial);
+        assert!(
+            graph.completeness_gap_kinds.contains(&GapKind::Expression),
+            "dynamic stages carrier must be an Expression gap, got: {:?}",
+            graph.completeness_gap_kinds
+        );
+        assert!(
+            graph
+                .completeness_gaps
+                .iter()
+                .any(|g| g.contains("top-level `stages:`") && g.contains("template expression")),
+            "gap must identify the dynamic stages carrier, got: {:?}",
+            graph.completeness_gaps
+        );
+    }
+
+    #[test]
+    fn jobs_as_template_expression_marks_partial_expression_gap() {
+        let yaml = r#"
+parameters:
+  - name: jobs
+    type: jobList
+
+jobs: ${{ parameters.jobs }}
+"#;
+        let graph = parse(yaml);
+        assert!(graph.parameters.contains_key("jobs"));
+        assert_eq!(graph.completeness, AuthorityCompleteness::Partial);
+        assert!(
+            graph.completeness_gap_kinds.contains(&GapKind::Expression),
+            "dynamic jobs carrier must be an Expression gap, got: {:?}",
+            graph.completeness_gap_kinds
+        );
+        assert!(
+            graph
+                .completeness_gaps
+                .iter()
+                .any(|g| g.contains("top-level `jobs:`") && g.contains("template expression")),
+            "gap must identify the dynamic jobs carrier, got: {:?}",
+            graph.completeness_gaps
+        );
     }
 
     // ── Cross-platform misclassification trap (red-team R2 #5) ─────

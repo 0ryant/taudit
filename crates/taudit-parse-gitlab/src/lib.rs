@@ -332,6 +332,12 @@ fn build_graph_from_root(
                 .metadata
                 .insert(META_TRIGGER.into(), "merge_request".into());
         }
+        if workflow_rules_define_variables(wf) {
+            graph.mark_partial(
+                GapKind::Expression,
+                "workflow:rules:variables define conditional variables — rule expressions not evaluated".to_string(),
+            );
+        }
     }
 
     // Process each job (any top-level key not in RESERVED)
@@ -367,6 +373,13 @@ fn build_graph_from_root(
             graph.mark_partial(
                 GapKind::Structural,
                 format!("job '{job_name}' uses extends: — inherited configuration not resolved"),
+            );
+        }
+
+        if rules_define_variables(job_map.get("rules")) {
+            graph.mark_partial(
+                GapKind::Expression,
+                format!("job '{job_name}' uses rules:variables — conditional variable scope not resolved"),
             );
         }
 
@@ -1225,6 +1238,22 @@ fn has_mr_trigger_in_workflow(wf: &Value) -> bool {
         }
     }
     false
+}
+
+fn workflow_rules_define_variables(wf: &Value) -> bool {
+    wf.as_mapping()
+        .and_then(|m| m.get("rules"))
+        .is_some_and(|rules| rules_define_variables(Some(rules)))
+}
+
+fn rules_define_variables(rules: Option<&Value>) -> bool {
+    let Some(rules) = rules.and_then(|v| v.as_sequence()) else {
+        return false;
+    };
+    rules
+        .iter()
+        .filter_map(|rule| rule.as_mapping())
+        .any(|rule| rule.contains_key("variables"))
 }
 
 /// Returns true when `if_expr` positively asserts that the pipeline source IS
@@ -2137,6 +2166,51 @@ deploy:
         assert!(
             needs_csv.split(',').any(|s| s == "build"),
             "default (artifacts implicitly true) must keep build in META_NEEDS (got: {needs_csv:?})"
+        );
+    }
+
+    /// Roadmap R3 / Phase 1B: conditional `rules:variables` changes variable
+    /// scope based on an expression. Until expressions are evaluated, the graph
+    /// must be Partial rather than silently claiming static completeness.
+    #[test]
+    fn rules_variables_mark_typed_expression_gap() {
+        let yaml = r#"
+workflow:
+  rules:
+    - if: '$CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH'
+      variables:
+        DEPLOY_TOKEN: "$PROD_DEPLOY_TOKEN"
+
+deploy:
+  rules:
+    - if: '$CI_COMMIT_REF_PROTECTED == "true"'
+      variables:
+        CLOUD_PASSWORD: "$PROD_CLOUD_PASSWORD"
+  script:
+    - deploy.sh
+"#;
+        let graph = parse(yaml);
+        assert_eq!(graph.completeness, AuthorityCompleteness::Partial);
+        assert_eq!(
+            graph.completeness_gap_kinds,
+            vec![GapKind::Expression, GapKind::Expression],
+            "workflow and job rules:variables should each produce an expression gap"
+        );
+        assert!(
+            graph
+                .completeness_gaps
+                .iter()
+                .any(|gap| gap.contains("workflow:rules:variables define conditional variables")),
+            "workflow rules:variables gap missing: {:?}",
+            graph.completeness_gaps
+        );
+        assert!(
+            graph
+                .completeness_gaps
+                .iter()
+                .any(|gap| gap.contains("job 'deploy' uses rules:variables")),
+            "job rules:variables gap missing: {:?}",
+            graph.completeness_gaps
         );
     }
 

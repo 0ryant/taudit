@@ -142,8 +142,13 @@ candidate labels. Each path also carries the deterministic pattern facts used by
 the rule: `mutable_channel`, `helper`, `helper_resolution`,
 `authority_transport`, and `authority_origin`.
 
-`--job` limits **dot** and **mermaid** to a job’s reachable subgraph; **json**
-and **summary** stay full-graph when you need lossless `completeness` / `completeness_gaps` or a global propagation rollup.
+For the canonical authority view, `--job` limits **dot** and **mermaid** to a
+job's reachable subgraph; **json** and **summary** stay full-graph when you need
+lossless `completeness` / `completeness_gaps` or a global propagation rollup.
+For the exploit view, `--job` filters the path projection before rendering
+**json**, **dot**, **mermaid**, or **summary**; the emitted JSON remains the
+separate [`exploit-graph.v1.json`](../schemas/exploit-graph.v1.json) contract,
+not the canonical authority graph envelope.
 
 `taudit map` defaults to the human-readable step×authority **table**; with
 `--format dot` or `--format mermaid` it emits the same diagram renderers as
