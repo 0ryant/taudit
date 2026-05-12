@@ -40,6 +40,11 @@ adds report metadata intended to make high-volume triage more explicit.
   attacker-surface kinds, template-resolution strength, and CVE relationship
   when known.
 - Graph risk summary fields for corpus-scale reporting and ranking.
+- Exploit-path graph view: `taudit graph --view exploit` emits deterministic
+  mutable-state-to-helper-authority paths as JSON, DOT, Mermaid, or summary
+  output. The canonical authority graph remains `--view authority`; disclosure
+  scoring, CVE workflow metadata, witness specs, and canary details remain
+  internal-gated and are not part of the default customer output.
 - Additional authority-confusion, supply-chain, OIDC, Docker/container, remote
   script, and cross-provider parser/rule coverage from the v1.1 prerelease
   cycle.
@@ -50,6 +55,9 @@ adds report metadata intended to make high-volume triage more explicit.
   not a compatibility break.
 - JSON and SARIF consumers should tolerate the additive fields introduced during
   the v1.1 prerelease cycle.
+- Graph consumers that want the disclosure-pack-oriented projection can opt into
+  `taudit graph --view exploit`; existing `taudit graph` usage remains the
+  authority view by default.
 - Existing `taudit-api = "0.1"` integrations should review the additive
   `taudit-api 0.4.0` wire types before moving to the v1.1 crate family.
 - Implementation crates (`taudit-core`, parsers, reporters, and sinks) publish
