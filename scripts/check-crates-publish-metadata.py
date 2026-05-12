@@ -15,6 +15,7 @@ ROOT = pathlib.Path(__file__).resolve().parents[1]
 REQUIRED_METADATA = ("description",)
 REQUIRED_ONE_OF = (("license", "license-file"),)
 API_CRATE = "taudit-api"
+CLI_CRATE = "taudit"
 
 
 def read_toml(path: pathlib.Path) -> dict:
@@ -65,7 +66,14 @@ def main() -> int:
     parser.add_argument(
         "--expected-release-version",
         default=expected_from_env(),
-        help="Expected version for all publishable taudit crates except taudit-api.",
+        help="Expected product CLI version for the publishable taudit crate.",
+    )
+    parser.add_argument(
+        "--expected-implementation-version",
+        help=(
+            "Expected version for publishable implementation crates. "
+            "When omitted, implementation crates must still be coherent with each other."
+        ),
     )
     args = parser.parse_args()
 
@@ -90,11 +98,13 @@ def main() -> int:
                 joined = "` or `".join(keys)
                 errors.append(f"{manifest_path}: package {name!r} missing `{joined}`")
 
+    package_versions = {package["name"]: package["version"] for _, package in packages}
     release_versions = {
-        package["name"]: package["version"]
-        for _, package in packages
-        if package.get("name") != API_CRATE
+        name: version
+        for name, version in package_versions.items()
+        if name not in (API_CRATE, CLI_CRATE)
     }
+    cli_version = package_versions.get(CLI_CRATE)
     api_versions = {
         package["name"]: package["version"]
         for _, package in packages
@@ -110,22 +120,23 @@ def main() -> int:
                 f"workspace.dependencies.{API_CRATE} has version {api_dep_version!r}; "
                 f"expected {expected_api_req!r} for local {API_CRATE}@{api_version}"
             )
-    if args.expected_release_version:
+    if args.expected_release_version and cli_version != args.expected_release_version:
+        errors.append(
+            f"{CLI_CRATE}: version {cli_version!r} does not match expected product release "
+            f"{args.expected_release_version!r}"
+        )
+    if args.expected_implementation_version:
         for name, version in sorted(release_versions.items()):
-            if version != args.expected_release_version:
+            if version != args.expected_implementation_version:
                 errors.append(
-                    f"{name}: version {version!r} does not match expected release "
-                    f"{args.expected_release_version!r}"
+                    f"{name}: version {version!r} does not match expected implementation "
+                    f"{args.expected_implementation_version!r}"
                 )
     elif release_versions:
         counts = Counter(release_versions.values())
         if len(counts) != 1:
             versions = ", ".join(f"{name}={version}" for name, version in sorted(release_versions.items()))
-            errors.append(f"publishable release crate versions are not coherent: {versions}")
-
-    release_version = args.expected_release_version
-    if release_version is None and release_versions:
-        release_version = Counter(release_versions.values()).most_common(1)[0][0]
+            errors.append(f"publishable implementation crate versions are not coherent: {versions}")
 
     for manifest_path, _package in packages:
         manifest = read_toml(manifest_path)
@@ -145,12 +156,13 @@ def main() -> int:
                                 f"{dep_version!r}; expected {expected_api_req!r}"
                             )
                     continue
-                if dep_name in release_versions and isinstance(dep, dict) and "path" in dep:
+                if dep_name in package_versions and isinstance(dep, dict) and "path" in dep:
                     dep_version = dep.get("version")
-                    if dep_version != release_version:
+                    expected_dep_version = package_versions[dep_name]
+                    if dep_version != expected_dep_version:
                         errors.append(
                             f"{manifest_path}: {name} {section_name}.{dep_name} has version "
-                            f"{dep_version!r}; expected {release_version!r}"
+                            f"{dep_version!r}; expected {expected_dep_version!r}"
                         )
 
     if errors:

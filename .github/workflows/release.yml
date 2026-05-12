@@ -35,14 +35,10 @@ jobs:
       - name: crates publish metadata
         run: python3 scripts/check-crates-publish-metadata.py --expected-release-version "${GITHUB_REF_NAME#v}"
 
-      # Per the v1.1.0-beta.3 API stability policy: `taudit-core` is workspace-
-      # internal but its `pub` items are still in the technical ABI; an
-      # accidental signature change between minor versions would break any
-      # external consumer pinning a specific minor. `cargo semver-checks`
-      # guards against that. The `--baseline-rev` is omitted so the tool
-      # diffs against the latest matching version on crates.io — on the very
-      # first publish of any crate the tool reports "no baseline" and exits 0,
-      # so this step is a no-op for first releases.
+      # Stable tags run cargo-semver-checks across the publishable library
+      # crates. The CLI product version may stay additive while implementation
+      # crates take a major bump; semver-checks enforces that split instead of
+      # letting a minor release accidentally break a published Rust API.
       - name: Install cargo-semver-checks
         if: ${{ !contains(github.ref_name, '-') }}
         run: cargo install cargo-semver-checks --locked --quiet
@@ -269,8 +265,8 @@ jobs:
 
       - name: Publish to crates.io
         # Cargo 1.88 still keeps `cargo publish --workspace` unstable, so
-        # publish explicitly in dependency order and wait briefly for registry
-        # index propagation between workspace crates. The existence check makes
+        # publish explicitly in dependency order and wait for registry index
+        # propagation between workspace crates. The existence check makes
         # reruns safe after a partial publish.
         env:
           CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
@@ -301,7 +297,16 @@ jobs:
               return
             fi
             cargo publish -p "$crate" --token "$CARGO_REGISTRY_TOKEN"
-            sleep 60
+            for attempt in $(seq 1 30); do
+              if cargo info "${crate}@${version}" --registry crates-io >/dev/null 2>&1; then
+                echo "${crate}@${version} visible on crates.io"
+                return
+              fi
+              echo "waiting for ${crate}@${version} to appear in crates.io index (attempt ${attempt}/30)"
+              sleep 10
+            done
+            echo "::error::${crate}@${version} did not appear in crates.io index after publish"
+            exit 1
           }
 
           publish_one taudit-api

@@ -31,7 +31,7 @@ Requires Rust ≥ 1.76. Verify the install:
 
 ```bash
 taudit --version
-# taudit 1.1.0-beta.2
+# taudit 1.1.0
 ```
 
 `taudit --help` appends a long reference (graph formats `json`/`dot`/`mermaid`/`summary`, `--job`, stdout/pipes, doc paths). Use `taudit graph --help`, `taudit scan --help`, etc. for subcommand flags. A Troff manual is in the repo: [`man/taudit.1`](../man/taudit.1). **Blessed CLI flows** on committed fixtures: [`docs/golden-paths.md`](docs/golden-paths.md); run **`just golden-paths`** from a clone to smoke them.
@@ -60,7 +60,7 @@ taudit scan azure-pipelines.yml
 ### Sample output
 
 ```
-taudit 1.1.0-beta.2 — 1 file
+taudit 1.1.0 — 1 file
 ────────────────────────────────────────────────────────────
 Authority Graph: .github/workflows/quality.yml
   Steps: 18 | Secrets: 0 | Actions: 4 | Identities: 1

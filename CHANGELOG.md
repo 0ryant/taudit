@@ -18,6 +18,45 @@ _(none yet — populate this paragraph when adding entries that change finding b
 
 _(populate if any consumer-visible field, schema, or contract changes; remove subsection if none)_
 
+## v1.1.0 — 2026-05-12 (stable)
+
+> **Stable promotion.** Promotes the `v1.1.0-rc.6` payload to crates.io stable.
+> Stable Cargo resolvers and `cargo install taudit` now receive the v1.1
+> parser, rule, report, and graph contract by default.
+
+### Detection delta (read first)
+
+No rule, parser, report, or schema behaviour change versus `v1.1.0-rc.6`.
+Compared with `v1.0.12`, this release is an additive detection and reporting
+cut: it parses more CI providers, emits more authority/confusion findings, and
+adds report metadata intended to make high-volume triage more explicit.
+
+### Added
+
+- Bitbucket Pipelines support alongside GitHub Actions, Azure DevOps, and
+  GitLab CI.
+- Publication context metadata in JSON and SARIF findings, including confidence
+  scope, runtime preconditions, portal-control dependency, authority kinds,
+  attacker-surface kinds, template-resolution strength, and CVE relationship
+  when known.
+- Graph risk summary fields for corpus-scale reporting and ranking.
+- Additional authority-confusion, supply-chain, OIDC, Docker/container, remote
+  script, and cross-provider parser/rule coverage from the v1.1 prerelease
+  cycle.
+
+### Migration notes
+
+- Expect more findings than `v1.0.12`. This is intentional coverage expansion,
+  not a compatibility break.
+- JSON and SARIF consumers should tolerate the additive fields introduced during
+  the v1.1 prerelease cycle.
+- Existing `taudit-api = "0.1"` integrations should review the additive
+  `taudit-api 0.3.0` wire types before moving to the v1.1 crate family.
+- Implementation crates (`taudit-core`, parsers, reporters, and sinks) publish
+  as `2.0.0` in this product release because their Rust library surfaces are
+  not semver-compatible with `1.0.12`. End users of the CLI are unaffected;
+  Rust embedders should depend on `taudit-api` for the stable wire contract.
+
 ## v1.1.0-rc.3 — 2026-05-05 (release candidate)
 
 > **Release candidate.** Supersedes `v1.1.0-rc.2`, which partially published

@@ -100,6 +100,20 @@ The same job graph runs for both: quality → create-release → SBOMs → binar
 | **Stable** | `v1.1.0` | `1.1.0` | (default — Latest) | published, picked by stable resolvers |
 | **Prerelease** | `v1.1.0-beta.1` | `1.1.0-beta.1` | `--prerelease` (no Latest badge) | published, picked only by explicit opt-in |
 
+The **product version** is the `taudit` CLI crate version. Supporting crates do
+not have to share that version when Rust semver requires a different answer:
+
+- `taudit-api` is the intended Rust embedding and wire-type contract. It may
+  follow its own contract version.
+- `taudit-core`, parser crates, reporter crates, and sink crates are
+  implementation crates for building the CLI. Because they are published on
+  crates.io, their crate versions must still be semver-honest. If their public
+  Rust API breaks while the CLI product release is additive, bump those
+  implementation crates to a major version and keep the CLI on its product
+  version.
+- Path dependency versions in the workspace must match the actual target crate
+  version, not the product tag version.
+
 **Nightly / commit builds** that don't deserve a registry version can skip tags entirely: artifact name includes date or short SHA; attach to a **Pre-release** GH release or leave as workflow-run artifacts only. The crates.io lane stays tag-driven.
 
 ### GitHub Release flag

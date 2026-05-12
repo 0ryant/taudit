@@ -34,6 +34,7 @@ Companion docs: [`release-strategy.md`](release-strategy.md) (lane policy: stabl
 - [ ] `python3 scripts/generate-authority-invariant-schema.py --check` clean (Rust↔schema enum drift).
 - [ ] `cargo semver-checks check-release` clean against the previous published baseline for stable tags. Prerelease tags (`*-beta.*`, `*-rc.*`) skip this CI step because Cargo's registry baseline selection compares them against the latest stable line; prerelease API churn is instead controlled by explicit CHANGELOG migration notes and the eventual stable-promotion semver gate.
 - [ ] CHANGELOG entry under `## v{tag}` includes the **Detection delta (read first)** paragraph (see [`release-strategy.md` §5](release-strategy.md#5-changelog-discipline-trust)).
+- [ ] Publish metadata gate passes for the product CLI version and the crate graph is semver-honest. The `taudit` CLI crate defines the product version; `taudit-api` may use its own wire-contract version; implementation crates (`taudit-core`, parsers, reporters, sinks) may take a different major version when their published Rust API breaks.
 
 **RC blockers (per-cycle)** — listed in the active CHANGELOG `Unreleased` section. The current cycle's RC blockers for `1.1.0-rc.1` are:
 
@@ -47,11 +48,12 @@ Companion docs: [`release-strategy.md`](release-strategy.md) (lane policy: stabl
 
 **Hard gates** (all required):
 
-- [ ] **14-day calendar soak** since the latest `rc.N` tag, with no new commits to `main` that touch parser logic, the JSON/SARIF/CloudEvents wire types, or `compute_fingerprint`. (Documentation, tests, and CI changes do not reset the clock; semantic changes do.)
+- [ ] **One-week calendar soak** since the latest `rc.N` tag, with no new commits to the release candidate payload that touch parser logic, the JSON/SARIF/CloudEvents wire types, or `compute_fingerprint`. (Documentation, tests, CI, and release-machinery changes do not reset the clock; semantic changes do.)
 - [ ] **Zero new P0/P1 findings** against the public contract surface during the soak. A P1 raised externally (issue tracker, fuzz finding, security disclosure) resets the clock to the day of the fix tag.
 - [ ] **Public-corpus dogfood pass.** taudit successfully scans a curated corpus of ≥100 real-world pipeline files sourced from public GitHub / GitLab / ADO repos (covering all three platforms, varied sizes, including known-pathological shapes) without crashing, hanging, or producing schema-invalid output. Maintain the corpus list in `docs/dogfood-corpus.md` with sources and rationale; refresh quarterly.
 - [ ] **Fuzz clean during soak.** `scheduled-fuzz.yml` runs (Tuesday cron) over the soak window report no new crashers, no new schema-invalid outputs, no new panics on hostile YAML.
 - [ ] **Maintainer self-attestation.** The maintainer runs taudit on the workspace's own CI YAML (`.github/workflows/`, `azure-pipelines.yml`, `.gitlab-ci.yml`, `bitbucket-pipelines.yml`) plus at least two sibling-project CI estates (e.g. tsign, axiom, CellOS once they exist) and writes the findings up as a public dogfood report committed to `docs/dogfood/v{tag}.md`. This is the "we use it on real code" signal that doesn't require a CISO call.
+- [ ] **CI outage fallback recorded.** If GitHub Actions is unavailable for the release window, run the equivalent release drills locally and/or in Azure DevOps, record which GitHub-only artifacts are delayed (GitHub Release assets, SBOM attestations, provenance attestations), and do not claim full GitHub release-artifact parity until those artifacts exist.
 - [ ] All RC-cycle blockers (§2.1) confirmed resolved at HEAD.
 - [ ] CHANGELOG `## Unreleased` empty stub re-scaffolded for the next cycle.
 
@@ -79,7 +81,7 @@ Version-as-promise rots ("we'll ship signed manifests in 1.2" → 1.3 → 1.5 �
 | Milestone | Calendar target | Lane |
 |-----------|-----------------|------|
 | `v1.1.0-rc.1` cut | **shipped 2026-05-02** | rc |
-| `v1.1.0` stable cut | **earliest 2026-05-16** (14 days post-rc.1, gated on §2.2; slips per soak-clock resets) | stable |
+| `v1.1.0` stable cut | **target 2026-05-12 or later** (maintainer-overridden one-week soak from the latest release candidate, gated on §2.2 local/ADO evidence while GHA is unavailable) | stable |
 | Signed-manifest support (tsign integration GA) | **target Q1 2027** — slips a quarter at a time, never silently | stable |
 | `axiom` enforcement integration GA | **target Q3 2027** — slips a quarter at a time, never silently | stable |
 | `v2.0.0` (model break) | **no earlier than 2028** unless detection model fundamentally shifts | major |
