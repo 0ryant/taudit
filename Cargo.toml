@@ -35,7 +35,7 @@ anyhow = "1"
 jsonschema = "0.45"
 clap = { version = "4", features = ["derive"] }
 clap_complete = "4"
-colored = "2"
+colored = "3"
 uuid = { version = "1", features = ["v4"] }
 chrono = { version = "0.4", features = ["serde"] }
 sha2 = "0.10"
