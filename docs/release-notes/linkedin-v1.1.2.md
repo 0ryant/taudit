@@ -29,6 +29,23 @@ taudit connects the two:
 
 That is the difference between “this workflow changes PATH” and “this workflow changes PATH before a later deploy action resolves a credential-bearing helper.”
 
+How this helps developers:
+
+- Review pipeline changes with context. Instead of reading a large workflow top to bottom, developers can see which step first introduces authority, where it crosses a trust boundary, and which later helper or action handles it.
+- Fix the highest-leverage boundary first. The graph points at practical hardening moves: scope `permissions:`, move secrets out of job-level env, pin or absolutize helper paths, split deploy authority into a smaller job, and keep mutable setup steps away from credential-bearing execution.
+- Avoid noisy “security says no” reviews. taudit distinguishes inventory from exploit-candidate paths, so teams can discuss a narrow ordering issue instead of debating whether every PATH mutation or every third-party action is automatically bad.
+- Keep suppressions reviewable. `fingerprint` handles precise dedup. `suppression_key` gives teams a stable waiver identity for findings they have reviewed, so harmless workflow edits do not constantly break known decisions.
+- Make CI/CD security visible to application engineers. The DOT, Mermaid, JSON, SARIF, and Graphviz outputs can go into PR comments, internal docs, SARIF dashboards, and architecture reviews.
+
+How this helps teams lock down pipelines:
+
+- Establish a baseline of where deploy, publish, registry, cloud, and repository-write authority actually flows.
+- Add merge gates around new high-risk authority paths without blocking the whole backlog on legacy findings.
+- Track progress over time with stable suppressions and graph summaries instead of spreadsheet-driven exception tracking.
+- Give platform teams a shared language for remediation: authority source, trust boundary, mutable state, helper resolution, and sink.
+- Separate product hardening from vulnerability disclosure. taudit’s default output is for downstream customers and internal platform teams; disclosure-only signals remain out of the customer path.
+- Use the same model across GitHub Actions, Azure DevOps, GitLab CI, and Bitbucket Pipelines, which matters for organizations that do not have a single CI provider.
+
 The output is intentionally conservative. taudit does not label corpus signals as vulnerabilities. It gives security engineers a narrow, evidence-backed review target.
 
 Install:
