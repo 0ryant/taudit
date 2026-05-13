@@ -57,6 +57,11 @@
       "pattern": "^[0-9a-f]{32}$",
       "description": "Stable cross-run finding fingerprint (32 hex chars, v3 algorithm: SHA-256 truncated to 128 bits). Byte-identical to SARIF `partialFingerprints[primaryLocationLineHash]` and JSON `findings[].fingerprint`. Use for SIEM dedup. Widened from 16 hex (64-bit) in v1.1.0-beta.3 to close a birthday-collision attack against `.taudit-suppressions.yml`. Optional in v1 for backward-compat; always emitted by current taudit. See docs/finding-fingerprint.md."
     },
+    "tauditsuppressionkey": {
+      "type": "string",
+      "pattern": "^sk1_[0-9a-f]{32}$",
+      "description": "Operator-stable waiver key (`sk1_` plus 32 hex chars). Coarser than `tauditfindingfingerprint`: it excludes ordered involved-node names so a reviewed `.taudit-suppressions.yml` waiver can survive unrelated surrounding workflow edits. Byte-identical to JSON `findings[].suppression_key` and SARIF `properties.suppressionKey`."
+    },
     "tauditruleid": {
       "type": "string",
       "pattern": "^[a-z][a-z0-9_]*$",

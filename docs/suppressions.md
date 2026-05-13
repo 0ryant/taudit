@@ -37,7 +37,7 @@ or mistyped fingerprints do not fail silently.
 
 ```yaml
 # .taudit-suppressions.yml
-# Each entry waives one finding by stable fingerprint.
+# Each entry waives one finding by fingerprint or suppression_key.
 suppressions:
   - fingerprint: "5edb30f4db3b5fa3d7fe7289374b7155"
     rule_id: "untrusted_with_authority"
@@ -53,13 +53,21 @@ suppressions:
     accepted_at: "2026-04-26"
     # No expires_at — non-critical, so optional. `taudit suppressions review`
     # will surface it for re-evaluation after 90 days.
+
+  - suppression_key: "sk1_f0a4a77a6dd134615108063795fd9fb0"
+    rule_id: "over_privileged_identity"
+    reason: "Reviewed stable waiver; unrelated step insertions should not break it."
+    accepted_by: "platform@example.com"
+    accepted_at: "2026-05-13"
+    expires_at: "2026-08-11"
 ```
 
 ### Field reference
 
 | Field | Required | Type | Notes |
 |-------|----------|------|-------|
-| `fingerprint` | yes | 32-char hex | Same value as JSON `findings[].fingerprint`, SARIF `partialFingerprints[primaryLocationLineHash]`, CloudEvents `tauditfindingfingerprint`. |
+| `fingerprint` | conditional | 32 hex | Precise dedup key. Same value as JSON `findings[].fingerprint`, SARIF `partialFingerprints[primaryLocationLineHash]`, CloudEvents `tauditfindingfingerprint`. Required unless `suppression_key` is present. |
+| `suppression_key` | conditional | `sk1_` plus 32 hex | Operator-stable waiver key. Same value as JSON `findings[].suppression_key`, SARIF `properties.suppressionKey`, CloudEvents `tauditsuppressionkey`. Required unless `fingerprint` is present. |
 | `rule_id` | yes | string | Snake-case rule id or custom rule id. Used for human display. |
 | `reason` | yes | string | Operator justification. Empty values are rejected — the audit trail is the point. |
 | `accepted_by` | yes | string | Identity of the approver: email, GitHub handle, employee id. |
@@ -68,7 +76,7 @@ suppressions:
 
 ## How a waiver applies
 
-When a finding's fingerprint matches an active suppression entry, taudit applies the waiver according to the configured mode (passed via `--suppression-mode <mode>`; defaults to `downgrade`):
+When a finding's `fingerprint` or `suppression_key` matches an active suppression entry, taudit applies the waiver according to the configured mode (passed via `--suppression-mode <mode>`; defaults to `downgrade`):
 
 ### `downgrade` mode (default)
 
@@ -197,7 +205,7 @@ The SARIF result's `properties` bag includes `originalSeverity` and `suppressed`
 
 ### CloudEvents (`taudit scan --format cloudevents`)
 
-The CloudEvent envelope's `data` payload (the full Finding) includes the new fields. The `tauditfindingfingerprint` and `tauditfindinggroup` extension attributes give SIEMs a stable dedup key across re-runs.
+The CloudEvent envelope's `data` payload (the full Finding) includes the new fields. The `tauditfindingfingerprint` and `tauditfindinggroup` extension attributes give SIEMs a stable dedup key across re-runs; `tauditsuppressionkey` gives operators a coarser waiver key for reviewed findings that should survive unrelated workflow edits.
 
 ## Recipe: gate CI on critical findings only, but keep audit trail
 

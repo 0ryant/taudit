@@ -8,15 +8,39 @@ All notable changes to this project will be documented in this file.
 
 _(none yet — populate this paragraph when adding entries that change finding behaviour)_
 
+## v1.1.2 — 2026-05-13 (stable patch)
+
+### Detection delta (read first)
+
+No rule, parser, or graph behaviour change versus `v1.1.1`. This release adds
+an operator-stable suppression locator to existing finding outputs.
+
 ### Fixed
+
+- Added `suppression_key` as a separate operator-stable waiver identity so
+  reviewed suppressions can survive harmless workflow edits, such as inserting
+  an unrelated step before an authority-bearing finding, without weakening the
+  precise `fingerprint` dedup/baseline contract.
 
 ### Changed
 
 ### Added
 
+- Added `suppression_key` to JSON findings, SARIF result properties, and
+  CloudEvents (`tauditsuppressionkey`), plus support for
+  `.taudit-suppressions.yml` entries keyed by either `fingerprint` or
+  `suppression_key`.
+- Added a compact corpus demo story for the Expo docs workflow, including
+  authority and exploit-path DOT files plus Graphviz PNG renders.
+
 ### Migration notes
 
-_(populate if any consumer-visible field, schema, or contract changes; remove subsection if none)_
+- Additive report/schema change: JSON findings now include
+  `suppression_key`; SARIF results include `properties.suppressionKey`;
+  CloudEvents include `tauditsuppressionkey`.
+- Implementation crates publish as `3.0.0` so the report crates can depend on
+  the new `taudit-core` suppression-key API during crates.io package
+  verification.
 
 ## v1.1.1 — 2026-05-13 (stable patch)
 

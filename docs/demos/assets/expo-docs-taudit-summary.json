@@ -1,0 +1,92 @@
+{
+  "summary": {
+    "total_findings": 30,
+    "critical": 3,
+    "high": 10,
+    "medium": 10,
+    "low": 0,
+    "info": 7,
+    "total_nodes": 31,
+    "total_edges": 32,
+    "completeness": "partial",
+    "completeness_gaps": [
+      {
+        "kind": "structural",
+        "reason": "composite action not resolved (local action './.github/actions/expo-caches' — taudit does not read filesystem)"
+      },
+      {
+        "kind": "structural",
+        "reason": "composite action not resolved (local action './.github/actions/slack-notify' — taudit does not read filesystem)"
+      }
+    ],
+    "graph_risk_summary": {
+      "authority_roots": 5,
+      "untrusted_sinks": 10,
+      "mutable_refs": 7,
+      "publication_adjacent_sinks": 3,
+      "delegation_hops": 0,
+      "protected_resource_categories": [
+        "identity",
+        "secret"
+      ]
+    }
+  },
+  "key_findings": [
+    {
+      "rule_id": "authority_propagation",
+      "severity": "critical",
+      "fingerprint": "5f6fc747877206a789ad781c169ecc69",
+      "suppression_key": "sk1_b641a6cca634adcb557213068ef617c6",
+      "message": "GITHUB_TOKEN reaches 5 sinks via authority propagation: [actions/checkout@v6, pnpm/action-setup@v4, actions/setup-node@v6, vale-cli/vale-action@v2.1.1, cloudflare/wrangler-action@v3]"
+    },
+    {
+      "rule_id": "authority_propagation",
+      "severity": "critical",
+      "fingerprint": "047dbe7fa5d9ec2b0db400def7b90ab2",
+      "suppression_key": "sk1_ff76604745a220e8b2fde33aecefe782",
+      "message": "CLOUDFLARE_ACCOUNT_ID propagated to cloudflare/wrangler-action@v3 across trust boundary"
+    },
+    {
+      "rule_id": "authority_propagation",
+      "severity": "critical",
+      "fingerprint": "b11200dba6b270821c8d4c915a45d63e",
+      "suppression_key": "sk1_af58a0c46d815ec28ad82941b815fdaf",
+      "message": "CLOUDFLARE_PAGES_API_TOKEN propagated to cloudflare/wrangler-action@v3 across trust boundary"
+    },
+    {
+      "rule_id": "self_mutating_pipeline",
+      "severity": "high",
+      "fingerprint": "4acc956b7f265c5a7fd67fa283a36a71",
+      "suppression_key": "sk1_02bee81ea0b34580024fccf9e2efd414",
+      "message": "Step '➕ Add `bin` to GITHUB_PATH' writes to the environment gate while holding authority (GITHUB_TOKEN) — secrets may leak into pipeline environment"
+    },
+    {
+      "rule_id": "gha_helper_path_sensitive_stdin",
+      "severity": "high",
+      "fingerprint": "d2d1c54d6d376ff5a4a484726f3fb1cf",
+      "suppression_key": "sk1_aa61ec291fed59c6fb7cf51065d9e0de",
+      "message": "Earlier step '➕ Add `bin` to GITHUB_PATH' mutates GITHUB_PATH before '🚀 Deploy Docs website' runs npx/wrangler via PATH and passes sensitive authority through stdin"
+    },
+    {
+      "rule_id": "gha_helper_path_sensitive_env",
+      "severity": "high",
+      "fingerprint": "5c855fabb9ce500a91767ed0999d539d",
+      "suppression_key": "sk1_aa3a92e6ca9681fc0ac6096cde99a47d",
+      "message": "Earlier step '➕ Add `bin` to GITHUB_PATH' mutates GITHUB_PATH before '🚀 Deploy Docs website' runs npx/wrangler via PATH and passes sensitive authority through environment variables"
+    },
+    {
+      "rule_id": "later_secret_materialized_after_path_mutation",
+      "severity": "high",
+      "fingerprint": "baac3bd1bdf178675362a198746f4ec3",
+      "suppression_key": "sk1_55099839d764f67989c691514253edf5",
+      "message": "Earlier step '➕ Add `bin` to GITHUB_PATH' mutates GITHUB_PATH before later action '🚀 Deploy Docs website' materializes authority and resolves helper `npx/wrangler` through PATH"
+    },
+    {
+      "rule_id": "gha_helper_untrusted_path_resolution",
+      "severity": "medium",
+      "fingerprint": "f6a09c83b6b1946493703d3c5b264d26",
+      "suppression_key": "sk1_ec39ad5e4f68f8eef6acd5ace4c93138",
+      "message": "Earlier step '➕ Add `bin` to GITHUB_PATH' mutates GITHUB_PATH before '🚀 Deploy Docs website' resolves security-sensitive helper `npx/wrangler` by name"
+    }
+  ]
+}

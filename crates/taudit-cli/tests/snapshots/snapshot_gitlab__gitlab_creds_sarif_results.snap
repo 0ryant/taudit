@@ -19,6 +19,7 @@ expression: results
     confidenceScope: yaml_only
     findingGroupId: 3e1ce5ac-d8de-5111-85c0-c961f1bfea37
     security-severity: "9.0"
+    suppressionKey: sk1_70c40fe30f8ddead6c17854663935232
     taudit-source: built-in
   ruleId: authority_propagation
 - level: error
@@ -38,6 +39,7 @@ expression: results
     confidenceScope: yaml_only
     findingGroupId: 661d0527-036b-5986-a564-a1d93afd8748
     security-severity: "9.0"
+    suppressionKey: sk1_58b5e871222f76b7f18caf7cf9492c41
     taudit-source: built-in
   ruleId: authority_propagation
 - level: error
@@ -57,6 +59,7 @@ expression: results
     confidenceScope: yaml_only
     findingGroupId: 0e309759-d91b-5d41-b2d7-b7ffeec7377c
     security-severity: "9.0"
+    suppressionKey: sk1_67de0ac7eee70ed68ba6674715c9f23b
     taudit-source: built-in
   ruleId: authority_propagation
 - level: error
@@ -76,6 +79,7 @@ expression: results
     confidenceScope: yaml_only
     findingGroupId: f529a601-9f35-545c-8e7e-74c2442a6908
     security-severity: "9.0"
+    suppressionKey: sk1_d184a429f3cb532c0079169a4c23b0cb
     taudit-source: built-in
   ruleId: authority_propagation
 - level: note
@@ -95,6 +99,7 @@ expression: results
     confidenceScope: yaml_only
     findingGroupId: c494fbb4-778f-5822-8dad-6f8e82c5921b
     security-severity: "2.0"
+    suppressionKey: sk1_4824afc6b1445429c370477881a20d34
     taudit-source: built-in
     timeToFix: large
   ruleId: long_lived_credential
@@ -115,6 +120,7 @@ expression: results
     confidenceScope: yaml_only
     findingGroupId: 6fdceba6-6f33-58fe-95bf-927f469b15ec
     security-severity: "2.0"
+    suppressionKey: sk1_c09cadb17eb8f76176fd49e4782ed17f
     taudit-source: built-in
     timeToFix: large
   ruleId: long_lived_credential
@@ -135,6 +141,7 @@ expression: results
     confidenceScope: yaml_only
     findingGroupId: 00262520-9062-589a-8cfd-399be5d1a0b9
     security-severity: "7.5"
+    suppressionKey: sk1_a0fd76b4b1140560e30334b3222ae956
     taudit-source: built-in
     timeToFix: small
   ruleId: over_privileged_identity
@@ -157,6 +164,7 @@ expression: results
     runtimePreconditions:
       - "the referenced mutable branch, tag, include, or image can change independently of this repository"
     security-severity: "7.5"
+    suppressionKey: sk1_45b02e73ff078b41d60e3b6a02b5c976
     taudit-source: built-in
     timeToFix: trivial
   ruleId: unpinned_action

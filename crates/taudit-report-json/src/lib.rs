@@ -1,5 +1,7 @@
 use taudit_core::error::TauditError;
-use taudit_core::finding::{compute_finding_group_id, compute_fingerprint, rule_id_for, Finding};
+use taudit_core::finding::{
+    compute_finding_group_id, compute_fingerprint, compute_suppression_key, rule_id_for, Finding,
+};
 use taudit_core::graph::{
     is_docker_digest_pinned, is_pin_semantically_valid, AuthorityCompleteness, AuthorityGraph,
     EdgeKind, GapKind, NodeKind, META_CONTAINER, META_OIDC, META_SERVICE_CONNECTION,
@@ -55,6 +57,7 @@ pub struct FindingWithFingerprint {
     #[serde(flatten)]
     pub finding: Finding,
     pub fingerprint: String,
+    pub suppression_key: String,
 }
 
 /// Standalone authority-graph export — the document emitted by
@@ -237,6 +240,7 @@ impl<W: std::io::Write> ReportSink<W> for JsonReportSink {
                 FindingWithFingerprint {
                     rule_id,
                     finding: owned,
+                    suppression_key: compute_suppression_key(f, graph),
                     fingerprint,
                 }
             })

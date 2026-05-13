@@ -29,6 +29,7 @@ findings:
     rule_id: authority_propagation
     severity: critical
     source: built-in
+    suppression_key: sk1_ffca7725a9ee77feb900702a0114767a
   - authority_kinds:
       - oidc_identity
     category: authority_propagation
@@ -56,6 +57,7 @@ findings:
     rule_id: authority_propagation
     severity: critical
     source: built-in
+    suppression_key: sk1_c6ce89eaa9383364fa8ef0605c66be0a
   - authority_kinds:
       - credential_named_variable
     category: long_lived_credential
@@ -72,6 +74,7 @@ findings:
     rule_id: long_lived_credential
     severity: low
     source: built-in
+    suppression_key: sk1_dd874a8288dad0ca657bed7f5599404e
     time_to_fix: large
   - authority_kinds:
       - credential_named_variable
@@ -89,6 +92,7 @@ findings:
     rule_id: long_lived_credential
     severity: low
     source: built-in
+    suppression_key: sk1_d1462d4c8f0c1f317b64764c873b7b89
     time_to_fix: large
   - authority_kinds:
       - oidc_identity
@@ -109,6 +113,7 @@ findings:
     rule_id: over_privileged_identity
     severity: high
     source: built-in
+    suppression_key: sk1_a6d56516e97292ec38383e3ea014a466
     time_to_fix: small
   - attacker_surface_kinds:
       - mutable_dependency_ref
@@ -128,6 +133,7 @@ findings:
       - "the referenced mutable branch, tag, include, or image can change independently of this repository"
     severity: medium
     source: built-in
+    suppression_key: sk1_b479a59c8affd98b2fc6720a7854ae76
     time_to_fix: trivial
   - attacker_surface_kinds:
       - mutable_dependency_ref
@@ -147,6 +153,7 @@ findings:
       - "the referenced mutable branch, tag, include, or image can change independently of this repository"
     severity: medium
     source: built-in
+    suppression_key: sk1_033d10c3704d4e5312e22f9d01465025
     time_to_fix: trivial
   - attacker_surface_kinds:
       - mutable_dependency_ref
@@ -166,6 +173,7 @@ findings:
       - "the referenced mutable branch, tag, include, or image can change independently of this repository"
     severity: high
     source: built-in
+    suppression_key: sk1_033d10c3704d4e5312e22f9d01465025
     time_to_fix: trivial
   - attacker_surface_kinds:
       - untrusted_checkout
@@ -187,6 +195,7 @@ findings:
     rule_id: untrusted_with_authority
     severity: critical
     source: built-in
+    suppression_key: sk1_e9a7bf38c217d147ef733253dff5e1c9
   - attacker_surface_kinds:
       - untrusted_step
     authority_kinds:
@@ -206,6 +215,7 @@ findings:
     rule_id: untrusted_with_authority
     severity: critical
     source: built-in
+    suppression_key: sk1_e9a7bf38c217d147ef733253dff5e1c9
   - attacker_surface_kinds:
       - untrusted_step
     authority_kinds:
@@ -225,6 +235,7 @@ findings:
     rule_id: untrusted_with_authority
     severity: critical
     source: built-in
+    suppression_key: sk1_3352102973b563d6ed7a19169e0b691c
   - attacker_surface_kinds:
       - script_sink
       - untrusted_checkout
@@ -250,6 +261,7 @@ findings:
       - the configured audience or cloud role grants useful authority
     severity: info
     source: built-in
+    suppression_key: sk1_167c4fc0683f62a0319743f558b31030
 graph:
   completeness: complete
   edges:

@@ -444,6 +444,34 @@ pub fn compute_finding_group_id(fingerprint: &str) -> String {
     )
 }
 
+fn finding_identity_parts(
+    finding: &Finding,
+    graph: &AuthorityGraph,
+) -> (String, String, String, String) {
+    let rule_id = rule_id_for(finding);
+    let category = category_rule_id(&finding.category).to_string();
+    let file_normalised = graph.source.file.replace('\\', "/");
+    let root_authority = finding
+        .nodes_involved
+        .iter()
+        .filter_map(|id| graph.node(*id))
+        .find(|n| matches!(n.kind, NodeKind::Secret | NodeKind::Identity))
+        .map(|n| n.name.clone())
+        .unwrap_or_default();
+
+    (rule_id, category, file_normalised, root_authority)
+}
+
+fn sha256_128_hex(canonical: &str) -> String {
+    let digest = Sha256::digest(canonical.as_bytes());
+    let mut out = String::with_capacity(32);
+    for byte in &digest[..16] {
+        use std::fmt::Write;
+        let _ = write!(&mut out, "{byte:02x}");
+    }
+    out
+}
+
 /// Compute a stable cross-run fingerprint for a finding.
 ///
 /// The fingerprint identifies "the same logical issue" across re-runs and
@@ -516,30 +544,8 @@ pub fn compute_finding_group_id(fingerprint: &str) -> String {
 /// SARIF / CloudEvents output instead.
 #[doc(hidden)]
 pub fn compute_fingerprint(finding: &Finding, graph: &AuthorityGraph) -> String {
-    let rule_id = extract_custom_rule_id(&finding.message)
-        .map(str::to_string)
-        .unwrap_or_else(|| category_rule_id(&finding.category).to_string());
-
-    let category = category_rule_id(&finding.category);
-
-    // v3 normalisation: collapse `\` to `/` so a Windows scan and a Linux
-    // baseline of the same logical pipeline produce identical fingerprints.
-    // Documented in the docstring above; tested by
-    // `fingerprint_is_stable_across_path_separator_styles`.
-    let file_normalised: String = graph.source.file.replace('\\', "/");
-
-    // Root authority name (if any) — always emitted as its own component,
-    // empty string when no Secret/Identity is involved. Distinct field so
-    // a finding whose root_authority differs from a sibling's is
-    // recognisably different even when the involved-node list happens to
-    // overlap.
-    let root_authority: String = finding
-        .nodes_involved
-        .iter()
-        .filter_map(|id| graph.node(*id))
-        .find(|n| matches!(n.kind, NodeKind::Secret | NodeKind::Identity))
-        .map(|n| n.name.clone())
-        .unwrap_or_default();
+    let (rule_id, category, file_normalised, root_authority) =
+        finding_identity_parts(finding, graph);
 
     // Ordered involved-node names. Order is preserved (NOT sorted) — for
     // authority_propagation findings the convention is `[source, sink]`,
@@ -573,14 +579,35 @@ pub fn compute_fingerprint(finding: &Finding, graph: &AuthorityGraph) -> String 
         "v3\x1frule={rule_id}\x1ffile={file_normalised}\x1fcategory={category}\x1froot={root_authority}\x1fnodes={nodes_ordered}\x1fanchor={anchor}"
     );
 
-    let digest = Sha256::digest(canonical.as_bytes());
-    let mut out = String::with_capacity(32);
-    for byte in &digest[..16] {
-        use std::fmt::Write;
-        // 16 bytes -> 32 hex chars (128-bit truncation)
-        let _ = write!(&mut out, "{byte:02x}");
-    }
-    out
+    // 16 bytes -> 32 hex chars (128-bit truncation)
+    sha256_128_hex(&canonical)
+}
+
+/// Compute the operator-stable suppression key for a finding.
+///
+/// `fingerprint` remains the precise dedup/baseline identity and includes the
+/// ordered involved-node list. That is intentionally sensitive to real graph
+/// topology. `suppression_key` is the waiver identity operators put in
+/// `.taudit-suppressions.yml` when they want a reviewed finding to survive
+/// harmless surrounding workflow edits, such as inserting an unrelated step
+/// before the authority-bearing job.
+///
+/// Inputs: rule id, normalised source file, category, root authority, and
+/// `extras.fingerprint_anchor`. Deliberately excluded: ordered involved-node
+/// list, display message, taudit version, and wall-clock state.
+#[doc(hidden)]
+pub fn compute_suppression_key(finding: &Finding, graph: &AuthorityGraph) -> String {
+    let (rule_id, category, file_normalised, root_authority) =
+        finding_identity_parts(finding, graph);
+    let anchor = finding
+        .extras
+        .fingerprint_anchor
+        .as_deref()
+        .unwrap_or_default();
+    let canonical = format!(
+        "sk1\x1frule={rule_id}\x1ffile={file_normalised}\x1fcategory={category}\x1froot={root_authority}\x1fanchor={anchor}"
+    );
+    format!("sk1_{}", sha256_128_hex(&canonical))
 }
 
 #[cfg(test)]
@@ -673,6 +700,47 @@ mod fingerprint_tests {
         assert_eq!(
             compute_fingerprint(&f1, &graph),
             compute_fingerprint(&f2, &graph)
+        );
+    }
+
+    #[test]
+    fn suppression_key_survives_unrelated_step_insertion() {
+        let mut before = AuthorityGraph::new(source("pipeline.yml"));
+        let before_secret = before.add_node(
+            NodeKind::Identity,
+            "System.AccessToken",
+            TrustZone::FirstParty,
+        );
+        let before_sink = before.add_node(NodeKind::Step, "step 1: deploy", TrustZone::ThirdParty);
+        let before_finding = make_finding(
+            FindingCategory::OverPrivilegedIdentity,
+            "System.AccessToken reaches deploy",
+            vec![before_secret, before_sink],
+        );
+
+        let mut after = AuthorityGraph::new(source("pipeline.yml"));
+        let after_secret = after.add_node(
+            NodeKind::Identity,
+            "System.AccessToken",
+            TrustZone::FirstParty,
+        );
+        let _unrelated = after.add_node(NodeKind::Step, "step 1: format", TrustZone::FirstParty);
+        let after_sink = after.add_node(NodeKind::Step, "step 2: deploy", TrustZone::ThirdParty);
+        let after_finding = make_finding(
+            FindingCategory::OverPrivilegedIdentity,
+            "System.AccessToken reaches deploy",
+            vec![after_secret, after_sink],
+        );
+
+        assert_ne!(
+            compute_fingerprint(&before_finding, &before),
+            compute_fingerprint(&after_finding, &after),
+            "precise fingerprints still distinguish changed graph topology"
+        );
+        assert_eq!(
+            compute_suppression_key(&before_finding, &before),
+            compute_suppression_key(&after_finding, &after),
+            "operator waiver key must survive unrelated step insertion"
         );
     }
 

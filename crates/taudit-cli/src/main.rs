@@ -758,6 +758,9 @@ enum SuppressionsAction {
         /// 32-char hex fingerprint to waive.
         #[arg(long)]
         fingerprint: Option<String>,
+        /// Versioned stable suppression key to waive (`sk1_` plus 32 hex chars).
+        #[arg(long)]
+        suppression_key: Option<String>,
         /// Snake-case rule id (or custom rule id) being waived.
         #[arg(long)]
         rule_id: Option<String>,
@@ -1560,6 +1563,7 @@ fn run() -> Result<()> {
             }
             SuppressionsAction::Add {
                 fingerprint,
+                suppression_key,
                 rule_id,
                 reason,
                 accepted_by,
@@ -1568,6 +1572,7 @@ fn run() -> Result<()> {
             } => cmd_suppressions_add(SuppressionsAddOpts {
                 suppressions_path: suppressions,
                 fingerprint,
+                suppression_key,
                 rule_id,
                 reason,
                 accepted_by,
@@ -2115,15 +2120,21 @@ fn cmd_scan(opts: ScanOpts) -> Result<()> {
                 .iter()
                 .map(|f| taudit_core::finding::compute_fingerprint(f, &graph))
                 .collect();
-            let critical_fps: Vec<&str> = findings
+            let suppression_keys: Vec<String> = findings
+                .iter()
+                .map(|f| taudit_core::finding::compute_suppression_key(f, &graph))
+                .collect();
+            let critical_pairs: Vec<(&str, &str)> = findings
                 .iter()
                 .zip(fingerprints.iter())
-                .filter(|(f, _)| f.severity == taudit_core::finding::Severity::Critical)
-                .map(|(_, fp)| fp.as_str())
+                .zip(suppression_keys.iter())
+                .filter(|((f, _), _)| f.severity == taudit_core::finding::Severity::Critical)
+                .map(|((_, fp), key)| (fp.as_str(), key.as_str()))
                 .collect();
-            if let Err(errors) =
-                suppression_config.validate_critical_waivers(critical_fps.iter().copied())
-            {
+            if let Err(errors) = suppression_config.validate_critical_waivers(
+                critical_pairs.iter().map(|(fp, _)| *fp),
+                critical_pairs.iter().map(|(_, key)| *key),
+            ) {
                 for err in errors {
                     eprintln!("error: {err}");
                 }
@@ -2134,6 +2145,7 @@ fn cmd_scan(opts: ScanOpts) -> Result<()> {
                 findings,
                 suppression_mode_core,
                 &fingerprints,
+                &suppression_keys,
                 suppression_today,
             );
             matched_suppressions.extend(matched_here);
@@ -2699,15 +2711,21 @@ fn run_verify_io<W: std::io::Write>(opts: &VerifyOpts, writer: &mut W) -> i32 {
             .iter()
             .map(|f| taudit_core::finding::compute_fingerprint(f, &graph))
             .collect();
-        let critical_fps: Vec<&str> = findings
+        let suppression_keys: Vec<String> = findings
+            .iter()
+            .map(|f| taudit_core::finding::compute_suppression_key(f, &graph))
+            .collect();
+        let critical_pairs: Vec<(&str, &str)> = findings
             .iter()
             .zip(fingerprints.iter())
-            .filter(|(f, _)| f.severity == taudit_core::finding::Severity::Critical)
-            .map(|(_, fp)| fp.as_str())
+            .zip(suppression_keys.iter())
+            .filter(|((f, _), _)| f.severity == taudit_core::finding::Severity::Critical)
+            .map(|((_, fp), key)| (fp.as_str(), key.as_str()))
             .collect();
-        if let Err(errors) =
-            suppression_config.validate_critical_waivers(critical_fps.iter().copied())
-        {
+        if let Err(errors) = suppression_config.validate_critical_waivers(
+            critical_pairs.iter().map(|(fp, _)| *fp),
+            critical_pairs.iter().map(|(_, key)| *key),
+        ) {
             for err in errors {
                 eprintln!("error: {err}");
             }
@@ -2718,6 +2736,7 @@ fn run_verify_io<W: std::io::Write>(opts: &VerifyOpts, writer: &mut W) -> i32 {
             findings,
             suppression_mode_core,
             &fingerprints,
+            &suppression_keys,
             suppression_today,
         );
         matched_suppressions.extend(matched_here);
@@ -4517,11 +4536,22 @@ fn cmd_invariants_list(invariants_dir: Option<PathBuf>) -> Result<()> {
 struct SuppressionsAddOpts {
     suppressions_path: Option<PathBuf>,
     fingerprint: Option<String>,
+    suppression_key: Option<String>,
     rule_id: Option<String>,
     reason: Option<String>,
     accepted_by: Option<String>,
     accepted_at: Option<String>,
     expires_at: Option<String>,
+}
+
+fn suppression_locator(entry: &taudit_core::suppressions::Suppression) -> String {
+    if let Some(fp) = entry.fingerprint.as_deref() {
+        fp.to_string()
+    } else if let Some(key) = entry.suppression_key.as_deref() {
+        format!("key:{key}")
+    } else {
+        "(no locator)".to_string()
+    }
 }
 
 /// `taudit suppressions list` — print every loaded entry with its
@@ -4553,10 +4583,10 @@ fn cmd_suppressions_list(suppressions_path: Option<PathBuf>) -> Result<()> {
     )?;
 
     let today = today_local();
-    let fp_width = cfg
+    let locator_width = cfg
         .suppressions
         .iter()
-        .map(|s| s.fingerprint.len())
+        .map(|s| suppression_locator(s).len())
         .max()
         .unwrap_or(16);
     let rule_width = cfg
@@ -4578,13 +4608,13 @@ fn cmd_suppressions_list(suppressions_path: Option<PathBuf>) -> Result<()> {
         let expiry = entry.expires_at.as_deref().unwrap_or("(no expiry)");
         writeln!(
             out,
-            "  {:<fp_width$}  {:<rule_width$}  {:<16}  expires={:<12}  by={}",
-            entry.fingerprint,
+            "  {:<locator_width$}  {:<rule_width$}  {:<16}  expires={:<12}  by={}",
+            suppression_locator(entry),
             entry.rule_id,
             labeled,
             expiry,
             entry.accepted_by,
-            fp_width = fp_width,
+            locator_width = locator_width,
             rule_width = rule_width,
         )?;
         writeln!(out, "    reason: {}", entry.reason)?;
@@ -4607,7 +4637,14 @@ fn cmd_suppressions_add(opts: SuppressionsAddOpts) -> Result<()> {
             .unwrap_or_else(|| PathBuf::from(".taudit-suppressions.yml"))
     });
 
-    let fingerprint = prompt_or_value(opts.fingerprint, "fingerprint (32 hex chars)")?;
+    let mut fingerprint = opts.fingerprint;
+    let suppression_key = opts.suppression_key;
+    if fingerprint.is_none() && suppression_key.is_none() {
+        fingerprint = Some(prompt_or_value(
+            None,
+            "fingerprint (32 hex chars; use --suppression-key for stable waiver key)",
+        )?);
+    }
     let rule_id = prompt_or_value(opts.rule_id, "rule_id (snake_case)")?;
     let reason = prompt_or_value(opts.reason, "reason (one-line justification)")?;
     let accepted_by = prompt_or_value(opts.accepted_by, "accepted_by (email or handle)")?;
@@ -4619,6 +4656,7 @@ fn cmd_suppressions_add(opts: SuppressionsAddOpts) -> Result<()> {
 
     let entry = taudit_core::suppressions::Suppression {
         fingerprint,
+        suppression_key,
         rule_id,
         reason,
         accepted_by,
@@ -4739,7 +4777,11 @@ fn cmd_suppressions_review(suppressions_path: Option<PathBuf>) -> Result<()> {
         writeln!(
             out,
             "  {}  rule={}  status={}  accepted_at={}  by={}",
-            entry.fingerprint, entry.rule_id, labeled, entry.accepted_at, entry.accepted_by
+            suppression_locator(entry),
+            entry.rule_id,
+            labeled,
+            entry.accepted_at,
+            entry.accepted_by
         )?;
         if let Some(ref expiry) = entry.expires_at {
             writeln!(out, "    expires_at: {expiry}")?;

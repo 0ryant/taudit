@@ -654,6 +654,135 @@ fn first_fingerprint_for(fixture: &std::path::Path) -> (String, String) {
     (fp, category)
 }
 
+fn scan_json_with_platform(fixture: &std::path::Path, platform: &str) -> serde_json::Value {
+    let output = taudit()
+        .arg("scan")
+        .arg("--format")
+        .arg("json")
+        .arg("--platform")
+        .arg(platform)
+        .arg(fixture)
+        .output()
+        .expect("spawn taudit");
+    assert!(
+        output.status.success(),
+        "scan must succeed; status: {:?}; stderr: {}; stdout: {}",
+        output.status.code(),
+        String::from_utf8_lossy(&output.stderr),
+        String::from_utf8_lossy(&output.stdout)
+    );
+    serde_json::from_slice(&output.stdout).expect("parse JSON")
+}
+
+fn finding_keys_for_rule(report: &serde_json::Value, rule: &str) -> (String, String) {
+    let finding = report["findings"]
+        .as_array()
+        .expect("findings array")
+        .iter()
+        .find(|f| f["rule_id"].as_str() == Some(rule))
+        .unwrap_or_else(|| panic!("missing finding for rule {rule}: {report:#}"));
+    let fp = finding["fingerprint"]
+        .as_str()
+        .expect("finding fingerprint")
+        .to_string();
+    let key = finding["suppression_key"]
+        .as_str()
+        .expect("finding suppression_key")
+        .to_string();
+    (fp, key)
+}
+
+#[test]
+fn suppression_key_is_stable_when_unrelated_step_is_inserted() {
+    let dir = unique_tmp_dir("suppression-key-stability");
+    let pipeline = dir.join("pipeline.yml");
+
+    std::fs::write(
+        &pipeline,
+        "trigger:\n- main\n\njobs:\n- job: deploy\n  steps:\n  - script: echo deploy\n    env:\n      SYSTEM_ACCESSTOKEN: $(System.AccessToken)\n",
+    )
+    .unwrap();
+    let before = scan_json_with_platform(&pipeline, "azure-devops");
+    let (fp_before, key_before) = finding_keys_for_rule(&before, "over_privileged_identity");
+
+    std::fs::write(
+        &pipeline,
+        "trigger:\n- main\n\njobs:\n- job: deploy\n  steps:\n  - script: echo format only\n  - script: echo deploy\n    env:\n      SYSTEM_ACCESSTOKEN: $(System.AccessToken)\n",
+    )
+    .unwrap();
+    let after = scan_json_with_platform(&pipeline, "azure-devops");
+    let (fp_after, key_after) = finding_keys_for_rule(&after, "over_privileged_identity");
+
+    assert_ne!(
+        fp_before, fp_after,
+        "precise fingerprint should remain topology-sensitive"
+    );
+    assert_eq!(
+        key_before, key_after,
+        "suppression_key should survive unrelated step insertion"
+    );
+}
+
+#[test]
+fn suppression_key_waiver_matches_after_unrelated_step_insertion() {
+    let dir = unique_tmp_dir("suppression-key-waiver");
+    let pipeline = dir.join("pipeline.yml");
+    let suppressions = dir.join(".taudit-suppressions.yml");
+
+    std::fs::write(
+        &pipeline,
+        "trigger:\n- main\n\njobs:\n- job: deploy\n  steps:\n  - script: echo deploy\n    env:\n      SYSTEM_ACCESSTOKEN: $(System.AccessToken)\n",
+    )
+    .unwrap();
+    let before = scan_json_with_platform(&pipeline, "azure-devops");
+    let (_, key) = finding_keys_for_rule(&before, "over_privileged_identity");
+    std::fs::write(
+        &suppressions,
+        format!(
+            "suppressions:\n  - suppression_key: \"{key}\"\n    rule_id: \"over_privileged_identity\"\n    reason: \"reviewed stable waiver\"\n    accepted_by: \"test@example.com\"\n    accepted_at: \"2026-04-26\"\n    expires_at: \"2099-01-01\"\n"
+        ),
+    )
+    .unwrap();
+
+    std::fs::write(
+        &pipeline,
+        "trigger:\n- main\n\njobs:\n- job: deploy\n  steps:\n  - script: echo format only\n  - script: echo deploy\n    env:\n      SYSTEM_ACCESSTOKEN: $(System.AccessToken)\n",
+    )
+    .unwrap();
+    let output = taudit()
+        .arg("scan")
+        .arg("--format")
+        .arg("json")
+        .arg("--platform")
+        .arg("azure-devops")
+        .arg("--suppressions")
+        .arg(&suppressions)
+        .arg(&pipeline)
+        .output()
+        .expect("spawn taudit");
+    assert!(
+        output.status.success(),
+        "scan with suppression_key waiver must succeed; stderr: {}; stdout: {}",
+        String::from_utf8_lossy(&output.stderr),
+        String::from_utf8_lossy(&output.stdout)
+    );
+    let report: serde_json::Value = serde_json::from_slice(&output.stdout).expect("parse JSON");
+    let finding = report["findings"]
+        .as_array()
+        .expect("findings array")
+        .iter()
+        .find(|f| f["rule_id"].as_str() == Some("over_privileged_identity"))
+        .expect("over_privileged_identity finding");
+    assert_eq!(
+        finding["suppression_reason"].as_str(),
+        Some("reviewed stable waiver")
+    );
+    assert!(
+        finding["original_severity"].is_string(),
+        "waived finding should retain original severity audit field: {finding:#}"
+    );
+}
+
 #[test]
 fn suppression_downgrade_drops_severity_and_records_audit_fields() {
     let fixture = workspace_root().join("tests/fixtures/propagation-leaky.yml");

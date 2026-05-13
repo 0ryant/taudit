@@ -24,6 +24,7 @@ expression: results
       - the authority shown in the graph is available to that run
       - untrusted PR or fork-controlled input can reach this workflow at runtime
     security-severity: "7.5"
+    suppressionKey: sk1_b7d6e3c9f9f8da1519afc2d9667a9364
     taudit-source: built-in
     timeToFix: medium
   ruleId: checkout_self_pr_exposure
@@ -45,6 +46,7 @@ expression: results
     findingGroupId: 5f27c90f-6130-57b7-931c-7e756722e388
     portalControlDependency: true
     security-severity: "7.5"
+    suppressionKey: sk1_f5713fcbea60d40cf198a961d114d083
     taudit-source: built-in
     timeToFix: small
   ruleId: over_privileged_identity
@@ -71,6 +73,7 @@ expression: results
       - the authority shown in the graph is available to that run
       - untrusted PR or fork-controlled input can reach this workflow at runtime
     security-severity: "9.0"
+    suppressionKey: sk1_3eeee794ecfc8dcb9f8a3ac419097560
     taudit-source: built-in
   ruleId: self_hosted_pool_pr_hijack
 - level: error
@@ -91,6 +94,7 @@ expression: results
     findingGroupId: 82f6a179-d521-5cd9-bdaa-09de04bfcb42
     portalControlDependency: true
     security-severity: "7.5"
+    suppressionKey: sk1_fc2b27975841ee1de181c539eb3555e2
     taudit-source: built-in
   ruleId: shared_self_hosted_pool_no_isolation
 - level: error
@@ -120,5 +124,6 @@ expression: results
       - the authority shown in the graph is available to that run
       - untrusted PR or fork-controlled input can reach this workflow at runtime
     security-severity: "7.5"
+    suppressionKey: sk1_39f6c552923530e285bb75ad38b1342e
     taudit-source: built-in
   ruleId: trigger_context_mismatch

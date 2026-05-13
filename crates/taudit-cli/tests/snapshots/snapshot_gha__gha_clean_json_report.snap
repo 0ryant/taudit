@@ -29,6 +29,7 @@ findings:
     rule_id: authority_propagation
     severity: medium
     source: built-in
+    suppression_key: sk1_c6ce89eaa9383364fa8ef0605c66be0a
 graph:
   completeness: complete
   edges:

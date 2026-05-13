@@ -1,6 +1,5 @@
 ---
 source: crates/taudit-cli/tests/snapshot_ado.rs
-assertion_line: 99
 expression: json
 ---
 findings:
@@ -24,6 +23,7 @@ findings:
       - untrusted PR or fork-controlled input can reach this workflow at runtime
     severity: high
     source: built-in
+    suppression_key: sk1_b7d6e3c9f9f8da1519afc2d9667a9364
     time_to_fix: medium
   - authority_kinds:
       - job_token
@@ -44,6 +44,7 @@ findings:
     rule_id: over_privileged_identity
     severity: high
     source: built-in
+    suppression_key: sk1_f5713fcbea60d40cf198a961d114d083
     time_to_fix: small
   - attacker_surface_kinds:
       - self_hosted_runner
@@ -67,6 +68,7 @@ findings:
       - untrusted PR or fork-controlled input can reach this workflow at runtime
     severity: critical
     source: built-in
+    suppression_key: sk1_3eeee794ecfc8dcb9f8a3ac419097560
   - attacker_surface_kinds:
       - self_hosted_runner
     category: shared_self_hosted_pool_no_isolation
@@ -83,6 +85,7 @@ findings:
     rule_id: shared_self_hosted_pool_no_isolation
     severity: high
     source: built-in
+    suppression_key: sk1_fc2b27975841ee1de181c539eb3555e2
   - attacker_surface_kinds:
       - script_sink
       - untrusted_checkout
@@ -113,6 +116,7 @@ findings:
       - untrusted PR or fork-controlled input can reach this workflow at runtime
     severity: high
     source: built-in
+    suppression_key: sk1_39f6c552923530e285bb75ad38b1342e
 graph:
   completeness: complete
   edges:

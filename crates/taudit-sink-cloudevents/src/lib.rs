@@ -2,7 +2,8 @@ use serde::Serialize;
 use taudit_core::baselines::compute_pipeline_identity_material_hash;
 use taudit_core::error::TauditError;
 use taudit_core::finding::{
-    compute_finding_group_id, compute_fingerprint, rule_id_for, Finding, FindingCategory,
+    compute_finding_group_id, compute_fingerprint, compute_suppression_key, rule_id_for, Finding,
+    FindingCategory,
 };
 use taudit_core::graph::AuthorityGraph;
 use taudit_core::ports::ReportSink;
@@ -48,6 +49,10 @@ pub struct CloudEventV1 {
     /// attribute names must be lowercase with no separators — hence
     /// `tauditfindingfingerprint` rather than the dashed/snaked form.
     pub tauditfindingfingerprint: String,
+    /// Operator-stable waiver key. Coarser than
+    /// `tauditfindingfingerprint`; use for suppressions that should survive
+    /// harmless surrounding workflow edits.
+    pub tauditsuppressionkey: String,
     /// Canonical snake_case rule id, byte-identical to JSON
     /// `findings[].rule_id` and SARIF `result.ruleId`. The CloudEvents
     /// `type` field stays scoped to the `FindingCategory` (so SIEM routing
@@ -476,6 +481,7 @@ fn finding_to_event(
         tauditcompleteness: Some(completeness_str.into()),
         tauditcompletenessgaps,
         tauditfindingfingerprint: compute_fingerprint(finding, graph),
+        tauditsuppressionkey: compute_suppression_key(finding, graph),
         tauditruleid: rule_id_for(finding),
         tauditplatform,
         tauditfindinggroup: finding

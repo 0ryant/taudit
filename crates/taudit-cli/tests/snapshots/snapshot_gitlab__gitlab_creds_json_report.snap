@@ -29,6 +29,7 @@ findings:
     rule_id: authority_propagation
     severity: critical
     source: built-in
+    suppression_key: sk1_70c40fe30f8ddead6c17854663935232
   - authority_kinds:
       - job_token
     category: authority_propagation
@@ -55,6 +56,7 @@ findings:
     rule_id: authority_propagation
     severity: critical
     source: built-in
+    suppression_key: sk1_58b5e871222f76b7f18caf7cf9492c41
   - authority_kinds:
       - credential_named_variable
     category: authority_propagation
@@ -81,6 +83,7 @@ findings:
     rule_id: authority_propagation
     severity: critical
     source: built-in
+    suppression_key: sk1_67de0ac7eee70ed68ba6674715c9f23b
   - authority_kinds:
       - credential_named_variable
     category: authority_propagation
@@ -107,6 +110,7 @@ findings:
     rule_id: authority_propagation
     severity: critical
     source: built-in
+    suppression_key: sk1_d184a429f3cb532c0079169a4c23b0cb
   - authority_kinds:
       - credential_named_variable
     category: long_lived_credential
@@ -123,6 +127,7 @@ findings:
     rule_id: long_lived_credential
     severity: low
     source: built-in
+    suppression_key: sk1_4824afc6b1445429c370477881a20d34
     time_to_fix: large
   - authority_kinds:
       - credential_named_variable
@@ -140,6 +145,7 @@ findings:
     rule_id: long_lived_credential
     severity: low
     source: built-in
+    suppression_key: sk1_c09cadb17eb8f76176fd49e4782ed17f
     time_to_fix: large
   - authority_kinds:
       - job_token
@@ -158,6 +164,7 @@ findings:
     rule_id: over_privileged_identity
     severity: high
     source: built-in
+    suppression_key: sk1_a0fd76b4b1140560e30334b3222ae956
     time_to_fix: small
   - attacker_surface_kinds:
       - mutable_dependency_ref
@@ -177,6 +184,7 @@ findings:
       - "the referenced mutable branch, tag, include, or image can change independently of this repository"
     severity: high
     source: built-in
+    suppression_key: sk1_45b02e73ff078b41d60e3b6a02b5c976
     time_to_fix: trivial
 graph:
   completeness: complete

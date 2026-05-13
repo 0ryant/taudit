@@ -22,6 +22,7 @@ findings:
     rule_id: over_privileged_identity
     severity: high
     source: built-in
+    suppression_key: sk1_f5713fcbea60d40cf198a961d114d083
     time_to_fix: small
   - attacker_surface_kinds:
       - script_sink
@@ -45,6 +46,7 @@ findings:
     rule_id: self_mutating_pipeline
     severity: high
     source: built-in
+    suppression_key: sk1_9147a3903bbf8195bc27ee188d19629b
   - attacker_surface_kinds:
       - script_sink
     category: setvariable_issecret_false
@@ -61,6 +63,7 @@ findings:
     rule_id: setvariable_issecret_false
     severity: high
     source: built-in
+    suppression_key: sk1_6bb31ef6361583ba27c481ea21451e08
   - attacker_surface_kinds:
       - script_sink
     category: setvariable_issecret_false
@@ -77,6 +80,7 @@ findings:
     rule_id: setvariable_issecret_false
     severity: high
     source: built-in
+    suppression_key: sk1_6bb31ef6361583ba27c481ea21451e08
 graph:
   completeness: complete
   edges:

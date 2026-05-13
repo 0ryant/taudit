@@ -19,5 +19,6 @@ expression: results
     confidenceScope: yaml_only
     findingGroupId: 58af3d8a-8e02-5d29-8a35-013ac5b8ddc2
     security-severity: "5.0"
+    suppressionKey: sk1_c6ce89eaa9383364fa8ef0605c66be0a
     taudit-source: built-in
   ruleId: authority_propagation

@@ -16,6 +16,20 @@ The same fingerprint is surfaced in three output formats:
 The values are byte-identical across formats for a given finding —
 ingest from any sink, key on the fingerprint, join across alerts.
 
+For operator waivers, taudit also emits a separate `suppression_key`:
+
+| Format       | Field                                                     |
+|--------------|-----------------------------------------------------------|
+| SARIF        | `runs[].results[].properties.suppressionKey`              |
+| JSON         | `findings[].suppression_key`                              |
+| CloudEvents  | extension attribute `tauditsuppressionkey`                |
+
+`fingerprint` is the precise dedup and baseline identity. It is
+topology-sensitive by design. `suppression_key` is coarser: it preserves
+rule/file/category/root-authority identity but excludes ordered
+involved-node names, so a reviewed waiver can survive harmless edits such
+as inserting an unrelated step before the finding.
+
 ## Format
 
 A 32-character lowercase hex string — the first 16 bytes of a SHA-256
@@ -59,7 +73,7 @@ root Secret/Identity collapsed onto a single fingerprint.
 * `extras.fingerprint_anchor` — an optional rule-supplied discriminator
   for findings without a natural graph-node anchor.
 
-**Insensitive to (these can change without breaking suppressions):**
+**Insensitive to (these can change without changing the fingerprint):**
 
 * Wall-clock time
 * The finding's user-facing `message` text — operators tweak phrasing

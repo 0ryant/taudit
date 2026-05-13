@@ -286,6 +286,11 @@
           "pattern": "^[0-9a-f]{32}$",
           "description": "Stable cross-run identifier for the finding (32 hex chars, v3 algorithm: SHA-256 truncated to 128 bits). Byte-identical to the value emitted in SARIF `partialFingerprints[primaryLocationLineHash]` and CloudEvents `tauditfindingfingerprint`. Use for SIEM dedup and suppression. Widened from 16 hex (64-bit) in v1.1.0-beta.3 to close a birthday-collision attack. Optional in v1 for backward-compat; always emitted by current taudit. See docs/finding-fingerprint.md."
         },
+        "suppression_key": {
+          "type": "string",
+          "pattern": "^sk1_[0-9a-f]{32}$",
+          "description": "Operator-stable waiver key for `.taudit-suppressions.yml` (`sk1_` plus 32 hex chars). Coarser than `fingerprint`: it excludes ordered involved-node names so a reviewed waiver can survive unrelated surrounding workflow edits while still preserving rule/file/category/root-authority identity. Byte-identical to SARIF `properties.suppressionKey` and CloudEvents `tauditsuppressionkey`."
+        },
         "finding_group_id": {
           "type": "string",
           "format": "uuid",

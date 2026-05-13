@@ -20,6 +20,7 @@ expression: results
     findingGroupId: 7aba0f67-2e57-5ce8-ae96-ebb114102c7d
     portalControlDependency: true
     security-severity: "7.5"
+    suppressionKey: sk1_f5713fcbea60d40cf198a961d114d083
     taudit-source: built-in
     timeToFix: small
   ruleId: over_privileged_identity
@@ -45,6 +46,7 @@ expression: results
     findingGroupId: a01ab427-afa1-5688-b2be-efa8eca2df6c
     portalControlDependency: true
     security-severity: "7.5"
+    suppressionKey: sk1_9147a3903bbf8195bc27ee188d19629b
     taudit-source: built-in
   ruleId: self_mutating_pipeline
 - level: error
@@ -65,6 +67,7 @@ expression: results
     findingGroupId: 89d948f5-12e9-5a29-b5c4-8dfded86a74a
     portalControlDependency: true
     security-severity: "7.5"
+    suppressionKey: sk1_6bb31ef6361583ba27c481ea21451e08
     taudit-source: built-in
   ruleId: setvariable_issecret_false
 - level: error
@@ -85,5 +88,6 @@ expression: results
     findingGroupId: 89d948f5-12e9-5a29-b5c4-8dfded86a74a
     portalControlDependency: true
     security-severity: "7.5"
+    suppressionKey: sk1_6bb31ef6361583ba27c481ea21451e08
     taudit-source: built-in
   ruleId: setvariable_issecret_false

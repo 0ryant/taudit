@@ -1,0 +1,8 @@
+[extend]
+useDefault = true
+
+[allowlist]
+description = "taudit suppression keys are deterministic review identifiers, not credentials"
+regexes = [
+  '''sk1_[0-9a-f]{32}''',
+]

@@ -18,9 +18,9 @@
 //! ## Format
 //!
 //! YAML at the repo root (`.taudit-suppressions.yml`) or under
-//! `.taudit/suppressions.yml`. Each entry waives one finding by stable
-//! fingerprint and carries the operator who accepted it, the reason,
-//! and an optional expiry:
+//! `.taudit/suppressions.yml`. Each entry waives one finding by precise
+//! `fingerprint` or operator-stable `suppression_key`, and carries the
+//! operator who accepted it, the reason, and an optional expiry:
 //!
 //! ```yaml
 //! suppressions:
@@ -30,11 +30,19 @@
 //!     accepted_by: "ryan@example.com"
 //!     accepted_at: "2026-04-26"
 //!     expires_at: "2026-07-26"  # optional; required for critical waivers
+//!
+//!   - suppression_key: "sk1_f0a4a77a6dd134615108063795fd9fb0"
+//!     rule_id: "over_privileged_identity"
+//!     reason: "Reviewed stable waiver."
+//!     accepted_by: "platform@example.com"
+//!     accepted_at: "2026-05-13"
+//!     expires_at: "2026-08-11"
 //! ```
 //!
 //! ## Behaviour
 //!
-//! For each finding, if its fingerprint matches an active suppression:
+//! For each finding, if its `fingerprint` or `suppression_key` matches an
+//! active suppression:
 //!
 //!   * **Downgrade mode (default):** severity drops by one tier
 //!     (`Critical -> High -> Medium -> Low -> Info`). The full finding
@@ -88,11 +96,19 @@ pub enum SuppressionMode {
 /// are non-breaking, removals require a major taudit version.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Suppression {
-    /// 32-char hex fingerprint of the finding being waived. Matches
-    /// the value in JSON `findings[].fingerprint`, SARIF
+    /// 32-char hex precise finding fingerprint. Matches JSON
+    /// `findings[].fingerprint`, SARIF
     /// `partialFingerprints[primaryLocationLineHash]`, and CloudEvents
     /// `tauditfindingfingerprint`.
-    pub fingerprint: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub fingerprint: Option<String>,
+
+    /// Versioned operator-stable waiver key (`sk1_` plus 32 hex chars). Matches JSON
+    /// `findings[].suppression_key`, SARIF `properties.suppressionKey`, and
+    /// CloudEvents `tauditsuppressionkey`. Use this when a reviewed waiver
+    /// should survive harmless surrounding workflow edits.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub suppression_key: Option<String>,
 
     /// Snake-case rule id (or custom rule id) being waived. Used for
     /// human-readable display and to surface mismatched waivers when a
@@ -124,6 +140,28 @@ pub struct Suppression {
 pub struct SuppressionConfig {
     #[serde(default)]
     pub suppressions: Vec<Suppression>,
+}
+
+impl Suppression {
+    fn display_locator(&self) -> String {
+        if let Some(fp) = self.fingerprint.as_deref() {
+            format!("fingerprint {fp}")
+        } else if let Some(key) = self.suppression_key.as_deref() {
+            format!("suppression_key {key}")
+        } else {
+            "empty locator".to_string()
+        }
+    }
+
+    fn match_token(&self) -> String {
+        if let Some(fp) = self.fingerprint.as_deref() {
+            format!("fingerprint:{fp}")
+        } else if let Some(key) = self.suppression_key.as_deref() {
+            format!("suppression_key:{key}")
+        } else {
+            format!("empty:{}:{}", self.rule_id, self.accepted_at)
+        }
+    }
 }
 
 /// Errors raised by the loader. `Parse` is the YAML-syntax case;
@@ -159,12 +197,9 @@ pub enum SuppressionError {
         actual_bytes: u64,
     },
     #[error(
-        "suppression for fingerprint {fingerprint} (rule {rule_id}) waives a critical finding but has no expires_at — critical waivers must expire"
+        "suppression for {locator} (rule {rule_id}) waives a critical finding but has no expires_at — critical waivers must expire"
     )]
-    MissingExpiryForCritical {
-        fingerprint: String,
-        rule_id: String,
-    },
+    MissingExpiryForCritical { locator: String, rule_id: String },
 }
 
 /// Status surfaced by `taudit suppressions list` / `review` for each
@@ -230,20 +265,32 @@ impl SuppressionConfig {
     /// the current scan considers Critical. A waiver entry that
     /// matches one of those AND lacks `expires_at` produces an error
     /// per the hard rule in module docs.
-    pub fn validate_critical_waivers<'a, I>(
+    pub fn validate_critical_waivers<'a, I, J>(
         &self,
         critical_fingerprints: I,
+        critical_suppression_keys: J,
     ) -> Result<(), Vec<SuppressionError>>
     where
         I: IntoIterator<Item = &'a str>,
+        J: IntoIterator<Item = &'a str>,
     {
-        let critical_set: std::collections::HashSet<&str> =
+        let critical_fingerprint_set: std::collections::HashSet<&str> =
             critical_fingerprints.into_iter().collect();
+        let critical_key_set: std::collections::HashSet<&str> =
+            critical_suppression_keys.into_iter().collect();
         let mut errors = Vec::new();
         for entry in &self.suppressions {
-            if entry.expires_at.is_none() && critical_set.contains(entry.fingerprint.as_str()) {
+            let matches_critical = entry
+                .fingerprint
+                .as_deref()
+                .is_some_and(|fp| critical_fingerprint_set.contains(fp))
+                || entry
+                    .suppression_key
+                    .as_deref()
+                    .is_some_and(|key| critical_key_set.contains(key));
+            if entry.expires_at.is_none() && matches_critical {
                 errors.push(SuppressionError::MissingExpiryForCritical {
-                    fingerprint: entry.fingerprint.clone(),
+                    locator: entry.display_locator(),
                     rule_id: entry.rule_id.clone(),
                 });
             }
@@ -271,15 +318,23 @@ impl SuppressionConfig {
         findings: Vec<Finding>,
         mode: SuppressionMode,
         fingerprints: &[String],
+        suppression_keys: &[String],
         today: chrono::NaiveDate,
     ) -> (Vec<Finding>, Vec<String>, std::collections::HashSet<String>) {
-        // Index suppressions by fingerprint for O(1) lookup. If two
-        // entries share a fingerprint (operator confusion), the first
-        // wins — keep the loader's order so behaviour is predictable.
+        // Index suppressions by both precise fingerprint and stable
+        // suppression key for O(1) lookup. If duplicates exist, the first
+        // wins — keep loader order so behaviour is predictable.
         let mut by_fp: std::collections::HashMap<&str, &Suppression> =
             std::collections::HashMap::with_capacity(self.suppressions.len());
+        let mut by_key: std::collections::HashMap<&str, &Suppression> =
+            std::collections::HashMap::with_capacity(self.suppressions.len());
         for entry in &self.suppressions {
-            by_fp.entry(entry.fingerprint.as_str()).or_insert(entry);
+            if let Some(fp) = entry.fingerprint.as_deref() {
+                by_fp.entry(fp).or_insert(entry);
+            }
+            if let Some(key) = entry.suppression_key.as_deref() {
+                by_key.entry(key).or_insert(entry);
+            }
         }
 
         let mut warnings = Vec::new();
@@ -288,27 +343,33 @@ impl SuppressionConfig {
 
         for (i, mut finding) in findings.into_iter().enumerate() {
             let fp = fingerprints.get(i).map(String::as_str);
-            let Some(entry) = fp.and_then(|f| by_fp.get(f)) else {
+            let key = suppression_keys.get(i).map(String::as_str);
+            let entry = fp
+                .and_then(|f| by_fp.get(f).copied())
+                .or_else(|| key.and_then(|k| by_key.get(k).copied()));
+            let Some(entry) = entry else {
                 out.push(finding);
                 continue;
             };
-            matched.insert(entry.fingerprint.clone());
+            matched.insert(entry.match_token());
 
             // Expired? Emit a warning, do not apply.
             if let Some(ref expiry) = entry.expires_at {
                 if let Ok(expiry_date) = chrono::NaiveDate::parse_from_str(expiry, "%Y-%m-%d") {
                     if expiry_date < today {
                         warnings.push(format!(
-                            "WARNING: suppression for fingerprint {} expired on {}; finding restored to original severity",
-                            entry.fingerprint, expiry,
+                            "WARNING: suppression for {} expired on {}; finding restored to original severity",
+                            entry.display_locator(),
+                            expiry,
                         ));
                         out.push(finding);
                         continue;
                     }
                 } else {
                     warnings.push(format!(
-                        "WARNING: suppression for fingerprint {} has unparseable expires_at '{}' (expected YYYY-MM-DD); ignoring entry",
-                        entry.fingerprint, expiry,
+                        "WARNING: suppression for {} has unparseable expires_at '{}' (expected YYYY-MM-DD); ignoring entry",
+                        entry.display_locator(),
+                        expiry,
                     ));
                     out.push(finding);
                     continue;
@@ -346,25 +407,28 @@ impl SuppressionConfig {
     /// configured but do not affect the gate.
     pub fn unmatched_warnings(
         &self,
-        matched_fingerprints: &std::collections::HashSet<String>,
+        matched_suppressions: &std::collections::HashSet<String>,
     ) -> Vec<String> {
         let mut warnings = Vec::new();
         for entry in &self.suppressions {
-            if matched_fingerprints.contains(&entry.fingerprint) {
+            if matched_suppressions.contains(&entry.match_token()) {
                 continue;
             }
 
             let mut warning = format!(
-                "warning: suppression for fingerprint {} (rule {}) matched no finding in this run",
-                entry.fingerprint, entry.rule_id
+                "warning: suppression for {} (rule {}) matched no finding in this run",
+                entry.display_locator(),
+                entry.rule_id
             );
 
-            if entry.fingerprint.len() != CURRENT_FINGERPRINT_HEX_LEN {
-                warning.push_str(&format!(
-                    " — fingerprint length {} hex chars is unexpected for this build (expected {})",
-                    entry.fingerprint.len(),
-                    CURRENT_FINGERPRINT_HEX_LEN
-                ));
+            if let Some(fingerprint) = entry.fingerprint.as_deref() {
+                if fingerprint.len() != CURRENT_FINGERPRINT_HEX_LEN {
+                    warning.push_str(&format!(
+                        " — fingerprint length {} hex chars is unexpected for this build (expected {})",
+                        fingerprint.len(),
+                        CURRENT_FINGERPRINT_HEX_LEN
+                    ));
+                }
             }
 
             warnings.push(warning);
@@ -453,7 +517,16 @@ impl SuppressionStatus {
 /// `taudit suppressions add`.
 pub fn render_entry_yaml(entry: &Suppression) -> String {
     let mut out = String::new();
-    out.push_str(&format!("  - fingerprint: \"{}\"\n", entry.fingerprint));
+    if let Some(ref fingerprint) = entry.fingerprint {
+        out.push_str(&format!("  - fingerprint: \"{fingerprint}\"\n"));
+        if let Some(ref suppression_key) = entry.suppression_key {
+            out.push_str(&format!("    suppression_key: \"{suppression_key}\"\n"));
+        }
+    } else if let Some(ref suppression_key) = entry.suppression_key {
+        out.push_str(&format!("  - suppression_key: \"{suppression_key}\"\n"));
+    } else {
+        out.push_str("  -\n");
+    }
     out.push_str(&format!("    rule_id: \"{}\"\n", entry.rule_id));
     out.push_str(&format!(
         "    reason: \"{}\"\n",
@@ -525,8 +598,8 @@ suppressions:
         let cfg = SuppressionConfig::load_from_path(&path).expect("parse OK");
         assert_eq!(cfg.suppressions.len(), 2);
         assert_eq!(
-            cfg.suppressions[0].fingerprint,
-            "5edb30f4db3b5fa3d7fe7289374b7155"
+            cfg.suppressions[0].fingerprint.as_deref(),
+            Some("5edb30f4db3b5fa3d7fe7289374b7155")
         );
         assert_eq!(
             cfg.suppressions[0].expires_at.as_deref(),
@@ -558,7 +631,8 @@ suppressions:
     #[test]
     fn downgrade_mode_drops_severity_one_tier_and_records_original() {
         let entry = Suppression {
-            fingerprint: "deadbeef00000000".into(),
+            fingerprint: Some("deadbeef00000000".into()),
+            suppression_key: None,
             rule_id: "unpinned_action".into(),
             reason: "internal action; risk owned by platform team".into(),
             accepted_by: "alice@example.com".into(),
@@ -571,10 +645,16 @@ suppressions:
 
         let f = finding(Severity::High, "msg");
         let fingerprints = vec!["deadbeef00000000".to_string()];
-        let (out, warnings, matched) =
-            cfg.apply(vec![f], SuppressionMode::Downgrade, &fingerprints, today());
+        let suppression_keys = Vec::new();
+        let (out, warnings, matched) = cfg.apply(
+            vec![f],
+            SuppressionMode::Downgrade,
+            &fingerprints,
+            &suppression_keys,
+            today(),
+        );
         assert!(warnings.is_empty());
-        assert!(matched.contains("deadbeef00000000"));
+        assert!(matched.contains("fingerprint:deadbeef00000000"));
         assert_eq!(out[0].severity, Severity::Medium);
         assert_eq!(out[0].extras.original_severity, Some(Severity::High));
         assert_eq!(
@@ -588,7 +668,8 @@ suppressions:
     fn suppress_mode_sets_flag_and_does_not_change_severity() {
         let cfg = SuppressionConfig {
             suppressions: vec![Suppression {
-                fingerprint: "deadbeef00000000".into(),
+                fingerprint: Some("deadbeef00000000".into()),
+                suppression_key: None,
                 rule_id: "unpinned_action".into(),
                 reason: "fork-only build; never publishes".into(),
                 accepted_by: "alice@example.com".into(),
@@ -598,19 +679,55 @@ suppressions:
         };
         let f = finding(Severity::High, "msg");
         let fingerprints = vec!["deadbeef00000000".to_string()];
-        let (out, _w, matched) =
-            cfg.apply(vec![f], SuppressionMode::Suppress, &fingerprints, today());
+        let suppression_keys = Vec::new();
+        let (out, _w, matched) = cfg.apply(
+            vec![f],
+            SuppressionMode::Suppress,
+            &fingerprints,
+            &suppression_keys,
+            today(),
+        );
         assert_eq!(out[0].severity, Severity::High);
-        assert!(matched.contains("deadbeef00000000"));
+        assert!(matched.contains("fingerprint:deadbeef00000000"));
         assert!(out[0].extras.suppressed);
         assert_eq!(out[0].extras.original_severity, Some(Severity::High));
+    }
+
+    #[test]
+    fn suppression_key_matches_when_fingerprint_changes() {
+        let cfg = SuppressionConfig {
+            suppressions: vec![Suppression {
+                fingerprint: None,
+                suppression_key: Some("sk1_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa".into()),
+                rule_id: "unpinned_action".into(),
+                reason: "reviewed stable waiver".into(),
+                accepted_by: "alice@example.com".into(),
+                accepted_at: "2026-04-26".into(),
+                expires_at: Some("2027-04-26".into()),
+            }],
+        };
+        let f = finding(Severity::High, "msg");
+        let fingerprints = vec!["aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa".to_string()];
+        let suppression_keys = vec!["sk1_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa".to_string()];
+        let (out, warnings, matched) = cfg.apply(
+            vec![f],
+            SuppressionMode::Downgrade,
+            &fingerprints,
+            &suppression_keys,
+            today(),
+        );
+
+        assert!(warnings.is_empty());
+        assert!(matched.contains("suppression_key:sk1_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"));
+        assert_eq!(out[0].severity, Severity::Medium);
     }
 
     #[test]
     fn expired_waiver_does_not_apply_and_emits_warning() {
         let cfg = SuppressionConfig {
             suppressions: vec![Suppression {
-                fingerprint: "deadbeef00000000".into(),
+                fingerprint: Some("deadbeef00000000".into()),
+                suppression_key: None,
                 rule_id: "unpinned_action".into(),
                 reason: "needs to rotate".into(),
                 accepted_by: "alice@example.com".into(),
@@ -620,11 +737,17 @@ suppressions:
         };
         let f = finding(Severity::High, "msg");
         let fingerprints = vec!["deadbeef00000000".to_string()];
-        let (out, warnings, matched) =
-            cfg.apply(vec![f], SuppressionMode::Downgrade, &fingerprints, today());
+        let suppression_keys = Vec::new();
+        let (out, warnings, matched) = cfg.apply(
+            vec![f],
+            SuppressionMode::Downgrade,
+            &fingerprints,
+            &suppression_keys,
+            today(),
+        );
         // Severity unchanged.
         assert_eq!(out[0].severity, Severity::High);
-        assert!(matched.contains("deadbeef00000000"));
+        assert!(matched.contains("fingerprint:deadbeef00000000"));
         // Warning surfaced.
         assert_eq!(warnings.len(), 1);
         assert!(
@@ -638,7 +761,8 @@ suppressions:
     fn critical_without_expiry_is_rejected_at_validation() {
         let cfg = SuppressionConfig {
             suppressions: vec![Suppression {
-                fingerprint: "cafebabecafebabe".into(),
+                fingerprint: Some("cafebabecafebabe".into()),
+                suppression_key: None,
                 rule_id: "untrusted_with_authority".into(),
                 reason: "no expiry on critical — should be rejected".into(),
                 accepted_by: "alice@example.com".into(),
@@ -647,13 +771,13 @@ suppressions:
             }],
         };
         let critical = ["cafebabecafebabe"];
-        let result = cfg.validate_critical_waivers(critical.iter().copied());
+        let result = cfg.validate_critical_waivers(critical.iter().copied(), std::iter::empty());
         assert!(result.is_err());
         let errors = result.unwrap_err();
         assert_eq!(errors.len(), 1);
         match &errors[0] {
-            SuppressionError::MissingExpiryForCritical { fingerprint, .. } => {
-                assert_eq!(fingerprint, "cafebabecafebabe");
+            SuppressionError::MissingExpiryForCritical { locator, .. } => {
+                assert_eq!(locator, "fingerprint cafebabecafebabe");
             }
             other => panic!("unexpected error: {other:?}"),
         }
@@ -663,7 +787,8 @@ suppressions:
     fn critical_with_expiry_passes_validation() {
         let cfg = SuppressionConfig {
             suppressions: vec![Suppression {
-                fingerprint: "cafebabecafebabe".into(),
+                fingerprint: Some("cafebabecafebabe".into()),
+                suppression_key: None,
                 rule_id: "untrusted_with_authority".into(),
                 reason: "approved by security; rotates with quarterly review".into(),
                 accepted_by: "alice@example.com".into(),
@@ -672,15 +797,44 @@ suppressions:
             }],
         };
         let critical = ["cafebabecafebabe"];
-        cfg.validate_critical_waivers(critical.iter().copied())
+        cfg.validate_critical_waivers(critical.iter().copied(), std::iter::empty())
             .expect("expiring waiver should pass");
+    }
+
+    #[test]
+    fn critical_suppression_key_without_expiry_is_rejected() {
+        let cfg = SuppressionConfig {
+            suppressions: vec![Suppression {
+                fingerprint: None,
+                suppression_key: Some("sk1_bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb".into()),
+                rule_id: "untrusted_with_authority".into(),
+                reason: "no expiry on critical — should be rejected".into(),
+                accepted_by: "alice@example.com".into(),
+                accepted_at: "2026-04-26".into(),
+                expires_at: None,
+            }],
+        };
+        let critical_keys = ["sk1_bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"];
+        let result =
+            cfg.validate_critical_waivers(std::iter::empty(), critical_keys.iter().copied());
+        assert!(result.is_err());
+        match &result.unwrap_err()[0] {
+            SuppressionError::MissingExpiryForCritical { locator, .. } => {
+                assert_eq!(
+                    locator,
+                    "suppression_key sk1_bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+                );
+            }
+            other => panic!("unexpected error: {other:?}"),
+        }
     }
 
     #[test]
     fn unmatched_warning_reports_orphaned_suppression() {
         let cfg = SuppressionConfig {
             suppressions: vec![Suppression {
-                fingerprint: "deadbeef00000000".into(),
+                fingerprint: Some("deadbeef00000000".into()),
+                suppression_key: None,
                 rule_id: "unpinned_action".into(),
                 reason: "orphaned".into(),
                 accepted_by: "alice@example.com".into(),
@@ -698,7 +852,8 @@ suppressions:
     fn unmatched_warning_hints_on_unexpected_fingerprint_length() {
         let cfg = SuppressionConfig {
             suppressions: vec![Suppression {
-                fingerprint: "deadbeefdeadbeef".into(),
+                fingerprint: Some("deadbeefdeadbeef".into()),
+                suppression_key: None,
                 rule_id: "unpinned_action".into(),
                 reason: "wrong length".into(),
                 accepted_by: "alice@example.com".into(),
@@ -715,7 +870,8 @@ suppressions:
     #[test]
     fn status_active_for_recent_no_expiry() {
         let entry = Suppression {
-            fingerprint: "x".into(),
+            fingerprint: Some("x".into()),
+            suppression_key: None,
             rule_id: "y".into(),
             reason: "z".into(),
             accepted_by: "a".into(),
@@ -731,7 +887,8 @@ suppressions:
     #[test]
     fn status_stale_for_review_after_90_days_no_expiry() {
         let entry = Suppression {
-            fingerprint: "x".into(),
+            fingerprint: Some("x".into()),
+            suppression_key: None,
             rule_id: "y".into(),
             reason: "z".into(),
             accepted_by: "a".into(),
@@ -747,7 +904,8 @@ suppressions:
     #[test]
     fn status_expiring_soon_within_30_days() {
         let entry = Suppression {
-            fingerprint: "x".into(),
+            fingerprint: Some("x".into()),
+            suppression_key: None,
             rule_id: "y".into(),
             reason: "z".into(),
             accepted_by: "a".into(),
@@ -763,7 +921,8 @@ suppressions:
     #[test]
     fn status_expired_after_expiry_date() {
         let entry = Suppression {
-            fingerprint: "x".into(),
+            fingerprint: Some("x".into()),
+            suppression_key: None,
             rule_id: "y".into(),
             reason: "z".into(),
             accepted_by: "a".into(),
@@ -779,7 +938,8 @@ suppressions:
     #[test]
     fn render_entry_yaml_round_trips() {
         let entry = Suppression {
-            fingerprint: "5edb30f4db3b5fa3d7fe7289374b7155".into(),
+            fingerprint: Some("5edb30f4db3b5fa3d7fe7289374b7155".into()),
+            suppression_key: None,
             rule_id: "untrusted_with_authority".into(),
             reason: "internal action; risk accepted".into(),
             accepted_by: "alice@example.com".into(),

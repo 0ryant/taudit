@@ -4,8 +4,8 @@ use serde::Serialize;
 use taudit_core::custom_rules::CustomRule;
 use taudit_core::error::TauditError;
 use taudit_core::finding::{
-    compute_finding_group_id, compute_fingerprint, rule_id_for, Finding, FindingSource, FixEffort,
-    Severity,
+    compute_finding_group_id, compute_fingerprint, compute_suppression_key, rule_id_for, Finding,
+    FindingSource, FixEffort, Severity,
 };
 use taudit_core::graph::AuthorityGraph;
 use taudit_core::ports::ReportSink;
@@ -2056,6 +2056,11 @@ struct SarifResultProperties {
     /// See `docs/finding-output-enhancements.md`.
     #[serde(rename = "findingGroupId", skip_serializing_if = "Option::is_none")]
     finding_group_id: Option<String>,
+    /// Operator-stable waiver key. Coarser than `partialFingerprints` and
+    /// intended for `.taudit-suppressions.yml` entries that should survive
+    /// unrelated surrounding workflow edits.
+    #[serde(rename = "suppressionKey")]
+    suppression_key: String,
     /// Coarse remediation effort: trivial / small / medium / large.
     /// Triage dashboards sort by `severity * timeToFix` to surface the
     /// highest-ROI fixes. See `docs/finding-output-enhancements.md`.
@@ -2351,6 +2356,7 @@ fn finding_to_result(
     // sink (`tauditfindingfingerprint` extension attribute) so SIEMs can
     // dedup across formats. See `docs/finding-fingerprint.md`.
     let fingerprint = compute_fingerprint(finding, graph);
+    let suppression_key = compute_suppression_key(finding, graph);
 
     let taudit_source = match &finding.source {
         FindingSource::BuiltIn => "built-in".to_string(),
@@ -2402,6 +2408,7 @@ fn finding_to_result(
             security_severity,
             taudit_source,
             finding_group_id,
+            suppression_key,
             time_to_fix,
             compensating_controls,
             suppressed,

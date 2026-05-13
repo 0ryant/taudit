@@ -19,6 +19,7 @@ expression: results
     confidenceScope: yaml_only
     findingGroupId: 19ee4c2e-a538-5bdb-adc2-8f789fcb6206
     security-severity: "9.0"
+    suppressionKey: sk1_ffca7725a9ee77feb900702a0114767a
     taudit-source: built-in
   ruleId: authority_propagation
 - level: error
@@ -38,6 +39,7 @@ expression: results
     confidenceScope: yaml_only
     findingGroupId: be66107e-37fd-5dbf-9330-11b1a3a4fd7b
     security-severity: "9.0"
+    suppressionKey: sk1_c6ce89eaa9383364fa8ef0605c66be0a
     taudit-source: built-in
   ruleId: authority_propagation
 - level: note
@@ -57,6 +59,7 @@ expression: results
     confidenceScope: yaml_only
     findingGroupId: 51fcc990-5084-59e3-a731-9c560c54d0ba
     security-severity: "2.0"
+    suppressionKey: sk1_dd874a8288dad0ca657bed7f5599404e
     taudit-source: built-in
     timeToFix: large
   ruleId: long_lived_credential
@@ -77,6 +80,7 @@ expression: results
     confidenceScope: yaml_only
     findingGroupId: 07e0de9b-04b5-5411-9c3b-bbf91d12002a
     security-severity: "2.0"
+    suppressionKey: sk1_d1462d4c8f0c1f317b64764c873b7b89
     taudit-source: built-in
     timeToFix: large
   ruleId: long_lived_credential
@@ -97,6 +101,7 @@ expression: results
     confidenceScope: yaml_only
     findingGroupId: 61e587be-3ab9-585f-a534-4308d9267ffa
     security-severity: "7.5"
+    suppressionKey: sk1_a6d56516e97292ec38383e3ea014a466
     taudit-source: built-in
     timeToFix: small
   ruleId: over_privileged_identity
@@ -119,6 +124,7 @@ expression: results
     runtimePreconditions:
       - "the referenced mutable branch, tag, include, or image can change independently of this repository"
     security-severity: "5.0"
+    suppressionKey: sk1_b479a59c8affd98b2fc6720a7854ae76
     taudit-source: built-in
     timeToFix: trivial
   ruleId: action_major_version_pin_without_sha
@@ -141,6 +147,7 @@ expression: results
     runtimePreconditions:
       - "the referenced mutable branch, tag, include, or image can change independently of this repository"
     security-severity: "5.0"
+    suppressionKey: sk1_033d10c3704d4e5312e22f9d01465025
     taudit-source: built-in
     timeToFix: trivial
   ruleId: unpinned_action
@@ -163,6 +170,7 @@ expression: results
     runtimePreconditions:
       - "the referenced mutable branch, tag, include, or image can change independently of this repository"
     security-severity: "7.5"
+    suppressionKey: sk1_033d10c3704d4e5312e22f9d01465025
     taudit-source: built-in
     timeToFix: trivial
   ruleId: unpinned_action
@@ -186,6 +194,7 @@ expression: results
     confidenceScope: yaml_only
     findingGroupId: 8134004c-cfe9-54e3-8ac4-1099db4b20dc
     security-severity: "9.0"
+    suppressionKey: sk1_e9a7bf38c217d147ef733253dff5e1c9
     taudit-source: built-in
   ruleId: untrusted_with_authority
 - level: error
@@ -207,6 +216,7 @@ expression: results
     confidenceScope: yaml_only
     findingGroupId: 26a1ad7d-a283-5a77-9c6c-f33833a25f7c
     security-severity: "9.0"
+    suppressionKey: sk1_e9a7bf38c217d147ef733253dff5e1c9
     taudit-source: built-in
   ruleId: untrusted_with_authority
 - level: error
@@ -228,6 +238,7 @@ expression: results
     confidenceScope: yaml_only
     findingGroupId: 5bb4e538-2f11-5dc2-949f-da1d8b6a37e2
     security-severity: "9.0"
+    suppressionKey: sk1_3352102973b563d6ed7a19169e0b691c
     taudit-source: built-in
   ruleId: untrusted_with_authority
 - level: note
@@ -254,5 +265,6 @@ expression: results
       - downstream identity provider accepts the issued OIDC token
       - the configured audience or cloud role grants useful authority
     security-severity: "0.1"
+    suppressionKey: sk1_167c4fc0683f62a0319743f558b31030
     taudit-source: built-in
   ruleId: uplift_without_attestation
