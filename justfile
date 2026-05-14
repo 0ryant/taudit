@@ -5,6 +5,18 @@ set shell := ["bash", "-eu", "-o", "pipefail", "-c"]
 default:
     @just --list
 
+release-check tag:
+    python scripts/release_harness.py check --tag {{tag}} --require-local-tag
+
+release-notes tag:
+    python scripts/release_harness.py notes --tag {{tag}}
+
+release-standardize tag:
+    python scripts/release_harness.py ensure-github-release --tag {{tag}}
+
+release-backfill tag:
+    python scripts/release_harness.py ensure-github-release --tag {{tag}} --source-ref {{tag}} --skip-publish-metadata
+
 versions:
     @echo "crate versions:"
     @find crates -name Cargo.toml -maxdepth 2 | sort | while read -r manifest; do name=$(grep '^name = ' "$manifest" | head -1 | cut -d '"' -f2); version=$(grep '^version = ' "$manifest" | head -1 | cut -d '"' -f2); printf "  %-28s %s\n" "$name" "$version"; done

@@ -558,22 +558,23 @@ fn fetch_variable_group_index(ctx: &AdoParserContext) -> Result<AdoVariableGroup
         base64::engine::general_purpose::STANDARD.encode(format!(":{pat}"))
     );
 
-    let response = ureq::get(&url)
-        .set("Accept", "application/json")
-        .set("Authorization", &auth)
+    let mut response = ureq::get(&url)
+        .header("Accept", "application/json")
+        .header("Authorization", &auth)
         .call()
         .map_err(map_ureq_error)?;
 
     let body: serde_json::Value = response
-        .into_json()
+        .body_mut()
+        .read_json()
         .map_err(|e| format!("invalid JSON response: {e}"))?;
     parse_variable_group_index_from_json(&body)
 }
 
 fn map_ureq_error(err: ureq::Error) -> String {
     match err {
-        ureq::Error::Status(code, _) => format!("HTTP {code} from variablegroups API"),
-        ureq::Error::Transport(t) => t.to_string(),
+        ureq::Error::StatusCode(code) => format!("HTTP {code} from variablegroups API"),
+        other => other.to_string(),
     }
 }
 

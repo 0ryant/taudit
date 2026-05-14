@@ -1,6 +1,6 @@
 # taudit Rule Reference
 
-129 built-in rule definitions are registered for `taudit explain`. The table below is the customer-facing rule catalogue; `gha_toolcache_absolute_path_downgrade` is a precision guard documented so helper-PATH findings do not over-fire. Run `taudit explain <rule-id>` for a description in the terminal.
+Built-in rule definitions are registered for `taudit explain`. The table below is the customer-facing rule catalogue; `gha_toolcache_absolute_path_downgrade` is a precision guard documented so helper-PATH findings do not over-fire. Run `taudit explain` to inspect the current catalogue, or `taudit explain <rule-id>` for a description in the terminal.
 
 ## Top-level commands
 
