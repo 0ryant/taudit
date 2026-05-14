@@ -8,6 +8,20 @@ All notable changes to this project will be documented in this file.
 
 _(none yet — populate this paragraph when adding entries that change finding behaviour)_
 
+## v1.1.4 — 2026-05-14 (stable patch)
+
+### Detection delta (read first)
+
+No rule, parser, graph, report, or schema behaviour change versus `v1.1.3`.
+This release repairs the stable GitHub release asset workflow after `v1.1.3`
+failed before asset generation.
+
+### Fixed
+
+- Isolated Rust 1.90 to the stable-release `cargo-semver-checks 0.46.0`
+  install/check steps while keeping taudit's MSRV, normal build, and normal test
+  gates on Rust 1.88.
+
 ## v1.1.3 — 2026-05-14 (stable patch)
 
 ### Detection delta (read first)

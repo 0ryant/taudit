@@ -41,13 +41,15 @@ jobs:
       # letting a minor release accidentally break a published Rust API.
       - name: Install cargo-semver-checks
         if: ${{ !contains(github.ref_name, '-') }}
-        # Keep this pinned to the repository MSRV. Newer cargo-semver-checks
-        # releases may require a newer rustc before taudit does.
-        run: cargo install cargo-semver-checks --version 0.46.0 --locked --quiet
+        # Keep the crate MSRV/build/test gates on Rust 1.88 above. This newer
+        # toolchain is only for the stable-release semver checker binary.
+        run: |
+          rustup toolchain install 1.90.0 --profile minimal --no-self-update
+          rustup run 1.90.0 cargo install cargo-semver-checks --version 0.46.0 --locked --quiet
 
       - name: cargo semver-checks
         if: ${{ !contains(github.ref_name, '-') }}
-        run: cargo semver-checks check-release --workspace --all-features
+        run: rustup run 1.90.0 cargo semver-checks check-release --workspace --all-features
 
       - name: Install cargo-deny
         run: cargo install cargo-deny --locked

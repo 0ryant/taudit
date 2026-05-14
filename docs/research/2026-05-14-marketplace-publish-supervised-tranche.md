@@ -51,6 +51,11 @@ Scope: GitHub Marketplace readiness and publish path for `0ryant/taudit-action`.
 - Tested `cargo-semver-checks 0.44.0`; it installs on Rust 1.88 but cannot parse
   this workspace's Rust 1.88 rustdoc JSON format. `0.46.0` passed the local
   Rust 1.88 semver gate.
+- The `v1.1.3` tag release workflow failed before asset generation because
+  `cargo-semver-checks 0.46.0` requires Rust 1.90 when installed in CI.
+- Council ratified cutting `v1.1.4` with Rust 1.90 isolated only to the
+  `cargo-semver-checks` install/check steps. Normal taudit MSRV, build, and test
+  gates stay on Rust 1.88.
 
 ## Decisions
 
