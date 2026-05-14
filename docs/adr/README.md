@@ -10,6 +10,8 @@ Records in this directory capture **significant** product and technical decision
 | [0004](0004-prereleases-publish-to-crates-io.md) | Prereleases publish to crates.io, gated by Cargo's resolver |
 | [0005](0005-authority-edge-classifier-and-witness-handoff.md) | Authority-edge classifier and witness handoff |
 | [0006](0006-exploit-path-view-and-ruleset.md) | Exploit-path view and ruleset |
+| [0007](0007-standardize-release-harness.md) | Standardize releases through a repo-owned harness |
+| [0008](0008-synthesize-research-into-maintained-artifacts.md) | Synthesize research into maintained artifacts, not scratch files |
 
 ## Conventions
 

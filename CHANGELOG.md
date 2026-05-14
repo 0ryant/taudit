@@ -8,15 +8,105 @@ All notable changes to this project will be documented in this file.
 
 _(none yet — populate this paragraph when adding entries that change finding behaviour)_
 
+## v1.1.2 — 2026-05-13 (stable patch)
+
+### Detection delta (read first)
+
+No rule, parser, or graph behaviour change versus `v1.1.1`. This release adds
+an operator-stable suppression locator to existing finding outputs.
+
 ### Fixed
+
+- Added `suppression_key` as a separate operator-stable waiver identity so
+  reviewed suppressions can survive harmless workflow edits, such as inserting
+  an unrelated step before an authority-bearing finding, without weakening the
+  precise `fingerprint` dedup/baseline contract.
 
 ### Changed
 
 ### Added
 
+- Added `suppression_key` to JSON findings, SARIF result properties, and
+  CloudEvents (`tauditsuppressionkey`), plus support for
+  `.taudit-suppressions.yml` entries keyed by either `fingerprint` or
+  `suppression_key`.
+- Added a compact corpus demo story for the Expo docs workflow, including
+  authority and exploit-path DOT files plus Graphviz PNG renders.
+
 ### Migration notes
 
-_(populate if any consumer-visible field, schema, or contract changes; remove subsection if none)_
+- Additive report/schema change: JSON findings now include
+  `suppression_key`; SARIF results include `properties.suppressionKey`;
+  CloudEvents include `tauditsuppressionkey`.
+- Implementation crates publish as `3.0.0` so the report crates can depend on
+  the new `taudit-core` suppression-key API during crates.io package
+  verification.
+
+## v1.1.1 — 2026-05-13 (stable patch)
+
+### Detection delta (read first)
+
+No rule, parser, graph, report, or schema behaviour change versus `v1.1.0`.
+
+### Fixed
+
+- `taudit remediate apply` now clears inherited Git hook repository environment
+  variables before running its internal `git status` guard. This prevents
+  remediation checks from treating unrelated temporary files as dirty when
+  taudit is invoked from a Git hook or another Git-controlled subprocess.
+
+## v1.1.0 — 2026-05-12 (stable)
+
+> **Stable promotion.** Promotes the `v1.1.0-rc.6` payload to crates.io stable.
+> Stable Cargo resolvers and `cargo install taudit` now receive the v1.1
+> parser, rule, report, and graph contract by default.
+
+### Detection delta (read first)
+
+No rule, parser, report, or schema behaviour change versus `v1.1.0-rc.6`.
+Compared with `v1.0.12`, this release is an additive detection and reporting
+cut: it parses more CI providers, emits more authority/confusion findings, and
+adds report metadata intended to make high-volume triage more explicit.
+
+### Added
+
+- Bitbucket Pipelines support alongside GitHub Actions, Azure DevOps, and
+  GitLab CI.
+- Publication context metadata in JSON and SARIF findings, including confidence
+  scope, runtime preconditions, portal-control dependency, authority kinds,
+  attacker-surface kinds, template-resolution strength, and CVE relationship
+  when known.
+- Graph risk summary fields for corpus-scale reporting and ranking.
+- Exploit-path graph view: `taudit graph --view exploit` emits deterministic
+  mutable-state-to-helper-authority paths as JSON, DOT, Mermaid, or summary
+  output. The canonical authority graph remains `--view authority`; disclosure
+  scoring, CVE workflow metadata, witness specs, and canary details remain
+  internal-gated and are not part of the default customer output.
+- Additional authority-confusion, supply-chain, OIDC, Docker/container, remote
+  script, and cross-provider parser/rule coverage from the v1.1 prerelease
+  cycle.
+
+### Fixed
+
+- Stable update checks now use semantic version ordering, so a published
+  prerelease such as `1.1.0-rc.6` is not advertised as newer than stable
+  `1.1.0`.
+
+### Migration notes
+
+- Expect more findings than `v1.0.12`. This is intentional coverage expansion,
+  not a compatibility break.
+- JSON and SARIF consumers should tolerate the additive fields introduced during
+  the v1.1 prerelease cycle.
+- Graph consumers that want the disclosure-pack-oriented projection can opt into
+  `taudit graph --view exploit`; existing `taudit graph` usage remains the
+  authority view by default.
+- Existing `taudit-api = "0.1"` integrations should review the additive
+  `taudit-api 0.4.0` wire types before moving to the v1.1 crate family.
+- Implementation crates (`taudit-core`, parsers, reporters, and sinks) publish
+  as `2.0.0` in this product release because their Rust library surfaces are
+  not semver-compatible with `1.0.12`. End users of the CLI are unaffected;
+  Rust embedders should depend on `taudit-api` for the stable wire contract.
 
 ## v1.1.0-rc.3 — 2026-05-05 (release candidate)
 
