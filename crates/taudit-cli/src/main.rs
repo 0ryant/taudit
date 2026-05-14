@@ -4236,15 +4236,17 @@ fn cmd_version() -> Result<()> {
 /// Designed to be called from a background thread — never panics.
 fn check_latest_version() -> Option<String> {
     let current = env!("CARGO_PKG_VERSION");
-    let resp = ureq::get("https://crates.io/api/v1/crates/taudit")
-        .timeout(std::time::Duration::from_secs(3))
-        .set(
+    let mut resp = ureq::get("https://crates.io/api/v1/crates/taudit")
+        .config()
+        .timeout_global(Some(std::time::Duration::from_secs(3)))
+        .build()
+        .header(
             "User-Agent",
             &format!("taudit/{current} (version-check; https://github.com/0ryant/taudit)"),
         )
         .call()
         .ok()?;
-    let json: serde_json::Value = resp.into_json().ok()?;
+    let json: serde_json::Value = resp.body_mut().read_json().ok()?;
     let latest = json["crate"]["newest_version"].as_str()?.to_string();
     if is_version_newer(current, &latest) {
         Some(latest)

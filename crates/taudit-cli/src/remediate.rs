@@ -1143,7 +1143,11 @@ fn lock_index(index_path: &Path) -> Result<IndexLock> {
 fn sha256_hex(s: &str) -> String {
     let mut hasher = Sha256::new();
     hasher.update(s.as_bytes());
-    format!("{:x}", hasher.finalize())
+    hasher
+        .finalize()
+        .iter()
+        .map(|byte| format!("{byte:02x}"))
+        .collect()
 }
 
 fn safe_patch_name(path: &Path) -> String {
