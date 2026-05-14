@@ -24,10 +24,28 @@ Visual Studio Marketplace publisher `algol`.
 ## Current State
 
 - [x] V1: Publisher exists: `algol`.
-- [ ] V2: Extension package exists in this repo.
+- [x] V2: Extension package exists in this repo at
+  `integrations/vscode-extension/`.
 - [ ] V3: Marketplace auth token is provisioned and verified.
 - [ ] V4: Extension release automation exists.
 - [ ] V5: Hosted smoke path exists for packaged VSIX install and activation.
+
+## Observed Evidence
+
+- `integrations/vscode-extension/` now exists with:
+  `package.json`, `README.md`, `CHANGELOG.md`, `LICENSE`,
+  `.vscodeignore`, `.gitignore`, `tsconfig.json`, extension source, tests, and
+  `package-lock.json`.
+- Local extension checks passed:
+  `npm run check`
+- Local extension-host smoke passed:
+  `npm run test:integration`
+- Local VSIX package passed:
+  `npm run package:vsix`
+- Local install smoke passed:
+  `code --install-extension taudit-vscode.vsix --force`
+  followed by `code --list-extensions --show-versions` showing
+  `algol.taudit-vscode@0.0.1`, then uninstall success.
 
 ## Non-Negotiable Constraints
 
@@ -72,12 +90,12 @@ extension should expose the stable taudit operator surface directly.
 - `taudit.verify.policyPath`
 - `taudit.verify.includeBuiltin`
 - `taudit.verify.ignorePartial`
+- `taudit.verify.format`
+- `taudit.scan.format`
 - `taudit.controls.ignoreFile`
 - `taudit.controls.suppressionsFile`
 - `taudit.controls.suppressionMode`
 - `taudit.controls.baselineRoot`
-- `taudit.output.format`
-- `taudit.graph.view`
 - `taudit.graph.format`
 - `taudit.maxHops`
 - `taudit.severityThreshold`
@@ -117,34 +135,34 @@ Rules:
   root `package.json`, `README.md`, `CHANGELOG.md`, extension entrypoint,
   `LICENSE`, icon asset, and `.vscodeignore`.
 
-- [ ] V13: Populate the manifest with required Marketplace fields.
+- [x] V13: Populate the manifest with required Marketplace fields.
   Required fields:
   `name`, `displayName`, `publisher=algol`, `version`, `engines.vscode`,
   `description`, `categories`, `license`, and extension entrypoint fields.
 
-- [ ] V14: Encode the extension settings schema and command registrations.
+- [x] V14: Encode the extension settings schema and command registrations.
   Required:
   `package.json` contributes commands, settings, activation events, and any
   view/webview points for the v1 product contract.
 
-- [ ] V15: Add package/build scripts.
+- [x] V15: Add package/build scripts.
   Minimum scripts:
   local build, local test, `vscode:prepublish`, `vsce package`, and
   deterministic packaging verification.
 
-- [ ] V16: Implement the minimum user-visible feature set for v1.
+- [x] V16: Implement the minimum user-visible feature set for v1.
   Required floor:
   run `taudit verify`, `scan`, and `graph`; support both authority and exploit
   graph views; surface JSON/SARIF results; and expose clear error states when
   the `taudit` binary or required control paths are missing.
 
-- [ ] V17: Add extension tests.
+- [x] V17: Add extension tests.
   Minimum:
   manifest/schema checks, command activation tests, and at least one
   `@vscode/test-electron` integration smoke covering each contributed command
   plus missing-binary failure behavior.
 
-- [ ] V18: Add local VSIX packaging smoke.
+- [x] V18: Add local VSIX packaging smoke.
   Required checks:
   `vsce package`, inspect produced `.vsix`, and install smoke with
   `code --install-extension` or equivalent supported client.
@@ -202,8 +220,10 @@ Rules:
 
 ## Known Blockers
 
-- No VS Code extension artifact currently exists in this repository.
 - No Marketplace PAT has been recorded yet; only the publisher identity exists.
+- No extension icon asset exists yet for Marketplace-quality packaging.
+- Missing-binary behavior is covered by the local runtime path validation, but
+  no dedicated extension-host negative smoke exists yet for every failure path.
 - GitHub-hosted smoke is currently blocked on account billing / spending-limit
   issues, so the publish lane should prefer Azure Pipelines or another working
   hosted environment for the first real smoke.
