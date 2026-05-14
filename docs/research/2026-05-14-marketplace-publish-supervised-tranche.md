@@ -4,6 +4,10 @@ Date: 2026-05-14
 Stop floor: 2026-05-15 01:13 BST
 Scope: GitHub Marketplace readiness and publish path for `0ryant/taudit-action`.
 
+Parallel track:
+Visual Studio Marketplace planning now lives in
+[`2026-05-15-visual-studio-marketplace-publish-track.md`](2026-05-15-visual-studio-marketplace-publish-track.md).
+
 ## Source Of Truth
 
 - Council ratification: merge taudit PR #28 first, then immutable action tag, moving `v1`, GitHub release, hosted smoke, Marketplace Agreement/UI publish.
