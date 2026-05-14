@@ -5020,10 +5020,15 @@ fn build_ado_parser_context(
     ado_project: Option<String>,
     ado_pat: Option<String>,
 ) -> Option<AdoParserContext> {
+    let pat = ado_pat.and_then(trim_to_option).or_else(|| {
+        std::env::var("TAUDIT_ADO_PAT")
+            .ok()
+            .and_then(trim_to_option)
+    });
     let ctx = AdoParserContext {
         org: ado_org.and_then(trim_to_option),
         project: ado_project.and_then(trim_to_option),
-        pat: ado_pat.and_then(trim_to_option),
+        pat,
     };
     if ctx.org.is_none() && ctx.project.is_none() && ctx.pat.is_none() {
         None
@@ -5845,6 +5850,25 @@ mod tests {
                 .any(|value| value.contains("super-secret-pat")),
             "PAT must never be materialized in metadata"
         );
+    }
+
+    #[test]
+    fn ado_parser_context_reads_pat_from_env_without_cli_arg() {
+        static ENV_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+        let _guard = ENV_LOCK.lock().expect("env lock");
+        std::env::set_var("TAUDIT_ADO_PAT", "  env-secret-pat  ");
+
+        let ctx = build_ado_parser_context(
+            Some("org-a".to_string()),
+            Some("project-a".to_string()),
+            None,
+        )
+        .expect("ado context");
+
+        std::env::remove_var("TAUDIT_ADO_PAT");
+        assert_eq!(ctx.org.as_deref(), Some("org-a"));
+        assert_eq!(ctx.project.as_deref(), Some("project-a"));
+        assert_eq!(ctx.pat.as_deref(), Some("env-secret-pat"));
     }
 
     #[test]

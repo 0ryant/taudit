@@ -73,7 +73,7 @@ This is the load-bearing safety mechanism. **Cargo's rule:** a version requireme
 
 | Caller | What gets picked from crates.io |
 |--------|-----------------|
-| `cargo install taudit` (no `--version`) | **Latest stable.** Skips `1.1.0-beta.1`. Stays on `1.0.12`. |
+| `cargo install taudit` (no `--version`) | **Latest stable.** Skips `1.1.0-beta.1`. Stays on `1.1.2`. |
 | `taudit = "1.1"` in `Cargo.toml` | **Latest stable matching `1.1.x`.** If only prereleases exist for `1.1`, errors with "no matching package". |
 | `taudit = "1"` or `"1.0"` | Latest stable in that range. Prereleases ignored. |
 | `taudit = "*"` | Still latest stable — the prerelease-skip rule applies to `*` too. |

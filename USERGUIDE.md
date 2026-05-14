@@ -321,7 +321,7 @@ jobs:
     steps:
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
       - name: Install taudit
-        run: cargo install taudit --version 1.0.12 --locked
+        run: cargo install taudit --version 1.1.2 --locked
       - name: Verify pipeline policy
         run: taudit verify --policy .taudit/policy/ .github/workflows/
 ```
@@ -337,7 +337,7 @@ and exit `2` (config error) both block the merge.
   inputs:
     targetType: inline
     script: |
-      cargo install taudit --version 1.0.12 --locked
+      cargo install taudit --version 1.1.2 --locked
       taudit verify --policy .taudit/policy/ azure-pipelines.yml
 ```
 
@@ -347,7 +347,7 @@ and exit `2` (config error) both block the merge.
 verify-pipeline-policy:
   stage: test
   script:
-    - cargo install taudit --version 1.0.12 --locked
+    - cargo install taudit --version 1.1.2 --locked
     - taudit verify --policy .taudit/policy/ .gitlab-ci.yml
   rules:
     - if: $CI_PIPELINE_SOURCE == "merge_request_event"
@@ -355,7 +355,9 @@ verify-pipeline-policy:
 
 ### SARIF for GitHub Code Scanning
 
-Emit violations as code-scanning annotations (inline on the diff):
+Emit violations as code-scanning annotations from a trusted branch or scheduled
+workflow. Keep the required PR scanner job at `contents: read`; do not combine
+untrusted PR workflow parsing with a same-job `security-events: write` token.
 
 ```yaml
 - name: Verify and emit SARIF
@@ -372,7 +374,8 @@ Emit violations as code-scanning annotations (inline on the diff):
 ```
 
 The double-invocation is intentional: the first run emits SARIF for the UI,
-the second enforces the exit-code gate.
+the second enforces the exit-code gate. Use that pattern only in workflows whose
+trigger and checkout are trusted for `security-events: write`.
 
 ### Using the built-in rules as a gate
 
