@@ -15,9 +15,9 @@ Scope: GitHub Marketplace readiness and publish path for `0ryant/taudit-action`.
 - [x] T2: Diagnose and fix PR #28 failing `quality` check.
 - [x] T3: Keep/update the task ledger with observed blockers and decisions.
 - [x] T4: Run local release-equivalent verification after fixes.
-- [ ] T5: Mark PR #28 ready and merge once green or record blocker.
-- [ ] T6: Verify `0ryant/taudit-action` Marketplace repo shape.
-- [ ] T7: Add hosted smoke path if compatible with Marketplace no-workflows rule, or create disposable external smoke plan.
+- [x] T5: Mark PR #28 ready and merge once green or record blocker.
+- [x] T6: Verify `0ryant/taudit-action` Marketplace repo shape.
+- [x] T7: Add hosted smoke path if compatible with Marketplace no-workflows rule, or create disposable external smoke plan.
 - [ ] T8: Cut immutable action tag only after PR #28 is merged and smoke path is ready.
 - [ ] T9: Move/create `v1` only after immutable tag resolution is verified.
 - [ ] T10: Create GitHub release only after tag checks pass.
@@ -56,6 +56,31 @@ Scope: GitHub Marketplace readiness and publish path for `0ryant/taudit-action`.
 - Council ratified cutting `v1.1.4` with Rust 1.90 isolated only to the
   `cargo-semver-checks` install/check steps. Normal taudit MSRV, build, and test
   gates stay on Rust 1.88.
+- PR #28 merged to `main` at merge commit
+  `6f1927fb1d258b9b6babdc9ef5854966f7ff88c3` after all GitHub checks passed.
+- `v1.1.4` release workflow run `25890117240` passed end to end. GitHub release
+  `v1.1.4` is non-draft/non-prerelease and has 12 uploaded assets: five
+  platform archives, five checksum files, and SPDX/CycloneDX SBOMs.
+- crates.io shows `taudit 1.1.4` created at `2026-05-14T23:15:49.060868Z`.
+- `0ryant/taudit-action` Marketplace shape verified: public repository, root
+  `action.yml`, no workflows in the action repository.
+- `0ryant/taudit-action` `main` now points at `taudit 1.1.4` and includes a
+  fixed `bin/taudit-action` entrypoint. Pushed action commit:
+  `04afde52cdb8d4c96640672d92bfe74e9592a353`.
+- Local action gates passed after the entrypoint fix: `npm test` (14 tests),
+  `npm run check`, `actionlint examples/*.yml`.
+- Local real-asset smoke passed from `/tmp/taudit-action-smoke` by invoking
+  `bin/taudit-action` with `INPUT_VERSION=1.1.4`; output contained
+  `exit-code=0`, `outcome=pass`, and `taudit-version=1.1.4`.
+- Hosted SHA smoke was attempted in `0ryant/taudit-action-smoke` run
+  `25891309430` against action commit
+  `04afde52cdb8d4c96640672d92bfe74e9592a353`. GitHub failed the job before any
+  runner step started. Check-run annotation: "The job was not started because
+  recent account payments have failed or your spending limit needs to be
+  increased. Please check the 'Billing & plans' section in your settings".
+- Council ratified stopping before action tags until GitHub hosted smoke can
+  actually execute. Do not create immutable `v1.0.0`, movable `v1`, or
+  Marketplace release from local evidence alone.
 
 ## Decisions
 
@@ -64,6 +89,12 @@ Scope: GitHub Marketplace readiness and publish path for `0ryant/taudit-action`.
 - DEC[2]: Council ratified superseding the assetless `v1.1.2` release with a
   fresh `v1.1.3` cut from fixed main. Do not move, retag, or manually backfill
   `v1.1.2`.
+- DEC[3]: Supersede failed `v1.1.3` with `v1.1.4`, isolating Rust 1.90 to
+  semver-checks only while keeping the crate's release build/test toolchain at
+  Rust 1.88.
+- DEC[4]: Stop before action tags because the required GitHub-hosted smoke is
+  blocked by account billing/spending-limit state and produced no runner
+  execution evidence.
 
 ## Stop Conditions
 
