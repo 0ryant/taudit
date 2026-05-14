@@ -41,12 +41,12 @@ MEDIUM  GITHUB_TOKEN (release-artifacts) propagated to actions/checkout@sha acro
 taudit does three things, in this order:
 
 1. **Models authority propagation as a deterministic graph.** Typed `NodeKinds` (`Step`, `Secret`, `Identity`, `Image`, `Artifact`), explicit `TrustZones` (`FirstParty`, `ThirdParty`, `Untrusted`), and named `EdgeKinds` (`HasAccessTo`, `Produces`, `Consumes`, `UsesImage`, `DelegatesTo`, `PersistsTo`). Same YAML in, same graph out. See [`docs/authority-graph.md`](docs/authority-graph.md) for the full specification.
-2. **Evaluates 61 built-in graph predicates** (rules) across GitHub Actions, Azure DevOps, and GitLab CI — each one is a query over nodes and edges, not a style or schema lint over raw YAML.
+2. **Evaluates built-in graph predicates** (rules) across GitHub Actions, Azure DevOps, and GitLab CI — each one is a query over nodes and edges, not a style or schema lint over raw YAML.
 3. **Optionally expresses org-specific expectations** as declarative YAML invariants (`--rules-dir`) and, when you want merge discipline, runs `taudit verify` against a chosen invariant set — still grounded in the graph, not a separate policy runtime.
 
-### Built-in rules (61 total)
+### Built-in rules
 
-> This table shows a representative subset. Run `taudit explain` to list all 61 rules with severity, or `taudit explain <rule-id>` for full description and remediation guidance. The full catalogue is in [`docs/rules/index.md`](docs/rules/index.md).
+> This table shows a representative subset. Run `taudit explain` to list the current built-in rules with severity, or `taudit explain <rule-id>` for full description and remediation guidance. The full catalogue is in [`docs/rules/index.md`](docs/rules/index.md).
 
 | Rule | Severity | What it catches |
 |---|---|---|
@@ -156,7 +156,7 @@ taudit graph --format dot .github/workflows/release.yml | dot -Tsvg > release.sv
 # 2. Inspect the same graph as a human-readable access table.
 taudit map .github/workflows/release.yml
 
-# 3. Apply the 61 built-in rules and emit findings.
+# 3. Apply the built-in rules and emit findings.
 taudit scan .github/workflows/
 
 # 4. Same scan, machine-readable, with the full graph included in the JSON.
@@ -329,7 +329,7 @@ Then pass that spec to your runtime supervisor/executor.
 ### Explain rules
 
 ```bash
-# List all 61 rules with severity
+# List the current built-in rules with severity
 taudit explain
 
 # Full description for a single rule
@@ -349,7 +349,7 @@ taudit --version
 
 ### Authority invariants (custom checks)
 
-taudit's 61 built-in rules are **authority invariants** — declarative
+taudit's built-in rules are **authority invariants** — declarative
 properties the authority graph must satisfy. You can add your own as YAML
 files and load them with `--invariants-dir`:
 
@@ -410,7 +410,7 @@ taudit scan . --ignore-file .taudit/ignore.yml
 1. **Parse** — GitHub Actions, Azure DevOps, or GitLab CI YAML into typed nodes (steps, secrets, identities, images) with trust zone classification (FirstParty, ThirdParty, Untrusted). Platform is auto-detected by default (`--platform auto`); override with `--platform github-actions`, `--platform azure-devops`, or `--platform gitlab-ci`.
 2. **Build graph** — Directed edges model authority flow: `HasAccessTo`, `Produces`, `Consumes`, `UsesImage`, `DelegatesTo`, `PersistsTo`.
 3. **Propagate** — BFS from authority-bearing sources (secrets, identities) through edges, flagging trust boundary crossings.
-4. **Apply invariants** — 61 built-in rules (plus any custom YAML rules) pattern-match against the graph, producing findings with severity, evidence paths, and remediation routing.
+4. **Apply invariants** — built-in rules (plus any custom YAML rules) pattern-match against the graph, producing findings with severity, evidence paths, and remediation routing.
 
 Trust zones are explicit on every node:
 - **FirstParty** — code you own (`run:` steps, local actions)
