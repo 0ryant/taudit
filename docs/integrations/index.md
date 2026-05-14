@@ -51,6 +51,7 @@ envelope so consumers can pin to a major and fail loudly on a break.
 | Contract | Owned by | Where |
 |---|---|---|
 | Authority graph JSON | taudit | [`schemas/authority-graph.v1.json`](../../schemas/authority-graph.v1.json) — `schema_version: "1.0.0"` today |
+| GitHub Marketplace action | taudit | [`github-marketplace-action-contract.md`](github-marketplace-action-contract.md) — implemented `dev.taudit.github-action.v1` contract for `0ryant/taudit-action` |
 | in-toto predicate `taudit.dev/attestations/authority-graph/v0.1` | tsign | [`tsign-consumer.md`](tsign-consumer.md) |
 | axiom decision JSON | axiom | [`axiom-consumer.md`](axiom-consumer.md) — `decision_schema_version: "0.1.0"` today |
 
@@ -94,6 +95,12 @@ explicit flag and ADR — not merged into the core graph parser.
 For **Azure DevOps** (e.g. org **0ryant**), **GitLab CI**, and **Bitbucket Pipelines**, see **[`ci-mirrors.md`](ci-mirrors.md)** — root **`azure-pipelines.yml`**, **`.gitlab-ci.yml`**, and **`bitbucket-pipelines.yml`** mirror the Rust + governance + taudit checks where the platform supports it.
 
 ## GitHub Actions: stack-integration (this repo)
+
+For the planned first-class Marketplace wrapper, see
+[`github-marketplace-action-contract.md`](github-marketplace-action-contract.md).
+The action contract is intentionally stricter than a copy-paste README snippet:
+typed inputs, deterministic argv mapping, explicit policy/suppression/baseline
+controls, stable outputs, and taudit exit-code preservation.
 
 The [`stack-integration`](../../.github/workflows/stack-integration.yml) workflow assumes **tsafe** and **CellOS** live in **the same GitHub org as this repository** (default repo ids **`{owner}/tsafe`** and **`{owner}/CellOS`** on `github.com`, where `{owner}` is this repo’s owner). The Actions **`GITHUB_TOKEN`** can clone those repos when they are private to the org. It runs **`taudit scan`** on tsafe’s `.github/workflows/` (override repo id with **`SIBLING_TSAFE_REPO`** if the name differs).
 

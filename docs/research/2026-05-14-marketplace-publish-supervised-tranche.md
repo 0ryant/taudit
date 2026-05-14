@@ -1,0 +1,69 @@
+# Marketplace Publish Supervised Tranche
+
+Date: 2026-05-14
+Stop floor: 2026-05-15 01:13 BST
+Scope: GitHub Marketplace readiness and publish path for `0ryant/taudit-action`.
+
+## Source Of Truth
+
+- Council ratification: merge taudit PR #28 first, then immutable action tag, moving `v1`, GitHub release, hosted smoke, Marketplace Agreement/UI publish.
+- GitHub Marketplace docs: action repo must be public, contain one root action metadata file, and contain no workflow files; publishing is through a release UI with Marketplace checkbox and Developer Agreement gate.
+
+## Tasks
+
+- [x] T1: Reconcile taudit branch with current `origin/main`.
+- [x] T2: Diagnose and fix PR #28 failing `quality` check.
+- [x] T3: Keep/update the task ledger with observed blockers and decisions.
+- [x] T4: Run local release-equivalent verification after fixes.
+- [ ] T5: Mark PR #28 ready and merge once green or record blocker.
+- [ ] T6: Verify `0ryant/taudit-action` Marketplace repo shape.
+- [ ] T7: Add hosted smoke path if compatible with Marketplace no-workflows rule, or create disposable external smoke plan.
+- [ ] T8: Cut immutable action tag only after PR #28 is merged and smoke path is ready.
+- [ ] T9: Move/create `v1` only after immutable tag resolution is verified.
+- [ ] T10: Create GitHub release only after tag checks pass.
+- [ ] T11: Complete Marketplace UI/Developer Agreement publish if available; otherwise record exact external blocker.
+- [ ] T12: End with clean repos, pushed state, and explicit residual risks.
+
+## Evidence Log
+
+- 2026-05-14 23:13 BST: PR #28 observed as draft/open with one failed
+  `quality` check and `origin/main` 14 commits ahead of the branch.
+- Failed GitHub check root cause: `scripts/generate-authority-invariant-schema.py
+  --check` reported stale schema/category enums.
+- Merged `origin/main` into `codex/marketplace-action-tranche`; merge commit
+  `bbeddc9`.
+- Regenerated schema check passed: `All four schemas match generator output.`
+- Isolated validator venv check passed:
+  `OK: validated 13 file(s) against authority-invariant-v1.schema.json`.
+- 2026-05-14 23:21 BST: Observed `v1.1.2` GitHub release has zero assets.
+- Failed `v1.1.2` release run root cause:
+  `cargo-semver-checks 0.47.0` requires Rust 1.91, but the release tag uses
+  Rust 1.88. The log itself identifies `cargo-semver-checks 0.44.0` as the
+  Rust-1.88-compatible version.
+- Observed `taudit@1.1.3` is not present on crates.io (`404 Not Found`).
+- Local release gate passed for `v1.1.3`: `cargo fmt --all -- --check`,
+  `cargo clippy --workspace --all-targets -- -D warnings`,
+  `cargo test --workspace`, `python3 scripts/check-crates-publish-metadata.py
+  --expected-release-version 1.1.3`, `python3 scripts/release_harness.py check
+  --tag v1.1.3`, `cargo deny check licenses bans sources`, `cargo audit`, and
+  `rustup run 1.88.0 cargo semver-checks check-release --workspace
+  --all-features`.
+- Tested `cargo-semver-checks 0.44.0`; it installs on Rust 1.88 but cannot parse
+  this workspace's Rust 1.88 rustdoc JSON format. `0.46.0` passed the local
+  Rust 1.88 semver gate.
+
+## Decisions
+
+- DEC[1]: Use a temporary Python virtualenv for local YAML validation because
+  the managed system Python rejects direct `pip install --user` under PEP 668.
+- DEC[2]: Council ratified superseding the assetless `v1.1.2` release with a
+  fresh `v1.1.3` cut from fixed main. Do not move, retag, or manually backfill
+  `v1.1.2`.
+
+## Stop Conditions
+
+- Hosted smoke failure.
+- Tag or release mismatch.
+- Marketplace metadata warning/error.
+- Developer Agreement or 2FA UI blocks publication.
+- Any unreviewed code/security gate failure.

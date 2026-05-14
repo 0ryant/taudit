@@ -6,6 +6,186 @@ MoSCoW: **Must** | **Should** | **Could** | **Won't**
 
 ---
 
+## Must Have
+
+### GitHub Marketplace action publication
+
+**Status:** In progress — public `0ryant/taudit-action` repo exists and
+contains the verified v1 wrapper scaffold. External Marketplace publication,
+immutable tag, moving `v1` tag, and hosted smoke remain open.
+**Effort:** Medium
+**Impact:** Make taudit installable as a first-class GitHub Marketplace action for CI/CD authority scanning and merge-gate adoption.
+**UX decision:** Ratified in [`docs/research/2026-05-14-github-marketplace-action-ux.md`](docs/research/2026-05-14-github-marketplace-action-ux.md). Marketplace v1 is **verify-first**: `scan` is advisory/bootstrap, `graph` is observability, `verify` is the default team gate.
+**Contract:** [`docs/integrations/github-marketplace-action-contract.md`](docs/integrations/github-marketplace-action-contract.md) defines `dev.taudit.github-action.v1`: input schema, output schema, argv mapping, exit semantics, security invariants, and compatibility rules.
+**Configuration model:** `policy` is only the invariant bundle. Suppressions, `.tauditignore`, and baselines are separate first-class controls and must be exposed/documented separately.
+
+#### Current state
+
+taudit has a local composite action at [`.github/actions/taudit-scan/action.yml`](.github/actions/taudit-scan/action.yml), but this repository is not shaped for direct Marketplace publication:
+
+- The action metadata is nested, not at repository root.
+- This repository contains product source, release workflows, docs, fixtures, and other files beyond a single action package.
+- The current composite action installs with `cargo install` and assumes `taudit scan` exit code means findings, but `scan` is now informational; enforcement should use `taudit verify`.
+- The current action interpolates user inputs into shell commands and is not ready for Marketplace exposure.
+
+#### Target shape
+
+Create a dedicated public action repository, `0ryant/taudit-action`, with:
+
+- Root `action.yml`.
+- Minimal wrapper code and README only.
+- No product release workflows from this repository copied across.
+- A unique Marketplace `name`, clear `description`, `author`, and `branding`.
+- Tags aligned to taudit stable releases, plus a moving compatible major tag such as `v1`.
+
+#### Implementation tasks
+
+- [x] Create dedicated Marketplace repository (`taudit-action`) or equivalent dedicated repo name.
+- [x] Add root `action.yml` with validated inputs:
+  - `mode`: `verify` (default), `scan`, or `graph`
+  - `version`: default to current stable, not floating `latest`
+  - `paths`: newline-separated paths/globs
+  - `platform`
+  - `ado-org`
+  - `ado-project`
+  - `ado-pat`
+  - `severity-threshold`
+  - `policy`
+  - `include-builtin`
+  - `ignore-file`
+  - `suppressions`
+  - `suppression-mode`
+  - `baseline-root`
+  - `gate-on-all`
+  - `strict`
+  - `ignore-partial`
+  - `format`
+  - `output`
+  - `graph-view`
+  - `max-hops`
+  - `no-color`
+  - `fallback-cargo`
+- [x] In the action repo, commit `contracts/taudit-action-inputs.v1.schema.json` matching [`docs/integrations/github-marketplace-action-contract.md`](docs/integrations/github-marketplace-action-contract.md).
+- [x] Replace shell-string construction with a safe argv-building wrapper.
+- [x] Validate enum-like inputs before execution (`mode`, `platform`, `format`, severity).
+- [x] Ensure `scan` mode is advisory by default unless an explicit fail option is selected.
+- [x] Ensure `verify` mode preserves taudit exit semantics: `0` pass, `1` violations, `2` cannot decide/config error.
+- [x] Preserve CLI control semantics:
+  - `policy` is required for `verify` and is not a suppressions directory.
+  - ADO enrichment inputs are all-or-none and `ado-pat` is masked.
+  - built-ins run in `verify` only when `include-builtin` is true.
+  - `.tauditignore` auto-discovery works unless `ignore-file` is supplied.
+  - `.taudit-suppressions.yml` and `.taudit/suppressions.yml` auto-discovery works unless `suppressions` is supplied.
+  - `.taudit/baselines/` auto-discovery works unless `baseline-root` is supplied.
+  - `gate-on-all` overrides baseline-new-only gating.
+  - `ignore-partial` is explicit, visible in summary, and never silently enabled.
+- [x] Emit clear action summary/output fields for loaded controls:
+  - `policy-path`
+  - `ignore-file-used`
+  - `suppressions-file-used`
+  - `suppression-mode-used`
+  - `baseline-root-used`
+  - `baseline-status`
+  - `partial-policy`
+  - `ado-enrichment`
+  - `new-findings-count`
+  - `preexisting-critical-count`
+  - `waived-count`
+- [x] Prefer downloading the pinned taudit release binary for runner OS/arch.
+- [x] Add a locked `cargo install taudit --version <version> --locked` fallback for unsupported platforms or missing release assets.
+- [x] Avoid echoing secrets, tokens, raw command lines with secret-bearing inputs, or untrusted arguments.
+- [x] Omit raw `extra-args` from v1; add only typed, validated inputs.
+- [x] Document SARIF upload as a separate `github/codeql-action/upload-sarif` step with explicit permissions.
+
+#### Documentation tasks
+
+- [x] Add Marketplace README with copy-paste workflows:
+  - required `verify` gate with policy directory
+  - link to the full action contract/schema
+  - config model explaining policy vs `.tauditignore` vs suppressions vs baselines
+  - advisory scan/bootstrap for first adoption
+  - SARIF output and upload
+  - graph artifact generation
+  - baseline-first adoption for existing repos
+  - suppression workflow using `suppression_key`
+- [x] Document suppression modes:
+  - `downgrade` can affect severity-threshold gating.
+  - `tag-only` preserves severity and does not by itself make `verify` pass.
+- [x] Document critical waiver behavior: critical suppressions require expiry; expired waivers stop applying; baselined critical findings still gate unless explicitly time-waived.
+- [x] Document the action step summary so users can explain exactly which policy, ignore file, suppression file, and baseline were applied.
+- [x] Make first-run/baseline errors crisp: explain whether policy or baseline is missing and show the exact bootstrap command.
+- [x] Document exact exit-code behavior for each mode.
+- [x] Document recommended pinning:
+  - `uses: 0ryant/taudit-action@v1` for compatible updates
+  - full SHA pin for high-control environments
+  - taudit CLI version pin via `version`
+- [ ] Update taudit docs to point users at the Marketplace action once published.
+- [x] Replace stale `cargo install taudit --version 1.0.12 --locked` examples with the current stable version where appropriate.
+- [x] Add a short security model: what the action reads, what it uploads, required permissions, and how it handles untrusted inputs.
+
+#### Test and readiness gates
+
+- [x] Unit-test wrapper argument construction and input validation.
+- [x] Add injection tests for `paths`, `policy`, `ignore-file`, `suppressions`, `baseline-root`, `output`, and any optional extra argument field.
+- [x] Add a negative test proving no v1 `extra-args` passthrough exists.
+- [ ] Run `actionlint` and `yamllint` on all README workflow examples. (`actionlint` passed locally; `yamllint` unavailable.)
+- [ ] Hosted-runner smoke on `ubuntu-latest`, `macos-latest`, and `windows-latest`.
+- [ ] Smoke `scan` mode on a clean fixture and a leaky fixture.
+- [ ] Smoke `verify` mode with:
+  - clean/noop policy exits `0`
+  - violating policy exits `1`
+  - missing policy or bad config exits `2`
+  - built-ins absent by default and present with `include-builtin`
+  - explicit missing suppression/ignore/policy paths fail clearly
+  - `suppression-mode: tag-only` does not suppress the gate
+  - `suppression-mode: downgrade` changes severity-threshold behavior
+  - critical suppression without expiry exits as a config error
+  - expired suppression no longer applies
+  - baseline-new-only gating, unwaived critical blocking, and `gate-on-all`
+  - `ignore-partial` behavior and summary visibility
+  - ADO enrichment all-or-none validation and PAT masking
+- [ ] Smoke `graph` mode for `json`, `dot`, `mermaid`, and `summary`.
+- [ ] Verify SARIF file generation and upload in a disposable repository.
+- [ ] Verify SARIF upload runs in a separate trusted job/workflow and does not grant `security-events: write` to untrusted PR execution.
+- [ ] Verify binary download path for each supported OS/arch.
+- [ ] Verify cargo fallback path on at least one runner.
+- [x] Verify no secrets or token-like values appear in logs from normal and failure paths.
+- [x] Verify action summary outputs loaded policy/ignore/suppressions/baseline state without leaking sensitive values.
+- [ ] Run the action against this repository's `.github/workflows/` as an advisory self-scan.
+- [ ] Run at least one disposable-repo end-to-end workflow using `uses: 0ryant/taudit-action@<tag>`.
+
+#### Marketplace publish tasks
+
+- [x] Confirm repository is public.
+- [ ] Confirm GitHub Marketplace Developer Agreement is accepted for the publishing account/org.
+- [ ] Confirm root `action.yml` has no Marketplace validation warnings.
+- [ ] Confirm action `name` is unique and not a reserved GitHub feature/category/user/org name.
+- [ ] Choose primary category; likely `Security` if available, otherwise closest Marketplace category.
+- [ ] Cut immutable release tag for the action repository.
+- [ ] Create/move compatible major tag (`v1`) only after the immutable tag passes hosted smoke.
+- [ ] Draft GitHub release from root `action.yml`.
+- [ ] Select **Publish this Action to the GitHub Marketplace**.
+- [ ] Publish release with release notes that name the bundled taudit version and supported modes.
+- [ ] After publication, install from Marketplace in a disposable repo and rerun smoke workflows.
+
+#### Acceptance criteria
+
+- [ ] A user can add one `uses: 0ryant/taudit-action@v1` step and get a useful advisory scan.
+- [ ] A team can make `verify` mode a required PR check without custom shell scripting.
+- [ ] SARIF and graph outputs can be produced without unsafe shell interpolation.
+- [ ] The action works on GitHub-hosted Linux, macOS, and Windows.
+- [ ] Docs explain how the action helps teams lock down pipelines: baseline, gate new authority paths, inspect graph output, and apply suppressions with reviewable keys.
+- [ ] Published Marketplace listing points to current docs and a current stable taudit release.
+
+#### Won't scope for first Marketplace release
+
+- Docker action packaging.
+- Automatic policy authoring.
+- Built-in upload to third-party storage or SIEM.
+- Non-GitHub CI wrappers; keep ADO/GitLab examples in taudit docs, not the Marketplace action repo.
+
+---
+
 ## Could Have
 
 ### `--ado-pat`: ADO variable group resolution at scan time

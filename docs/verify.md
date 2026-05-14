@@ -268,7 +268,7 @@ jobs:
     steps:
       - uses: actions/checkout@a5ac7e51b41094c92402da3b24376905380afc29
       - name: Install taudit
-        run: cargo install taudit --version 1.0.12 --locked
+        run: cargo install taudit --version 1.1.2 --locked
       - name: Verify pipeline policy
         run: taudit verify --policy .taudit/policy/ .github/workflows/
 ```
@@ -282,7 +282,7 @@ config error) blocks the merge.
 verify-pipeline-policy:
   stage: test
   script:
-    - cargo install taudit --version 1.0.12 --locked
+    - cargo install taudit --version 1.1.2 --locked
     - taudit verify --policy .taudit/policy/ .gitlab-ci.yml
   rules:
     - if: $CI_PIPELINE_SOURCE == "merge_request_event"
@@ -296,7 +296,7 @@ verify-pipeline-policy:
   inputs:
     targetType: inline
     script: |
-      cargo install taudit --version 1.0.12 --locked
+      cargo install taudit --version 1.1.2 --locked
       taudit verify --policy .taudit/policy/ azure-pipelines.yml
 ```
 

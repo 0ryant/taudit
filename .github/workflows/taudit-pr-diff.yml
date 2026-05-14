@@ -32,7 +32,11 @@ jobs:
           BASE=${{ github.event.pull_request.base.sha }}
           HEAD=${{ github.event.pull_request.head.sha }}
           FILES=$(git diff --name-only "$BASE" "$HEAD" | grep -E '\.(yml|yaml)$' | head -20 || true)
-          echo "files=$FILES" >> "$GITHUB_OUTPUT"
+          {
+            echo "files<<EOF"
+            echo "$FILES"
+            echo "EOF"
+          } >> "$GITHUB_OUTPUT"
 
       - name: Run authority diff on each changed file
         id: diff
@@ -40,7 +44,8 @@ jobs:
         run: |
           BASE=${{ github.event.pull_request.base.sha }}
           REPORT=""
-          for FILE in ${{ steps.changed.outputs.files }}; do
+          while IFS= read -r FILE; do
+            [ -n "$FILE" ] || continue
             # Get base version of file (empty string if new)
             BASE_CONTENT=$(git show "${BASE}:${FILE}" 2>/dev/null || true)
             if [ -n "$BASE_CONTENT" ] && [ -f "$FILE" ]; then
@@ -49,7 +54,7 @@ jobs:
                 REPORT="${REPORT}\n### \`${FILE}\`\n\`\`\`\n${DIFF}\n\`\`\`\n"
               fi
             fi
-          done
+          done <<< "${FILES}"
           if [ -n "$REPORT" ]; then
             {
               echo "report<<EOF"
@@ -57,6 +62,8 @@ jobs:
               echo "EOF"
             } >> "$GITHUB_OUTPUT"
           fi
+        env:
+          FILES: ${{ steps.changed.outputs.files }}
 
       - name: Post PR comment
         if: steps.diff.outputs.report != ''
