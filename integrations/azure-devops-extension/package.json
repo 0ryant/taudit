@@ -1,0 +1,18 @@
+{
+  "name": "taudit-azure-devops-extension",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Azure DevOps pipeline task packaging for taudit.",
+  "license": "MIT OR Apache-2.0",
+  "scripts": {
+    "prepare:task-runtime": "npm install --omit=dev --prefix Taudit",
+    "check": "node --check Taudit/index.js Taudit/lib/*.js test/*.mjs",
+    "test": "node --test test/argv.test.mjs test/inputs.test.mjs",
+    "package:vsix": "npm run prepare:task-runtime && mkdir -p dist && npx tfx-cli extension create --manifest-globs vss-extension.json --output-path dist",
+    "smoke:vsix": "node test/vsix-smoke.mjs",
+    "preflight": "npm run check && npm run test && npm run package:vsix && npm run smoke:vsix"
+  },
+  "devDependencies": {
+    "tfx-cli": "^0.22.0"
+  }
+}

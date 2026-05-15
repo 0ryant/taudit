@@ -1,0 +1,73 @@
+{
+  "manifestVersion": 1,
+  "id": "taudit-azure-pipelines",
+  "publisher": "algol",
+  "version": "0.1.0",
+  "name": "taudit",
+  "description": "Run taudit verify, scan, and graph in Azure Pipelines through a typed pipeline task.",
+  "public": false,
+  "categories": [
+    "Azure Pipelines"
+  ],
+  "targets": [
+    {
+      "id": "Microsoft.VisualStudio.Services"
+    }
+  ],
+  "icons": {
+    "default": "images/extension-icon.png"
+  },
+  "branding": {
+    "color": "#111827",
+    "theme": "dark"
+  },
+  "content": {
+    "details": {
+      "path": "overview.md"
+    }
+  },
+  "links": {
+    "support": {
+      "uri": "https://github.com/0ryant/taudit/issues"
+    },
+    "learn": {
+      "uri": "https://github.com/0ryant/taudit/blob/main/integrations/azure-devops-extension/README.md"
+    },
+    "license": {
+      "uri": "https://github.com/0ryant/taudit/blob/main/LICENSE"
+    }
+  },
+  "repository": {
+    "type": "git",
+    "uri": "https://github.com/0ryant/taudit"
+  },
+  "files": [
+    {
+      "path": "Taudit"
+    },
+    {
+      "path": "Taudit/node_modules"
+    },
+    {
+      "path": "images"
+    },
+    {
+      "path": "overview.md"
+    },
+    {
+      "path": "README.md"
+    }
+  ],
+  "contributions": [
+    {
+      "id": "taudit-task",
+      "type": "ms.vss-distributed-task.task",
+      "targets": [
+        "ms.vss-distributed-task.tasks"
+      ],
+      "properties": {
+        "name": "Taudit"
+      }
+    }
+  ]
+}

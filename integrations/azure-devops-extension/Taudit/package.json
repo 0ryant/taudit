@@ -1,0 +1,9 @@
+{
+  "name": "taudit-azure-devops-task-runtime",
+  "version": "0.1.0",
+  "private": true,
+  "license": "MIT OR Apache-2.0",
+  "dependencies": {
+    "azure-pipelines-task-lib": "^5.2.1"
+  }
+}

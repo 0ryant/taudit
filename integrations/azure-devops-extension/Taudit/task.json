@@ -1,0 +1,232 @@
+{
+  "$schema": "https://raw.githubusercontent.com/microsoft/azure-pipelines-task-lib/master/tasks.schema.json",
+  "id": "cd3bb7e5-31cc-4a50-b8b8-f76ff2e44e78",
+  "name": "Taudit",
+  "friendlyName": "taudit",
+  "description": "Run taudit verify, scan, or graph against CI/CD pipeline YAML with a typed task surface.",
+  "helpMarkDown": "Use verify mode with a policy directory for merge gating. Graph mode can emit authority or exploit views.",
+  "category": "Utility",
+  "author": "Algol",
+  "version": {
+    "Major": 1,
+    "Minor": 0,
+    "Patch": 0
+  },
+  "minimumAgentVersion": "2.182.1",
+  "instanceNameFormat": "taudit $(mode)",
+  "inputs": [
+    {
+      "name": "mode",
+      "type": "pickList",
+      "label": "Mode",
+      "defaultValue": "verify",
+      "required": true,
+      "options": {
+        "verify": "verify",
+        "scan": "scan",
+        "graph": "graph"
+      },
+      "helpMarkDown": "taudit subcommand to run."
+    },
+    {
+      "name": "version",
+      "type": "string",
+      "label": "taudit version",
+      "defaultValue": "1.1.4",
+      "required": false,
+      "helpMarkDown": "Pinned taudit version to download."
+    },
+    {
+      "name": "paths",
+      "type": "multiLine",
+      "label": "Paths",
+      "defaultValue": "azure-pipelines.yml",
+      "required": true,
+      "helpMarkDown": "Newline-separated workspace-relative pipeline paths or directories."
+    },
+    {
+      "name": "platform",
+      "type": "pickList",
+      "label": "Platform",
+      "defaultValue": "auto",
+      "required": true,
+      "options": {
+        "auto": "auto",
+        "github-actions": "github-actions",
+        "azure-devops": "azure-devops",
+        "gitlab": "gitlab",
+        "bitbucket": "bitbucket"
+      },
+      "helpMarkDown": "Override platform autodetection when needed."
+    },
+    {
+      "name": "adoOrg",
+      "type": "string",
+      "label": "ADO org",
+      "defaultValue": "",
+      "required": false,
+      "helpMarkDown": "Optional Azure DevOps org for variable-group enrichment. Requires project and PAT."
+    },
+    {
+      "name": "adoProject",
+      "type": "string",
+      "label": "ADO project",
+      "defaultValue": "",
+      "required": false,
+      "helpMarkDown": "Optional Azure DevOps project for variable-group enrichment. Requires org and PAT."
+    },
+    {
+      "name": "adoPat",
+      "type": "string",
+      "label": "ADO PAT",
+      "defaultValue": "",
+      "required": false,
+      "helpMarkDown": "Optional Azure DevOps PAT for variable-group enrichment. Prefer a secret pipeline variable or env: TAUDIT_ADO_PAT."
+    },
+    {
+      "name": "policy",
+      "type": "filePath",
+      "label": "Policy path",
+      "defaultValue": "",
+      "required": false,
+      "helpMarkDown": "Required in verify mode. Workspace-relative file or directory."
+    },
+    {
+      "name": "includeBuiltin",
+      "type": "boolean",
+      "label": "Include builtin policy",
+      "defaultValue": "false",
+      "required": false
+    },
+    {
+      "name": "ignoreFile",
+      "type": "filePath",
+      "label": "Ignore file",
+      "defaultValue": "",
+      "required": false
+    },
+    {
+      "name": "suppressions",
+      "type": "filePath",
+      "label": "Suppressions file",
+      "defaultValue": "",
+      "required": false
+    },
+    {
+      "name": "suppressionMode",
+      "type": "pickList",
+      "label": "Suppression mode",
+      "defaultValue": "downgrade",
+      "required": false,
+      "options": {
+        "downgrade": "downgrade",
+        "tag-only": "tag-only"
+      }
+    },
+    {
+      "name": "baselineRoot",
+      "type": "filePath",
+      "label": "Baseline root",
+      "defaultValue": "",
+      "required": false
+    },
+    {
+      "name": "gateOnAll",
+      "type": "boolean",
+      "label": "Gate on all findings",
+      "defaultValue": "false",
+      "required": false
+    },
+    {
+      "name": "strict",
+      "type": "boolean",
+      "label": "Strict mode",
+      "defaultValue": "false",
+      "required": false
+    },
+    {
+      "name": "ignorePartial",
+      "type": "boolean",
+      "label": "Ignore partial graph findings",
+      "defaultValue": "false",
+      "required": false
+    },
+    {
+      "name": "format",
+      "type": "string",
+      "label": "Format",
+      "defaultValue": "",
+      "required": false,
+      "helpMarkDown": "Mode-scoped taudit output format."
+    },
+    {
+      "name": "output",
+      "type": "string",
+      "label": "Output file",
+      "defaultValue": "",
+      "required": false,
+      "helpMarkDown": "Workspace-relative output path. For graph mode, the task captures stdout into this file."
+    },
+    {
+      "name": "graphView",
+      "type": "pickList",
+      "label": "Graph view",
+      "defaultValue": "authority",
+      "required": false,
+      "options": {
+        "authority": "authority",
+        "exploit": "exploit"
+      }
+    },
+    {
+      "name": "severityThreshold",
+      "type": "pickList",
+      "label": "Severity threshold",
+      "defaultValue": "",
+      "required": false,
+      "options": {
+        "critical": "critical",
+        "high": "high",
+        "medium": "medium",
+        "low": "low",
+        "info": "info"
+      }
+    },
+    {
+      "name": "maxHops",
+      "type": "string",
+      "label": "Max hops",
+      "defaultValue": "",
+      "required": false
+    },
+    {
+      "name": "noColor",
+      "type": "boolean",
+      "label": "Disable ANSI color",
+      "defaultValue": "true",
+      "required": false
+    },
+    {
+      "name": "fallbackCargo",
+      "type": "boolean",
+      "label": "Fallback to cargo install",
+      "defaultValue": "false",
+      "required": false
+    }
+  ],
+  "restrictions": {
+    "commands": {
+      "mode": "restricted"
+    },
+    "settableVariables": {
+      "allowed": [
+        "taudit.*"
+      ]
+    }
+  },
+  "execution": {
+    "Node20_1": {
+      "target": "index.js"
+    }
+  }
+}
