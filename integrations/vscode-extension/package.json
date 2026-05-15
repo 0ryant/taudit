@@ -1,7 +1,7 @@
 {
   "name": "taudit-vscode",
   "displayName": "taudit",
-  "description": "Verify CI/CD pipeline authority, scan findings, and render taudit graphs from VS Code.",
+  "description": "Audit GitHub Actions, Azure Pipelines, GitLab CI, and Bitbucket workflows from VS Code with policy gates and taudit graphs.",
   "version": "0.1.5",
   "publisher": "algol",
   "icon": "assets/icon.png",

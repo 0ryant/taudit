@@ -3,8 +3,8 @@
   "id": "cd3bb7e5-31cc-4a50-b8b8-f76ff2e44e78",
   "name": "Taudit",
   "friendlyName": "taudit",
-  "description": "Run taudit verify, scan, or graph against CI/CD pipeline YAML with a typed task surface.",
-  "helpMarkDown": "Use verify mode with a workspace-relative policy directory for merge gating. baselineRoot must also be workspace-relative; do not pass $(System.DefaultWorkingDirectory) or an absolute path. Graph mode can emit authority or exploit views.",
+  "description": "Fail unsafe CI/CD pipeline changes with taudit verify, scan, or graph in Azure Pipelines.",
+  "helpMarkDown": "Use verify mode with a workspace-relative policy directory to gate merges. baselineRoot and other path inputs must stay workspace-relative; do not pass $(System.DefaultWorkingDirectory) or absolute paths. Graph mode can emit authority or exploit views for review artifacts.",
   "category": "Utility",
   "author": "Algol",
   "version": {
@@ -42,7 +42,7 @@
       "label": "Paths",
       "defaultValue": "azure-pipelines.yml",
       "required": true,
-      "helpMarkDown": "Newline-separated workspace-relative pipeline paths or directories."
+      "helpMarkDown": "Newline-separated workspace-relative pipeline paths or directories. Do not pass $(System.DefaultWorkingDirectory) or other absolute Azure DevOps path variables."
     },
     {
       "name": "platform",
@@ -89,7 +89,7 @@
       "label": "Policy path",
       "defaultValue": "",
       "required": false,
-      "helpMarkDown": "Required in verify mode. Workspace-relative file or directory."
+      "helpMarkDown": "Required in verify mode. Workspace-relative file or directory only; do not pass $(System.DefaultWorkingDirectory) or other absolute Azure DevOps path variables."
     },
     {
       "name": "includeBuiltin",
@@ -103,14 +103,16 @@
       "type": "filePath",
       "label": "Ignore file",
       "defaultValue": "",
-      "required": false
+      "required": false,
+      "helpMarkDown": "Optional workspace-relative path to .tauditignore."
     },
     {
       "name": "suppressions",
       "type": "filePath",
       "label": "Suppressions file",
       "defaultValue": "",
-      "required": false
+      "required": false,
+      "helpMarkDown": "Optional workspace-relative path to a taudit suppressions file."
     },
     {
       "name": "suppressionMode",
@@ -166,7 +168,7 @@
       "label": "Output file",
       "defaultValue": "",
       "required": false,
-      "helpMarkDown": "Workspace-relative output path. For graph mode, the task captures stdout into this file."
+      "helpMarkDown": "Workspace-relative output path. For graph mode, the task captures stdout into this file. Do not target repository control or workflow files."
     },
     {
       "name": "graphView",

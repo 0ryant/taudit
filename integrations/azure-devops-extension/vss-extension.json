@@ -4,7 +4,7 @@
   "publisher": "algol",
   "version": "0.1.7",
   "name": "taudit",
-  "description": "Gate Azure Pipelines with taudit policy checks, advisory scans, and authority graph artifacts.",
+  "description": "Fail unsafe Azure Pipelines before merge with taudit policy gates, workflow findings, and authority or exploit graph artifacts.",
   "public": true,
   "categories": [
     "Azure Pipelines"

@@ -125,6 +125,12 @@ function validateWorkspacePath(name, value, options = {}) {
   if (path.includes("\0") || path.includes("\n") || path.includes("\r")) {
     throw new Error(`${name} must be a single workspace-relative path`);
   }
+  if (/^\$\([^)]+\)(?:[\\/].*)?$/.test(path)) {
+    if (baselineRoot) {
+      throw new Error("baselineRoot must be workspace-relative (for example '.' or '.taudit'); do not pass $(System.DefaultWorkingDirectory) or an absolute path");
+    }
+    throw new Error(`${name} must be workspace-relative; do not pass $(System.DefaultWorkingDirectory) or other Azure DevOps path variables`);
+  }
   if (path.startsWith("/") || /^[A-Za-z]:[\\/]/.test(path)) {
     if (baselineRoot) {
       throw new Error("baselineRoot must be workspace-relative (for example '.' or '.taudit'); do not pass $(System.DefaultWorkingDirectory) or an absolute path");

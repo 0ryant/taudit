@@ -1,50 +1,30 @@
 # taudit for Azure Pipelines
 
-Gate Azure Pipelines with the same taudit controls operators use from the CLI:
-policy verification, advisory CI/CD scans, and reviewable authority or exploit
-graph artifacts.
+Fail unsafe Azure Pipelines before merge with repo-local taudit policy gates,
+reviewable workflow findings, and saved authority or exploit graph artifacts.
 
 Use `Taudit@1` when you need to:
 
-- fail a pipeline when workflow authority violates a repo-local policy
-- scan Azure Pipelines YAML, GitHub Actions, GitLab CI, or Bitbucket pipeline
-  files during migration and audit work
-- export authority and exploit-candidate graphs for security review
+- fail a pipeline when a PR introduces broad service connections, risky mutable
+  state, or secret-bearing helper flows
+- review advisory findings during migration, audit, or hardening work
+- export authority and exploit-candidate graphs as pipeline artifacts for
+  security review
 - keep policy, ignore files, suppressions, and baselines as explicit pipeline
   controls instead of shell-script arguments
 
-Two operator constraints matter in practice:
-
-- `baselineRoot` is workspace-relative only. Use `.` or another repo-relative
-  path, not `$(System.DefaultWorkingDirectory)` and not an absolute path.
-- On Windows runners, release extraction depends on PowerShell archive support
-  or `tar`; if those are missing, use `fallbackCargo=true`.
-
-## Golden path
+## 60-second quick start
 
 1. Install the extension into your Azure DevOps organization.
-2. Add `Taudit@1` to a pipeline.
-3. Start with `mode: verify` and a repo-local policy directory such as
-   `.taudit/policy/`.
-4. Add `mode: graph` with `graphView: authority` or `graphView: exploit` when
-   you want a saved graph artifact for review.
-
-## What it does
-
-- Runs `taudit verify`, `taudit scan`, or `taudit graph`.
-- Preserves a typed task contract with no raw shell or arbitrary argument
-  passthrough.
-- Downloads a pinned `taudit` release asset for the current runner platform.
-- Keeps Azure DevOps PAT material out of argv and injects it through process
-  environment only when ADO enrichment is configured
-- Falls back to a locked, workspace-local Cargo install only when explicitly
-  enabled through `fallbackCargo`
-
-## Minimal step
+2. Add `Taudit@1` to a pipeline with `mode: verify` and a repo-local policy
+   path such as `.taudit/policy/`.
+3. Run the pipeline and inspect the `taudit.outcome` and `taudit.reportPath`
+   outputs.
 
 ```yaml
 steps:
   - task: Taudit@1
+    displayName: Verify pipeline policy
     inputs:
       mode: verify
       policy: .taudit/policy/
@@ -52,7 +32,19 @@ steps:
         azure-pipelines.yml
 ```
 
-## Graph artifact example
+## Requirements and limitations
+
+- `policy` is required in `verify` mode.
+- `baselineRoot` is workspace-relative only. Use `.` or another repo-relative
+  path, not `$(System.DefaultWorkingDirectory)` and not an absolute path.
+- On Windows runners, release extraction depends on PowerShell archive support
+  or `tar`; if those are missing, use `fallbackCargo=true`.
+- ADO variable-group enrichment is optional and requires `adoOrg`,
+  `adoProject`, and a secret `adoPat` or `TAUDIT_ADO_PAT`.
+- The task is Azure DevOps-first. Cross-CI scanning is supported, but the main
+  merge-gating story is Azure Pipelines.
+
+## Review artifact example
 
 ```yaml
 steps:
@@ -67,6 +59,23 @@ steps:
       output: .artifacts/taudit-exploit.dot
 ```
 
+## What lands in the run
+
+- `taudit.exitCode`
+- `taudit.outcome`
+- `taudit.reportPath`
+- `taudit.findingsCount`
+- `taudit.tauditVersion`
+- saved graph or report artifacts when `output` is set
+- config errors surfaced directly in the task log before taudit starts
+
+## Trust signals
+
+- typed task contract with no raw shell passthrough
+- pinned GitHub release assets by taudit version and runner platform
+- ADO PAT material stays in process environment and out of taudit argv
+- open-source implementation and documented security disclosure path
+
 ## Key controls
 
 - `includeBuiltin`
@@ -77,19 +86,6 @@ steps:
 - `gateOnAll`
 - `ignorePartial`
 - `graphView`
-
-## Outputs
-
-The task writes output variables such as:
-
-- `taudit.exitCode`
-- `taudit.outcome`
-- `taudit.reportPath`
-- `taudit.findingsCount`
-- `taudit.tauditVersion`
-
-These can be consumed by later steps in the same job or downstream jobs using
-Azure DevOps output-variable syntax.
 
 ## Demo and docs
 

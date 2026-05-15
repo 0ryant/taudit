@@ -1,75 +1,66 @@
 # taudit VS Code Extension
 
-Verify CI/CD pipeline authority from VS Code. The taudit extension runs your
-local `taudit` CLI through typed commands for `verify`, `scan`, and
-authority/exploit graph generation.
+Audit GitHub Actions, Azure Pipelines, GitLab CI, and Bitbucket pipelines from
+VS Code with policy gates, advisory findings, and authority or exploit graphs.
 
-Use it when you want editor-side checks for GitHub Actions, Azure DevOps,
-GitLab CI, or Bitbucket Pipelines without writing ad hoc shell commands.
+Use it when you want a local workflow for CI/CD policy review without writing
+ad hoc shell commands.
 
-What it gives you:
+What you get first:
 
-- `Verify Workspace` for policy-backed CI/CD authority checks.
-- `Scan Workspace` and `Scan Active File` for advisory findings.
-- Authority and exploit graph commands for local graph inspection.
-- Explicit settings for policy, ignore files, suppressions, baselines,
-  platform, graph format, and severity threshold.
+- `Verify Workspace` to fail unsafe GitHub Actions or Azure Pipelines policy
+  paths before merge.
+- `Scan Workspace` and `Scan Active File` for advisory workflow findings and
+  SARIF-ready output.
+- Authority and exploit graph commands for local review of risky helper,
+  secret, and mutable-state paths.
+- Output and artifact views inside VS Code so you can inspect command results,
+  graph files, and config errors without leaving the editor.
 
-The extension does not embed taudit. Install `taudit` locally, keep it on
-`PATH`, or set `taudit.binaryPath`.
+## Before you install
 
-Current commands:
+- Install `taudit` locally with `cargo install taudit --locked`.
+- Keep `taudit` on `PATH`, or set `taudit.binaryPath`.
+- `Verify Workspace` requires a repo-local policy path.
+- Supported workflow platforms are GitHub Actions, Azure DevOps, GitLab CI, and
+  Bitbucket Pipelines.
 
-- `taudit: Initialize Workspace Policy`
-- `taudit: Verify Workspace`
-- `taudit: Scan Workspace`
-- `taudit: Scan Active File`
-- `taudit: Graph Authority View`
-- `taudit: Graph Exploit View`
-- `taudit: Show Output`
+## Quick start
 
-The extension does not embed taudit and does not expose raw argument
-passthrough. It invokes a locally available `taudit` binary and maps VS Code
-settings onto the supported CLI surface.
-
-## Golden path
-
-1. Install `taudit` locally with `cargo install taudit --locked`, then make it
-   available on `PATH`, or set `taudit.binaryPath`.
+1. Install `taudit` locally with `cargo install taudit --locked`.
 2. Open the repository you want to inspect in VS Code.
 3. Set `taudit.verify.policyPath` to `.taudit/policy/`.
-4. Open the Command Palette and run `taudit: Initialize Workspace Policy`.
-5. Review or edit the generated
-   `.taudit/policy/bundled-strict-policy.yml`.
-6. Run `taudit: Verify Workspace`.
-7. Open `taudit: Show Output` to inspect the artifact and command output.
+4. Run `taudit: Initialize Workspace Policy`.
+5. Run `taudit: Verify Workspace`.
+6. Open `taudit: Show Output` to inspect the result and any generated artifact.
 
 If your repo uses a different pipeline root, also set `taudit.workflowPaths`
 before running the workspace commands.
 
-## Minimum setup
+If the configured verify policy path does not exist yet, `Initialize Workspace
+Policy` seeds it with a starter `bundled-strict-policy.yml` so `Verify
+Workspace` can run immediately.
 
-1. Install `taudit` locally with `cargo install taudit --locked`, then make it
-   available on `PATH`, or set `taudit.binaryPath`.
-2. Set `taudit.verify.policyPath` to a valid policy file or directory.
-3. Optionally configure ignore, suppressions, and baseline controls through the
-   `taudit.controls.*` settings.
+## Result surfaces
 
-If the configured verify policy path does not exist yet, run
-`taudit: Initialize Workspace Policy`. The extension seeds the configured path
-with a starter `bundled-strict-policy.yml` file so `Verify Workspace` can run
-immediately.
+- `taudit` output channel for command results and validation errors
+- workspace artifact files for graph output and JSON/SARIF exports
+- config validation that fails early when the binary, policy, ignore file,
+  suppressions file, or baseline root are misconfigured
 
-## Settings that matter
+## Required settings
 
-- `taudit.binaryPath`
-  Explicit path to the local `taudit` binary when it is not on `PATH`.
-- `taudit.platform`
-  Default CI/CD platform for `scan`, `verify`, and `graph`.
-- `taudit.workflowPaths`
-  Workspace-relative roots used by the workspace commands.
 - `taudit.verify.policyPath`
   Required policy file or directory for `taudit: Verify Workspace`.
+- `taudit.binaryPath`
+  Explicit path to the local `taudit` binary when it is not on `PATH`.
+- `taudit.workflowPaths`
+  Workspace-relative roots used by the workspace commands.
+
+## Optional controls
+
+- `taudit.platform`
+  Default CI/CD platform for `scan`, `verify`, and `graph`.
 - `taudit.controls.ignoreFile`
 - `taudit.controls.suppressionsFile`
 - `taudit.controls.suppressionMode`
@@ -79,9 +70,20 @@ The extension validates explicit paths before it starts `taudit`. Missing
 binary, missing policy, missing ignore file, missing suppressions file, or
 missing baseline root are reported as configuration errors.
 
+## Commands
+
+- `taudit: Initialize Workspace Policy`
+- `taudit: Verify Workspace`
+- `taudit: Scan Workspace`
+- `taudit: Scan Active File`
+- `taudit: Graph Authority View`
+- `taudit: Graph Exploit View`
+- `taudit: Show Output`
+
 ## Scope
 
-This extension is a workspace-side operator surface for:
+This extension is a workspace-side operator surface over a local `taudit`
+binary for:
 
 - `taudit verify`
 - `taudit scan`

@@ -1,8 +1,8 @@
 # taudit Azure DevOps extension
 
-Azure DevOps Marketplace packaging for `Taudit@1`, a pipeline task that runs
-taudit policy gates, advisory CI/CD scans, and authority graph exports without
-raw shell passthrough.
+Azure DevOps Marketplace packaging for `Taudit@1`, a pipeline task that blocks
+unsafe Azure Pipelines before merge with taudit policy gates, reviewable
+workflow findings, and authority or exploit graph artifacts.
 
 Use it to make taudit visible in Azure Pipelines as an installable task:
 
@@ -12,24 +12,27 @@ Use it to make taudit visible in Azure Pipelines as an installable task:
 - typed inputs keep policy, ignore files, suppressions, baselines, and ADO
   enrichment separate
 
-Operator pitfalls worth knowing up front:
+## Operator quick start
+
+1. Install the extension into your Azure DevOps organization.
+2. Add `Taudit@1` to your pipeline YAML.
+3. Start with `mode: verify` and `policy: .taudit/policy/`.
+4. Review `taudit.outcome` and `taudit.reportPath`, then add graph artifacts
+   if needed.
+
+## Requirements and limitations
 
 - `baselineRoot` must be workspace-relative, for example `.` or `.taudit`.
   Do not pass `$(System.DefaultWorkingDirectory)` or any absolute path.
 - On Windows, release-asset extraction depends on PowerShell archive support or
   `tar`. If that path is unavailable on the runner, set `fallbackCargo=true`
   and the task will install `taudit` into a workspace-local Cargo cache.
+- `verify` requires a repo-local policy path.
+- ADO variable-group enrichment is optional and requires `adoOrg`,
+  `adoProject`, and a secret `adoPat` or `TAUDIT_ADO_PAT`.
 
 This is the pipeline-step surface for Azure DevOps. It complements the VS Code
 extension in `integrations/vscode-extension/`; it does not replace it.
-
-## Operator golden path
-
-1. Install the extension into your Azure DevOps organization.
-2. Add `Taudit@1` to your pipeline YAML.
-3. Start with `mode: verify` and `policy: .taudit/policy/`.
-4. Add `mode: graph` and `graphView: authority` or `exploit` when you want
-   saved graph artifacts.
 
 ## Maintainer packaging path
 
@@ -101,7 +104,7 @@ steps:
       severityThreshold: high
 ```
 
-## Graph example
+## Review artifact example
 
 ```yaml
 steps:
@@ -115,6 +118,13 @@ steps:
       format: dot
       output: .artifacts/taudit-exploit.dot
 ```
+
+## Trust signals
+
+- no raw shell or argument passthrough
+- pinned GitHub release assets by version and runner platform
+- ADO PAT material stays in process environment and out of taudit argv
+- open-source implementation and documented security disclosure path
 
 ## Task outputs
 

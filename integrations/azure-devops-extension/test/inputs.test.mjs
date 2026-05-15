@@ -43,3 +43,25 @@ test("baselineRoot rejects absolute ADO-style workspace paths with a direct mess
     /baselineRoot must be workspace-relative .* do not pass \$\(System\.DefaultWorkingDirectory\)/
   );
 });
+
+test("baselineRoot rejects Azure DevOps macro paths with a direct message", () => {
+  assert.throws(
+    () => normalizeInputs({
+      mode: "scan",
+      paths: "azure-pipelines.yml",
+      baselineRoot: "$(System.DefaultWorkingDirectory)"
+    }, {}),
+    /baselineRoot must be workspace-relative .* do not pass \$\(System\.DefaultWorkingDirectory\)/
+  );
+});
+
+test("policy rejects Azure DevOps macro paths", () => {
+  assert.throws(
+    () => normalizeInputs({
+      mode: "verify",
+      paths: "azure-pipelines.yml",
+      policy: "$(Build.SourcesDirectory)/.taudit/policy"
+    }, {}),
+    /policy must be workspace-relative; do not pass \$\(System\.DefaultWorkingDirectory\) or other Azure DevOps path variables/
+  );
+});
