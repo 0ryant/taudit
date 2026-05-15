@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.1.9
+
+- Refreshed the Azure DevOps README and Marketplace overview to match the
+  current task contract, especially the workspace-absolute compatibility
+  normalization for `policy`, `ignoreFile`, `suppressions`, and
+  `baselineRoot`.
+- Added the in-repo Azure DevOps extension changelog so package history is
+  inspectable alongside the task source.
+
 ## 0.1.8
 
 - Fixed the Azure DevOps relative-path coercion bug by treating `policy`,

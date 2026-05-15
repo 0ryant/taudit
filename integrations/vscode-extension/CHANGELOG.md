@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.1.6
 
 - Hardened request validation so workspace scans, verify policy paths, ignore
   files, suppressions files, and baseline roots cannot escape the active
