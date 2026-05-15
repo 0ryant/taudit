@@ -1,4 +1,5 @@
 import * as path from "node:path";
+import * as fs from "node:fs/promises";
 import * as vscode from "vscode";
 import {
   getPrimaryWorkspaceFolder,
@@ -33,6 +34,9 @@ export function activate(
   context.subscriptions.push(outputChannel);
 
   context.subscriptions.push(
+    vscode.commands.registerCommand("taudit.initializePolicy", async () => {
+      await initializeWorkspacePolicy(context);
+    }),
     vscode.commands.registerCommand("taudit.verifyWorkspace", async () => {
       await runWorkspaceVerify(context);
     }),
@@ -229,7 +233,7 @@ async function executeRequest(
     outputChannel.appendLine(validationError);
     if (notify) {
       outputChannel.show(true);
-      void vscode.window.showErrorMessage(validationError);
+      await showValidationError(context, validationError, request);
     }
     return;
   }
@@ -294,6 +298,80 @@ async function executeRequest(
   }
 }
 
+async function initializeWorkspacePolicy(
+  context: vscode.ExtensionContext,
+): Promise<void> {
+  const folder = getPrimaryWorkspaceFolder();
+  if (!folder) {
+    void vscode.window.showErrorMessage(
+      "taudit policy initialization requires an open workspace folder.",
+    );
+    return;
+  }
+
+  const settings = readSettings();
+  const configuredPath = settings.verifyPolicyPath.trim() || ".taudit/policy/";
+  const resolvedTarget = resolveWorkspacePath(folder, configuredPath);
+  const sourceTemplate = path.join(
+    context.extensionPath,
+    "templates",
+    "bundled-strict-policy.yml",
+  );
+
+  const targetIsFile = /\.[Yy][Aa]?[Mm][Ll]$/.test(configuredPath);
+  const outputFile = targetIsFile
+    ? resolvedTarget
+    : path.join(resolvedTarget, "bundled-strict-policy.yml");
+
+  try {
+    const existing = await pathExists(outputFile);
+    if (existing) {
+      await openArtifact(outputFile);
+      void vscode.window.showInformationMessage(
+        `taudit policy already exists: ${path.relative(folder.uri.fsPath, outputFile)}`,
+      );
+      return;
+    }
+
+    await fs.mkdir(path.dirname(outputFile), { recursive: true });
+    await fs.copyFile(sourceTemplate, outputFile);
+    await openArtifact(outputFile);
+    void vscode.window.showInformationMessage(
+      `Initialized taudit policy at ${path.relative(folder.uri.fsPath, outputFile)}`,
+    );
+  } catch (error) {
+    const message =
+      error instanceof Error ? error.message : "Unknown policy initialization error.";
+    outputChannel.appendLine(message);
+    outputChannel.show(true);
+    void vscode.window.showErrorMessage(
+      `taudit failed to initialize policy: ${message}`,
+    );
+  }
+}
+
+async function showValidationError(
+  context: vscode.ExtensionContext,
+  message: string,
+  request: TauditRequest,
+): Promise<void> {
+  if (
+    request.mode === "verify" &&
+    message.startsWith("Configured taudit verify policy path does not exist:")
+  ) {
+    const choice = await vscode.window.showErrorMessage(
+      message,
+      "Initialize Policy",
+    );
+    if (choice === "Initialize Policy") {
+      await initializeWorkspacePolicy(context);
+    }
+    return;
+  }
+
+  void vscode.window.showErrorMessage(message);
+}
+
 function normalizeOptional(value: string): string | undefined {
   return value.trim().length > 0 ? value : undefined;
 }
@@ -331,4 +409,13 @@ function previewArgs(request: TauditRequest): string {
 
 function sanitizeName(name: string): string {
   return name.replace(/[^A-Za-z0-9._-]+/g, "-");
+}
+
+async function pathExists(candidate: string): Promise<boolean> {
+  try {
+    await fs.access(candidate);
+    return true;
+  } catch {
+    return false;
+  }
 }

@@ -5,6 +5,7 @@ typed command surface.
 
 Current commands:
 
+- `taudit: Initialize Workspace Policy`
 - `taudit: Verify Workspace`
 - `taudit: Scan Workspace`
 - `taudit: Scan Active File`
@@ -16,6 +17,21 @@ The extension does not embed taudit and does not expose raw argument
 passthrough. It invokes a locally available `taudit` binary and maps VS Code
 settings onto the supported CLI surface.
 
+## Golden path
+
+1. Install `taudit` locally and make it available on `PATH`, or set
+   `taudit.binaryPath`.
+2. Open the repository you want to inspect in VS Code.
+3. Set `taudit.verify.policyPath` to `.taudit/policy/`.
+4. Open the Command Palette and run `taudit: Initialize Workspace Policy`.
+5. Review or edit the generated
+   `.taudit/policy/bundled-strict-policy.yml`.
+6. Run `taudit: Verify Workspace`.
+7. Open `taudit: Show Output` to inspect the artifact and command output.
+
+If your repo uses a different pipeline root, also set `taudit.workflowPaths`
+before running the workspace commands.
+
 ## Minimum setup
 
 1. Install `taudit` locally and make it available on `PATH`, or set
@@ -23,6 +39,11 @@ settings onto the supported CLI surface.
 2. Set `taudit.verify.policyPath` to a valid policy file or directory.
 3. Optionally configure ignore, suppressions, and baseline controls through the
    `taudit.controls.*` settings.
+
+If the configured verify policy path does not exist yet, run
+`taudit: Initialize Workspace Policy`. The extension seeds the configured path
+with a starter `bundled-strict-policy.yml` file so `Verify Workspace` can run
+immediately.
 
 ## Settings that matter
 

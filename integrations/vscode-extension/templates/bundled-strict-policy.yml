@@ -1,0 +1,50 @@
+# Bundled Strict Policy: three of the most aggressive starter invariants in
+# one file. This is the quickest useful bootstrap for a new repo.
+---
+id: strict_no_untrusted_with_prod_secret
+name: No Untrusted Step May Receive Production Secret
+severity: critical
+description: >-
+  Production-tagged secrets must never propagate into the untrusted zone.
+match:
+  source:
+    node_type: Secret
+    metadata:
+      environment: production
+  sink:
+    trust_zone: untrusted
+  path:
+    must_exist: true
+---
+id: strict_no_broad_identity_to_untrusted
+name: No Broad Identity May Reach Untrusted Step
+severity: critical
+description: >-
+  Broad-scope identities must never reach the untrusted zone.
+match:
+  source:
+    node_type: Identity
+    metadata:
+      scope: broad
+  sink:
+    trust_zone: untrusted
+  path:
+    must_exist: true
+---
+id: strict_no_pr_trigger_with_broad_identity
+name: PR-Triggered Pipelines Must Not Carry Broad Identity
+severity: critical
+description: >-
+  Any pull request-triggered pipeline carrying a broad-scope identity should be
+  treated as a merge blocker.
+match:
+  graph_metadata:
+    trigger:
+      in:
+        - pull_request
+        - pull_request_target
+  source:
+    node_type: Identity
+    metadata:
+      scope: broad
+  standalone: true

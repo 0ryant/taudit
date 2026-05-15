@@ -2,7 +2,7 @@
   "name": "taudit-vscode",
   "displayName": "taudit",
   "description": "Run taudit scan, verify, and graph commands from VS Code using a local taudit binary.",
-  "version": "0.1.1",
+  "version": "0.1.2",
   "publisher": "algol",
   "icon": "assets/icon.png",
   "license": "MIT OR Apache-2.0",
@@ -37,6 +37,7 @@
   ],
   "main": "./out/extension.js",
   "activationEvents": [
+    "onCommand:taudit.initializePolicy",
     "onCommand:taudit.verifyWorkspace",
     "onCommand:taudit.scanWorkspace",
     "onCommand:taudit.scanFile",
@@ -46,6 +47,10 @@
   ],
   "contributes": {
     "commands": [
+      {
+        "command": "taudit.initializePolicy",
+        "title": "taudit: Initialize Workspace Policy"
+      },
       {
         "command": "taudit.verifyWorkspace",
         "title": "taudit: Verify Workspace"

@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.1.2
+
+- Added `taudit: Initialize Workspace Policy` to bootstrap a starter verify
+  policy into the configured workspace path.
+- Added a verify-time quick action to initialize the policy path when it does
+  not exist.
+- Documented a README golden path for first use.
+
 ## 0.1.1
 
 - Replaced the Marketplace extension icon with the updated taudit icon asset.
