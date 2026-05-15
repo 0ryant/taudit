@@ -4,12 +4,13 @@ Date: 2026-05-15
 Scope: release and test sequence for a future `taudit` VS Code extension
 published to Visual Studio Marketplace under publisher `algol`.
 
-Status: lane definition plus initial local evidence. The repository now
+Status: lane definition plus local publish-ready evidence. The repository now
 contains an in-tree extension scaffold at `integrations/vscode-extension/`,
 local `npm run check` passed, `npm run test:integration` passed,
 `vsce package` passed, `npm run smoke:vsix` passed, and `npm run preflight`
-passed.
-Marketplace PAT evidence and hosted smoke are still missing.
+passed. A Marketplace publish attempt was made with a tsafe-provided PAT and
+failed on publisher permissions for `Algol`, not on packaging or auth
+transport.
 
 ## Inputs
 
@@ -138,7 +139,7 @@ Current scaffold values:
 
 - extension root: `integrations/vscode-extension`
 - extension identifier: `algol.taudit-vscode`
-- current manifest version: `0.0.1`
+- current manifest version: `0.1.0`
 - current VSIX name: `taudit-vscode.vsix`
 
 ```bash
@@ -204,7 +205,8 @@ Use fixtures that make each result deterministic:
 
 ## Current Blockers
 
-- No Marketplace PAT evidence is recorded.
+- A Marketplace PAT now exists in tsafe, but the PAT principal lacks publish
+  rights on publisher `Algol`.
 - No hosted VSIX install/activation smoke path is recorded.
 - GitHub-hosted runner smoke is currently not a reliable first lane because the
   prior Marketplace tranche observed a billing/spending-limit blocker before

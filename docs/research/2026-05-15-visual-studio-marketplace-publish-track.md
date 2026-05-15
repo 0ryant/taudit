@@ -177,7 +177,7 @@ Rules:
   management, and verified with `vsce login algol` or equivalent noninteractive
   `VSCE_PAT` flow.
 
-- [ ] V20: Decide release versioning semantics.
+- [x] V20: Decide release versioning semantics.
   Required decision:
   whether the extension version mirrors `taudit` CLI versions or follows its
   own cadence, plus pre-release policy.
@@ -222,11 +222,18 @@ Rules:
 
 ## Known Blockers
 
-- No Marketplace PAT has been recorded yet; only the publisher identity exists.
+- Marketplace PAT transport now exists via tsafe, but the PAT principal lacks
+  publish rights on publisher `Algol`.
 - The Azure hosted preflight lane exists, but no successful hosted run is
   recorded yet.
-- Extension versioning semantics are still undecided: independent SemVer versus
-  mirrored CLI cadence.
 - GitHub-hosted smoke is currently blocked on account billing / spending-limit
   issues, so the publish lane should prefer Azure Pipelines or another working
   hosted environment for the first real smoke.
+
+## Versioning Decision
+
+- The extension follows independent SemVer from the `taudit` CLI.
+- First publish target: `0.1.0`.
+- Minor versions can add typed commands/settings.
+- Patch versions are for packaging, docs, and bug fixes that preserve the
+  public command/settings contract.

@@ -184,9 +184,9 @@ Still CLI-first:
 
 The remaining blockers are operational, not product-shape:
 
-- no `VSCE_PAT` is provisioned in this environment
+- the Marketplace PAT principal currently lacks publish rights on publisher
+  `Algol`
 - no successful Azure hosted preflight run is recorded yet
-- extension versioning policy still needs to be fixed before first publish
 
 ## Related
 
