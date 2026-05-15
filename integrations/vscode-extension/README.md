@@ -51,6 +51,8 @@ Workspace` can run immediately.
 
 - `taudit` output channel for command results and validation errors
 - workspace artifact files for graph output and JSON/SARIF exports
+- `taudit: Show Output` reopens the latest real artifact for the workspace when
+  one exists; otherwise it reports that no artifact is available yet
 - config validation that fails early when the binary, policy, ignore file,
   suppressions file, or baseline root are misconfigured
 
@@ -88,6 +90,8 @@ Paths configured through `taudit.workflowPaths`, `taudit.verify.policyPath`,
 `taudit.controls.ignoreFile`, `taudit.controls.suppressionsFile`, and
 `taudit.controls.baselineRoot` must stay inside the workspace. The extension
 rejects `..` escapes and other out-of-workspace targets before launch.
+If a command fails before `taudit` writes a report or graph, the extension keeps
+the output channel usable instead of trying to reopen a missing artifact file.
 
 ## Commands
 

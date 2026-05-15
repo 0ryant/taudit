@@ -97,6 +97,22 @@ The graph is the contract between these layers. Keeping it stable, versioned, an
 
 For **workflow YAML shape and platform contexts**, keep using your platform linter (e.g. **[actionlint](https://github.com/rhysd/actionlint)** for GitHub Actions) alongside taudit — taudit models **authority propagation**, not full expression evaluation or every schema knob.
 
+## Operator surfaces
+
+The CLI is the authority surface. Two thin operator adapters are maintained in
+this repo:
+
+- **VS Code extension**: [`integrations/vscode-extension/README.md`](integrations/vscode-extension/README.md)
+  — local verify, scan, and graph commands over a locally installed `taudit`
+  binary.
+- **Azure DevOps task**: [`integrations/azure-devops-extension/README.md`](integrations/azure-devops-extension/README.md)
+  — `Taudit@1` for Azure Pipelines with typed task inputs and version-pinned
+  release-asset execution.
+
+These wrappers do not embed a separate taudit engine. If a pipeline or editor
+surface runs `taudit`, that execution surface is still auditable by `taudit`
+itself.
+
 ## Golden path (docs + CI)
 
 Blessed copy-paste flows (graph → scan → verify, exit codes, stdout vs `-o`): **[`docs/golden-paths.md`](docs/golden-paths.md)**. Example workflow with pinned `taudit` + SARIF upload: **[`docs/examples/ci-gate-taudit-verify.yml`](docs/examples/ci-gate-taudit-verify.yml)**. Adoption checklist: **[`docs/adr/0003-strategic-spine-adoption-phased.md`](docs/adr/0003-strategic-spine-adoption-phased.md)**. Day 0–1 operator runbook (verify, baselines, suppressions, CI per platform): **[`docs/adoption-day0-day1.md`](docs/adoption-day0-day1.md)**. **Stable vs edge releases** (crates.io trust, GitHub velocity, semver for detection): **[`docs/release-strategy.md`](docs/release-strategy.md)**.

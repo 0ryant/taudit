@@ -1,5 +1,19 @@
 # Changelog
 
+## Unreleased
+
+- Hardened request validation so workspace scans, verify policy paths, ignore
+  files, suppressions files, and baseline roots cannot escape the active
+  workspace via `..` or other out-of-workspace paths.
+- Tightened settings validation at the extension boundary: `maxHops` must be a
+  positive integer and `severityThreshold` must be one of the supported taudit
+  severities before the CLI starts.
+- In multi-root workspaces, workspace commands now prefer the active editor's
+  workspace folder instead of blindly using the first root.
+- Hardened artifact handling so failed runs do not leave `Show Output` pointing
+  at a missing file; the extension now only opens artifacts that actually
+  exist and tells the user when no artifact has been produced yet.
+
 ## 0.1.5
 
 - Tightened Marketplace description, categories, keywords, and README first

@@ -46,6 +46,9 @@ steps:
 - `policy`, `ignoreFile`, `suppressions`, and `baselineRoot` are plain string
   inputs rather than Azure DevOps `filePath` inputs so the task can preserve
   repo-relative paths instead of receiving agent-canonicalized absolute ones.
+  If Azure still canonicalizes a path inside the checked-out repo, the task
+  normalizes that compatibility case back to a repo-relative path before
+  invoking `taudit`.
 - On Windows runners, release extraction depends on PowerShell archive support
   or `tar`; if those are missing, use `fallbackCargo=true`.
 - `adoOrg`, `adoProject`, and `adoPat` are forwarded to the taudit CLI for

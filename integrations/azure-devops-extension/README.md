@@ -30,6 +30,9 @@ Use it to make taudit visible in Azure Pipelines as an installable task:
 - `policy`, `ignoreFile`, `suppressions`, and `baselineRoot` are string inputs
   on purpose. Azure DevOps `filePath` inputs are agent-normalized and can
   arrive as absolute workspace paths, which breaks a relative-path contract.
+  When Azure canonicalizes a path inside the checked-out repo anyway, the task
+  normalizes that compatibility case back to a repo-relative path before
+  invoking `taudit`.
 - On Windows, release-asset extraction depends on PowerShell archive support or
   `tar`. If that path is unavailable on the runner, set `fallbackCargo=true`
   and the task will install `taudit` into a workspace-local Cargo cache.
@@ -209,3 +212,5 @@ npm run preflight
 
 This emits a VSIX under `dist/` that can be published as an Azure DevOps
 extension and then installed into an Azure DevOps organization.
+
+See also: [CHANGELOG.md](./CHANGELOG.md)
