@@ -26,26 +26,28 @@ Visual Studio Marketplace publisher `algol`.
 - [x] V1: Publisher exists: `algol`.
 - [x] V2: Extension package exists in this repo at
   `integrations/vscode-extension/`.
+- [x] V4: Extension release automation exists.
+- [x] V5: Hosted smoke path exists for packaged VSIX install and activation.
 - [ ] V3: Marketplace auth token is provisioned and verified.
-- [ ] V4: Extension release automation exists.
-- [ ] V5: Hosted smoke path exists for packaged VSIX install and activation.
 
 ## Observed Evidence
 
 - `integrations/vscode-extension/` now exists with:
   `package.json`, `README.md`, `CHANGELOG.md`, `LICENSE`,
-  `.vscodeignore`, `.gitignore`, `tsconfig.json`, extension source, tests, and
-  `package-lock.json`.
+  `.vscodeignore`, `.gitignore`, `tsconfig.json`, `assets/icon.png`,
+  extension source, tests, and `package-lock.json`.
+- Hosted lane exists at:
+  `azure-pipelines.vscode-extension.yml`
 - Local extension checks passed:
   `npm run check`
 - Local extension-host smoke passed:
   `npm run test:integration`
 - Local VSIX package passed:
   `npm run package:vsix`
-- Local install smoke passed:
-  `code --install-extension taudit-vscode.vsix --force`
-  followed by `code --list-extensions --show-versions` showing
-  `algol.taudit-vscode@0.0.1`, then uninstall success.
+- Local VSIX install smoke passed:
+  `npm run smoke:vsix`
+- Local full extension preflight passed:
+  `npm run preflight`
 
 ## Non-Negotiable Constraints
 
@@ -130,7 +132,7 @@ Rules:
   `extensionKind`, activation model, local binary invocation model, settings
   surface, and whether the extension must support remote workspaces or web.
 
-- [ ] V12: Create the extension scaffold in-repo.
+- [x] V12: Create the extension scaffold in-repo.
   Required files:
   root `package.json`, `README.md`, `CHANGELOG.md`, extension entrypoint,
   `LICENSE`, icon asset, and `.vscodeignore`.
@@ -180,7 +182,7 @@ Rules:
   whether the extension version mirrors `taudit` CLI versions or follows its
   own cadence, plus pre-release policy.
 
-- [ ] V21: Add release automation.
+- [x] V21: Add release automation.
   Preferred path:
   Azure Pipelines publish lane using `VSCE_PAT`, because the current GitHub
   Actions account is blocked on billing/runners.
@@ -221,9 +223,10 @@ Rules:
 ## Known Blockers
 
 - No Marketplace PAT has been recorded yet; only the publisher identity exists.
-- No extension icon asset exists yet for Marketplace-quality packaging.
-- Missing-binary behavior is covered by the local runtime path validation, but
-  no dedicated extension-host negative smoke exists yet for every failure path.
+- The Azure hosted preflight lane exists, but no successful hosted run is
+  recorded yet.
+- Extension versioning semantics are still undecided: independent SemVer versus
+  mirrored CLI cadence.
 - GitHub-hosted smoke is currently blocked on account billing / spending-limit
   issues, so the publish lane should prefer Azure Pipelines or another working
   hosted environment for the first real smoke.

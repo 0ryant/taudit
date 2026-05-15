@@ -7,7 +7,8 @@ published to Visual Studio Marketplace under publisher `algol`.
 Status: lane definition plus initial local evidence. The repository now
 contains an in-tree extension scaffold at `integrations/vscode-extension/`,
 local `npm run check` passed, `npm run test:integration` passed,
-`vsce package` passed, and a local VSIX install/uninstall smoke passed.
+`vsce package` passed, `npm run smoke:vsix` passed, and `npm run preflight`
+passed.
 Marketplace PAT evidence and hosted smoke are still missing.
 
 ## Inputs
@@ -72,9 +73,9 @@ command or hosted run, and do not publish.
      README or CHANGELOG, and no secret-like values in packaged files.
 
 5. **Local install smoke gate**
-   - Install the produced `.vsix` into a supported local VS Code client with
-     `code --install-extension <vsix> --force` or the selected client
-     equivalent.
+  - Install the produced `.vsix` into a supported local VS Code client with
+    the repository smoke path (`npm run smoke:vsix`) or an equivalent
+    `code --install-extension <vsix> --force` flow.
    - Open a fixture workspace containing representative GitHub Actions workflow
      files and taudit controls.
    - Run command activation and at least one advisory `scan`, one `verify`
@@ -97,6 +98,9 @@ command or hosted run, and do not publish.
 7. **Hosted preflight gate**
    - Prefer Azure Pipelines for the first hosted lane while GitHub-hosted runner
      capacity is blocked by billing/spending-limit state.
+   - Use the dedicated Azure YAML lane at
+     [`../../azure-pipelines.vscode-extension.yml`](../../azure-pipelines.vscode-extension.yml)
+     for hosted preflight and gated `VSCE_PAT` publish.
    - Hosted preflight must run on a clean checkout and perform:
      dependency install, build, unit tests, extension integration tests, VSIX
      packaging, package content inspection, and install/activation smoke.
@@ -142,11 +146,12 @@ cd /Users/rytilcock/prj/taudit/integrations/vscode-extension
 git status --short --branch
 npm ci
 npm run check
+cargo build -p taudit
 npm run test:integration
 npx @vscode/vsce package
-code --install-extension taudit-vscode.vsix --force
-code --list-extensions --show-versions | rg '^algol\\.taudit-vscode@'
-code --uninstall-extension algol.taudit-vscode
+npm run smoke:vsix
+# or the one-shot local lane:
+npm run preflight
 ```
 
 For CI publish, prefer a two-job shape:

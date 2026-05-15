@@ -27,7 +27,9 @@ export async function run(): Promise<void> {
   }
 
   const repoRoot = getRepoRoot();
-  const tauditBinaryPath = path.join(repoRoot, "target", "debug", "taudit");
+  const tauditBinaryPath =
+    process.env.TAUDIT_BINARY_PATH ??
+    path.join(repoRoot, "target", "debug", "taudit");
   assert.ok(
     fs.existsSync(tauditBinaryPath),
     `Expected built taudit binary at ${tauditBinaryPath}`,

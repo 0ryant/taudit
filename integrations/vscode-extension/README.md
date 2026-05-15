@@ -24,6 +24,25 @@ settings onto the supported CLI surface.
 3. Optionally configure ignore, suppressions, and baseline controls through the
    `taudit.controls.*` settings.
 
+## Settings that matter
+
+- `taudit.binaryPath`
+  Explicit path to the local `taudit` binary when it is not on `PATH`.
+- `taudit.platform`
+  Default CI/CD platform for `scan`, `verify`, and `graph`.
+- `taudit.workflowPaths`
+  Workspace-relative roots used by the workspace commands.
+- `taudit.verify.policyPath`
+  Required policy file or directory for `taudit: Verify Workspace`.
+- `taudit.controls.ignoreFile`
+- `taudit.controls.suppressionsFile`
+- `taudit.controls.suppressionMode`
+- `taudit.controls.baselineRoot`
+
+The extension validates explicit paths before it starts `taudit`. Missing
+binary, missing policy, missing ignore file, missing suppressions file, or
+missing baseline root are reported as configuration errors.
+
 ## Scope
 
 This extension is a workspace-side operator surface for:
@@ -35,3 +54,17 @@ This extension is a workspace-side operator surface for:
 
 It is not a vulnerability scanner, a generic YAML linter, or a shell wrapper
 for arbitrary taudit flags.
+
+## Local release preflight
+
+From `integrations/vscode-extension/`:
+
+```bash
+npm ci
+cargo build -p taudit
+npm run preflight
+```
+
+`npm run preflight` runs unit checks, extension-host integration tests, VSIX
+packaging, and isolated VSIX install/uninstall smoke against a downloaded
+stable VS Code runtime.

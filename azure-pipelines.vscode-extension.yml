@@ -1,0 +1,171 @@
+# Optional Azure DevOps pipeline: VS Code extension hosted preflight + gated publish.
+#
+# Register separately from azure-pipelines.yml (Pipelines → New → same repo → this file).
+# The preflight stage is safe to run without Marketplace credentials. The publish stage
+# requires both:
+#   - Queue-time variable PUBLISH_VSCODE_EXTENSION=true
+#   - Secret variable VSCE_PAT scoped to Visual Studio Marketplace Manage for publisher algol
+---
+trigger: none
+pr: none
+
+variables:
+  NODE_VERSION: "20.x"
+  RUST_TOOLCHAIN: "1.88"
+  EXTENSION_DIR: integrations/vscode-extension
+  VSIX_NAME: taudit-vscode.vsix
+  EXTENSION_ID: algol.taudit-vscode
+  PUBLISH_VSCODE_EXTENSION: "false"
+
+stages:
+  - stage: preflight
+    displayName: VS Code extension preflight
+    jobs:
+      - job: vscode_extension_preflight
+        displayName: Build, test, package, and install smoke
+        pool:
+          vmImage: ubuntu-latest
+        steps:
+          - checkout: self
+            fetchDepth: 0
+
+          - task: NodeTool@0
+            inputs:
+              versionSpec: $(NODE_VERSION)
+            displayName: Install Node.js
+
+          - bash: |
+              set -euo pipefail
+              curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --default-toolchain "$(RUST_TOOLCHAIN)"
+              echo "##vso[task.prependpath]$HOME/.cargo/bin"
+              . "$HOME/.cargo/env"
+              rustc -Vv
+              cargo -V
+            displayName: Install Rust
+
+          - bash: |
+              set -euo pipefail
+              node --version
+              npm --version
+            displayName: Show Node/npm versions
+
+          - bash: npm ci
+            workingDirectory: $(EXTENSION_DIR)
+            displayName: npm ci
+
+          - bash: npm run check
+            workingDirectory: $(EXTENSION_DIR)
+            displayName: npm run check
+
+          - bash: cargo build -p taudit
+            displayName: Build taudit debug binary
+
+          - bash: |
+              set -euo pipefail
+              if ! command -v xvfb-run >/dev/null 2>&1; then
+                sudo apt-get update
+                sudo apt-get install -y xvfb
+              fi
+              xvfb-run --help >/dev/null
+            displayName: Ensure xvfb-run is available
+
+          - bash: xvfb-run -a npm run test:integration
+            workingDirectory: $(EXTENSION_DIR)
+            displayName: xvfb-run npm run test:integration
+            env:
+              TAUDIT_BINARY_PATH: $(Build.SourcesDirectory)/target/debug/taudit
+
+          - bash: npm run package:vsix
+            workingDirectory: $(EXTENSION_DIR)
+            displayName: Package VSIX
+
+          - bash: |
+              set -euo pipefail
+              test -f "$(VSIX_NAME)"
+              sha256sum "$(VSIX_NAME)" | tee "$(VSIX_NAME).sha256"
+              unzip -l "$(VSIX_NAME)" | tee "$(VSIX_NAME).contents.txt"
+            workingDirectory: $(EXTENSION_DIR)
+            displayName: Inspect packaged VSIX
+
+          - bash: npm run smoke:vsix
+            workingDirectory: $(EXTENSION_DIR)
+            displayName: VSIX install/uninstall smoke
+
+          - task: PublishPipelineArtifact@1
+            inputs:
+              targetPath: $(Build.SourcesDirectory)/$(EXTENSION_DIR)/$(VSIX_NAME)
+              artifact: taudit-vscode-vsix
+            displayName: Publish VSIX artifact
+
+          - task: PublishPipelineArtifact@1
+            inputs:
+              targetPath: $(Build.SourcesDirectory)/$(EXTENSION_DIR)/$(VSIX_NAME).sha256
+              artifact: taudit-vscode-vsix-sha256
+            displayName: Publish VSIX SHA-256
+
+          - task: PublishPipelineArtifact@1
+            inputs:
+              targetPath: $(Build.SourcesDirectory)/$(EXTENSION_DIR)/$(VSIX_NAME).contents.txt
+              artifact: taudit-vscode-vsix-contents
+            displayName: Publish VSIX contents listing
+
+  - stage: publish
+    displayName: VS Code extension publish
+    dependsOn: preflight
+    condition: and(succeeded(), eq(variables['PUBLISH_VSCODE_EXTENSION'], 'true'))
+    jobs:
+      - deployment: publish_vscode_extension
+        displayName: Publish VSIX to Visual Studio Marketplace
+        environment: vscode-marketplace
+        pool:
+          vmImage: ubuntu-latest
+        strategy:
+          runOnce:
+            deploy:
+              steps:
+                - checkout: self
+                  fetchDepth: 0
+
+                - task: NodeTool@0
+                  inputs:
+                    versionSpec: $(NODE_VERSION)
+                  displayName: Install Node.js
+
+                - download: current
+                  artifact: taudit-vscode-vsix
+                  displayName: Download preflight VSIX
+
+                - download: current
+                  artifact: taudit-vscode-vsix-sha256
+                  displayName: Download preflight VSIX SHA-256
+
+                - bash: |
+                    set -euo pipefail
+                    literal_unexpanded='$''(VSCE_PAT)'
+                    if [[ -z "${VSCE_PAT:-}" || "${VSCE_PAT}" == "${literal_unexpanded}" ]]; then
+                      echo "##vso[task.logissue type=error]VSCE_PAT secret variable is required for publish."
+                      exit 1
+                    fi
+                    echo "##vso[task.setsecret]${VSCE_PAT}"
+                  displayName: Validate VSCE_PAT secret
+                  env:
+                    VSCE_PAT: $(VSCE_PAT)
+
+                - bash: |
+                    set -euo pipefail
+                    vsix="$(Pipeline.Workspace)/taudit-vscode-vsix/$(VSIX_NAME)"
+                    checksum="$(Pipeline.Workspace)/taudit-vscode-vsix-sha256/$(VSIX_NAME).sha256"
+                    test -f "${vsix}"
+                    test -f "${checksum}"
+                    (cd "$(dirname "${vsix}")" && sha256sum -c "${checksum}")
+                  displayName: Verify downloaded VSIX digest
+
+                - bash: |
+                    set -euo pipefail
+                    cd "$(EXTENSION_DIR)"
+                    npm ci
+                    npx @vscode/vsce publish \
+                      --packagePath "$(Pipeline.Workspace)/taudit-vscode-vsix/$(VSIX_NAME)"
+                  displayName: Publish with vsce
+                  env:
+                    VSCE_PAT: $(VSCE_PAT)

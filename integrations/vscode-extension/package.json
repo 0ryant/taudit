@@ -4,6 +4,7 @@
   "description": "Run taudit scan, verify, and graph commands from VS Code using a local taudit binary.",
   "version": "0.0.1",
   "publisher": "algol",
+  "icon": "assets/icon.png",
   "license": "MIT OR Apache-2.0",
   "repository": {
     "type": "git",
@@ -198,8 +199,10 @@
     "pretest": "npm run compile",
     "test": "node --test out/test/*.test.js",
     "test:integration": "npm run compile && node out/test/run-integration.js",
+    "smoke:vsix": "npm run compile && node out/test/install-vsix-smoke.js",
     "check": "npm run test",
-    "package:vsix": "npm run compile && vsce package --out taudit-vscode.vsix"
+    "package:vsix": "npm run compile && vsce package --out taudit-vscode.vsix",
+    "preflight": "npm run check && npm run test:integration && npm run package:vsix && npm run smoke:vsix"
   },
   "devDependencies": {
     "@types/node": "^24.0.0",

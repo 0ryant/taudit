@@ -1,4 +1,3 @@
-import * as fs from "node:fs/promises";
 import * as path from "node:path";
 import * as vscode from "vscode";
 import {
@@ -17,6 +16,7 @@ import {
   createArtifactPath,
   ensureStorageDir,
   runTaudit,
+  validateRequest,
 } from "./runner";
 
 let outputChannel: vscode.OutputChannel;
@@ -331,48 +331,4 @@ function previewArgs(request: TauditRequest): string {
 
 function sanitizeName(name: string): string {
   return name.replace(/[^A-Za-z0-9._-]+/g, "-");
-}
-
-async function validateRequest(request: TauditRequest): Promise<string | undefined> {
-  if (usesExplicitPath(request.binaryPath) && !(await pathExists(request.binaryPath))) {
-    return `Configured taudit binary path does not exist: ${request.binaryPath}`;
-  }
-
-  if (request.mode === "verify" && !(await pathExists(request.policyPath))) {
-    return `Configured taudit verify policy path does not exist: ${request.policyPath}`;
-  }
-
-  if (request.mode !== "graph") {
-    if (request.ignoreFile && !(await pathExists(request.ignoreFile))) {
-      return `Configured taudit ignore file does not exist: ${request.ignoreFile}`;
-    }
-    if (
-      request.suppressionsFile &&
-      !(await pathExists(request.suppressionsFile))
-    ) {
-      return `Configured taudit suppressions file does not exist: ${request.suppressionsFile}`;
-    }
-    if (request.baselineRoot && !(await pathExists(request.baselineRoot))) {
-      return `Configured taudit baseline root does not exist: ${request.baselineRoot}`;
-    }
-  }
-
-  return undefined;
-}
-
-function usesExplicitPath(binaryPath: string): boolean {
-  return (
-    path.isAbsolute(binaryPath) ||
-    binaryPath.startsWith(".") ||
-    binaryPath.includes(path.sep)
-  );
-}
-
-async function pathExists(targetPath: string): Promise<boolean> {
-  try {
-    await fs.access(targetPath);
-    return true;
-  } catch {
-    return false;
-  }
 }
