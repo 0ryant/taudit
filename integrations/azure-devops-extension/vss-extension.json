@@ -1,0 +1,78 @@
+{
+  "manifestVersion": 1,
+  "id": "taudit-azure-pipelines",
+  "publisher": "algol",
+  "version": "0.1.8",
+  "name": "taudit",
+  "description": "Fail unsafe Azure Pipelines before merge with taudit policy gates, workflow findings, and authority or exploit graph artifacts.",
+  "public": true,
+  "categories": [
+    "Azure Pipelines"
+  ],
+  "tags": [
+    "azure-pipelines",
+    "pipeline-security",
+    "ci-cd",
+    "policy-as-code",
+    "supply-chain-security",
+    "authority-graph",
+    "taudit"
+  ],
+  "targets": [
+    {
+      "id": "Microsoft.VisualStudio.Services"
+    }
+  ],
+  "branding": {
+    "color": "#111827",
+    "theme": "dark"
+  },
+  "links": {
+    "support": {
+      "uri": "https://github.com/0ryant/taudit/issues"
+    },
+    "learn": {
+      "uri": "https://github.com/0ryant/taudit/blob/main/integrations/azure-devops-extension/README.md"
+    },
+    "license": {
+      "uri": "https://github.com/0ryant/taudit/blob/main/LICENSE"
+    }
+  },
+  "repository": {
+    "type": "git",
+    "uri": "https://github.com/0ryant/taudit"
+  },
+  "files": [
+    {
+      "path": "Taudit"
+    },
+    {
+      "path": "Taudit/node_modules"
+    },
+    {
+      "path": "images/extension-icon.png",
+      "addressable": true,
+      "assetType": "Microsoft.VisualStudio.Services.Icons.Default"
+    },
+    {
+      "path": "overview.md",
+      "addressable": true,
+      "assetType": "Microsoft.VisualStudio.Services.Content.Details"
+    },
+    {
+      "path": "README.md"
+    }
+  ],
+  "contributions": [
+    {
+      "id": "taudit-task",
+      "type": "ms.vss-distributed-task.task",
+      "targets": [
+        "ms.vss-distributed-task.tasks"
+      ],
+      "properties": {
+        "name": "Taudit"
+      }
+    }
+  ]
+}

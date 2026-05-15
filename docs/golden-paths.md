@@ -4,10 +4,24 @@ This page lists **copy-pasteable** commands that should always work on a clean c
 
 **Principle:** prefer **terminal transcripts** (commands + key stdout checks) over screenshots. For graph **shape**, use **SVG** from Graphviz (`dot -Tsvg`) or Mermaid in Markdown — see [`docs/media/README.md`](media/README.md).
 
+## Marketplace quick links
+
+Use these stable anchors from Marketplace listings, extension READMEs, release
+notes, and support replies:
+
+| Need | Link |
+|------|------|
+| Smoke the CLI in one command | [Path A — Map](#path-a--map-human-table) |
+| Verify the graph JSON contract | [Path B — Graph JSON](#path-b--graph-json-machine-contract) |
+| Show findings without setting up policy | [Path D — Scan](#path-d--scan-findings) |
+| Export a visual graph | [Path E — Diagram export](#path-e--diagram-export-optional-graphviz) or [Path F — Mermaid](#path-f--mermaid-no-graphviz) |
+| Explain merge-gate behavior | [Path H — Merge gate](#path-h--merge-gate-verify-after-graph--scan) |
+| Point users at rule details | [Path G — Rule catalog](#path-g--rule-catalog-explain) |
+
 ## Prerequisites
 
 - **From source (dev):** `cargo build -p taudit` then `target/debug/taudit …`, or `cargo run -p taudit -- …`.
-- **Installed:** `taudit` on your `PATH` (e.g. `cargo install --path crates/taudit-cli`).
+- **Installed:** `taudit` on your `PATH` (e.g. `cargo install taudit --locked`).
 - Stable output in scripts/CI: set **`NO_COLOR=1`** (or pass `--no-color` where supported).
 
 Fixtures used below:
@@ -81,7 +95,7 @@ NO_COLOR=1 taudit verify --policy tests/fixtures/verify-golden-noop-policy.yml t
 
 Expect: graph JSON validates the schema envelope; scan exits **0**; verify exits **0** with `verify: authority graph modeling:` and `verify: 0 violations` (noop policy matches nothing). Replace the policy path with your real `.taudit/policy/` directory in production.
 
-**Pin the binary in CI:** `cargo install taudit --version 1.1.2 --locked` (adjust as you adopt newer releases). Copy-paste workflow: [`docs/examples/ci-gate-taudit-verify.yml`](examples/ci-gate-taudit-verify.yml).
+**Pin the binary in CI:** `cargo install taudit --version 1.1.4 --locked` (adjust as you adopt newer releases). Copy-paste workflow: [`docs/examples/ci-gate-taudit-verify.yml`](examples/ci-gate-taudit-verify.yml).
 
 ## Path G — Rule catalog (`explain`)
 

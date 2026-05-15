@@ -1,0 +1,236 @@
+{
+  "$schema": "https://raw.githubusercontent.com/microsoft/azure-pipelines-task-lib/master/tasks.schema.json",
+  "id": "cd3bb7e5-31cc-4a50-b8b8-f76ff2e44e78",
+  "name": "Taudit",
+  "friendlyName": "taudit",
+  "description": "Fail unsafe CI/CD pipeline changes with taudit verify, scan, or graph in Azure Pipelines.",
+  "helpMarkDown": "Use verify mode with a workspace-relative policy directory to gate merges. baselineRoot and other path inputs must stay workspace-relative; do not pass $(System.DefaultWorkingDirectory) or absolute paths. Graph mode can emit authority or exploit views for review artifacts.",
+  "category": "Utility",
+  "author": "Algol",
+  "version": {
+    "Major": 1,
+    "Minor": 0,
+    "Patch": 5
+  },
+  "minimumAgentVersion": "2.182.1",
+  "instanceNameFormat": "taudit $(mode)",
+  "inputs": [
+    {
+      "name": "mode",
+      "type": "pickList",
+      "label": "Mode",
+      "defaultValue": "verify",
+      "required": true,
+      "options": {
+        "verify": "verify",
+        "scan": "scan",
+        "graph": "graph"
+      },
+      "helpMarkDown": "taudit subcommand to run."
+    },
+    {
+      "name": "version",
+      "type": "string",
+      "label": "taudit version",
+      "defaultValue": "1.1.4",
+      "required": false,
+      "helpMarkDown": "Pinned taudit version to download."
+    },
+    {
+      "name": "paths",
+      "type": "multiLine",
+      "label": "Paths",
+      "defaultValue": "azure-pipelines.yml",
+      "required": true,
+      "helpMarkDown": "Newline-separated workspace-relative pipeline paths or directories. Do not pass $(System.DefaultWorkingDirectory) or other absolute Azure DevOps path variables."
+    },
+    {
+      "name": "platform",
+      "type": "pickList",
+      "label": "Platform",
+      "defaultValue": "auto",
+      "required": true,
+      "options": {
+        "auto": "auto",
+        "github-actions": "github-actions",
+        "azure-devops": "azure-devops",
+        "gitlab": "gitlab",
+        "bitbucket": "bitbucket"
+      },
+      "helpMarkDown": "Override platform autodetection when needed."
+    },
+    {
+      "name": "adoOrg",
+      "type": "string",
+      "label": "ADO org",
+      "defaultValue": "",
+      "required": false,
+      "helpMarkDown": "Optional Azure DevOps org forwarded to the taudit CLI for ADO-aware analysis. Current taudit versions may treat this as reserved scaffolding."
+    },
+    {
+      "name": "adoProject",
+      "type": "string",
+      "label": "ADO project",
+      "defaultValue": "",
+      "required": false,
+      "helpMarkDown": "Optional Azure DevOps project forwarded to the taudit CLI for ADO-aware analysis. Current taudit versions may treat this as reserved scaffolding."
+    },
+    {
+      "name": "adoPat",
+      "type": "string",
+      "label": "ADO PAT",
+      "defaultValue": "",
+      "required": false,
+      "helpMarkDown": "Optional Azure DevOps PAT forwarded via TAUDIT_ADO_PAT for ADO-aware analysis. Prefer a secret pipeline variable. Current taudit versions may treat this as reserved scaffolding."
+    },
+    {
+      "name": "policy",
+      "type": "string",
+      "label": "Policy path",
+      "defaultValue": "",
+      "required": false,
+      "helpMarkDown": "Required in verify mode. Workspace-relative file or directory only, for example `.taudit/policy` or `taudit/policy`. Do not pass $(System.DefaultWorkingDirectory) or other absolute Azure DevOps path variables."
+    },
+    {
+      "name": "includeBuiltin",
+      "type": "boolean",
+      "label": "Include builtin policy",
+      "defaultValue": "false",
+      "required": false
+    },
+    {
+      "name": "ignoreFile",
+      "type": "string",
+      "label": "Ignore file",
+      "defaultValue": "",
+      "required": false,
+      "helpMarkDown": "Optional workspace-relative path to `.tauditignore`."
+    },
+    {
+      "name": "suppressions",
+      "type": "string",
+      "label": "Suppressions file",
+      "defaultValue": "",
+      "required": false,
+      "helpMarkDown": "Optional workspace-relative path to a taudit suppressions file."
+    },
+    {
+      "name": "suppressionMode",
+      "type": "pickList",
+      "label": "Suppression mode",
+      "defaultValue": "downgrade",
+      "required": false,
+      "options": {
+        "downgrade": "downgrade",
+        "tag-only": "tag-only"
+      }
+    },
+    {
+      "name": "baselineRoot",
+      "type": "string",
+      "label": "Baseline root",
+      "defaultValue": "",
+      "required": false,
+      "helpMarkDown": "Optional workspace-relative baseline root, for example `.` or `.taudit`. Do not pass $(System.DefaultWorkingDirectory) or any absolute path."
+    },
+    {
+      "name": "gateOnAll",
+      "type": "boolean",
+      "label": "Gate on all findings",
+      "defaultValue": "false",
+      "required": false
+    },
+    {
+      "name": "strict",
+      "type": "boolean",
+      "label": "Strict mode",
+      "defaultValue": "false",
+      "required": false
+    },
+    {
+      "name": "ignorePartial",
+      "type": "boolean",
+      "label": "Ignore partial graph findings",
+      "defaultValue": "false",
+      "required": false
+    },
+    {
+      "name": "format",
+      "type": "string",
+      "label": "Format",
+      "defaultValue": "",
+      "required": false,
+      "helpMarkDown": "Mode-scoped taudit output format."
+    },
+    {
+      "name": "output",
+      "type": "string",
+      "label": "Output file",
+      "defaultValue": "",
+      "required": false,
+      "helpMarkDown": "Workspace-relative output path. For graph mode, the task captures stdout into this file. Do not target repository control or workflow files."
+    },
+    {
+      "name": "graphView",
+      "type": "pickList",
+      "label": "Graph view",
+      "defaultValue": "authority",
+      "required": false,
+      "options": {
+        "authority": "authority",
+        "exploit": "exploit"
+      }
+    },
+    {
+      "name": "severityThreshold",
+      "type": "pickList",
+      "label": "Severity threshold",
+      "defaultValue": "",
+      "required": false,
+      "options": {
+        "critical": "critical",
+        "high": "high",
+        "medium": "medium",
+        "low": "low",
+        "info": "info"
+      }
+    },
+    {
+      "name": "maxHops",
+      "type": "string",
+      "label": "Max hops",
+      "defaultValue": "",
+      "required": false
+    },
+    {
+      "name": "noColor",
+      "type": "boolean",
+      "label": "Disable ANSI color",
+      "defaultValue": "true",
+      "required": false
+    },
+    {
+      "name": "fallbackCargo",
+      "type": "boolean",
+      "label": "Fallback to cargo install",
+      "defaultValue": "false",
+      "required": false,
+      "helpMarkDown": "If release-asset install fails, install taudit with `cargo install --locked` into a workspace-local cache. This is the recovery path when Windows extraction dependencies are unavailable."
+    }
+  ],
+  "restrictions": {
+    "commands": {
+      "mode": "restricted"
+    },
+    "settableVariables": {
+      "allowed": [
+        "taudit.*"
+      ]
+    }
+  },
+  "execution": {
+    "Node20_1": {
+      "target": "index.js"
+    }
+  }
+}

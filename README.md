@@ -97,6 +97,22 @@ The graph is the contract between these layers. Keeping it stable, versioned, an
 
 For **workflow YAML shape and platform contexts**, keep using your platform linter (e.g. **[actionlint](https://github.com/rhysd/actionlint)** for GitHub Actions) alongside taudit — taudit models **authority propagation**, not full expression evaluation or every schema knob.
 
+## Operator surfaces
+
+The CLI is the authority surface. Two thin operator adapters are maintained in
+this repo:
+
+- **VS Code extension**: [`integrations/vscode-extension/README.md`](integrations/vscode-extension/README.md)
+  — local verify, scan, and graph commands over a locally installed `taudit`
+  binary.
+- **Azure DevOps task**: [`integrations/azure-devops-extension/README.md`](integrations/azure-devops-extension/README.md)
+  — `Taudit@1` for Azure Pipelines with typed task inputs and version-pinned
+  release-asset execution.
+
+These wrappers do not embed a separate taudit engine. If a pipeline or editor
+surface runs `taudit`, that execution surface is still auditable by `taudit`
+itself.
+
 ## Golden path (docs + CI)
 
 Blessed copy-paste flows (graph → scan → verify, exit codes, stdout vs `-o`): **[`docs/golden-paths.md`](docs/golden-paths.md)**. Example workflow with pinned `taudit` + SARIF upload: **[`docs/examples/ci-gate-taudit-verify.yml`](docs/examples/ci-gate-taudit-verify.yml)**. Adoption checklist: **[`docs/adr/0003-strategic-spine-adoption-phased.md`](docs/adr/0003-strategic-spine-adoption-phased.md)**. Day 0–1 operator runbook (verify, baselines, suppressions, CI per platform): **[`docs/adoption-day0-day1.md`](docs/adoption-day0-day1.md)**. **Stable vs edge releases** (crates.io trust, GitHub velocity, semver for detection): **[`docs/release-strategy.md`](docs/release-strategy.md)**.
@@ -172,6 +188,34 @@ taudit verify .github/workflows/ --policy invariants/starter/ --platform github-
 # 7. Propagation rollup JSON (same dense-graph guard as scan) — triage / dashboards.
 taudit graph .github/workflows/release.yml --format summary | jq '.totals'
 ```
+
+## Self-audit semantics
+
+`taudit` audits the pipeline that runs it. There is no built-in self-exemption.
+
+If a workflow contains a `taudit` step or extension task, that step is part of
+the authority graph and may appear in findings when it matches normal rules.
+This is expected:
+
+- a GitHub Actions job that runs `taudit` can still be flagged for broad
+  `GITHUB_TOKEN`, unpinned third-party actions, or risky authority flow
+- an Azure DevOps pipeline that uses `Taudit@1` can still be flagged for
+  external task trust, variable-group authority, or artifact movement
+
+What matters is the trust model of the execution surface, not the brand of the
+tool running there.
+
+Platform pinning is different across CI systems:
+
+- **GitHub Actions**: pin third-party actions by full commit SHA
+- **Azure DevOps Marketplace tasks**: there is no SHA-pin equivalent; pin the
+  task major version (`Taudit@1`), pin the downloaded `taudit` binary version,
+  and verify the asset integrity
+
+`Taudit@1` downloads a version-pinned release asset and verifies its SHA-256
+checksum before execution. If you want taudit findings in a repo dogfood lane
+to be non-blocking, do that explicitly in policy, baseline, or suppressions —
+not through a hidden product exemption.
 
 ## Support
 

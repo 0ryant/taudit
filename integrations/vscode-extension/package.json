@@ -1,0 +1,236 @@
+{
+  "name": "taudit-vscode",
+  "displayName": "taudit",
+  "description": "Audit GitHub Actions, Azure Pipelines, GitLab CI, and Bitbucket workflows from VS Code with policy gates and taudit graphs.",
+  "version": "0.1.5",
+  "publisher": "algol",
+  "icon": "assets/icon.png",
+  "license": "MIT OR Apache-2.0",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/0ryant/taudit.git",
+    "directory": "integrations/vscode-extension"
+  },
+  "homepage": "https://github.com/0ryant/taudit/tree/main/integrations/vscode-extension",
+  "bugs": {
+    "url": "https://github.com/0ryant/taudit/issues"
+  },
+  "engines": {
+    "vscode": "^1.95.0"
+  },
+  "categories": [
+    "Linters",
+    "Visualization",
+    "Testing",
+    "Other"
+  ],
+  "keywords": [
+    "taudit",
+    "ci-cd",
+    "pipeline-security",
+    "supply-chain-security",
+    "devsecops",
+    "authority-graph",
+    "security-scanning",
+    "policy-as-code",
+    "sarif",
+    "github-actions",
+    "gitlab",
+    "azure-devops",
+    "bitbucket",
+    "workflow-security",
+    "vscode"
+  ],
+  "extensionKind": [
+    "workspace"
+  ],
+  "main": "./out/extension.js",
+  "activationEvents": [
+    "onCommand:taudit.initializePolicy",
+    "onCommand:taudit.verifyWorkspace",
+    "onCommand:taudit.scanWorkspace",
+    "onCommand:taudit.scanFile",
+    "onCommand:taudit.graphAuthority",
+    "onCommand:taudit.graphExploit",
+    "onCommand:taudit.showOutput"
+  ],
+  "contributes": {
+    "commands": [
+      {
+        "command": "taudit.initializePolicy",
+        "title": "taudit: Initialize Workspace Policy"
+      },
+      {
+        "command": "taudit.verifyWorkspace",
+        "title": "taudit: Verify Workspace"
+      },
+      {
+        "command": "taudit.scanWorkspace",
+        "title": "taudit: Scan Workspace"
+      },
+      {
+        "command": "taudit.scanFile",
+        "title": "taudit: Scan Active File"
+      },
+      {
+        "command": "taudit.graphAuthority",
+        "title": "taudit: Graph Authority View"
+      },
+      {
+        "command": "taudit.graphExploit",
+        "title": "taudit: Graph Exploit View"
+      },
+      {
+        "command": "taudit.showOutput",
+        "title": "taudit: Show Output"
+      }
+    ],
+    "configuration": {
+      "title": "taudit",
+      "properties": {
+        "taudit.binaryPath": {
+          "type": "string",
+          "default": "taudit",
+          "description": "Path to the taudit binary. Defaults to `taudit` on PATH."
+        },
+        "taudit.platform": {
+          "type": "string",
+          "enum": [
+            "auto",
+            "github-actions",
+            "azure-devops",
+            "gitlab",
+            "bitbucket"
+          ],
+          "default": "auto",
+          "description": "Default platform passed to taudit."
+        },
+        "taudit.workflowPaths": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "default": [
+            ".github/workflows/"
+          ],
+          "description": "Workspace-relative paths scanned by the workspace commands."
+        },
+        "taudit.verify.policyPath": {
+          "type": "string",
+          "default": ".taudit/policy/",
+          "description": "Workspace-relative path to the taudit verify policy file or directory."
+        },
+        "taudit.verify.includeBuiltin": {
+          "type": "boolean",
+          "default": false,
+          "description": "Also run taudit built-in rules during verify."
+        },
+        "taudit.verify.ignorePartial": {
+          "type": "boolean",
+          "default": false,
+          "description": "Suppress findings produced by partial-graph reasoning during verify."
+        },
+        "taudit.verify.format": {
+          "type": "string",
+          "enum": [
+            "text",
+            "json",
+            "sarif"
+          ],
+          "default": "json",
+          "description": "Default output format for verify."
+        },
+        "taudit.scan.format": {
+          "type": "string",
+          "enum": [
+            "terminal",
+            "json",
+            "sarif",
+            "cloudevents"
+          ],
+          "default": "json",
+          "description": "Default output format for scan."
+        },
+        "taudit.graph.format": {
+          "type": "string",
+          "enum": [
+            "json",
+            "dot",
+            "mermaid",
+            "summary"
+          ],
+          "default": "mermaid",
+          "description": "Default output format for authority and exploit graph commands."
+        },
+        "taudit.controls.ignoreFile": {
+          "type": "string",
+          "default": "",
+          "description": "Optional workspace-relative path to .tauditignore."
+        },
+        "taudit.controls.suppressionsFile": {
+          "type": "string",
+          "default": "",
+          "description": "Optional workspace-relative path to .taudit-suppressions.yml."
+        },
+        "taudit.controls.suppressionMode": {
+          "type": "string",
+          "enum": [
+            "downgrade",
+            "tag-only"
+          ],
+          "default": "downgrade",
+          "description": "How taudit should apply matched suppressions."
+        },
+        "taudit.controls.baselineRoot": {
+          "type": "string",
+          "default": "",
+          "description": "Optional workspace-relative baseline root containing .taudit/baselines/."
+        },
+        "taudit.maxHops": {
+          "type": "integer",
+          "default": 4,
+          "minimum": 1,
+          "description": "Maximum propagation depth for taudit BFS analysis."
+        },
+        "taudit.severityThreshold": {
+          "type": "string",
+          "enum": [
+            "",
+            "critical",
+            "high",
+            "medium",
+            "low",
+            "info"
+          ],
+          "default": "",
+          "description": "Optional severity threshold for scan or verify. Leave empty to count all findings."
+        },
+        "taudit.runOnSave": {
+          "type": "boolean",
+          "default": false,
+          "description": "When enabled, taudit scans supported pipeline files after save."
+        }
+      }
+    }
+  },
+  "scripts": {
+    "clean": "node -e \"const fs=require('fs'); for (const p of ['out','taudit-vscode.vsix']) fs.rmSync(p,{recursive:true,force:true});\"",
+    "compile": "tsc -p ./",
+    "watch": "tsc -watch -p ./",
+    "vscode:prepublish": "npm run compile",
+    "pretest": "npm run compile",
+    "test": "node --test out/test/*.test.js",
+    "test:integration": "npm run compile && node out/test/run-integration.js",
+    "smoke:vsix": "npm run compile && node out/test/install-vsix-smoke.js",
+    "check": "npm run test",
+    "package:vsix": "npm run compile && vsce package --out taudit-vscode.vsix",
+    "preflight": "npm run check && npm run test:integration && npm run package:vsix && npm run smoke:vsix"
+  },
+  "devDependencies": {
+    "@types/node": "^24.0.0",
+    "@types/vscode": "^1.95.0",
+    "@vscode/test-electron": "^2.5.2",
+    "@vscode/vsce": "^3.6.2",
+    "typescript": "^5.8.3"
+  }
+}

@@ -1,0 +1,7 @@
+src/**
+tsconfig.json
+node_modules/.cache/**
+out/test/**
+out/**/*.map
+.gitignore
+*.tsbuildinfo

@@ -43,23 +43,41 @@ Each layer is single-purpose, externally verifiable, and replaceable:
   across repos, applies organisational policy, emits decisions
   external systems consume. Sibling project, **coming in axiom v0.1**.
 
+## Adoption links
+
+Use these entry points when linking from Marketplace listings or integration
+READMEs:
+
+| Audience | Start here | Why |
+|---|---|---|
+| GitHub Actions users | [`github-marketplace-action-contract.md`](github-marketplace-action-contract.md) | Typed action contract, permissions, inputs, outputs, and exit semantics. |
+| VS Code users | [`visual-studio-marketplace-extension-operator-guide.md`](visual-studio-marketplace-extension-operator-guide.md) | Editor commands, settings, result surfaces, and operator controls. |
+| Azure DevOps users | [`azure-devops-marketplace-extension-contract.md`](azure-devops-marketplace-extension-contract.md) | Pipeline task contract and Marketplace packaging surface. |
+| Azure DevOps operators proving the task live | [`azure-devops-live-proof-checklist.md`](azure-devops-live-proof-checklist.md) | One real `Taudit@1` receipt: queue checks, outputs, artifacts, and failure branches. |
+| CLI adopters | [`../golden-paths.md`](../golden-paths.md) | Copy-paste graph, scan, verify, and diagram flows on committed fixtures. |
+| Brownfield rollout | [`../adoption-day0-day1.md`](../adoption-day0-day1.md) | Baselines, suppressions, policy layout, and merge-gating CI. |
+| Dogfood/self-audit operators | [`taudit-dogfood-self-audit-patterns.md`](taudit-dogfood-self-audit-patterns.md) | Keep taudit findings visible but non-blocking with explicit baselines and suppressions. |
+| Policy authors | [`../verify.md`](../verify.md) | Verify semantics, required policy path, formats, and exit codes. |
+
 ## Contract surfaces
 
-Three contracts pin the layers together. Each is versioned in its
-envelope so consumers can pin to a major and fail loudly on a break.
+These contracts pin the layers together. Each is versioned in its envelope so
+consumers can pin to a major and fail loudly on a break.
 
 | Contract | Owned by | Where |
 |---|---|---|
 | Authority graph JSON | taudit | [`schemas/authority-graph.v1.json`](../../schemas/authority-graph.v1.json) — `schema_version: "1.0.0"` today |
 | GitHub Marketplace action | taudit | [`github-marketplace-action-contract.md`](github-marketplace-action-contract.md) — implemented `dev.taudit.github-action.v1` contract for `0ryant/taudit-action` |
+| Visual Studio Marketplace extension | taudit | [`visual-studio-marketplace-extension-contract.md`](visual-studio-marketplace-extension-contract.md) — proposed `dev.taudit.vscode-extension.v1` contract for the `algol.taudit-vscode` VS Code extension; [`visual-studio-marketplace-extension-operator-guide.md`](visual-studio-marketplace-extension-operator-guide.md) — operator guide, controls mapping, and release preflight |
+| Azure DevOps Marketplace task | taudit | [`azure-devops-marketplace-extension-contract.md`](azure-devops-marketplace-extension-contract.md) — implemented `dev.taudit.azure-pipelines-task.v1` contract for the `algol.taudit-azure-pipelines` Azure DevOps extension |
 | in-toto predicate `taudit.dev/attestations/authority-graph/v0.1` | tsign | [`tsign-consumer.md`](tsign-consumer.md) |
 | axiom decision JSON | axiom | [`axiom-consumer.md`](axiom-consumer.md) — `decision_schema_version: "0.1.0"` today |
 
 The graph schema is `1.x.y` — additive changes only, breaking changes
 require a `2.0.0` bump (see
-[`docs/authority-graph.md`](../authority-graph.md#versioning)). The two
-proposed contracts are explicitly `0.x` to leave room for evolution
-before the sibling projects publish.
+[`docs/authority-graph.md`](../authority-graph.md#versioning)). The proposed
+sibling-project contracts are explicitly `0.x` to leave room for evolution
+before those projects publish.
 
 ## Why this composition matters
 
@@ -101,6 +119,12 @@ For the planned first-class Marketplace wrapper, see
 The action contract is intentionally stricter than a copy-paste README snippet:
 typed inputs, deterministic argv mapping, explicit policy/suppression/baseline
 controls, stable outputs, and taudit exit-code preservation.
+
+For the proposed editor-side product surface, see
+[`visual-studio-marketplace-extension-contract.md`](visual-studio-marketplace-extension-contract.md).
+The VS Code extension contract keeps the same typed operator controls as the
+action contract, but maps them into commands, workspace settings, editor result
+surfaces, and VSIX/Marketplace readiness gates.
 
 The [`stack-integration`](../../.github/workflows/stack-integration.yml) workflow assumes **tsafe** and **CellOS** live in **the same GitHub org as this repository** (default repo ids **`{owner}/tsafe`** and **`{owner}/CellOS`** on `github.com`, where `{owner}` is this repo’s owner). The Actions **`GITHUB_TOKEN`** can clone those repos when they are private to the org. It runs **`taudit scan`** on tsafe’s `.github/workflows/` (override repo id with **`SIBLING_TSAFE_REPO`** if the name differs).
 
