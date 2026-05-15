@@ -19,8 +19,8 @@ settings onto the supported CLI surface.
 
 ## Golden path
 
-1. Install `taudit` locally and make it available on `PATH`, or set
-   `taudit.binaryPath`.
+1. Install `taudit` locally with `cargo install taudit --locked`, then make it
+   available on `PATH`, or set `taudit.binaryPath`.
 2. Open the repository you want to inspect in VS Code.
 3. Set `taudit.verify.policyPath` to `.taudit/policy/`.
 4. Open the Command Palette and run `taudit: Initialize Workspace Policy`.
@@ -34,8 +34,8 @@ before running the workspace commands.
 
 ## Minimum setup
 
-1. Install `taudit` locally and make it available on `PATH`, or set
-   `taudit.binaryPath`.
+1. Install `taudit` locally with `cargo install taudit --locked`, then make it
+   available on `PATH`, or set `taudit.binaryPath`.
 2. Set `taudit.verify.policyPath` to a valid policy file or directory.
 3. Optionally configure ignore, suppressions, and baseline controls through the
    `taudit.controls.*` settings.
