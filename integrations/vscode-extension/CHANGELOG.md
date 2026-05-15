@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.1.5
+
+- Tightened Marketplace description, categories, keywords, and README first
+  screen for CI/CD authority, graph, SARIF, and policy-search discoverability.
+- Kept the extension positioning precise: a typed VS Code surface over a local
+  `taudit` binary, not a bundled scanner or arbitrary shell wrapper.
+
 ## 0.1.2
 
 - Added `taudit: Initialize Workspace Policy` to bootstrap a starter verify

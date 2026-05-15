@@ -1,7 +1,22 @@
 # taudit VS Code Extension
 
-This extension runs the local `taudit` CLI from VS Code with an explicit,
-typed command surface.
+Verify CI/CD pipeline authority from VS Code. The taudit extension runs your
+local `taudit` CLI through typed commands for `verify`, `scan`, and
+authority/exploit graph generation.
+
+Use it when you want editor-side checks for GitHub Actions, Azure DevOps,
+GitLab CI, or Bitbucket Pipelines without writing ad hoc shell commands.
+
+What it gives you:
+
+- `Verify Workspace` for policy-backed CI/CD authority checks.
+- `Scan Workspace` and `Scan Active File` for advisory findings.
+- Authority and exploit graph commands for local graph inspection.
+- Explicit settings for policy, ignore files, suppressions, baselines,
+  platform, graph format, and severity threshold.
+
+The extension does not embed taudit. Install `taudit` locally, keep it on
+`PATH`, or set `taudit.binaryPath`.
 
 Current commands:
 

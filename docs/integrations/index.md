@@ -43,6 +43,20 @@ Each layer is single-purpose, externally verifiable, and replaceable:
   across repos, applies organisational policy, emits decisions
   external systems consume. Sibling project, **coming in axiom v0.1**.
 
+## Adoption links
+
+Use these entry points when linking from Marketplace listings or integration
+READMEs:
+
+| Audience | Start here | Why |
+|---|---|---|
+| GitHub Actions users | [`github-marketplace-action-contract.md`](github-marketplace-action-contract.md) | Typed action contract, permissions, inputs, outputs, and exit semantics. |
+| VS Code users | [`visual-studio-marketplace-extension-operator-guide.md`](visual-studio-marketplace-extension-operator-guide.md) | Editor commands, settings, result surfaces, and operator controls. |
+| Azure DevOps users | [`azure-devops-marketplace-extension-contract.md`](azure-devops-marketplace-extension-contract.md) | Pipeline task contract and Marketplace packaging surface. |
+| CLI adopters | [`../golden-paths.md`](../golden-paths.md) | Copy-paste graph, scan, verify, and diagram flows on committed fixtures. |
+| Brownfield rollout | [`../adoption-day0-day1.md`](../adoption-day0-day1.md) | Baselines, suppressions, policy layout, and merge-gating CI. |
+| Policy authors | [`../verify.md`](../verify.md) | Verify semantics, required policy path, formats, and exit codes. |
+
 ## Contract surfaces
 
 These contracts pin the layers together. Each is versioned in its envelope so

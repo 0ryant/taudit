@@ -1,8 +1,8 @@
 {
   "name": "taudit-azure-devops-extension",
-  "version": "0.1.5",
+  "version": "0.1.6",
   "private": true,
-  "description": "Azure DevOps pipeline task packaging for taudit.",
+  "description": "Azure DevOps Marketplace packaging for taudit pipeline policy gates, scans, and authority graph artifacts.",
   "license": "MIT OR Apache-2.0",
   "scripts": {
     "prepare:task-runtime": "npm install --omit=dev --prefix Taudit",

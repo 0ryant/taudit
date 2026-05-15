@@ -2,12 +2,21 @@
   "manifestVersion": 1,
   "id": "taudit-azure-pipelines",
   "publisher": "algol",
-  "version": "0.1.5",
+  "version": "0.1.6",
   "name": "taudit",
-  "description": "Run taudit verify, scan, and graph in Azure Pipelines through a typed pipeline task.",
+  "description": "Gate Azure Pipelines with taudit policy checks, advisory scans, and authority graph artifacts.",
   "public": true,
   "categories": [
     "Azure Pipelines"
+  ],
+  "tags": [
+    "azure-pipelines",
+    "pipeline-security",
+    "ci-cd",
+    "policy-as-code",
+    "supply-chain-security",
+    "authority-graph",
+    "taudit"
   ],
   "targets": [
     {

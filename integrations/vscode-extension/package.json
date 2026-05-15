@@ -1,8 +1,8 @@
 {
   "name": "taudit-vscode",
   "displayName": "taudit",
-  "description": "Run taudit scan, verify, and graph commands from VS Code using a local taudit binary.",
-  "version": "0.1.4",
+  "description": "Verify CI/CD pipeline authority, scan findings, and render taudit graphs from VS Code.",
+  "version": "0.1.5",
   "publisher": "algol",
   "icon": "assets/icon.png",
   "license": "MIT OR Apache-2.0",
@@ -20,17 +20,26 @@
   },
   "categories": [
     "Linters",
+    "Visualization",
     "Testing",
     "Other"
   ],
   "keywords": [
     "taudit",
-    "cicd",
+    "ci-cd",
+    "pipeline-security",
+    "supply-chain-security",
+    "devsecops",
+    "authority-graph",
+    "security-scanning",
+    "policy-as-code",
+    "sarif",
     "github-actions",
     "gitlab",
     "azure-devops",
     "bitbucket",
-    "security"
+    "workflow-security",
+    "vscode"
   ],
   "extensionKind": [
     "workspace"

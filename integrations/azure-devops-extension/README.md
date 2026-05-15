@@ -1,6 +1,16 @@
 # taudit Azure DevOps extension
 
-Azure DevOps extension packaging for the `Taudit@1` pipeline task.
+Azure DevOps Marketplace packaging for `Taudit@1`, a pipeline task that runs
+taudit policy gates, advisory CI/CD scans, and authority graph exports without
+raw shell passthrough.
+
+Use it to make taudit visible in Azure Pipelines as an installable task:
+
+- `verify` blocks unsafe authority paths with repo-local policy
+- `scan` gives teams advisory findings during adoption and migration
+- `graph` writes authority or exploit-candidate artifacts for review
+- typed inputs keep policy, ignore files, suppressions, baselines, and ADO
+  enrichment separate
 
 This is the pipeline-step surface for Azure DevOps. It complements the VS Code
 extension in `integrations/vscode-extension/`; it does not replace it.
@@ -29,7 +39,7 @@ npm run preflight
 The packaged artifact is:
 
 ```text
-dist/algol.taudit-azure-pipelines-0.1.3.vsix
+dist/algol.taudit-azure-pipelines-0.1.6.vsix
 ```
 
 This repo also carries a dedicated smoke lane:

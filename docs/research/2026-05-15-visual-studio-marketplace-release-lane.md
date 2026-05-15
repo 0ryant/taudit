@@ -207,6 +207,22 @@ Use fixtures that make each result deterministic:
 - Package inspection finds secret-like values or Marketplace-disallowed assets.
 - Post-publish Marketplace install cannot be verified.
 
+## Post-Publish Growth Lane
+
+Once publish and install verification are complete, the extension is still not
+done. The next lane is discoverability and conversion:
+
+1. verify listing metadata matches the intended search surface
+2. verify screenshots and demo links render correctly
+3. verify the listing first screen exposes a copy-paste golden path
+4. verify repo docs and product pages link back to the Marketplace entry
+5. record installs, active installs, ratings, and operator feedback as inputs
+   to patch-version listing improvements
+
+The canonical task list for this lane lives in
+[`2026-05-15-visual-studio-marketplace-publish-track.md`](2026-05-15-visual-studio-marketplace-publish-track.md)
+under **Growth And Discoverability Tasks** (`V27-V36`).
+
 ## Current Blockers
 
 - A Marketplace PAT now exists in tsafe, but the PAT principal lacks publish

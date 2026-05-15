@@ -1,7 +1,17 @@
 # taudit for Azure Pipelines
 
-`taudit` brings authority-graph scanning and verify-mode policy gates into
-Azure DevOps pipelines as a first-class pipeline task.
+Gate Azure Pipelines with the same taudit controls operators use from the CLI:
+policy verification, advisory CI/CD scans, and reviewable authority or exploit
+graph artifacts.
+
+Use `Taudit@1` when you need to:
+
+- fail a pipeline when workflow authority violates a repo-local policy
+- scan Azure Pipelines YAML, GitHub Actions, GitLab CI, or Bitbucket pipeline
+  files during migration and audit work
+- export authority and exploit-candidate graphs for security review
+- keep policy, ignore files, suppressions, and baselines as explicit pipeline
+  controls instead of shell-script arguments
 
 ## Golden path
 
@@ -14,9 +24,10 @@ Azure DevOps pipelines as a first-class pipeline task.
 
 ## What it does
 
-- Runs `taudit verify`, `taudit scan`, or `taudit graph`
-- Preserves the same typed contract as the GitHub Marketplace action
-- Downloads a pinned `taudit` release asset for the current runner platform
+- Runs `taudit verify`, `taudit scan`, or `taudit graph`.
+- Preserves a typed task contract with no raw shell or arbitrary argument
+  passthrough.
+- Downloads a pinned `taudit` release asset for the current runner platform.
 - Keeps Azure DevOps PAT material out of argv and injects it through process
   environment only when ADO enrichment is configured
 - Falls back to a locked, workspace-local Cargo install only when explicitly
