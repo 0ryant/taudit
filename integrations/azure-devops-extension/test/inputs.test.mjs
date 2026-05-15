@@ -12,16 +12,17 @@ test("verify requires policy", () => {
   );
 });
 
-test("ado enrichment requires all fields", () => {
-  assert.throws(
-    () => normalizeInputs({
-      mode: "scan",
-      paths: "azure-pipelines.yml",
-      adoOrg: "0ryant",
-      adoProject: "taudit"
-    }, {}),
-    /ADO enrichment requires adoPat/
-  );
+test("ado context flags are forwarded independently for CLI parity", () => {
+  const input = normalizeInputs({
+    mode: "scan",
+    paths: "azure-pipelines.yml",
+    adoOrg: "0ryant",
+    adoProject: "taudit"
+  }, {});
+
+  assert.equal(input.adoOrg, "0ryant");
+  assert.equal(input.adoProject, "taudit");
+  assert.equal(input.adoPat, "");
 });
 
 test("graph output path stays workspace relative", () => {

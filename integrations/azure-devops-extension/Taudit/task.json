@@ -65,7 +65,7 @@
       "label": "ADO org",
       "defaultValue": "",
       "required": false,
-      "helpMarkDown": "Optional Azure DevOps org for variable-group enrichment. Requires project and PAT."
+      "helpMarkDown": "Optional Azure DevOps org forwarded to the taudit CLI for ADO-aware analysis. Current taudit versions may treat this as reserved scaffolding."
     },
     {
       "name": "adoProject",
@@ -73,7 +73,7 @@
       "label": "ADO project",
       "defaultValue": "",
       "required": false,
-      "helpMarkDown": "Optional Azure DevOps project for variable-group enrichment. Requires org and PAT."
+      "helpMarkDown": "Optional Azure DevOps project forwarded to the taudit CLI for ADO-aware analysis. Current taudit versions may treat this as reserved scaffolding."
     },
     {
       "name": "adoPat",
@@ -81,7 +81,7 @@
       "label": "ADO PAT",
       "defaultValue": "",
       "required": false,
-      "helpMarkDown": "Optional Azure DevOps PAT for variable-group enrichment. Prefer a secret pipeline variable or env: TAUDIT_ADO_PAT."
+      "helpMarkDown": "Optional Azure DevOps PAT forwarded via TAUDIT_ADO_PAT for ADO-aware analysis. Prefer a secret pipeline variable. Current taudit versions may treat this as reserved scaffolding."
     },
     {
       "name": "policy",

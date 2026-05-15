@@ -45,9 +45,9 @@ shell, or extra-args passthrough in v1.
 | `version` | SemVer string | `1.1.4` | all | installer only |
 | `paths` | multiline string | `azure-pipelines.yml` | all | positional paths |
 | `platform` | enum `auto`, `github-actions`, `azure-devops`, `gitlab`, `bitbucket` | `auto` | all | `--platform` |
-| `adoOrg` | string | none | all | `--ado-org` |
-| `adoProject` | string | none | all | `--ado-project` |
-| `adoPat` | secret string | none | all | `TAUDIT_ADO_PAT` env |
+| `adoOrg` | string | none | all | `--ado-org` (forwarded; may be reserved scaffolding on current taudit versions) |
+| `adoProject` | string | none | all | `--ado-project` (forwarded; may be reserved scaffolding on current taudit versions) |
+| `adoPat` | secret string | none | all | `TAUDIT_ADO_PAT` env (forwarded; may be reserved scaffolding on current taudit versions) |
 | `policy` | workspace-relative file or directory | none | `verify` | `--policy` |
 | `includeBuiltin` | boolean | `false` | `verify` | `--include-builtin` |
 | `ignoreFile` | workspace-relative file | none | `scan`, `verify` | `--ignore-file` |

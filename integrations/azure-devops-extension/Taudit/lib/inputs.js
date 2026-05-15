@@ -50,7 +50,6 @@ function normalizeInputs(raw, env) {
   validateEnums(normalized);
   validateModeFormat(normalized);
   validateVerifyPolicy(normalized);
-  validateAdoAllOrNone(normalized);
   validatePathLikeInputs(normalized);
   return normalized;
 }
@@ -93,15 +92,6 @@ function validateModeFormat(input) {
 function validateVerifyPolicy(input) {
   if (input.mode === "verify" && !input.policy) {
     throw new Error("policy is required for verify mode");
-  }
-}
-
-function validateAdoAllOrNone(input) {
-  const keys = ["adoOrg", "adoProject", "adoPat"];
-  const present = keys.filter((key) => input[key]);
-  if (present.length > 0 && present.length < keys.length) {
-    const missing = keys.filter((key) => !input[key]);
-    throw new Error(`ADO enrichment requires ${missing.join(", ")}`);
   }
 }
 

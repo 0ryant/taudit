@@ -43,8 +43,9 @@ steps:
   path, not `$(System.DefaultWorkingDirectory)` and not an absolute path.
 - On Windows runners, release extraction depends on PowerShell archive support
   or `tar`; if those are missing, use `fallbackCargo=true`.
-- ADO variable-group enrichment is optional and requires `adoOrg`,
-  `adoProject`, and a secret `adoPat` or `TAUDIT_ADO_PAT`.
+- `adoOrg`, `adoProject`, and `adoPat` are forwarded to the taudit CLI for
+  ADO-aware analysis. Current taudit versions may treat that path as reserved
+  scaffolding rather than active variable-group enrichment.
 - The task is Azure DevOps-first. Cross-CI scanning is supported, but the main
   merge-gating story is Azure Pipelines.
 

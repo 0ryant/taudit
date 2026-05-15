@@ -31,8 +31,9 @@ Use it to make taudit visible in Azure Pipelines as an installable task:
   `tar`. If that path is unavailable on the runner, set `fallbackCargo=true`
   and the task will install `taudit` into a workspace-local Cargo cache.
 - `verify` requires a repo-local policy path.
-- ADO variable-group enrichment is optional and requires `adoOrg`,
-  `adoProject`, and a secret `adoPat` or `TAUDIT_ADO_PAT`.
+- `adoOrg`, `adoProject`, and `adoPat` are forwarded to the taudit CLI for
+  ADO-aware analysis. Current taudit versions may treat that path as reserved
+  scaffolding rather than active variable-group enrichment.
 
 This is the pipeline-step surface for Azure DevOps. It complements the VS Code
 extension in `integrations/vscode-extension/`; it does not replace it.
