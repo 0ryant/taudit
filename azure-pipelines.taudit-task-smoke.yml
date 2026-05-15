@@ -76,9 +76,11 @@ stages:
               echo "verify outcome: $(tauditVerify.taudit.outcome)"
               ls -la .artifacts
             displayName: Show taudit outputs
+            condition: always()
 
           - task: PublishPipelineArtifact@1
             inputs:
               targetPath: .artifacts
               artifact: taudit-task-smoke
             displayName: Publish taudit task artifacts
+            condition: always()

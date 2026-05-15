@@ -53,8 +53,10 @@ READMEs:
 | GitHub Actions users | [`github-marketplace-action-contract.md`](github-marketplace-action-contract.md) | Typed action contract, permissions, inputs, outputs, and exit semantics. |
 | VS Code users | [`visual-studio-marketplace-extension-operator-guide.md`](visual-studio-marketplace-extension-operator-guide.md) | Editor commands, settings, result surfaces, and operator controls. |
 | Azure DevOps users | [`azure-devops-marketplace-extension-contract.md`](azure-devops-marketplace-extension-contract.md) | Pipeline task contract and Marketplace packaging surface. |
+| Azure DevOps operators proving the task live | [`azure-devops-live-proof-checklist.md`](azure-devops-live-proof-checklist.md) | One real `Taudit@1` receipt: queue checks, outputs, artifacts, and failure branches. |
 | CLI adopters | [`../golden-paths.md`](../golden-paths.md) | Copy-paste graph, scan, verify, and diagram flows on committed fixtures. |
 | Brownfield rollout | [`../adoption-day0-day1.md`](../adoption-day0-day1.md) | Baselines, suppressions, policy layout, and merge-gating CI. |
+| Dogfood/self-audit operators | [`taudit-dogfood-self-audit-patterns.md`](taudit-dogfood-self-audit-patterns.md) | Keep taudit findings visible but non-blocking with explicit baselines and suppressions. |
 | Policy authors | [`../verify.md`](../verify.md) | Verify semantics, required policy path, formats, and exit codes. |
 
 ## Contract surfaces

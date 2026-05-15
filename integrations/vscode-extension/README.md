@@ -20,6 +20,8 @@ What you get first:
 ## Before you install
 
 - Install `taudit` locally with `cargo install taudit --locked`.
+- Prefer a known taudit release version in team docs and support runbooks; by
+  default `cargo install` tracks the latest published crate.
 - Keep `taudit` on `PATH`, or set `taudit.binaryPath`.
 - `Verify Workspace` requires a repo-local policy path.
 - Supported workflow platforms are GitHub Actions, Azure DevOps, GitLab CI, and
@@ -47,6 +49,15 @@ Workspace` can run immediately.
 - workspace artifact files for graph output and JSON/SARIF exports
 - config validation that fails early when the binary, policy, ignore file,
   suppressions file, or baseline root are misconfigured
+
+## Trust model
+
+- the extension runs a local `taudit` binary on your machine or dev container
+- it does not expose raw shell or arbitrary argument passthrough
+- it writes artifacts into the workspace so you can inspect graph and report output
+- it does not embed its own taudit engine; local binary behavior controls the result
+- if you need a fully pinned operator flow, install and manage a specific taudit
+  CLI version in your team environment
 
 ## Required settings
 

@@ -81,6 +81,16 @@ steps:
 - ADO PAT material stays in process environment and out of taudit argv
 - open-source implementation and documented security disclosure path
 
+## What the task executes
+
+`Taudit@1` downloads the requested taudit release asset for the runner platform,
+verifies its SHA-256 checksum, extracts it into a workspace-local tool cache,
+and executes that binary locally on the agent. If `fallbackCargo=true` is set,
+the task may instead install the pinned taudit crate version into a
+workspace-local Cargo cache and run that binary. The task logs the resolved
+taudit version and report path so the execution surface is inspectable in the
+pipeline run.
+
 ## When taudit finds taudit
 
 `Taudit@1` stays inside the authority graph. If your pipeline gives the task

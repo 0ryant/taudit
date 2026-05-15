@@ -131,6 +131,14 @@ steps:
 - ADO PAT material stays in process environment and out of taudit argv
 - open-source implementation and documented security disclosure path
 
+## Execution model
+
+`Taudit@1` executes locally on the Azure Pipelines agent. The task downloads the
+requested taudit release asset for the runner platform, verifies its SHA-256
+checksum, extracts it into a workspace-local tool cache, and runs that binary.
+If `fallbackCargo=true` is enabled, the task may instead install the pinned
+crate version into a workspace-local Cargo cache and execute that binary.
+
 ## When taudit finds taudit
 
 `Taudit@1` is part of the pipeline graph. If your pipeline grants the task
