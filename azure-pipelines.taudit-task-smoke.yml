@@ -1,0 +1,84 @@
+---
+trigger: none
+pr: none
+
+stages:
+  - stage: taudit_task_smoke
+    displayName: Taudit task smoke
+    jobs:
+      - job: task_smoke
+        displayName: Run Taudit@1 on repo pipelines
+        pool:
+          vmImage: ubuntu-latest
+        steps:
+          - checkout: self
+            fetchDepth: 0
+
+          - task: Taudit@1
+            name: tauditScan
+            displayName: Scan Azure pipeline YAML
+            inputs:
+              mode: scan
+              version: 1.1.4
+              platform: azure-devops
+              paths: |
+                azure-pipelines.yml
+                azure-pipelines.stack-integration.yml
+                azure-pipelines.vscode-extension.yml
+                azure-pipelines.taudit-task-smoke.yml
+              format: json
+              output: .artifacts/taudit-scan.json
+              severityThreshold: high
+
+          - task: Taudit@1
+            name: tauditAuthority
+            displayName: Export authority graph
+            inputs:
+              mode: graph
+              version: 1.1.4
+              platform: azure-devops
+              paths: |
+                azure-pipelines.yml
+              graphView: authority
+              format: dot
+              output: .artifacts/taudit-authority.dot
+
+          - task: Taudit@1
+            name: tauditExploit
+            displayName: Export exploit graph
+            inputs:
+              mode: graph
+              version: 1.1.4
+              platform: azure-devops
+              paths: |
+                azure-pipelines.yml
+              graphView: exploit
+              format: dot
+              output: .artifacts/taudit-exploit.dot
+
+          - task: Taudit@1
+            name: tauditVerify
+            displayName: Verify clean fixture with example policy
+            inputs:
+              mode: verify
+              version: 1.1.4
+              platform: azure-devops
+              paths: |
+                tests/fixtures/clean.yml
+              policy: invariants/policies/example-enterprise-ado.yml
+              includeBuiltin: true
+              format: json
+              output: .artifacts/taudit-verify.json
+
+          - bash: |
+              set -euo pipefail
+              echo "scan outcome: $(tauditScan.taudit.outcome)"
+              echo "verify outcome: $(tauditVerify.taudit.outcome)"
+              ls -la .artifacts
+            displayName: Show taudit outputs
+
+          - task: PublishPipelineArtifact@1
+            inputs:
+              targetPath: .artifacts
+              artifact: taudit-task-smoke
+            displayName: Publish taudit task artifacts

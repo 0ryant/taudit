@@ -1,6 +1,6 @@
 # taudit Azure DevOps extension
 
-Private Azure DevOps extension packaging for the `Taudit@1` pipeline task.
+Azure DevOps extension packaging for the `Taudit@1` pipeline task.
 
 This is the pipeline-step surface for Azure DevOps. It complements the VS Code
 extension in `integrations/vscode-extension/`; it does not replace it.
@@ -15,7 +15,7 @@ npm run preflight
 ```
 
 2. Publish the VSIX to Visual Studio Marketplace as an Azure DevOps extension.
-3. Share the private extension with your Azure DevOps organization.
+3. Share the extension with your Azure DevOps organization if it remains private.
 4. Install it into the organization.
 5. Use `Taudit@1` in pipeline YAML.
 
@@ -24,6 +24,15 @@ The packaged artifact is:
 ```text
 dist/algol.taudit-azure-pipelines-0.1.0.vsix
 ```
+
+This repo also carries a dedicated smoke lane:
+
+```text
+../../azure-pipelines.taudit-task-smoke.yml
+```
+
+It exercises `Taudit@1` in `scan`, `graph authority`, `graph exploit`, and
+`verify` modes against this repository.
 
 ## YAML
 

@@ -53,7 +53,7 @@ consumers can pin to a major and fail loudly on a break.
 | Authority graph JSON | taudit | [`schemas/authority-graph.v1.json`](../../schemas/authority-graph.v1.json) — `schema_version: "1.0.0"` today |
 | GitHub Marketplace action | taudit | [`github-marketplace-action-contract.md`](github-marketplace-action-contract.md) — implemented `dev.taudit.github-action.v1` contract for `0ryant/taudit-action` |
 | Visual Studio Marketplace extension | taudit | [`visual-studio-marketplace-extension-contract.md`](visual-studio-marketplace-extension-contract.md) — proposed `dev.taudit.vscode-extension.v1` contract for the `algol.taudit-vscode` VS Code extension; [`visual-studio-marketplace-extension-operator-guide.md`](visual-studio-marketplace-extension-operator-guide.md) — operator guide, controls mapping, and release preflight |
-| Azure DevOps Marketplace task | taudit | [`azure-devops-marketplace-extension-contract.md`](azure-devops-marketplace-extension-contract.md) — proposed `dev.taudit.azure-pipelines-task.v1` contract for the `algol.taudit-azure-pipelines` Azure DevOps extension |
+| Azure DevOps Marketplace task | taudit | [`azure-devops-marketplace-extension-contract.md`](azure-devops-marketplace-extension-contract.md) — implemented `dev.taudit.azure-pipelines-task.v1` contract for the `algol.taudit-azure-pipelines` Azure DevOps extension |
 | in-toto predicate `taudit.dev/attestations/authority-graph/v0.1` | tsign | [`tsign-consumer.md`](tsign-consumer.md) |
 | axiom decision JSON | axiom | [`axiom-consumer.md`](axiom-consumer.md) — `decision_schema_version: "0.1.0"` today |
 

@@ -1,6 +1,6 @@
 # Azure DevOps Marketplace Task Contract
 
-Status: proposed v1 contract for the `algol.taudit-azure-pipelines` Azure
+Status: implemented v1 contract for the `algol.taudit-azure-pipelines` Azure
 DevOps extension.
 
 This document defines the first-class Azure Pipelines task surface for taudit.
@@ -96,7 +96,8 @@ steps:
 - The task runtime dependency tree must be included under
   `Taudit/node_modules/`.
 - The package must include discovery assets: `overview.md` and icon.
-- The extension is private by default until explicitly shared or made public.
+- The extension can be published private and shared org-by-org, or made public
+  later without changing the task contract.
 
 ## Publish and install model
 
@@ -110,3 +111,9 @@ High-level operator flow:
 3. Share the private extension with the Azure DevOps organization.
 4. Install it into the organization.
 5. Reference `Taudit@1` in pipeline YAML.
+
+The repository smoke definition for this contract lives at:
+
+```text
+../../azure-pipelines.taudit-task-smoke.yml
+```
