@@ -9,6 +9,9 @@ Visual Studio Marketplace publisher `algol`.
 - Official publish flow: VS Code extensions are packaged and published with
   `@vscode/vsce`; publishing requires a Visual Studio Marketplace publisher and
   an Azure DevOps PAT with Marketplace `Manage` scope.
+- Local operator publish paths in this repo use `tsafe` for PAT injection.
+  Hosted CI lanes may use a CI secret variable because `tsafe` is not assumed
+  on hosted runners.
 - Required manifest contract: every extension needs a root `package.json` with
   at least `name`, `version`, `publisher`, and `engines.vscode`.
 - Packaging/publish hygiene: Marketplace rejects user-provided SVG icons and
@@ -57,6 +60,8 @@ Visual Studio Marketplace publisher `algol`.
   separate extension product with its own manifest, versioning, and UX.
 - Do not create a publisher PAT with broader Azure DevOps scope than
   Marketplace `Manage` unless a documented exception is accepted.
+- Do not document or use local operator publish/share flows that pass PATs on
+  the command line or rely on raw shell exports outside `tsafe`.
 - Do not ship README / CHANGELOG / icon assets that violate VS Marketplace
   image rules.
 - Do not publish the first extension release without at least one real VSIX
@@ -174,8 +179,8 @@ Rules:
 - [ ] V19: Provision Marketplace auth for publisher `algol`.
   Required:
   Azure DevOps PAT with Marketplace `Manage` scope, stored in secret
-  management, and verified with `vsce login algol` or equivalent noninteractive
-  `VSCE_PAT` flow.
+  management, and verified with `tsafe exec` for local operator flows or an
+  equivalent CI-secret `VSCE_PAT` flow for hosted automation.
 
 - [x] V20: Decide release versioning semantics.
   Required decision:
@@ -194,7 +199,8 @@ Rules:
 
 - [ ] V23: Publish the first private or stable extension release.
   Choose one:
-  `vsce publish` directly or `vsce package` plus manual Marketplace upload.
+  local `tsafe exec` wrapping `vsce publish`, hosted CI `VSCE_PAT`, or
+  `vsce package` plus manual Marketplace upload.
 
 - [ ] V24: Verify the Marketplace listing after publish.
   Required checks:

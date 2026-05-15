@@ -254,6 +254,9 @@ Packaging and publishing MUST use `@vscode/vsce` or a documented compatible
 tool. Marketplace publishing requires a Visual Studio Marketplace publisher and
 an Azure DevOps PAT with Marketplace `Manage` scope. Automated publish SHOULD
 use `VSCE_PAT` and MUST NOT broaden PAT scope without a documented exception.
+Local operator publish paths MUST inject that PAT with `tsafe` or an equivalent
+declared-scope secret wrapper; they MUST NOT pass PATs on command lines or rely
+on ad hoc shell exports. Hosted CI publish lanes may use a CI secret variable.
 
 Marketplace assets and README/CHANGELOG images MUST satisfy VS Marketplace
 rules: no user-provided SVG icon and no non-HTTPS or untrusted SVG images.

@@ -18,6 +18,16 @@ It does three things:
 It does not embed taudit, does not edit your pipelines, and does not expose
 raw argument passthrough.
 
+## Operator Secret Posture
+
+Local operator flows for Marketplace publish or share must use `tsafe`.
+
+- Use `tsafe exec` for local `vsce` / `tfx-cli` publish or share commands.
+- Do not paste PATs into shell history.
+- Do not pass PATs on command lines.
+- For hosted CI lanes, a CI secret variable is the allowed exception because
+  `tsafe` is a local operator tool, not a hosted runner dependency.
+
 ## Commands
 
 The current command surface is:
@@ -167,6 +177,9 @@ It currently:
 - runs `npm run smoke:vsix`
 - publishes the VSIX and checksum as pipeline artifacts
 - exposes a gated publish stage that requires `VSCE_PAT`
+
+For local manual publish, use `tsafe` rather than exporting `VSCE_PAT`
+directly in the shell.
 
 ## What Is Still CLI-Only
 

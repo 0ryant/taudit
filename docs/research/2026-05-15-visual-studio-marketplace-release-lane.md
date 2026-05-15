@@ -89,8 +89,11 @@ command or hosted run, and do not publish.
      for publisher `algol`.
    - Store it as `VSCE_PAT` in the selected CI secret store or local secret
      manager; do not commit it, echo it, or place it in command arguments.
-   - Verify auth with `vsce login algol` for interactive local setup or
-     noninteractive `VSCE_PAT` execution in CI.
+   - Local operator flows must use `tsafe exec` to inject the PAT. Hosted CI
+     flows may use noninteractive `VSCE_PAT` execution because `tsafe` is not
+     assumed on hosted runners.
+   - Verify auth with `tsafe exec` for local setup or noninteractive
+     `VSCE_PAT` execution in CI.
    - Confirm normal and failed publish-preflight logs do not contain the PAT or
      token-like substrings.
    - If a broader PAT scope is proposed, stop and record the exception before
@@ -117,8 +120,9 @@ command or hosted run, and do not publish.
      succeeds and then fails, recover with a new extension version.
 
 9. **Publish gate**
-   - Publish either with `vsce publish` using `VSCE_PAT` or by uploading the
-     already-inspected `.vsix` through the Marketplace UI.
+   - Publish either with `tsafe exec` wrapping `vsce publish` for local
+     operator flows, or by uploading the already-inspected `.vsix` through the
+     Marketplace UI. Hosted CI publish may use a CI-secret `VSCE_PAT`.
    - Use the exact VSIX artifact that passed hosted preflight, or rerun all
      package and smoke gates if a new artifact is generated.
    - Record command, artifact path, artifact digest, version, publisher,
@@ -161,7 +165,7 @@ For CI publish, prefer a two-job shape:
    artifact and digest.
 2. `publish`: requires `preflight`, downloads the exact artifact, verifies the
    digest, then runs `npx @vscode/vsce publish --packagePath <vsix>` with
-   `VSCE_PAT` provided only as a secret environment variable.
+   `VSCE_PAT` provided only as a CI secret environment variable.
 
 ## Smoke Fixture Matrix
 
