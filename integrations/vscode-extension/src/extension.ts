@@ -1,6 +1,7 @@
 import * as path from "node:path";
 import * as fs from "node:fs/promises";
 import * as vscode from "vscode";
+import { existingArtifactPath } from "./artifacts";
 import {
   getPreferredWorkspaceFolder,
   getWorkspaceTargets,
@@ -54,9 +55,15 @@ export function activate(
     }),
     vscode.commands.registerCommand("taudit.showOutput", async () => {
       outputChannel.show(true);
-      if (lastArtifactPath) {
-        await openArtifact(lastArtifactPath);
+      const artifactPath = await existingArtifactPath(lastArtifactPath);
+      if (artifactPath) {
+        await openArtifact(artifactPath);
+        return;
       }
+
+      void vscode.window.showInformationMessage(
+        "No taudit artifact is available yet for this workspace.",
+      );
     }),
     vscode.workspace.onDidSaveTextDocument(async (document) => {
       if (!readSettings().runOnSave || !isSupportedPipelinePath(document.uri.fsPath)) {
@@ -275,10 +282,11 @@ async function executeRequest(
     outputChannel.appendLine(result.stderr.trimEnd());
   }
 
-  lastArtifactPath = artifactPath;
+  const resolvedArtifactPath = await existingArtifactPath(artifactPath);
+  lastArtifactPath = resolvedArtifactPath;
 
-  if (revealArtifact) {
-    await openArtifact(artifactPath);
+  if (revealArtifact && resolvedArtifactPath) {
+    await openArtifact(resolvedArtifactPath);
   }
 
   if (result.exitCode === 0) {
@@ -301,6 +309,11 @@ async function executeRequest(
 
   if (notify) {
     outputChannel.show(true);
+    if (!resolvedArtifactPath) {
+      outputChannel.appendLine(
+        `taudit ${request.mode} did not produce an artifact at ${artifactPath}.`,
+      );
+    }
     void vscode.window.showErrorMessage(
       `taudit ${request.mode} failed with exit ${result.exitCode}.`,
     );
