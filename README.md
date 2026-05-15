@@ -99,8 +99,12 @@ For **workflow YAML shape and platform contexts**, keep using your platform lint
 
 ## Operator surfaces
 
-The CLI is the authority surface. Two thin operator adapters are maintained in
-this repo:
+The CLI is the authority surface. Three thin operator adapters are maintained
+around it:
+
+- **GitHub Action**: [`docs/integrations/github-marketplace-action-contract.md`](docs/integrations/github-marketplace-action-contract.md)
+  — `0ryant/taudit-action` for typed verify, scan, and graph execution in
+  GitHub Actions.
 
 - **VS Code extension**: [`integrations/vscode-extension/README.md`](integrations/vscode-extension/README.md)
   — local verify, scan, and graph commands over a locally installed `taudit`
@@ -451,7 +455,7 @@ taudit scan . --ignore-file .taudit/ignore.yml
 
 ## How it works
 
-1. **Parse** — GitHub Actions, Azure DevOps, or GitLab CI YAML into typed nodes (steps, secrets, identities, images) with trust zone classification (FirstParty, ThirdParty, Untrusted). Platform is auto-detected by default (`--platform auto`); override with `--platform github-actions`, `--platform azure-devops`, or `--platform gitlab-ci`.
+1. **Parse** — GitHub Actions, Azure DevOps, or GitLab CI YAML into typed nodes (steps, secrets, identities, images) with trust zone classification (FirstParty, ThirdParty, Untrusted). Platform is auto-detected by default (`--platform auto`); override with `--platform github-actions`, `--platform azure-devops`, or `--platform gitlab`.
 2. **Build graph** — Directed edges model authority flow: `HasAccessTo`, `Produces`, `Consumes`, `UsesImage`, `DelegatesTo`, `PersistsTo`.
 3. **Propagate** — BFS from authority-bearing sources (secrets, identities) through edges, flagging trust boundary crossings.
 4. **Apply invariants** — built-in rules (plus any custom YAML rules) pattern-match against the graph, producing findings with severity, evidence paths, and remediation routing.

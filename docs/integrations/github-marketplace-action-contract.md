@@ -85,7 +85,7 @@ repository SHOULD test that `action.yml` and
 | `graph-view` | enum: `authority`, `exploit` | `authority` | `graph` | `--view` | Selects authority graph or exploit-candidate graph projection. |
 | `severity-threshold` | enum: `critical`, `high`, `medium`, `low`, `info` | CLI default | `scan`, `verify` | `--severity-threshold` | Filters/gates at or above threshold according to CLI command semantics. |
 | `max-hops` | positive integer | CLI default | all | `--max-hops` | Reject non-integer, zero, negative, or excessive values before invoking CLI. |
-| `no-color` | boolean | `true` in CI | `scan`, `verify` | `--no-color` | Default CI logs should be stable and grep-friendly. |
+| `no-color` | boolean | `true` | `scan`, `verify` | `--no-color` | Default Action logs should be stable and grep-friendly. |
 | `fallback-cargo` | boolean | `false` | install | installer only | If release asset is unavailable, run locked `cargo install`; must be visible in logs. |
 
 ### Input JSON Schema
