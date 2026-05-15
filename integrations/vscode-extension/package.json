@@ -2,7 +2,7 @@
   "name": "taudit-vscode",
   "displayName": "taudit",
   "description": "Audit GitHub Actions, Azure Pipelines, GitLab CI, and Bitbucket workflows from VS Code with policy gates and taudit graphs.",
-  "version": "0.1.5",
+  "version": "0.1.6",
   "publisher": "algol",
   "icon": "assets/icon.png",
   "license": "MIT OR Apache-2.0",
