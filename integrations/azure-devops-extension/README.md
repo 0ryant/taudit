@@ -22,7 +22,7 @@ npm run preflight
 The packaged artifact is:
 
 ```text
-dist/algol.taudit-azure-pipelines-0.1.0.vsix
+dist/algol.taudit-azure-pipelines-0.1.1.vsix
 ```
 
 This repo also carries a dedicated smoke lane:

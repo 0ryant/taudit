@@ -2,7 +2,7 @@
   "manifestVersion": 1,
   "id": "taudit-azure-pipelines",
   "publisher": "algol",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "name": "taudit",
   "description": "Run taudit verify, scan, and graph in Azure Pipelines through a typed pipeline task.",
   "public": false,
@@ -15,7 +15,7 @@
     }
   ],
   "icons": {
-    "default": "images/extension-icon.png"
+    "default": "extensionIcon.png"
   },
   "branding": {
     "color": "#111827",
@@ -49,7 +49,7 @@
       "path": "Taudit/node_modules"
     },
     {
-      "path": "images"
+      "path": "extensionIcon.png"
     },
     {
       "path": "overview.md"

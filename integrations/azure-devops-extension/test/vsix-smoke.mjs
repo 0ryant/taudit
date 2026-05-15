@@ -3,12 +3,13 @@ import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import packageJson from "../package.json" with { type: "json" };
 
 const extensionRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const vsixPath = path.join(
   extensionRoot,
   "dist",
-  "algol.taudit-azure-pipelines-0.1.0.vsix",
+  `algol.taudit-azure-pipelines-${packageJson.version}.vsix`,
 );
 
 test("packaged VSIX contains task runtime dependencies", () => {
