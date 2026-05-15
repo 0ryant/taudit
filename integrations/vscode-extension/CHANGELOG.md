@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.1.1
+
+- Replaced the Marketplace extension icon with the updated taudit icon asset.
+
 ## 0.1.0
 
 - First Marketplace release of the taudit VS Code extension.
