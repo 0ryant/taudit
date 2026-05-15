@@ -1,5 +1,7 @@
 "use strict";
 
+const path = require("node:path");
+
 const MODE_FORMATS = {
   scan: ["terminal", "json", "sarif", "cloudevents"],
   verify: ["text", "json", "sarif"],
@@ -49,6 +51,7 @@ function normalizeInputs(raw, env) {
 
   validateEnums(normalized);
   validateModeFormat(normalized);
+  normalizeModeScopedPathLikeInputs(normalized);
   validateVerifyPolicy(normalized);
   validatePathLikeInputs(normalized);
   return normalized;
@@ -95,6 +98,27 @@ function validateVerifyPolicy(input) {
   }
 }
 
+function normalizeModeScopedPathLikeInputs(input) {
+  if (input.mode !== "verify") {
+    delete input.policy;
+  }
+
+  for (const key of ["policy", "ignoreFile", "suppressions", "baselineRoot"]) {
+    if (!input[key]) {
+      continue;
+    }
+    const normalized = normalizeWorkspaceRelativeInput(key, input[key], input.cwd);
+    input[key] = normalized.value;
+    if (normalized.fromWorkspaceRootAbsolute && input[key] === ".") {
+      if (key === "baselineRoot") {
+        delete input[key];
+      } else if (key !== "policy") {
+        delete input[key];
+      }
+    }
+  }
+}
+
 function validatePathLikeInputs(input) {
   for (const entry of splitPaths(input.paths)) {
     validateWorkspacePath("paths", entry, false);
@@ -107,6 +131,30 @@ function validatePathLikeInputs(input) {
       });
     }
   }
+}
+
+function normalizeWorkspaceRelativeInput(name, value, cwd) {
+  const text = String(value).trim();
+  if (text === "") {
+    return { value: text, fromWorkspaceRootAbsolute: false };
+  }
+  if (/^\$\([^)]+\)(?:[\\/].*)?$/.test(text)) {
+    return { value: text, fromWorkspaceRootAbsolute: false };
+  }
+  if (!path.isAbsolute(text)) {
+    return { value: text, fromWorkspaceRootAbsolute: false };
+  }
+
+  const workspace = path.resolve(cwd);
+  const absolute = path.resolve(text);
+  const relative = path.relative(workspace, absolute);
+  if (relative === "") {
+    return { value: ".", fromWorkspaceRootAbsolute: true };
+  }
+  if (relative.startsWith("..") || path.isAbsolute(relative)) {
+    return { value: text, fromWorkspaceRootAbsolute: false };
+  }
+  return { value: relative.split(path.sep).join("/"), fromWorkspaceRootAbsolute: false };
 }
 
 function validateWorkspacePath(name, value, options = {}) {

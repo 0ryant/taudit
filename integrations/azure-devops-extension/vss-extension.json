@@ -2,7 +2,7 @@
   "manifestVersion": 1,
   "id": "taudit-azure-pipelines",
   "publisher": "algol",
-  "version": "0.1.7",
+  "version": "0.1.8",
   "name": "taudit",
   "description": "Fail unsafe Azure Pipelines before merge with taudit policy gates, workflow findings, and authority or exploit graph artifacts.",
   "public": true,

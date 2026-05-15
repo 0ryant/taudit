@@ -39,8 +39,13 @@ steps:
   The closest equivalent is `Taudit@1` plus an explicit `version` input for the
   downloaded `taudit` binary.
 - `policy` is required in `verify` mode.
+- `graph` does not require `policy` and the task ignores stray policy-like
+  values outside `verify`.
 - `baselineRoot` is workspace-relative only. Use `.` or another repo-relative
   path, not `$(System.DefaultWorkingDirectory)` and not an absolute path.
+- `policy`, `ignoreFile`, `suppressions`, and `baselineRoot` are plain string
+  inputs rather than Azure DevOps `filePath` inputs so the task can preserve
+  repo-relative paths instead of receiving agent-canonicalized absolute ones.
 - On Windows runners, release extraction depends on PowerShell archive support
   or `tar`; if those are missing, use `fallbackCargo=true`.
 - `adoOrg`, `adoProject`, and `adoPat` are forwarded to the taudit CLI for

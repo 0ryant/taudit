@@ -65,6 +65,17 @@ shell, or extra-args passthrough in v1.
 | `noColor` | boolean | `true` | `scan`, `verify` | `--no-color` |
 | `fallbackCargo` | boolean | `false` | installer | installer only |
 
+Notes:
+
+- `policy`, `ignoreFile`, `suppressions`, and `baselineRoot` are modeled as
+  plain string inputs in the Azure DevOps task contract. They are not
+  `filePath` inputs because the Azure Pipelines agent can canonicalize
+  `filePath` values into absolute workspace paths before the task runs.
+- For compatibility with older task materialization behavior, workspace-absolute
+  values inside the checked-out repo are relativized internally before CLI
+  argument construction.
+- `policy` is validated only in `verify` mode. `graph` does not require it.
+
 ## Output variables
 
 The task sets these output variables:

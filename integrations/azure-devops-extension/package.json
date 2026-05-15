@@ -1,6 +1,6 @@
 {
   "name": "taudit-azure-devops-extension",
-  "version": "0.1.7",
+  "version": "0.1.8",
   "private": true,
   "description": "Azure DevOps Marketplace packaging for taudit pipeline policy gates, scans, and authority graph artifacts.",
   "license": "MIT OR Apache-2.0",

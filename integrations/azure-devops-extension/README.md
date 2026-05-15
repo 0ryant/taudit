@@ -27,10 +27,14 @@ Use it to make taudit visible in Azure Pipelines as an installable task:
   downloaded `taudit` binary.
 - `baselineRoot` must be workspace-relative, for example `.` or `.taudit`.
   Do not pass `$(System.DefaultWorkingDirectory)` or any absolute path.
+- `policy`, `ignoreFile`, `suppressions`, and `baselineRoot` are string inputs
+  on purpose. Azure DevOps `filePath` inputs are agent-normalized and can
+  arrive as absolute workspace paths, which breaks a relative-path contract.
 - On Windows, release-asset extraction depends on PowerShell archive support or
   `tar`. If that path is unavailable on the runner, set `fallbackCargo=true`
   and the task will install `taudit` into a workspace-local Cargo cache.
 - `verify` requires a repo-local policy path.
+- `graph` does not require or validate `policy`.
 - `adoOrg`, `adoProject`, and `adoPat` are forwarded to the taudit CLI for
   ADO-aware analysis. Current taudit versions may treat that path as reserved
   scaffolding rather than active variable-group enrichment.
@@ -54,7 +58,7 @@ npm run preflight
 The packaged artifact is:
 
 ```text
-dist/algol.taudit-azure-pipelines-0.1.7.vsix
+dist/algol.taudit-azure-pipelines-0.1.8.vsix
 ```
 
 This repo also carries a dedicated smoke lane:
@@ -184,6 +188,9 @@ steps:
 - Default paths: `azure-pipelines.yml`
 - No raw args or shell passthrough
 - `verify` requires `policy`
+- workspace-absolute compatibility inputs inside the checked-out repo are
+  relativized internally for `policy`, `ignoreFile`, `suppressions`, and
+  `baselineRoot` so Azure-hosted agents do not fail on canonicalized paths
 - `graph` writes to a file only when `output` is set; the task captures stdout
   because `taudit graph` itself does not support `--output`
 

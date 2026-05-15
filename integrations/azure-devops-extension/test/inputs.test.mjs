@@ -66,3 +66,55 @@ test("policy rejects Azure DevOps macro paths", () => {
     /policy must be workspace-relative; do not pass \$\(System\.DefaultWorkingDirectory\) or other Azure DevOps path variables/
   );
 });
+
+test("verify relativizes workspace-absolute policy paths from Azure Pipelines", () => {
+  const input = normalizeInputs({
+    mode: "verify",
+    paths: "azure-pipelines.yml",
+    policy: "/home/vsts/work/1/s/taudit/policy"
+  }, {
+    SYSTEM_DEFAULTWORKINGDIRECTORY: "/home/vsts/work/1/s"
+  });
+
+  assert.equal(input.policy, "taudit/policy");
+});
+
+test("graph ignores spurious policy values from filePath-style coercion", () => {
+  const input = normalizeInputs({
+    mode: "graph",
+    paths: "azure-pipelines.yml",
+    policy: "/home/vsts/work/1/s"
+  }, {
+    SYSTEM_DEFAULTWORKINGDIRECTORY: "/home/vsts/work/1/s"
+  });
+
+  assert.equal(input.policy, undefined);
+});
+
+test("optional file-like inputs drop workspace-root coercions", () => {
+  const input = normalizeInputs({
+    mode: "scan",
+    paths: "azure-pipelines.yml",
+    ignoreFile: "/home/vsts/work/1/s",
+    suppressions: "/home/vsts/work/1/s",
+    baselineRoot: "/home/vsts/work/1/s"
+  }, {
+    SYSTEM_DEFAULTWORKINGDIRECTORY: "/home/vsts/work/1/s"
+  });
+
+  assert.equal(input.ignoreFile, undefined);
+  assert.equal(input.suppressions, undefined);
+  assert.equal(input.baselineRoot, undefined);
+});
+
+test("explicit relative baselineRoot dot is preserved", () => {
+  const input = normalizeInputs({
+    mode: "scan",
+    paths: "azure-pipelines.yml",
+    baselineRoot: "."
+  }, {
+    SYSTEM_DEFAULTWORKINGDIRECTORY: "/home/vsts/work/1/s"
+  });
+
+  assert.equal(input.baselineRoot, ".");
+});
