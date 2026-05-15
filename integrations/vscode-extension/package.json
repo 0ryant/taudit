@@ -2,18 +2,18 @@
   "name": "taudit-vscode",
   "displayName": "taudit",
   "description": "Run taudit scan, verify, and graph commands from VS Code using a local taudit binary.",
-  "version": "0.1.3",
+  "version": "0.1.4",
   "publisher": "algol",
   "icon": "assets/icon.png",
   "license": "MIT OR Apache-2.0",
   "repository": {
     "type": "git",
-    "url": "https://github.com/algol-cc/taudit.git",
+    "url": "https://github.com/0ryant/taudit.git",
     "directory": "integrations/vscode-extension"
   },
-  "homepage": "https://github.com/algol-cc/taudit/tree/main/integrations/vscode-extension",
+  "homepage": "https://github.com/0ryant/taudit/tree/main/integrations/vscode-extension",
   "bugs": {
-    "url": "https://github.com/algol-cc/taudit/issues"
+    "url": "https://github.com/0ryant/taudit/issues"
   },
   "engines": {
     "vscode": "^1.95.0"
