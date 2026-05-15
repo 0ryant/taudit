@@ -11,15 +11,31 @@ const { promisify } = require("node:util");
 const execFileAsync = promisify(execFile);
 
 async function resolveTaudit(input) {
+  const cachedBinary = installedBinaryPath(input.cwd, input.version);
+  if (fs.existsSync(cachedBinary)) {
+    return cachedBinary;
+  }
+
   try {
     return await installFromRelease(input.version, input.cwd);
   } catch (error) {
     if (!input.fallbackCargo) {
       throw new Error(`taudit release asset install failed and fallbackCargo is false: ${error.message}`);
     }
-    await execFileAsync("cargo", ["install", "taudit", "--version", input.version, "--locked"]);
-    return "taudit";
+    return await installWithCargoFallback(input.version, input.cwd);
   }
+}
+
+function normalizeVersion(version) {
+  return String(version).startsWith("v") ? String(version).slice(1) : String(version);
+}
+
+function binaryName() {
+  return process.platform === "win32" ? "taudit.exe" : "taudit";
+}
+
+function installedBinaryPath(workspace, version) {
+  return path.join(workspace, ".taudit-tools", "bin", normalizeVersion(version), binaryName());
 }
 
 function releaseAssetFor(platform, arch) {
@@ -34,7 +50,8 @@ function releaseAssetFor(platform, arch) {
 
 async function installFromRelease(version, workspace) {
   const asset = releaseAssetFor(process.platform, process.arch);
-  const tag = version.startsWith("v") ? version : `v${version}`;
+  const normalizedVersion = normalizeVersion(version);
+  const tag = `v${normalizedVersion}`;
   const url = `https://github.com/0ryant/taudit/releases/download/${tag}/${asset}`;
   const checksumUrl = `${url}.sha256`;
   if (typeof fetch !== "function") {
@@ -49,12 +66,11 @@ async function installFromRelease(version, workspace) {
     await download(checksumUrl, checksum);
     await verifyChecksum(archive, checksum);
 
-    const binDir = path.join(workspace, ".taudit-tools", "bin", version);
+    const binDir = path.join(workspace, ".taudit-tools", "bin", normalizedVersion);
     await fsp.mkdir(binDir, { recursive: true });
-    const binaryName = process.platform === "win32" ? "taudit.exe" : "taudit";
-    const output = path.join(binDir, binaryName);
+    const output = path.join(binDir, binaryName());
     if (!fs.existsSync(output)) {
-      await extractArchive(archive, binDir, binaryName);
+      await extractArchive(archive, binDir, binaryName());
       await fsp.chmod(output, 0o755).catch(() => {});
     }
     return output;
@@ -100,6 +116,33 @@ async function extractArchive(archivePath, binDir, binaryName) {
   }
 }
 
+async function installWithCargoFallback(version, workspace) {
+  const normalizedVersion = normalizeVersion(version);
+  const root = path.join(workspace, ".taudit-tools", "cargo", normalizedVersion);
+  const output = path.join(root, "bin", binaryName());
+  if (fs.existsSync(output)) {
+    return output;
+  }
+
+  await fsp.mkdir(root, { recursive: true });
+  await execFileAsync("cargo", [
+    "install",
+    "taudit",
+    "--version",
+    normalizedVersion,
+    "--locked",
+    "--root",
+    root
+  ]);
+  if (!fs.existsSync(output)) {
+    throw new Error("cargo fallback install completed but taudit binary was not found");
+  }
+  await fsp.chmod(output, 0o755).catch(() => {});
+  return output;
+}
+
 module.exports = {
-  resolveTaudit
+  resolveTaudit,
+  normalizeVersion,
+  installedBinaryPath
 };

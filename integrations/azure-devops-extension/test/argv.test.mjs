@@ -45,3 +45,29 @@ test("buildArgv maps verify inputs deterministically", () => {
     "eng/pipeline.yml"
   ]);
 });
+
+test("buildArgv keeps graph mode free of verify and scan flags", () => {
+  const argv = buildArgv({
+    mode: "graph",
+    platform: "azure-devops",
+    graphView: "exploit",
+    format: "dot",
+    ignoreFile: ".tauditignore",
+    suppressions: ".taudit/suppressions.yml",
+    suppressionMode: "tag-only",
+    baselineRoot: ".",
+    severityThreshold: "high",
+    noColor: true,
+    output: "graph.dot",
+    paths: "azure-pipelines.yml"
+  });
+
+  assert.deepEqual(argv, [
+    "graph",
+    "--platform", "azure-devops",
+    "--view", "exploit",
+    "--format", "dot",
+    "--",
+    "azure-pipelines.yml"
+  ]);
+});

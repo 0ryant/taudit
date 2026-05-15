@@ -20,17 +20,15 @@ function buildArgv(input) {
 
   if (input.mode === "graph") {
     addPair(argv, "--view", input.graphView || "authority");
-  }
-
-  addPair(argv, "--ignore-file", input.ignoreFile);
-  addPair(argv, "--suppressions", input.suppressions);
-  addPair(argv, "--suppression-mode", input.suppressionMode);
-  addPair(argv, "--baseline-root", input.baselineRoot);
-  addPair(argv, "--format", input.format);
-  addPair(argv, "--severity-threshold", input.severityThreshold);
-  addFlag(argv, "--no-color", input.noColor);
-
-  if (input.mode !== "graph") {
+    addPair(argv, "--format", input.format);
+  } else {
+    addPair(argv, "--ignore-file", input.ignoreFile);
+    addPair(argv, "--suppressions", input.suppressions);
+    addPair(argv, "--suppression-mode", input.suppressionMode);
+    addPair(argv, "--baseline-root", input.baselineRoot);
+    addPair(argv, "--format", input.format);
+    addPair(argv, "--severity-threshold", input.severityThreshold);
+    addFlag(argv, "--no-color", input.noColor);
     addPair(argv, "--output", input.output);
   }
 

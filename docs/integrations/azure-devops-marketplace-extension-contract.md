@@ -98,6 +98,9 @@ steps:
 - The package must include discovery assets: `overview.md` and icon.
 - The extension can be published private and shared org-by-org, or made public
   later without changing the task contract.
+- Cargo fallback, when enabled, must install into a workspace-local tool cache
+  and execute the resolved binary path directly rather than relying on PATH
+  mutation.
 
 ## Publish and install model
 

@@ -7,7 +7,7 @@ This page lists **copy-pasteable** commands that should always work on a clean c
 ## Prerequisites
 
 - **From source (dev):** `cargo build -p taudit` then `target/debug/taudit …`, or `cargo run -p taudit -- …`.
-- **Installed:** `taudit` on your `PATH` (e.g. `cargo install --path crates/taudit-cli`).
+- **Installed:** `taudit` on your `PATH` (e.g. `cargo install taudit --locked`).
 - Stable output in scripts/CI: set **`NO_COLOR=1`** (or pass `--no-color` where supported).
 
 Fixtures used below:
@@ -81,7 +81,7 @@ NO_COLOR=1 taudit verify --policy tests/fixtures/verify-golden-noop-policy.yml t
 
 Expect: graph JSON validates the schema envelope; scan exits **0**; verify exits **0** with `verify: authority graph modeling:` and `verify: 0 violations` (noop policy matches nothing). Replace the policy path with your real `.taudit/policy/` directory in production.
 
-**Pin the binary in CI:** `cargo install taudit --version 1.1.2 --locked` (adjust as you adopt newer releases). Copy-paste workflow: [`docs/examples/ci-gate-taudit-verify.yml`](examples/ci-gate-taudit-verify.yml).
+**Pin the binary in CI:** `cargo install taudit --version 1.1.4 --locked` (adjust as you adopt newer releases). Copy-paste workflow: [`docs/examples/ci-gate-taudit-verify.yml`](examples/ci-gate-taudit-verify.yml).
 
 ## Path G — Rule catalog (`explain`)
 

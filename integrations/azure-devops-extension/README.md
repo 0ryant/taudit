@@ -5,7 +5,15 @@ Azure DevOps extension packaging for the `Taudit@1` pipeline task.
 This is the pipeline-step surface for Azure DevOps. It complements the VS Code
 extension in `integrations/vscode-extension/`; it does not replace it.
 
-## Golden path
+## Operator golden path
+
+1. Install the extension into your Azure DevOps organization.
+2. Add `Taudit@1` to your pipeline YAML.
+3. Start with `mode: verify` and `policy: .taudit/policy/`.
+4. Add `mode: graph` and `graphView: authority` or `exploit` when you want
+   saved graph artifacts.
+
+## Maintainer packaging path
 
 1. Package the extension:
 
@@ -17,12 +25,11 @@ npm run preflight
 2. Publish the VSIX to Visual Studio Marketplace as an Azure DevOps extension.
 3. Share the extension with your Azure DevOps organization if it remains private.
 4. Install it into the organization.
-5. Use `Taudit@1` in pipeline YAML.
 
 The packaged artifact is:
 
 ```text
-dist/algol.taudit-azure-pipelines-0.1.2.vsix
+dist/algol.taudit-azure-pipelines-0.1.3.vsix
 ```
 
 This repo also carries a dedicated smoke lane:
@@ -33,6 +40,14 @@ This repo also carries a dedicated smoke lane:
 
 It exercises `Taudit@1` in `scan`, `graph authority`, `graph exploit`, and
 `verify` modes against this repository.
+
+Binary behavior:
+
+- Default: download a pinned GitHub release asset for the current runner
+  platform into `.taudit-tools/bin/<version>/`.
+- Optional fallback: if `fallbackCargo=true`, install `taudit` with
+  `cargo install --locked --root <workspace-local-cache>` and execute that
+  binary directly.
 
 ## YAML
 
@@ -116,6 +131,8 @@ steps:
 See also:
 
 - [`../../docs/integrations/azure-devops-marketplace-extension-contract.md`](../../docs/integrations/azure-devops-marketplace-extension-contract.md)
+- [`../../docs/demos/corpus-expo-docs-authority-exploit-story.md`](../../docs/demos/corpus-expo-docs-authority-exploit-story.md)
+- [`../../docs/golden-paths.md`](../../docs/golden-paths.md)
 
 ## Packaging
 
