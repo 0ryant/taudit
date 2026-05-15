@@ -187,13 +187,21 @@
           "description": "Optional workspace-relative baseline root containing .taudit/baselines/."
         },
         "taudit.maxHops": {
-          "type": "number",
+          "type": "integer",
           "default": 4,
           "minimum": 1,
           "description": "Maximum propagation depth for taudit BFS analysis."
         },
         "taudit.severityThreshold": {
           "type": "string",
+          "enum": [
+            "",
+            "critical",
+            "high",
+            "medium",
+            "low",
+            "info"
+          ],
           "default": "",
           "description": "Optional severity threshold for scan or verify. Leave empty to count all findings."
         },

@@ -80,6 +80,10 @@ Workspace` can run immediately.
 The extension validates explicit paths before it starts `taudit`. Missing
 binary, missing policy, missing ignore file, missing suppressions file, or
 missing baseline root are reported as configuration errors.
+Paths configured through `taudit.workflowPaths`, `taudit.verify.policyPath`,
+`taudit.controls.ignoreFile`, `taudit.controls.suppressionsFile`, and
+`taudit.controls.baselineRoot` must stay inside the workspace. The extension
+rejects `..` escapes and other out-of-workspace targets before launch.
 
 ## Commands
 

@@ -317,6 +317,17 @@ async function initializeWorkspacePolicy(
     "templates",
     "bundled-strict-policy.yml",
   );
+  const relativeTarget = path.relative(folder.uri.fsPath, resolvedTarget);
+  if (
+    path.isAbsolute(relativeTarget) ||
+    relativeTarget.startsWith("..") ||
+    relativeTarget === ".."
+  ) {
+    void vscode.window.showErrorMessage(
+      `taudit verify policy path must stay inside the workspace: ${configuredPath}`,
+    );
+    return;
+  }
 
   const targetIsFile = /\.[Yy][Aa]?[Mm][Ll]$/.test(configuredPath);
   const outputFile = targetIsFile

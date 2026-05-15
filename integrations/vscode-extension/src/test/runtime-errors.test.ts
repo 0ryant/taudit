@@ -34,6 +34,78 @@ test("validateRequest rejects a missing verify policy path before execution", as
   );
 });
 
+test("validateRequest rejects verify policy paths that escape the workspace", async () => {
+  const tempDir = await fs.mkdtemp(path.join(os.tmpdir(), "taudit-vscode-"));
+  const outsidePolicy = path.join(os.tmpdir(), "taudit-vscode-outside-policy");
+  await fs.mkdir(outsidePolicy, { recursive: true });
+
+  const request = makeVerifyRequest({
+    cwd: tempDir,
+    targets: [tempDir],
+    policyPath: outsidePolicy,
+  });
+
+  assert.equal(
+    await validateRequest(request),
+    `Configured taudit verify policy path must stay inside the workspace: ${outsidePolicy}`,
+  );
+});
+
+test("validateRequest rejects workflow targets that escape the workspace", async () => {
+  const tempDir = await fs.mkdtemp(path.join(os.tmpdir(), "taudit-vscode-"));
+  const outsideTarget = path.join(os.tmpdir(), "taudit-vscode-outside.yml");
+  await fs.writeFile(outsideTarget, "name: outside\n", "utf8");
+  const policyDir = path.join(tempDir, ".taudit", "policy");
+  await fs.mkdir(policyDir, { recursive: true });
+
+  const request = makeVerifyRequest({
+    cwd: tempDir,
+    targets: [outsideTarget],
+    policyPath: policyDir,
+  });
+
+  assert.equal(
+    await validateRequest(request),
+    `Configured taudit workflow path must stay inside the workspace: ${outsideTarget}`,
+  );
+});
+
+test("validateRequest rejects invalid severityThreshold values before execution", async () => {
+  const tempDir = await fs.mkdtemp(path.join(os.tmpdir(), "taudit-vscode-"));
+  const policyDir = path.join(tempDir, ".taudit", "policy");
+  await fs.mkdir(policyDir, { recursive: true });
+
+  const request = makeVerifyRequest({
+    cwd: tempDir,
+    targets: [tempDir],
+    policyPath: policyDir,
+    severityThreshold: "bogus",
+  });
+
+  assert.equal(
+    await validateRequest(request),
+    "Configured taudit severityThreshold must be one of critical, high, medium, low, or info.",
+  );
+});
+
+test("validateRequest rejects non-integer maxHops values before execution", async () => {
+  const tempDir = await fs.mkdtemp(path.join(os.tmpdir(), "taudit-vscode-"));
+  const policyDir = path.join(tempDir, ".taudit", "policy");
+  await fs.mkdir(policyDir, { recursive: true });
+
+  const request = makeVerifyRequest({
+    cwd: tempDir,
+    targets: [tempDir],
+    policyPath: policyDir,
+    maxHops: 2.5,
+  });
+
+  assert.equal(
+    await validateRequest(request),
+    "Configured taudit maxHops must be a positive integer.",
+  );
+});
+
 test("runTaudit surfaces a missing PATH binary as a start failure", async () => {
   const tempDir = await fs.mkdtemp(path.join(os.tmpdir(), "taudit-vscode-"));
   const policyDir = path.join(tempDir, ".taudit", "policy");

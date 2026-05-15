@@ -54,6 +54,14 @@ export interface CommandResult {
   artifactPath: string;
 }
 
+const SEVERITY_THRESHOLDS = new Set([
+  "critical",
+  "high",
+  "medium",
+  "low",
+  "info",
+]);
+
 export function artifactExtension(request: TauditRequest): string {
   if (request.mode === "graph") {
     switch (request.format) {
@@ -179,12 +187,38 @@ export async function runTaudit(
 export async function validateRequest(
   request: TauditRequest,
 ): Promise<string | undefined> {
+  if (!Number.isInteger(request.maxHops) || request.maxHops < 1) {
+    return "Configured taudit maxHops must be a positive integer.";
+  }
+
+  if (
+    request.mode !== "graph" &&
+    request.severityThreshold &&
+    !SEVERITY_THRESHOLDS.has(request.severityThreshold)
+  ) {
+    return "Configured taudit severityThreshold must be one of critical, high, medium, low, or info.";
+  }
+
   if (usesExplicitPath(request.binaryPath) && !(await pathExists(request.binaryPath))) {
     return `Configured taudit binary path does not exist: ${request.binaryPath}`;
   }
 
+  const outsideWorkspace = validateWorkspaceBoundTargets(
+    request.cwd,
+    request.targets,
+  );
+  if (outsideWorkspace) {
+    return outsideWorkspace;
+  }
+
   if (request.mode === "verify" && !(await pathExists(request.policyPath))) {
     return `Configured taudit verify policy path does not exist: ${request.policyPath}`;
+  }
+  if (
+    request.mode === "verify" &&
+    !pathStaysWithinWorkspace(request.cwd, request.policyPath)
+  ) {
+    return `Configured taudit verify policy path must stay inside the workspace: ${request.policyPath}`;
   }
 
   if (request.mode !== "graph") {
@@ -192,13 +226,31 @@ export async function validateRequest(
       return `Configured taudit ignore file does not exist: ${request.ignoreFile}`;
     }
     if (
+      request.ignoreFile &&
+      !pathStaysWithinWorkspace(request.cwd, request.ignoreFile)
+    ) {
+      return `Configured taudit ignore file must stay inside the workspace: ${request.ignoreFile}`;
+    }
+    if (
       request.suppressionsFile &&
       !(await pathExists(request.suppressionsFile))
     ) {
       return `Configured taudit suppressions file does not exist: ${request.suppressionsFile}`;
     }
+    if (
+      request.suppressionsFile &&
+      !pathStaysWithinWorkspace(request.cwd, request.suppressionsFile)
+    ) {
+      return `Configured taudit suppressions file must stay inside the workspace: ${request.suppressionsFile}`;
+    }
     if (request.baselineRoot && !(await pathExists(request.baselineRoot))) {
       return `Configured taudit baseline root does not exist: ${request.baselineRoot}`;
+    }
+    if (
+      request.baselineRoot &&
+      !pathStaysWithinWorkspace(request.cwd, request.baselineRoot)
+    ) {
+      return `Configured taudit baseline root must stay inside the workspace: ${request.baselineRoot}`;
     }
   }
 
@@ -265,4 +317,23 @@ async function pathExists(targetPath: string): Promise<boolean> {
   } catch {
     return false;
   }
+}
+
+function validateWorkspaceBoundTargets(
+  cwd: string,
+  targets: string[],
+): string | undefined {
+  for (const target of targets) {
+    if (!pathStaysWithinWorkspace(cwd, target)) {
+      return `Configured taudit workflow path must stay inside the workspace: ${target}`;
+    }
+  }
+  return undefined;
+}
+
+function pathStaysWithinWorkspace(workspaceRoot: string, candidate: string): boolean {
+  const root = path.resolve(workspaceRoot);
+  const resolved = path.resolve(candidate);
+  const relative = path.relative(root, resolved);
+  return relative === "" || (!relative.startsWith("..") && !path.isAbsolute(relative));
 }
