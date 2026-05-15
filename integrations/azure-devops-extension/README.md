@@ -12,6 +12,14 @@ Use it to make taudit visible in Azure Pipelines as an installable task:
 - typed inputs keep policy, ignore files, suppressions, baselines, and ADO
   enrichment separate
 
+Operator pitfalls worth knowing up front:
+
+- `baselineRoot` must be workspace-relative, for example `.` or `.taudit`.
+  Do not pass `$(System.DefaultWorkingDirectory)` or any absolute path.
+- On Windows, release-asset extraction depends on PowerShell archive support or
+  `tar`. If that path is unavailable on the runner, set `fallbackCargo=true`
+  and the task will install `taudit` into a workspace-local Cargo cache.
+
 This is the pipeline-step surface for Azure DevOps. It complements the VS Code
 extension in `integrations/vscode-extension/`; it does not replace it.
 
@@ -39,7 +47,7 @@ npm run preflight
 The packaged artifact is:
 
 ```text
-dist/algol.taudit-azure-pipelines-0.1.6.vsix
+dist/algol.taudit-azure-pipelines-0.1.7.vsix
 ```
 
 This repo also carries a dedicated smoke lane:
@@ -58,6 +66,13 @@ Binary behavior:
 - Optional fallback: if `fallbackCargo=true`, install `taudit` with
   `cargo install --locked --root <workspace-local-cache>` and execute that
   binary directly.
+
+Windows note:
+
+- The task first tries explicit PowerShell `Expand-Archive` extraction with
+  `Microsoft.PowerShell.Archive` imported directly, then falls back to `tar`.
+- If both extraction paths are unavailable on the runner, the task now points
+  directly at `fallbackCargo=true` as the supported recovery path.
 
 ## YAML
 

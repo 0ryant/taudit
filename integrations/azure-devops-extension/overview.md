@@ -13,6 +13,13 @@ Use `Taudit@1` when you need to:
 - keep policy, ignore files, suppressions, and baselines as explicit pipeline
   controls instead of shell-script arguments
 
+Two operator constraints matter in practice:
+
+- `baselineRoot` is workspace-relative only. Use `.` or another repo-relative
+  path, not `$(System.DefaultWorkingDirectory)` and not an absolute path.
+- On Windows runners, release extraction depends on PowerShell archive support
+  or `tar`; if those are missing, use `fallbackCargo=true`.
+
 ## Golden path
 
 1. Install the extension into your Azure DevOps organization.

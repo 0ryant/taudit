@@ -102,11 +102,7 @@ async function verifyChecksum(archivePath, checksumPath) {
 
 async function extractArchive(archivePath, binDir, binaryName) {
   if (archivePath.endsWith(".zip")) {
-    await execFileAsync("powershell", [
-      "-NoProfile",
-      "-Command",
-      `Expand-Archive -Path "${archivePath}" -DestinationPath "${binDir}" -Force`
-    ]);
+    await extractZipArchive(archivePath, binDir);
   } else {
     await execFileAsync("tar", ["-xzf", archivePath, "-C", binDir]);
   }
@@ -114,6 +110,57 @@ async function extractArchive(archivePath, binDir, binaryName) {
   if (!fs.existsSync(output)) {
     throw new Error(`taudit binary not found after extracting ${path.basename(archivePath)}`);
   }
+}
+
+async function extractZipArchive(archivePath, binDir) {
+  const failures = [];
+
+  for (const candidate of windowsExpandArchiveCandidates(archivePath, binDir)) {
+    try {
+      await execFileAsync(candidate.command, candidate.args, { shell: false });
+      return;
+    } catch (error) {
+      failures.push(`${candidate.label}: ${error.message || String(error)}`);
+    }
+  }
+
+  try {
+    await execFileAsync("tar", ["-xf", archivePath, "-C", binDir], { shell: false });
+    return;
+  } catch (error) {
+    failures.push(`tar: ${error.message || String(error)}`);
+  }
+
+  throw new Error(
+    "failed to extract taudit Windows release asset. Tried PowerShell Expand-Archive with explicit Microsoft.PowerShell.Archive import and tar fallback. " +
+    "If the runner lacks those extraction dependencies, enable fallbackCargo=true. Details: " +
+    failures.join(" | ")
+  );
+}
+
+function windowsExpandArchiveCandidates(archivePath, binDir) {
+  const script =
+    `$ErrorActionPreference = 'Stop'; ` +
+    `Import-Module Microsoft.PowerShell.Archive -ErrorAction Stop; ` +
+    `Expand-Archive -LiteralPath '${escapePowerShellSingleQuoted(archivePath)}' ` +
+    `-DestinationPath '${escapePowerShellSingleQuoted(binDir)}' -Force`;
+
+  return [
+    {
+      label: "pwsh Expand-Archive",
+      command: "pwsh",
+      args: ["-NoProfile", "-Command", script]
+    },
+    {
+      label: "powershell Expand-Archive",
+      command: "powershell",
+      args: ["-NoProfile", "-Command", script]
+    }
+  ];
+}
+
+function escapePowerShellSingleQuoted(value) {
+  return String(value).replace(/'/g, "''");
 }
 
 async function installWithCargoFallback(version, workspace) {
@@ -144,5 +191,7 @@ async function installWithCargoFallback(version, workspace) {
 module.exports = {
   resolveTaudit,
   normalizeVersion,
-  installedBinaryPath
+  installedBinaryPath,
+  windowsExpandArchiveCandidates,
+  escapePowerShellSingleQuoted
 };

@@ -4,13 +4,13 @@
   "name": "Taudit",
   "friendlyName": "taudit",
   "description": "Run taudit verify, scan, or graph against CI/CD pipeline YAML with a typed task surface.",
-  "helpMarkDown": "Use verify mode with a policy directory for merge gating. Graph mode can emit authority or exploit views.",
+  "helpMarkDown": "Use verify mode with a workspace-relative policy directory for merge gating. baselineRoot must also be workspace-relative; do not pass $(System.DefaultWorkingDirectory) or an absolute path. Graph mode can emit authority or exploit views.",
   "category": "Utility",
   "author": "Algol",
   "version": {
     "Major": 1,
     "Minor": 0,
-    "Patch": 3
+    "Patch": 4
   },
   "minimumAgentVersion": "2.182.1",
   "instanceNameFormat": "taudit $(mode)",
@@ -128,7 +128,8 @@
       "type": "filePath",
       "label": "Baseline root",
       "defaultValue": "",
-      "required": false
+      "required": false,
+      "helpMarkDown": "Optional workspace-relative baseline root, for example `.` or `.taudit`. Do not pass $(System.DefaultWorkingDirectory) or any absolute path."
     },
     {
       "name": "gateOnAll",
@@ -211,7 +212,8 @@
       "type": "boolean",
       "label": "Fallback to cargo install",
       "defaultValue": "false",
-      "required": false
+      "required": false,
+      "helpMarkDown": "If release-asset install fails, install taudit with `cargo install --locked` into a workspace-local cache. This is the recovery path when Windows extraction dependencies are unavailable."
     }
   ],
   "restrictions": {

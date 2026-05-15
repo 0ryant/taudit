@@ -111,17 +111,24 @@ function validatePathLikeInputs(input) {
   }
   for (const key of ["policy", "ignoreFile", "suppressions", "baselineRoot", "output"]) {
     if (input[key]) {
-      validateWorkspacePath(key, input[key], key === "output");
+      validateWorkspacePath(key, input[key], {
+        isOutput: key === "output",
+        baselineRoot: key === "baselineRoot"
+      });
     }
   }
 }
 
-function validateWorkspacePath(name, value, isOutput) {
+function validateWorkspacePath(name, value, options = {}) {
+  const { isOutput = false, baselineRoot = false } = options;
   const path = String(value);
   if (path.includes("\0") || path.includes("\n") || path.includes("\r")) {
     throw new Error(`${name} must be a single workspace-relative path`);
   }
   if (path.startsWith("/") || /^[A-Za-z]:[\\/]/.test(path)) {
+    if (baselineRoot) {
+      throw new Error("baselineRoot must be workspace-relative (for example '.' or '.taudit'); do not pass $(System.DefaultWorkingDirectory) or an absolute path");
+    }
     throw new Error(`${name} must be workspace-relative`);
   }
   const segments = path.split(/[\\/]+/).filter(Boolean);

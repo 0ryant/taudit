@@ -2,7 +2,7 @@
   "manifestVersion": 1,
   "id": "taudit-azure-pipelines",
   "publisher": "algol",
-  "version": "0.1.6",
+  "version": "0.1.7",
   "name": "taudit",
   "description": "Gate Azure Pipelines with taudit policy checks, advisory scans, and authority graph artifacts.",
   "public": true,
