@@ -39,6 +39,10 @@ What you get first:
 If your repo uses a different pipeline root, also set `taudit.workflowPaths`
 before running the workspace commands.
 
+In a multi-root workspace, the workspace commands use the active editor's
+workspace folder when one is open; otherwise they fall back to the first
+workspace folder.
+
 If the configured verify policy path does not exist yet, `Initialize Workspace
 Policy` seeds it with a starter `bundled-strict-policy.yml` so `Verify
 Workspace` can run immediately.

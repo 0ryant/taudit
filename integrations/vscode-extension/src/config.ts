@@ -63,16 +63,26 @@ export function readSettings(): TauditSettings {
   };
 }
 
-export function getPrimaryWorkspaceFolder():
-  | vscode.WorkspaceFolder
-  | undefined {
+export function getPreferredWorkspaceFolder(
+  documentUri?: vscode.Uri,
+): vscode.WorkspaceFolder | undefined {
+  if (documentUri) {
+    return vscode.workspace.getWorkspaceFolder(documentUri) ?? vscode.workspace.workspaceFolders?.[0];
+  }
+
+  const activeDocument = vscode.window.activeTextEditor?.document;
+  if (activeDocument) {
+    return vscode.workspace.getWorkspaceFolder(activeDocument.uri) ?? vscode.workspace.workspaceFolders?.[0];
+  }
+
   return vscode.workspace.workspaceFolders?.[0];
 }
 
 export function getWorkspaceTargets(
   settings: TauditSettings,
+  preferredFolder?: vscode.WorkspaceFolder,
 ): WorkspaceTargetContext | undefined {
-  const folder = getPrimaryWorkspaceFolder();
+  const folder = preferredFolder ?? getPreferredWorkspaceFolder();
   if (!folder) {
     return undefined;
   }

@@ -2,7 +2,7 @@ import * as path from "node:path";
 import * as fs from "node:fs/promises";
 import * as vscode from "vscode";
 import {
-  getPrimaryWorkspaceFolder,
+  getPreferredWorkspaceFolder,
   getWorkspaceTargets,
   isSupportedPipelinePath,
   readSettings,
@@ -78,7 +78,10 @@ async function runWorkspaceVerify(
   context: vscode.ExtensionContext,
 ): Promise<void> {
   const settings = readSettings();
-  const workspace = getWorkspaceTargets(settings);
+  const workspace = getWorkspaceTargets(
+    settings,
+    getPreferredWorkspaceFolder(vscode.window.activeTextEditor?.document.uri),
+  );
 
   if (!workspace) {
     void vscode.window.showErrorMessage(
@@ -115,7 +118,10 @@ async function runWorkspaceScan(
   context: vscode.ExtensionContext,
 ): Promise<void> {
   const settings = readSettings();
-  const workspace = getWorkspaceTargets(settings);
+  const workspace = getWorkspaceTargets(
+    settings,
+    getPreferredWorkspaceFolder(vscode.window.activeTextEditor?.document.uri),
+  );
 
   if (!workspace) {
     void vscode.window.showErrorMessage(
@@ -150,7 +156,10 @@ async function runWorkspaceGraph(
   view: GraphView,
 ): Promise<void> {
   const settings = readSettings();
-  const workspace = getWorkspaceTargets(settings);
+  const workspace = getWorkspaceTargets(
+    settings,
+    getPreferredWorkspaceFolder(vscode.window.activeTextEditor?.document.uri),
+  );
 
   if (!workspace) {
     void vscode.window.showErrorMessage(
@@ -301,7 +310,7 @@ async function executeRequest(
 async function initializeWorkspacePolicy(
   context: vscode.ExtensionContext,
 ): Promise<void> {
-  const folder = getPrimaryWorkspaceFolder();
+  const folder = getPreferredWorkspaceFolder(vscode.window.activeTextEditor?.document.uri);
   if (!folder) {
     void vscode.window.showErrorMessage(
       "taudit policy initialization requires an open workspace folder.",
