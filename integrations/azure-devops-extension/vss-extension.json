@@ -2,7 +2,7 @@
   "manifestVersion": 1,
   "id": "taudit-azure-pipelines",
   "publisher": "algol",
-  "version": "0.1.3",
+  "version": "0.1.4",
   "name": "taudit",
   "description": "Run taudit verify, scan, and graph in Azure Pipelines through a typed pipeline task.",
   "public": true,
@@ -20,18 +20,18 @@
   },
   "links": {
     "support": {
-      "uri": "https://github.com/0ryant/taudit/issues"
+      "uri": "https://github.com/algol-cc/taudit/issues"
     },
     "learn": {
-      "uri": "https://github.com/0ryant/taudit/blob/main/integrations/azure-devops-extension/README.md"
+      "uri": "https://github.com/algol-cc/taudit/blob/main/integrations/azure-devops-extension/README.md"
     },
     "license": {
-      "uri": "https://github.com/0ryant/taudit/blob/main/LICENSE"
+      "uri": "https://github.com/algol-cc/taudit/blob/main/LICENSE"
     }
   },
   "repository": {
     "type": "git",
-    "uri": "https://github.com/0ryant/taudit"
+    "uri": "https://github.com/algol-cc/taudit"
   },
   "files": [
     {

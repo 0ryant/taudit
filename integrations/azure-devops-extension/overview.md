@@ -75,6 +75,6 @@ Azure DevOps output-variable syntax.
 
 ## Demo and docs
 
-- Demo story: `https://github.com/0ryant/taudit/blob/main/docs/demos/corpus-expo-docs-authority-exploit-story.md`
-- CLI golden paths: `https://github.com/0ryant/taudit/blob/main/docs/golden-paths.md`
-- Azure DevOps contract: `https://github.com/0ryant/taudit/blob/main/docs/integrations/azure-devops-marketplace-extension-contract.md`
+- Demo story: `https://github.com/algol-cc/taudit/blob/main/docs/demos/corpus-expo-docs-authority-exploit-story.md`
+- CLI golden paths: `https://github.com/algol-cc/taudit/blob/main/docs/golden-paths.md`
+- Azure DevOps contract: `https://github.com/algol-cc/taudit/blob/main/docs/integrations/azure-devops-marketplace-extension-contract.md`
