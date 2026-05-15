@@ -27,6 +27,7 @@ steps:
     displayName: Verify pipeline policy
     inputs:
       mode: verify
+      version: 1.1.4
       policy: .taudit/policy/
       paths: |
         azure-pipelines.yml
@@ -34,6 +35,9 @@ steps:
 
 ## Requirements and limitations
 
+- Azure DevOps Marketplace tasks do not have a GitHub-style SHA pin surface.
+  The closest equivalent is `Taudit@1` plus an explicit `version` input for the
+  downloaded `taudit` binary.
 - `policy` is required in `verify` mode.
 - `baselineRoot` is workspace-relative only. Use `.` or another repo-relative
   path, not `$(System.DefaultWorkingDirectory)` and not an absolute path.
@@ -72,9 +76,16 @@ steps:
 ## Trust signals
 
 - typed task contract with no raw shell passthrough
-- pinned GitHub release assets by taudit version and runner platform
+- version-pinned GitHub release assets by runner platform, with SHA-256
+  verification before execution
 - ADO PAT material stays in process environment and out of taudit argv
 - open-source implementation and documented security disclosure path
+
+## When taudit finds taudit
+
+`Taudit@1` stays inside the authority graph. If your pipeline gives the task
+broad authority or routes it through risky boundaries, `taudit` can report that
+step in findings. That is expected behavior, not a hidden self-attack mode.
 
 ## Key controls
 

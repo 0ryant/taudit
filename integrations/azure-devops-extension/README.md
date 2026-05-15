@@ -22,6 +22,9 @@ Use it to make taudit visible in Azure Pipelines as an installable task:
 
 ## Requirements and limitations
 
+- Azure DevOps Marketplace tasks do not have a GitHub-style SHA pin surface.
+  The closest equivalent is `Taudit@1` plus an explicit `version` input for the
+  downloaded `taudit` binary.
 - `baselineRoot` must be workspace-relative, for example `.` or `.taudit`.
   Do not pass `$(System.DefaultWorkingDirectory)` or any absolute path.
 - On Windows, release-asset extraction depends on PowerShell archive support or
@@ -97,6 +100,7 @@ steps:
     displayName: Verify pipeline policy
     inputs:
       mode: verify
+      version: 1.1.4
       policy: .taudit/policy/
       paths: |
         azure-pipelines.yml
@@ -122,9 +126,20 @@ steps:
 ## Trust signals
 
 - no raw shell or argument passthrough
-- pinned GitHub release assets by version and runner platform
+- version-pinned GitHub release assets by runner platform, with SHA-256
+  verification before execution
 - ADO PAT material stays in process environment and out of taudit argv
 - open-source implementation and documented security disclosure path
+
+## When taudit finds taudit
+
+`Taudit@1` is part of the pipeline graph. If your pipeline grants the task
+broad authority or routes it through risky trust boundaries, `taudit` can
+report that step in findings. This is expected behavior. The task is not
+self-exempt.
+
+If you run `taudit` in a repo dogfood lane and want to accept that risk
+temporarily, do it with explicit policy, baseline, or suppressions.
 
 ## Task outputs
 

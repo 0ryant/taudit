@@ -173,6 +173,34 @@ taudit verify .github/workflows/ --policy invariants/starter/ --platform github-
 taudit graph .github/workflows/release.yml --format summary | jq '.totals'
 ```
 
+## Self-audit semantics
+
+`taudit` audits the pipeline that runs it. There is no built-in self-exemption.
+
+If a workflow contains a `taudit` step or extension task, that step is part of
+the authority graph and may appear in findings when it matches normal rules.
+This is expected:
+
+- a GitHub Actions job that runs `taudit` can still be flagged for broad
+  `GITHUB_TOKEN`, unpinned third-party actions, or risky authority flow
+- an Azure DevOps pipeline that uses `Taudit@1` can still be flagged for
+  external task trust, variable-group authority, or artifact movement
+
+What matters is the trust model of the execution surface, not the brand of the
+tool running there.
+
+Platform pinning is different across CI systems:
+
+- **GitHub Actions**: pin third-party actions by full commit SHA
+- **Azure DevOps Marketplace tasks**: there is no SHA-pin equivalent; pin the
+  task major version (`Taudit@1`), pin the downloaded `taudit` binary version,
+  and verify the asset integrity
+
+`Taudit@1` downloads a version-pinned release asset and verifies its SHA-256
+checksum before execution. If you want taudit findings in a repo dogfood lane
+to be non-blocking, do that explicitly in policy, baseline, or suppressions —
+not through a hidden product exemption.
+
 ## Support
 
 - Product support: open a GitHub issue in this repository.
