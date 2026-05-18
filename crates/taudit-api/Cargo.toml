@@ -1,16 +1,17 @@
 [package]
 name = "taudit-api"
-version = "0.4.0"
+version = "0.4.1"
 description = "Stable wire types for taudit JSON / SARIF / CloudEvents output. Public contract for downstream consumers (tsign, axiom, custom integrations). 0.x: contract is not frozen — review on every minor bump until 1.0."
+readme = "README.md"
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
 authors.workspace = true
 repository.workspace = true
 homepage.workspace = true
-documentation.workspace = true
-keywords.workspace = true
-categories.workspace = true
+documentation = "https://docs.rs/taudit-api"
+keywords = ["security", "ci-cd", "sarif", "cloudevents", "authority-graph"]
+categories = ["development-tools", "development-tools::testing"]
 
 [dependencies]
 serde = { workspace = true }

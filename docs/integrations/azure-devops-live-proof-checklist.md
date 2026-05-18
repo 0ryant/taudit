@@ -35,7 +35,7 @@ The repository smoke lane for this is:
 Recommended pinned task inputs for the first live receipt:
 
 - `task: Taudit@1`
-- `version: 1.1.4`
+- `version: 1.1.5`
 - `platform: azure-devops`
 
 ## Queue and agent preflight

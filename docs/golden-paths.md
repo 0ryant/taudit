@@ -95,7 +95,7 @@ NO_COLOR=1 taudit verify --policy tests/fixtures/verify-golden-noop-policy.yml t
 
 Expect: graph JSON validates the schema envelope; scan exits **0**; verify exits **0** with `verify: authority graph modeling:` and `verify: 0 violations` (noop policy matches nothing). Replace the policy path with your real `.taudit/policy/` directory in production.
 
-**Pin the binary in CI:** `cargo install taudit --version 1.1.4 --locked` (adjust as you adopt newer releases). Copy-paste workflow: [`docs/examples/ci-gate-taudit-verify.yml`](examples/ci-gate-taudit-verify.yml).
+**Pin the binary in CI:** `cargo install taudit --version 1.1.5 --locked` (adjust as you adopt newer releases). Copy-paste workflow: [`docs/examples/ci-gate-taudit-verify.yml`](examples/ci-gate-taudit-verify.yml).
 
 ## Path G — Rule catalog (`explain`)
 

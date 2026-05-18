@@ -501,10 +501,12 @@ GitHub Code Scanning.
 ## Architecture
 
 ```
-taudit-core              graph, propagation engine, 61 rules, finding model (no I/O)
+taudit-api               stable wire types for JSON / SARIF / CloudEvents / authority graph output
+taudit-core              graph, propagation engine, rules, baselines, suppressions, custom rules (no I/O)
 taudit-parse-gha         GitHub Actions YAML → AuthorityGraph
 taudit-parse-ado         Azure DevOps YAML → AuthorityGraph
 taudit-parse-gitlab      GitLab CI YAML → AuthorityGraph
+taudit-parse-bitbucket   Bitbucket Pipelines YAML → AuthorityGraph
 taudit-report-terminal   colored terminal reporter
 taudit-report-json       JSON report adapter
 taudit-report-sarif      SARIF 2.1.0 adapter for code scanning platforms
@@ -513,6 +515,22 @@ taudit-cli               composition root (clap, file I/O, wiring)
 ```
 
 Ports and adapters — `taudit-core` has zero I/O dependencies, so the graph is reproducible from YAML in isolation.
+
+### Crate READMEs
+
+| Crate | Crates.io role | README |
+|---|---|---|
+| `taudit` | CLI product: installable authority graph scanner and CI/CD security gate | This README |
+| `taudit-api` | Stable Rust wire types for JSON, SARIF, CloudEvents, and authority graph output | [`crates/taudit-api/README.md`](crates/taudit-api/README.md) |
+| `taudit-core` | In-process authority graph engine, propagation analysis, rules, baselines, suppressions, custom rules | [`crates/taudit-core/README.md`](crates/taudit-core/README.md) |
+| `taudit-parse-gha` | GitHub Actions YAML parser for authority graphs | [`crates/taudit-parse-gha/README.md`](crates/taudit-parse-gha/README.md) |
+| `taudit-parse-ado` | Azure DevOps YAML parser for authority graphs | [`crates/taudit-parse-ado/README.md`](crates/taudit-parse-ado/README.md) |
+| `taudit-parse-gitlab` | GitLab CI YAML parser for authority graphs | [`crates/taudit-parse-gitlab/README.md`](crates/taudit-parse-gitlab/README.md) |
+| `taudit-parse-bitbucket` | Bitbucket Pipelines YAML parser for authority graphs | [`crates/taudit-parse-bitbucket/README.md`](crates/taudit-parse-bitbucket/README.md) |
+| `taudit-report-terminal` | Human-readable terminal and CI log renderer | [`crates/taudit-report-terminal/README.md`](crates/taudit-report-terminal/README.md) |
+| `taudit-report-json` | Versioned JSON report and authority graph export adapter | [`crates/taudit-report-json/README.md`](crates/taudit-report-json/README.md) |
+| `taudit-report-sarif` | SARIF 2.1.0 adapter for code scanning ingestion | [`crates/taudit-report-sarif/README.md`](crates/taudit-report-sarif/README.md) |
+| `taudit-sink-cloudevents` | CloudEvents JSONL event stream for findings | [`crates/taudit-sink-cloudevents/README.md`](crates/taudit-sink-cloudevents/README.md) |
 
 ## CI Integration
 

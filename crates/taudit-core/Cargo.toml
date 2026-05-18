@@ -1,16 +1,17 @@
 [package]
 name = "taudit-core"
 description = "Deterministic authority graph and propagation engine for CI/CD: typed nodes, trust zones, and edges for how credentials and identities flow—used by graph analysis, not standalone linting."
-version = "3.0.0"
+version = "3.0.1"
+readme = "README.md"
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
 authors.workspace = true
 repository.workspace = true
 homepage.workspace = true
-documentation.workspace = true
-keywords.workspace = true
-categories.workspace = true
+documentation = "https://docs.rs/taudit-core"
+keywords = ["security", "ci-cd", "authority-graph", "devsecops", "supply-chain"]
+categories = ["development-tools", "development-tools::testing"]
 
 [dependencies]
 taudit-api = { workspace = true }

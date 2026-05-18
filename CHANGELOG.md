@@ -8,6 +8,29 @@ All notable changes to this project will be documented in this file.
 
 _(none yet — populate this paragraph when adding entries that change finding behaviour)_
 
+## v1.1.5 — 2026-05-18 (stable patch)
+
+### Detection delta (read first)
+
+No rule, parser, graph, report, schema, or CLI behaviour change versus `v1.1.4`.
+This release refreshes crates.io and docs.rs findability: crate READMEs,
+documentation links, keywords/categories, and the root crate map.
+
+### Changed
+
+- Added dedicated README files for the public API, core, parser, reporter, and
+  sink crates, and wired each publishable crate manifest to include them.
+- Refined crates.io package metadata for downstream search: targeted keywords,
+  categories, and docs.rs documentation URLs per crate.
+- Updated the root README architecture crate map and current pinned install docs
+  for `taudit 1.1.5`.
+
+### Migration notes
+
+- No CLI, schema, detection, dependency, or output migration is required.
+- Rust embedders can remain on the `taudit-api 0.4.x` and implementation
+  `3.0.x` lines; this patch refreshes package metadata and docs surfaces only.
+
 ## v1.1.4 — 2026-05-14 (stable patch)
 
 ### Detection delta (read first)

@@ -42,7 +42,7 @@ shell, or extra-args passthrough in v1.
 | Input | Type | Default | Applies to | CLI mapping |
 |---|---|---|---|---|
 | `mode` | enum `verify`, `scan`, `graph` | `verify` | all | subcommand |
-| `version` | SemVer string | `1.1.4` | all | installer only |
+| `version` | SemVer string | `1.1.5` | all | installer only |
 | `paths` | multiline string | `azure-pipelines.yml` | all | positional paths |
 | `platform` | enum `auto`, `github-actions`, `azure-devops`, `gitlab`, `bitbucket` | `auto` | all | `--platform` |
 | `adoOrg` | string | none | all | `--ado-org` (forwarded; may be reserved scaffolding on current taudit versions) |

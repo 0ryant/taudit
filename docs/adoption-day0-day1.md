@@ -2,7 +2,7 @@
 
 Single checklist for rolling **taudit** onto a repository: local bootstrap, policy layout, baselines / suppressions, optional SARIF, and **merge-gating CI** for **GitHub Actions**, **GitLab CI**, and **Azure DevOps**. taudit is **graph-first**—it models **authority propagation** across CI/CD; merge gates and YAML invariants sit on top of that model, not the other way around.
 
-**Version pinning:** replace `1.1.4` below with the **exact** crate version your org pins (same value in every `cargo install` line). Prefer **`--locked`** so transitive deps do not drift between CI runs.
+**Version pinning:** replace `1.1.5` below with the **exact** crate version your org pins (same value in every `cargo install` line). Prefer **`--locked`** so transitive deps do not drift between CI runs.
 
 **Further reading:** [USERGUIDE.md](../USERGUIDE.md) (end-user spine), [verify.md](verify.md), [baselines.md](baselines.md), [suppressions.md](suppressions.md), [custom-rules.md](custom-rules.md), [golden-paths.md](golden-paths.md), [policies/cookbook-partial-graphs.md](policies/cookbook-partial-graphs.md), [dogfood self-audit patterns](integrations/taudit-dogfood-self-audit-patterns.md). Strategic phased adoption: [adr/0003-strategic-spine-adoption-phased.md](adr/0003-strategic-spine-adoption-phased.md).
 
@@ -13,7 +13,7 @@ Single checklist for rolling **taudit** onto a repository: local bootstrap, poli
 ### 1. Install
 
 ```bash
-cargo install taudit --version 1.1.4 --locked
+cargo install taudit --version 1.1.5 --locked
 taudit --version
 ```
 
@@ -89,7 +89,7 @@ Tune **`--suppression-mode`** (`downgrade` vs `tag-only`) as needed.
 
 ## Day 1 — CI merge gate
 
-Use the **same** pinned `cargo install taudit --version 1.1.4 --locked` everywhere.
+Use the **same** pinned `cargo install taudit --version 1.1.5 --locked` everywhere.
 
 ### GitHub Actions
 
@@ -105,7 +105,7 @@ jobs:
     steps:
       - uses: actions/checkout@<FULL_SHA>
       - name: Install taudit
-        run: cargo install taudit --version 1.1.4 --locked
+        run: cargo install taudit --version 1.1.5 --locked
       - name: Verify pipeline policy
         run: taudit verify --policy .taudit/policy/ .github/workflows/
 ```
@@ -133,7 +133,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@<FULL_SHA>
-      - run: cargo install taudit --version 1.1.4 --locked
+      - run: cargo install taudit --version 1.1.5 --locked
       - run: taudit verify --policy .taudit/policy/ --format sarif -o results.sarif .github/workflows/
         continue-on-error: true
       - uses: github/codeql-action/upload-sarif@v3
@@ -149,7 +149,7 @@ See also the committed example [examples/ci-gate-taudit-verify.yml](examples/ci-
 verify-pipeline-policy:
   stage: test
   script:
-    - cargo install taudit --version 1.1.4 --locked
+    - cargo install taudit --version 1.1.5 --locked
     - taudit verify --policy .taudit/policy/ .gitlab-ci.yml   # add paths if split across files
   rules:
     - if: $CI_PIPELINE_SOURCE == "merge_request_event"
@@ -165,7 +165,7 @@ Configure protected branches / merge rules so this job blocks merge when it fail
   inputs:
     targetType: inline
     script: |
-      cargo install taudit --version 1.1.4 --locked
+      cargo install taudit --version 1.1.5 --locked
       taudit verify --policy .taudit/policy/ azure-pipelines.yml
 ```
 

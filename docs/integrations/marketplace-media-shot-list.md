@@ -222,7 +222,7 @@ steps:
     displayName: Export exploit-candidate graph
     inputs:
       mode: graph
-      version: 1.1.4
+      version: 1.1.5
       paths: |
         azure-pipelines.yml
       graphView: exploit

@@ -65,7 +65,7 @@ jobs:
         continue-on-error: true
         with:
           mode: verify
-          version: 1.1.4
+          version: 1.1.5
           paths: |
             .github/workflows/
           policy: .taudit/policy/
@@ -129,7 +129,7 @@ steps:
     continueOnError: true
     inputs:
       mode: verify
-      version: 1.1.4
+      version: 1.1.5
       platform: azure-devops
       paths: |
         azure-pipelines.yml

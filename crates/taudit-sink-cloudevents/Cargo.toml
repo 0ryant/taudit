@@ -1,19 +1,20 @@
 [package]
 name = "taudit-sink-cloudevents"
 description = "CloudEvents JSONL sink: one event per graph-derived finding from taudit CI/CD authority analysis."
-version = "3.0.0"
+version = "3.0.1"
+readme = "README.md"
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
 authors.workspace = true
 repository.workspace = true
 homepage.workspace = true
-documentation.workspace = true
-keywords.workspace = true
-categories.workspace = true
+documentation = "https://docs.rs/taudit-sink-cloudevents"
+keywords = ["cloudevents", "security", "ci-cd", "authority-graph", "devsecops"]
+categories = ["development-tools", "development-tools::testing"]
 
 [dependencies]
-taudit-core = { version = "3.0.0", path = "../taudit-core" }
+taudit-core = { version = "3.0.1", path = "../taudit-core" }
 serde = { workspace = true }
 serde_json = { workspace = true }
 uuid = { version = "1", features = ["v4"] }

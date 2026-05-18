@@ -1,19 +1,20 @@
 [package]
 name = "taudit-parse-ado"
 description = "Parses Azure DevOps YAML into taudit typed authority graphs for CI/CD propagation and trust-boundary analysis."
-version = "3.0.0"
+version = "3.0.1"
+readme = "README.md"
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
 authors.workspace = true
 repository.workspace = true
 homepage.workspace = true
-documentation.workspace = true
-keywords.workspace = true
-categories.workspace = true
+documentation = "https://docs.rs/taudit-parse-ado"
+keywords = ["azure-devops", "security", "ci-cd", "authority-graph", "devsecops"]
+categories = ["development-tools", "development-tools::testing", "parser-implementations"]
 
 [dependencies]
-taudit-core = { version = "3.0.0", path = "../taudit-core" }
+taudit-core = { version = "3.0.1", path = "../taudit-core" }
 serde = { workspace = true }
 serde_json = { workspace = true }
 serde_yaml = { workspace = true }
