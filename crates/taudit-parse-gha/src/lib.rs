@@ -328,6 +328,19 @@ impl PipelineParser for GhaParser {
                 );
             }
 
+            if job
+                .services
+                .as_ref()
+                .is_some_and(|services| !yaml_value_is_empty(services))
+            {
+                graph.mark_partial(
+                    GapKind::Structural,
+                    format!(
+                        "job '{job_name}' uses service containers — services, ports, volumes, options, and registry credentials are not modeled"
+                    ),
+                );
+            }
+
             // Self-hosted runner detection: `runs-on: self-hosted` or a sequence
             // that includes `self-hosted`. Creates an Image node tagged with
             // META_SELF_HOSTED so downstream rules can flag the job. Hosted
@@ -361,6 +374,16 @@ impl PipelineParser for GhaParser {
                     if !options.is_empty() {
                         meta.insert(META_GHA_CONTAINER_OPTIONS.into(), options.to_string());
                     }
+                }
+                let unsupported = container.unsupported_static_fields();
+                if !unsupported.is_empty() {
+                    graph.mark_partial(
+                        GapKind::Structural,
+                        format!(
+                            "job '{job_name}' container {} not modeled; only image/options are complete",
+                            unsupported.join(", ")
+                        ),
+                    );
                 }
                 if pinned {
                     if let Some(digest) = image_str.split("@sha256:").nth(1) {
@@ -1561,6 +1584,16 @@ fn yaml_value_compact(value: &serde_yaml::Value) -> Option<String> {
     }
 }
 
+fn yaml_value_is_empty(value: &serde_yaml::Value) -> bool {
+    match value {
+        serde_yaml::Value::Null => true,
+        serde_yaml::Value::String(s) => s.trim().is_empty(),
+        serde_yaml::Value::Sequence(seq) => seq.is_empty(),
+        serde_yaml::Value::Mapping(map) => map.is_empty(),
+        _ => false,
+    }
+}
+
 fn combined_condition(job_if: Option<&str>, step_if: Option<&str>) -> Option<String> {
     match (job_if, step_if) {
         (Some(job), Some(step)) if !job.is_empty() && !step.is_empty() => {
@@ -1636,6 +1669,12 @@ pub enum ContainerConfig {
         image: String,
         #[serde(default)]
         options: Option<String>,
+        #[serde(default)]
+        credentials: Option<serde_yaml::Value>,
+        #[serde(default)]
+        ports: Option<serde_yaml::Value>,
+        #[serde(default)]
+        volumes: Option<serde_yaml::Value>,
     },
 }
 
@@ -1652,6 +1691,39 @@ impl ContainerConfig {
             ContainerConfig::Image(_) => None,
             ContainerConfig::Full { options, .. } => options.as_deref(),
         }
+    }
+
+    fn unsupported_static_fields(&self) -> Vec<&'static str> {
+        let ContainerConfig::Full {
+            credentials,
+            ports,
+            volumes,
+            ..
+        } = self
+        else {
+            return Vec::new();
+        };
+
+        let mut fields = Vec::new();
+        if credentials
+            .as_ref()
+            .is_some_and(|value| !yaml_value_is_empty(value))
+        {
+            fields.push("container credentials");
+        }
+        if ports
+            .as_ref()
+            .is_some_and(|value| !yaml_value_is_empty(value))
+        {
+            fields.push("container ports");
+        }
+        if volumes
+            .as_ref()
+            .is_some_and(|value| !yaml_value_is_empty(value))
+        {
+            fields.push("container volumes");
+        }
+        fields
     }
 }
 
@@ -1681,6 +1753,10 @@ pub struct GhaJob {
     /// Job container image.
     #[serde(default)]
     pub container: Option<ContainerConfig>,
+    /// Service containers are a separate execution surface. v1.2.0-rc.1
+    /// records a typed structural gap rather than silently claiming support.
+    #[serde(default)]
+    pub services: Option<serde_yaml::Value>,
     /// Matrix/strategy configuration. When a matrix is present, the authority
     /// shape may differ per matrix entry — graph is marked Partial.
     #[serde(default)]
@@ -2432,6 +2508,39 @@ jobs:
                 .iter()
                 .any(|f| f.category == taudit_core::finding::FindingCategory::AuthorityPropagation),
             "authority should propagate from step to floating container"
+        );
+    }
+
+    #[test]
+    fn service_containers_and_container_credentials_mark_structural_partial() {
+        let graph = parse(include_str!(
+            "../../../tests/fixtures/gha-service-containers-and-credentials.yml"
+        ));
+        assert_eq!(
+            graph.completeness,
+            AuthorityCompleteness::Partial,
+            "service containers and private container credentials are not fully modeled"
+        );
+        assert!(
+            graph.completeness_gap_kinds.contains(&GapKind::Structural),
+            "service/container execution surface gaps must be structural, got: {:?}",
+            graph.completeness_gap_kinds
+        );
+        assert!(
+            graph
+                .completeness_gaps
+                .iter()
+                .any(|g| g.contains("service containers")),
+            "service container gap should be explicit: {:?}",
+            graph.completeness_gaps
+        );
+        assert!(
+            graph
+                .completeness_gaps
+                .iter()
+                .any(|g| g.contains("container credentials")),
+            "job container credentials gap should be explicit: {:?}",
+            graph.completeness_gaps
         );
     }
 

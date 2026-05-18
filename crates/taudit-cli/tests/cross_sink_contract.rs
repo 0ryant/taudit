@@ -26,6 +26,16 @@ use taudit_report_json::JsonReportSink;
 use taudit_report_sarif::SarifReportSink;
 use taudit_sink_cloudevents::CloudEventsJsonlSink;
 
+const CUSTOM_FINDING_GROUP_ID: &str = "11111111-1111-5111-8111-111111111111";
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct SinkIdentity {
+    rule_id: String,
+    fingerprint: String,
+    suppression_key: String,
+    finding_group_id: String,
+}
+
 /// Build one rich-metadata graph plus two findings (built-in + custom-rule)
 /// so each sink invocation operates on an identical input. The metadata
 /// shape mirrors the JSON byte-determinism test's `build_graph` helper —
@@ -85,7 +95,10 @@ fn build_graph_with_findings() -> (AuthorityGraph, Vec<Finding>) {
         source: FindingSource::Custom {
             source_file: std::path::PathBuf::from("rules/my_custom_rule.yaml"),
         },
-        extras: FindingExtras::default(),
+        extras: FindingExtras {
+            finding_group_id: Some(CUSTOM_FINDING_GROUP_ID.into()),
+            ..FindingExtras::default()
+        },
     };
 
     (graph, vec![builtin, custom])
@@ -108,8 +121,8 @@ fn custom_rules_for_test() -> Vec<CustomRule> {
     }]
 }
 
-/// Pull `(rule_id, fingerprint)` pairs in input order from a JSON report.
-fn json_pairs(graph: &AuthorityGraph, findings: &[Finding]) -> Vec<(String, String)> {
+/// Pull identity fields in input order from a JSON report.
+fn json_identities(graph: &AuthorityGraph, findings: &[Finding]) -> Vec<SinkIdentity> {
     let mut buf = Vec::new();
     JsonReportSink.emit(&mut buf, graph, findings).unwrap();
     let v: serde_json::Value = serde_json::from_slice(&buf).unwrap();
@@ -117,23 +130,23 @@ fn json_pairs(graph: &AuthorityGraph, findings: &[Finding]) -> Vec<(String, Stri
         .as_array()
         .unwrap()
         .iter()
-        .map(|f| {
-            (
-                f["rule_id"].as_str().unwrap().to_string(),
-                f["fingerprint"].as_str().unwrap().to_string(),
-            )
+        .map(|f| SinkIdentity {
+            rule_id: f["rule_id"].as_str().unwrap().to_string(),
+            fingerprint: f["fingerprint"].as_str().unwrap().to_string(),
+            suppression_key: f["suppression_key"].as_str().unwrap().to_string(),
+            finding_group_id: f["finding_group_id"].as_str().unwrap().to_string(),
         })
         .collect()
 }
 
-/// Pull `(rule_id, fingerprint)` pairs in input order from a SARIF report.
+/// Pull identity fields in input order from a SARIF report.
 /// Uses `emit_multi_with_custom_rules` so the custom rule actually surfaces
 /// as `result.ruleId = "my_custom_rule"` rather than the category fallback.
-fn sarif_pairs(
+fn sarif_identities(
     graph: &AuthorityGraph,
     findings: &[Finding],
     custom_rules: &[CustomRule],
-) -> Vec<(String, String)> {
+) -> Vec<SinkIdentity> {
     let mut buf = Vec::new();
     SarifReportSink
         .emit_multi_with_custom_rules(&mut buf, &[(graph, findings)], custom_rules)
@@ -143,21 +156,27 @@ fn sarif_pairs(
         .as_array()
         .unwrap()
         .iter()
-        .map(|r| {
-            (
-                r["ruleId"].as_str().unwrap().to_string(),
-                r["partialFingerprints"]["primaryLocationLineHash"]
-                    .as_str()
-                    .unwrap()
-                    .to_string(),
-            )
+        .map(|r| SinkIdentity {
+            rule_id: r["ruleId"].as_str().unwrap().to_string(),
+            fingerprint: r["partialFingerprints"]["primaryLocationLineHash"]
+                .as_str()
+                .unwrap()
+                .to_string(),
+            suppression_key: r["properties"]["suppressionKey"]
+                .as_str()
+                .unwrap()
+                .to_string(),
+            finding_group_id: r["properties"]["findingGroupId"]
+                .as_str()
+                .unwrap()
+                .to_string(),
         })
         .collect()
 }
 
-/// Pull `(tauditruleid, tauditfindingfingerprint)` pairs in input order from
+/// Pull identity fields in input order from
 /// the CloudEvents JSONL stream.
-fn cloudevents_pairs(graph: &AuthorityGraph, findings: &[Finding]) -> Vec<(String, String)> {
+fn cloudevents_identities(graph: &AuthorityGraph, findings: &[Finding]) -> Vec<SinkIdentity> {
     let mut buf = Vec::new();
     // Pin the correlation id so the test never mints a UUID that could leak
     // into other assertions in this file (pure cleanliness — none of our
@@ -169,10 +188,12 @@ fn cloudevents_pairs(graph: &AuthorityGraph, findings: &[Finding]) -> Vec<(Strin
         .lines()
         .map(|line| {
             let v: serde_json::Value = serde_json::from_str(line).unwrap();
-            (
-                v["tauditruleid"].as_str().unwrap().to_string(),
-                v["tauditfindingfingerprint"].as_str().unwrap().to_string(),
-            )
+            SinkIdentity {
+                rule_id: v["tauditruleid"].as_str().unwrap().to_string(),
+                fingerprint: v["tauditfindingfingerprint"].as_str().unwrap().to_string(),
+                suppression_key: v["tauditsuppressionkey"].as_str().unwrap().to_string(),
+                finding_group_id: v["tauditfindinggroup"].as_str().unwrap().to_string(),
+            }
         })
         .collect()
 }
@@ -182,18 +203,18 @@ fn fingerprints_match_across_all_three_sinks() {
     let (graph, findings) = build_graph_with_findings();
     let custom_rules = custom_rules_for_test();
 
-    let json = json_pairs(&graph, &findings);
-    let sarif = sarif_pairs(&graph, &findings, &custom_rules);
-    let ce = cloudevents_pairs(&graph, &findings);
+    let json = json_identities(&graph, &findings);
+    let sarif = sarif_identities(&graph, &findings, &custom_rules);
+    let ce = cloudevents_identities(&graph, &findings);
 
     assert_eq!(json.len(), 2, "json sink emitted wrong finding count");
     assert_eq!(sarif.len(), 2, "sarif sink emitted wrong finding count");
     assert_eq!(ce.len(), 2, "cloudevents sink emitted wrong finding count");
 
     for i in 0..2 {
-        let (_, fp_json) = &json[i];
-        let (_, fp_sarif) = &sarif[i];
-        let (_, fp_ce) = &ce[i];
+        let fp_json = &json[i].fingerprint;
+        let fp_sarif = &sarif[i].fingerprint;
+        let fp_ce = &ce[i].fingerprint;
         assert_eq!(
             fp_json, fp_sarif,
             "finding[{i}]: JSON fingerprint {fp_json} != SARIF partialFingerprints {fp_sarif}"
@@ -210,14 +231,14 @@ fn rule_ids_match_across_all_three_sinks() {
     let (graph, findings) = build_graph_with_findings();
     let custom_rules = custom_rules_for_test();
 
-    let json = json_pairs(&graph, &findings);
-    let sarif = sarif_pairs(&graph, &findings, &custom_rules);
-    let ce = cloudevents_pairs(&graph, &findings);
+    let json = json_identities(&graph, &findings);
+    let sarif = sarif_identities(&graph, &findings, &custom_rules);
+    let ce = cloudevents_identities(&graph, &findings);
 
     for i in 0..2 {
-        let (rid_json, _) = &json[i];
-        let (rid_sarif, _) = &sarif[i];
-        let (rid_ce, _) = &ce[i];
+        let rid_json = &json[i].rule_id;
+        let rid_sarif = &sarif[i].rule_id;
+        let rid_ce = &ce[i].rule_id;
         assert_eq!(
             rid_json, rid_sarif,
             "finding[{i}]: JSON rule_id {rid_json} != SARIF ruleId {rid_sarif}"
@@ -230,18 +251,79 @@ fn rule_ids_match_across_all_three_sinks() {
 }
 
 #[test]
+fn suppression_keys_match_across_all_three_sinks() {
+    let (graph, findings) = build_graph_with_findings();
+    let custom_rules = custom_rules_for_test();
+
+    let json = json_identities(&graph, &findings);
+    let sarif = sarif_identities(&graph, &findings, &custom_rules);
+    let ce = cloudevents_identities(&graph, &findings);
+
+    for i in 0..2 {
+        let sk_json = &json[i].suppression_key;
+        let sk_sarif = &sarif[i].suppression_key;
+        let sk_ce = &ce[i].suppression_key;
+        assert_eq!(
+            sk_json, sk_sarif,
+            "finding[{i}]: JSON suppression_key {sk_json} != SARIF properties.suppressionKey {sk_sarif}"
+        );
+        assert_eq!(
+            sk_sarif, sk_ce,
+            "finding[{i}]: SARIF properties.suppressionKey {sk_sarif} != CloudEvents tauditsuppressionkey {sk_ce}"
+        );
+    }
+}
+
+#[test]
+fn finding_group_ids_match_across_all_three_sinks() {
+    let (graph, findings) = build_graph_with_findings();
+    let custom_rules = custom_rules_for_test();
+
+    let json = json_identities(&graph, &findings);
+    let sarif = sarif_identities(&graph, &findings, &custom_rules);
+    let ce = cloudevents_identities(&graph, &findings);
+
+    for i in 0..2 {
+        let group_json = &json[i].finding_group_id;
+        let group_sarif = &sarif[i].finding_group_id;
+        let group_ce = &ce[i].finding_group_id;
+        assert_eq!(
+            group_json, group_sarif,
+            "finding[{i}]: JSON finding_group_id {group_json} != SARIF properties.findingGroupId {group_sarif}"
+        );
+        assert_eq!(
+            group_sarif, group_ce,
+            "finding[{i}]: SARIF properties.findingGroupId {group_sarif} != CloudEvents tauditfindinggroup {group_ce}"
+        );
+    }
+
+    assert_eq!(
+        json[1].finding_group_id, CUSTOM_FINDING_GROUP_ID,
+        "fixture custom finding_group_id must survive JSON emission"
+    );
+    assert_eq!(
+        sarif[1].finding_group_id, CUSTOM_FINDING_GROUP_ID,
+        "fixture custom finding_group_id must survive SARIF emission"
+    );
+    assert_eq!(
+        ce[1].finding_group_id, CUSTOM_FINDING_GROUP_ID,
+        "fixture custom finding_group_id must survive CloudEvents emission"
+    );
+}
+
+#[test]
 fn builtin_finding_uses_snake_case_category_rule_id() {
     let (graph, findings) = build_graph_with_findings();
     let custom_rules = custom_rules_for_test();
 
-    let json = json_pairs(&graph, &findings);
-    let sarif = sarif_pairs(&graph, &findings, &custom_rules);
-    let ce = cloudevents_pairs(&graph, &findings);
+    let json = json_identities(&graph, &findings);
+    let sarif = sarif_identities(&graph, &findings, &custom_rules);
+    let ce = cloudevents_identities(&graph, &findings);
 
     // findings[0] is the built-in `AuthorityPropagation`.
-    assert_eq!(json[0].0, "authority_propagation");
-    assert_eq!(sarif[0].0, "authority_propagation");
-    assert_eq!(ce[0].0, "authority_propagation");
+    assert_eq!(json[0].rule_id, "authority_propagation");
+    assert_eq!(sarif[0].rule_id, "authority_propagation");
+    assert_eq!(ce[0].rule_id, "authority_propagation");
 }
 
 #[test]
@@ -249,16 +331,16 @@ fn custom_rule_finding_surfaces_bracketed_id_in_all_three_sinks() {
     let (graph, findings) = build_graph_with_findings();
     let custom_rules = custom_rules_for_test();
 
-    let json = json_pairs(&graph, &findings);
-    let sarif = sarif_pairs(&graph, &findings, &custom_rules);
-    let ce = cloudevents_pairs(&graph, &findings);
+    let json = json_identities(&graph, &findings);
+    let sarif = sarif_identities(&graph, &findings, &custom_rules);
+    let ce = cloudevents_identities(&graph, &findings);
 
     // findings[1] message starts with `[my_custom_rule] …`. The custom-rule
     // id MUST win across every sink, not the `UnpinnedAction` category that
     // happens to be on the Finding struct.
-    assert_eq!(json[1].0, "my_custom_rule");
-    assert_eq!(sarif[1].0, "my_custom_rule");
-    assert_eq!(ce[1].0, "my_custom_rule");
+    assert_eq!(json[1].rule_id, "my_custom_rule");
+    assert_eq!(sarif[1].rule_id, "my_custom_rule");
+    assert_eq!(ce[1].rule_id, "my_custom_rule");
 }
 
 /// Pins the per-sink rendering contract for messages containing Markdown /
@@ -328,17 +410,17 @@ fn markdown_payload_renders_per_sink_contract_with_stable_fingerprint() {
     );
 
     // ── Fingerprint parity: sanitisation must NOT shift fingerprints. ──
-    let json_pairs = json_pairs(&graph, &findings);
-    let sarif_pairs = sarif_pairs(&graph, &findings, &custom_rules);
-    let ce_pairs = cloudevents_pairs(&graph, &findings);
+    let json_identities = json_identities(&graph, &findings);
+    let sarif_identities = sarif_identities(&graph, &findings, &custom_rules);
+    let ce_identities = cloudevents_identities(&graph, &findings);
     for i in 0..2 {
         assert_eq!(
-            json_pairs[i].1, sarif_pairs[i].1,
+            json_identities[i].fingerprint, sarif_identities[i].fingerprint,
             "finding[{i}] fingerprint diverges between JSON and SARIF under \
              Markdown payload — sanitisation leaked into fingerprint inputs"
         );
         assert_eq!(
-            sarif_pairs[i].1, ce_pairs[i].1,
+            sarif_identities[i].fingerprint, ce_identities[i].fingerprint,
             "finding[{i}] fingerprint diverges between SARIF and CloudEvents \
              under Markdown payload — sanitisation leaked into fingerprint inputs"
         );

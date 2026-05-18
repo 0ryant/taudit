@@ -353,6 +353,8 @@ fn build_graph_from_root(
         }
     }
 
+    let generic_artifact_jobs = collect_generic_artifact_producers(mapping);
+
     // Process each job (any top-level key not in RESERVED)
     // determinism: sort by key — same YAML must produce same NodeId order
     let mut top_level_entries: Vec<(&Value, &Value)> = mapping.iter().collect();
@@ -404,6 +406,13 @@ fn build_graph_from_root(
             graph.mark_partial(
                 GapKind::Structural,
                 format!("job '{job_name}' uses inherit: — inheritance scope not resolved"),
+            );
+        }
+
+        if generic_artifact_jobs.contains(job_name) {
+            graph.mark_partial(
+                GapKind::Structural,
+                format!("job '{job_name}' publishes generic artifacts — artifact paths/reports beyond dotenv are not materialized"),
             );
         }
 
@@ -476,6 +485,25 @@ fn build_graph_from_root(
         // Upstream job names consumed via `needs:` / `dependencies:`.
         // Used to build dotenv-flow chains across stages.
         let needs = extract_needs(job_map);
+        let generic_artifact_inputs: Vec<&str> = needs
+            .iter()
+            .filter_map(|name| {
+                if generic_artifact_jobs.contains(name.as_str()) {
+                    Some(name.as_str())
+                } else {
+                    None
+                }
+            })
+            .collect();
+        if !generic_artifact_inputs.is_empty() {
+            graph.mark_partial(
+                GapKind::Structural,
+                format!(
+                    "job '{job_name}' consumes generic artifacts from '{}' via needs/dependencies — generic artifact dataflow not materialized",
+                    generic_artifact_inputs.join(",")
+                ),
+            );
+        }
 
         // Detect whether this job's `rules:` / `only:` clause restricts
         // execution to protected branches (or to the default branch,
@@ -682,6 +710,46 @@ fn extract_dotenv_file(job_map: &serde_yaml::Mapping) -> Option<String> {
             }
         }
         _ => None,
+    }
+}
+
+fn collect_generic_artifact_producers(root: &serde_yaml::Mapping) -> HashSet<String> {
+    root.iter()
+        .filter_map(|(key, value)| {
+            let job_name = key.as_str()?;
+            if RESERVED.contains(&job_name) || job_name.starts_with('.') {
+                return None;
+            }
+            let job_map = value.as_mapping()?;
+            if job_has_generic_artifacts(job_map) {
+                Some(job_name.to_string())
+            } else {
+                None
+            }
+        })
+        .collect()
+}
+
+fn job_has_generic_artifacts(job_map: &serde_yaml::Mapping) -> bool {
+    job_map
+        .get("artifacts")
+        .map(artifacts_value_has_generic_payload)
+        .unwrap_or(false)
+}
+
+fn artifacts_value_has_generic_payload(value: &Value) -> bool {
+    let Some(map) = value.as_mapping() else {
+        return !matches!(value, Value::Null | Value::Bool(false));
+    };
+
+    if map.contains_key("paths") || map.contains_key("exclude") || map.contains_key("untracked") {
+        return true;
+    }
+
+    match map.get("reports") {
+        Some(Value::Mapping(reports)) => reports.keys().any(|key| key.as_str() != Some("dotenv")),
+        Some(_) => true,
+        None => false,
     }
 }
 
@@ -2256,6 +2324,36 @@ deploy:
         assert!(
             needs_csv.split(',').any(|s| s == "build"),
             "default (artifacts implicitly true) must keep build in META_NEEDS (got: {needs_csv:?})"
+        );
+    }
+
+    #[test]
+    fn generic_artifact_upload_and_download_marks_structural_gap() {
+        let graph = parse(include_str!(
+            "../../../tests/fixtures/gitlab-generic-artifacts.yml"
+        ));
+
+        assert_eq!(graph.completeness, AuthorityCompleteness::Partial);
+        assert!(
+            graph.completeness_gap_kinds.contains(&GapKind::Structural),
+            "expected generic artifacts to produce a Structural gap, got: {:?}",
+            graph.completeness_gap_kinds
+        );
+        assert!(
+            graph
+                .completeness_gaps
+                .iter()
+                .any(|gap| gap.contains("job 'build' publishes generic artifacts")),
+            "expected producer generic artifact gap, got: {:?}",
+            graph.completeness_gaps
+        );
+        assert!(
+            graph
+                .completeness_gaps
+                .iter()
+                .any(|gap| gap.contains("job 'deploy' consumes generic artifacts from 'build'")),
+            "expected consumer generic artifact gap, got: {:?}",
+            graph.completeness_gaps
         );
     }
 

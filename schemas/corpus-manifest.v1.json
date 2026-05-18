@@ -1,0 +1,229 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://taudit.dev/schemas/corpus-manifest.v1.json",
+  "title": "taudit Corpus Manifest v1",
+  "description": "Tracked manifest for pinned public CI corpus entries. The manifest records provenance, expected parser completeness, local cache metadata, and tags while keeping fetch/cache behavior explicit and separate from runner execution.",
+  "type": "object",
+  "required": ["schema_version", "name", "entries"],
+  "additionalProperties": false,
+  "properties": {
+    "$schema": {
+      "type": "string"
+    },
+    "schema_version": {
+      "type": "string",
+      "pattern": "^1\\.[0-9]+\\.[0-9]+$",
+      "description": "Semver for this manifest schema. Must start with 1."
+    },
+    "name": {
+      "type": "string",
+      "minLength": 1
+    },
+    "description": {
+      "type": "string"
+    },
+    "entries": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "$ref": "#/$defs/CorpusEntry"
+      }
+    }
+  },
+  "$defs": {
+    "CorpusEntry": {
+      "type": "object",
+      "required": [
+        "id",
+        "provider",
+        "source",
+        "license",
+        "expected",
+        "local",
+        "tags"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "id": {
+          "type": "string",
+          "pattern": "^[a-z0-9][a-z0-9._:-]{0,127}$",
+          "description": "Stable manifest-local identifier used in reports and histograms."
+        },
+        "provider": {
+          "type": "string",
+          "enum": [
+            "github_actions",
+            "azure_pipelines",
+            "gitlab_ci",
+            "bitbucket_pipelines"
+          ]
+        },
+        "source": {
+          "$ref": "#/$defs/Source"
+        },
+        "license": {
+          "$ref": "#/$defs/LicenseUseBasis"
+        },
+        "expected": {
+          "$ref": "#/$defs/ExpectedParserResult"
+        },
+        "local": {
+          "$ref": "#/$defs/LocalMaterialization"
+        },
+        "tags": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1
+          },
+          "minItems": 1,
+          "uniqueItems": true
+        }
+      }
+    },
+    "Source": {
+      "type": "object",
+      "required": ["url", "path"],
+      "anyOf": [
+        { "required": ["commit"] },
+        { "required": ["digest"] }
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "url": {
+          "type": "string",
+          "format": "uri",
+          "description": "Public upstream URL for the repository or artifact."
+        },
+        "commit": {
+          "type": "string",
+          "pattern": "^[0-9a-fA-F]{7,64}$",
+          "description": "Immutable upstream commit SHA when the source is version-control backed."
+        },
+        "digest": {
+          "type": "string",
+          "pattern": "^sha256:[0-9a-f]{64}$",
+          "description": "Immutable artifact digest when commit pinning is not the source anchor."
+        },
+        "path": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Path of the CI file in the upstream source."
+        },
+        "pulled_at": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Optional timestamp for when the local copy or cache entry was produced."
+        }
+      }
+    },
+    "LicenseUseBasis": {
+      "type": "object",
+      "required": ["basis", "name"],
+      "additionalProperties": false,
+      "properties": {
+        "basis": {
+          "type": "string",
+          "enum": [
+            "repo_license",
+            "public_repository_terms",
+            "explicit_permission",
+            "internal_fixture",
+            "unknown_pending_review"
+          ],
+          "description": "Why taudit may store or reference this corpus entry."
+        },
+        "name": {
+          "type": "string",
+          "minLength": 1,
+          "description": "License name or short use-basis label."
+        },
+        "url": {
+          "type": "string",
+          "format": "uri"
+        },
+        "notes": {
+          "type": "string"
+        }
+      }
+    },
+    "ExpectedParserResult": {
+      "type": "object",
+      "required": ["parser", "completeness", "gap_kinds"],
+      "additionalProperties": false,
+      "properties": {
+        "parser": {
+          "type": "string",
+          "enum": [
+            "taudit-parse-gha",
+            "taudit-parse-ado",
+            "taudit-parse-gitlab",
+            "taudit-parse-bitbucket"
+          ]
+        },
+        "completeness": {
+          "type": "string",
+          "enum": ["complete", "partial", "unknown"]
+        },
+        "gap_kinds": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/GapKind"
+          },
+          "uniqueItems": true,
+          "description": "Expected typed completeness gap classes for this entry."
+        },
+        "gap_reasons": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1
+          },
+          "description": "Optional expected gap reason text or stable fragments."
+        }
+      }
+    },
+    "LocalMaterialization": {
+      "type": "object",
+      "required": ["path", "cache"],
+      "additionalProperties": false,
+      "properties": {
+        "path": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Repo-relative or absolute path to the local corpus file used by the runner."
+        },
+        "cache": {
+          "$ref": "#/$defs/CacheMetadata"
+        }
+      }
+    },
+    "CacheMetadata": {
+      "type": "object",
+      "required": ["mode"],
+      "additionalProperties": false,
+      "properties": {
+        "mode": {
+          "type": "string",
+          "enum": ["tracked_copy", "fetch_cache", "external_reference"],
+          "description": "How local material is expected to be obtained. The runner reports missing files but does not fetch."
+        },
+        "key": {
+          "type": "string",
+          "minLength": 1
+        },
+        "digest": {
+          "type": "string",
+          "pattern": "^sha256:[0-9a-f]{64}$"
+        },
+        "notes": {
+          "type": "string"
+        }
+      }
+    },
+    "GapKind": {
+      "type": "string",
+      "enum": ["expression", "structural", "opaque"]
+    }
+  }
+}

@@ -1,0 +1,41 @@
+image: node:20
+
+pipelines:
+  default:
+    - step:
+        name: default-build
+        script:
+          - npm ci
+          - npm test
+  branches:
+    main:
+      - step:
+          name: main-deploy
+          deployment: production
+          oidc: true
+          script:
+            - ./deploy.sh "$DEPLOY_TOKEN"
+    "feature/*":
+      - step:
+          name: feature-check
+          script:
+            - echo ${REPOSITORY_API_KEY}
+  tags:
+    "v*":
+      - step:
+          name: tag-release
+          script:
+            - ./release.sh
+  pull-requests:
+    "**":
+      - step:
+          name: pr-test
+          script:
+            - npm test
+  custom:
+    smoke:
+      - step:
+          name: smoke
+          trigger: manual
+          script:
+            - ./smoke.sh

@@ -1,0 +1,29 @@
+pipelines:
+  default:
+    - parallel:
+        fail-fast: true
+        steps:
+          - step:
+              name: linux
+              script:
+                - ./test-linux.sh
+              artifacts:
+                - reports/linux.xml
+          - step:
+              name: windows
+              script:
+                - ./test-windows.sh
+              artifacts:
+                - reports/windows.xml
+    - stage:
+        name: release
+        deployment: production
+        steps:
+          - step:
+              name: package
+              script:
+                - ./package.sh
+          - step:
+              name: publish
+              script:
+                - ./publish.sh "$PUBLISH_TOKEN"

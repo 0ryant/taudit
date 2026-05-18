@@ -1,0 +1,341 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://taudit.dev/schemas/action-intelligence-catalog.v1.json",
+  "title": "taudit Action Intelligence Catalog v1",
+  "description": "Seed contract for action intelligence catalog entries. This schema records public helper and authority facts with explicit source anchors or witness-status explanations. It is a contract seed, not the full L4-04 seeded catalog.",
+  "type": "object",
+  "required": ["schema_version", "schema_uri", "catalog_version", "entries"],
+  "additionalProperties": false,
+  "properties": {
+    "$schema": {
+      "type": "string"
+    },
+    "schema_version": {
+      "type": "string",
+      "pattern": "^1\\.[0-9]+\\.[0-9]+$",
+      "description": "Semver for this schema contract. Must remain in the 1.x line for additive changes."
+    },
+    "schema_uri": {
+      "type": "string",
+      "format": "uri",
+      "const": "https://taudit.dev/schemas/action-intelligence-catalog.v1.json"
+    },
+    "catalog_version": {
+      "type": "string",
+      "pattern": "^(0|1)\\.[0-9]+\\.[0-9]+$",
+      "description": "Version of the catalog data file using this schema. 0.x indicates seed or pre-complete catalog material."
+    },
+    "non_exhaustive": {
+      "type": "boolean",
+      "description": "True when the file is an example or partial seed, not a complete action catalog."
+    },
+    "entries": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "$ref": "#/$defs/CatalogEntry"
+      }
+    }
+  },
+  "$defs": {
+    "CatalogEntry": {
+      "type": "object",
+      "required": [
+        "id",
+        "action",
+        "version_ref",
+        "helper_resolution",
+        "helper_invocations",
+        "authority_transport",
+        "authority_origin",
+        "confidence",
+        "evidence_tier",
+        "source_evidence",
+        "deferred"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "id": {
+          "type": "string",
+          "pattern": "^[a-z0-9][a-z0-9._:/-]{0,127}$",
+          "description": "Stable catalog-local identifier for this action fact entry."
+        },
+        "action": {
+          "$ref": "#/$defs/ActionRef"
+        },
+        "version_ref": {
+          "$ref": "#/$defs/VersionRef"
+        },
+        "helper_resolution": {
+          "$ref": "#/$defs/HelperResolution"
+        },
+        "helper_invocations": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "$ref": "#/$defs/HelperInvocation"
+          },
+          "description": "Concrete helper invocation facts this catalog entry can produce or match. L4 event producers use these values for HelperExecution.helper and transport predicates."
+        },
+        "authority_transport": {
+          "type": "array",
+          "minItems": 1,
+          "uniqueItems": true,
+          "items": {
+            "$ref": "#/$defs/AuthorityTransport"
+          }
+        },
+        "authority_origin": {
+          "type": "array",
+          "minItems": 1,
+          "uniqueItems": true,
+          "items": {
+            "$ref": "#/$defs/AuthorityOrigin"
+          }
+        },
+        "confidence": {
+          "$ref": "#/$defs/Confidence"
+        },
+        "evidence_tier": {
+          "$ref": "#/$defs/EvidenceTier"
+        },
+        "source_evidence": {
+          "$ref": "#/$defs/SourceEvidence"
+        },
+        "deferred": {
+          "type": "boolean",
+          "description": "True when the entry is a placeholder or negative-space marker whose source/witness work is intentionally incomplete."
+        },
+        "deferred_reason": {
+          "type": "string",
+          "minLength": 1
+        },
+        "notes": {
+          "type": "string"
+        }
+      },
+      "if": {
+        "properties": {
+          "deferred": {
+            "const": true
+          }
+        },
+        "required": ["deferred"]
+      },
+      "then": {
+        "required": ["deferred_reason"]
+      }
+    },
+    "ActionRef": {
+      "type": "object",
+      "required": ["ecosystem", "name"],
+      "additionalProperties": false,
+      "properties": {
+        "ecosystem": {
+          "type": "string",
+          "enum": ["github_actions"],
+          "description": "Action ecosystem for the catalog entry. L4-03 seeds GitHub Actions only."
+        },
+        "name": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$",
+          "description": "Owner/repository action name without the @ref suffix."
+        },
+        "display_name": {
+          "type": "string"
+        }
+      }
+    },
+    "VersionRef": {
+      "type": "object",
+      "required": ["kind", "value"],
+      "additionalProperties": false,
+      "properties": {
+        "kind": {
+          "type": "string",
+          "enum": ["major_ref", "pinned_tag", "sha", "unversioned", "unknown"]
+        },
+        "value": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Observed, example, or placeholder version/ref value such as v3, v2.1.0, a SHA, or unknown."
+        }
+      }
+    },
+    "SourceEvidence": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "source_anchors": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "$ref": "#/$defs/SourceAnchor"
+          }
+        },
+        "witness_status": {
+          "$ref": "#/$defs/WitnessStatus"
+        }
+      },
+      "anyOf": [
+        {
+          "required": ["source_anchors"]
+        },
+        {
+          "required": ["witness_status"]
+        }
+      ]
+    },
+    "HelperInvocation": {
+      "type": "object",
+      "required": ["helper", "helper_resolution", "authority_transport"],
+      "additionalProperties": false,
+      "properties": {
+        "helper": {
+          "type": "string",
+          "minLength": 1,
+          "pattern": "^[A-Za-z0-9_.:/@+-]+$",
+          "description": "Normalized helper command or executable label, such as docker, wrangler, npm, gh, or codecov."
+        },
+        "helper_resolution": {
+          "$ref": "#/$defs/HelperResolution"
+        },
+        "authority_transport": {
+          "type": "array",
+          "minItems": 1,
+          "uniqueItems": true,
+          "items": {
+            "$ref": "#/$defs/AuthorityTransport"
+          }
+        },
+        "argument_patterns": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1
+          },
+          "description": "Sanitized argument or command-pattern hints. These are matching aids only, never secret values."
+        },
+        "notes": {
+          "type": "string"
+        }
+      }
+    },
+    "SourceAnchor": {
+      "type": "object",
+      "required": ["kind", "label"],
+      "additionalProperties": false,
+      "properties": {
+        "kind": {
+          "type": "string",
+          "enum": ["public_source", "public_docs", "taudit_doc", "taudit_fixture"]
+        },
+        "label": {
+          "type": "string",
+          "minLength": 1
+        },
+        "url": {
+          "type": "string",
+          "format": "uri"
+        },
+        "path": {
+          "type": "string",
+          "minLength": 1
+        },
+        "line_start": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "line_end": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "commit": {
+          "type": "string",
+          "pattern": "^[0-9a-fA-F]{7,64}$"
+        },
+        "notes": {
+          "type": "string"
+        }
+      },
+      "anyOf": [
+        {
+          "required": ["url"]
+        },
+        {
+          "required": ["path"]
+        }
+      ]
+    },
+    "WitnessStatus": {
+      "type": "object",
+      "required": ["status", "explanation"],
+      "additionalProperties": false,
+      "properties": {
+        "status": {
+          "type": "string",
+          "enum": [
+            "not_started",
+            "public_source_only",
+            "local_witness",
+            "runner_faithful_witness",
+            "hosted_witness",
+            "deferred"
+          ]
+        },
+        "explanation": {
+          "type": "string",
+          "minLength": 1
+        }
+      }
+    },
+    "HelperResolution": {
+      "type": "string",
+      "enum": [
+        "bare_command",
+        "shell_string",
+        "toolkit_which",
+        "absolute_path",
+        "toolcache_path",
+        "action_owned_path",
+        "user_supplied_absolute_path",
+        "ambient_path_by_explicit_mode",
+        "unknown"
+      ]
+    },
+    "AuthorityTransport": {
+      "type": "string",
+      "enum": [
+        "argv",
+        "stdin",
+        "env",
+        "credential_file_path",
+        "config_file_path",
+        "workspace_file",
+        "oidc_request_env"
+      ]
+    },
+    "AuthorityOrigin": {
+      "type": "string",
+      "enum": [
+        "caller_provided_secret",
+        "action_input_secret",
+        "github_token",
+        "oidc_request_capability",
+        "cloud_credential_minted_by_action",
+        "registry_credential_minted_by_action",
+        "generated_credential_file",
+        "derived_secret_payload"
+      ]
+    },
+    "Confidence": {
+      "type": "string",
+      "enum": ["high", "medium", "low"]
+    },
+    "EvidenceTier": {
+      "type": "string",
+      "enum": ["static", "inferred", "catalog", "witness_label", "observed"],
+      "description": "Public evidence strength label. Observed requires explicit observed-evidence input outside the catalog seed."
+    }
+  }
+}

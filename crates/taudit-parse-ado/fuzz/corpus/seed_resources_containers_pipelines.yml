@@ -1,0 +1,25 @@
+trigger: none
+
+resources:
+  repositories:
+    - repository: shared
+      type: git
+      name: Contoso/shared-templates
+      ref: refs/heads/main
+  containers:
+    - container: build_image
+      image: alpine:3.20
+      endpoint: dockerhub-prod
+  pipelines:
+    - pipeline: upstream_security_build
+      source: security-ci
+      branch: main
+      trigger: true
+
+jobs:
+  - job: build
+    container: build_image
+    steps:
+      - checkout: shared
+      - script: echo consume external resources
+        displayName: Consume resources

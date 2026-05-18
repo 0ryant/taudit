@@ -4,6 +4,8 @@
 from __future__ import annotations
 
 import argparse
+import dataclasses
+import json
 import pathlib
 import re
 import subprocess
@@ -17,10 +19,36 @@ ROOT = pathlib.Path(__file__).resolve().parents[1]
 CHANGELOG = ROOT / "CHANGELOG.md"
 CLI_MANIFEST = ROOT / "crates" / "taudit-cli" / "Cargo.toml"
 TAG_RE = re.compile(r"^v(?P<version>\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?)$")
+CONFORMANCE_INCOMPLETE_EXIT_CODE = 3
 
 
 class ReleaseHarnessError(RuntimeError):
     """Raised when the requested release shape is invalid."""
+
+
+@dataclass(frozen=True)
+class ConformanceGateResult:
+    command: tuple[str, ...]
+    exit_code: int
+    status: str
+    full_conformance: bool
+    counts: dict[str, int]
+
+    @property
+    def pending_count(self) -> int:
+        return self.counts.get("pending", 0)
+
+    @property
+    def is_full_pass(self) -> bool:
+        return self.exit_code == 0 and self.status == "pass" and self.full_conformance
+
+    @property
+    def is_incomplete_pending(self) -> bool:
+        return (
+            self.exit_code == CONFORMANCE_INCOMPLETE_EXIT_CODE
+            and self.status == "incomplete"
+            and not self.full_conformance
+        )
 
 
 @dataclass(frozen=True)
@@ -30,6 +58,7 @@ class ReleasePlan:
     prerelease: bool
     title: str
     notes: str
+    conformance: ConformanceGateResult | None = None
 
 
 def read_toml(path: pathlib.Path) -> dict:
@@ -90,10 +119,11 @@ def cli_version(root: pathlib.Path, source_ref: str | None = None) -> str:
 
 def extract_changelog_section(changelog_text: str, tag: str) -> str:
     header_prefix = f"## {tag}"
+    header_re = re.compile(rf"^##\s+{re.escape(tag)}(?:\s|$)")
     lines = changelog_text.splitlines()
     start = None
     for index, line in enumerate(lines):
-        if line.startswith(header_prefix):
+        if header_re.match(line):
             start = index
             break
     if start is None:
@@ -137,12 +167,97 @@ def run_checked(argv: list[str], root: pathlib.Path) -> None:
     subprocess.run(argv, cwd=root, check=True)
 
 
+def conformance_harness_command(root: pathlib.Path) -> list[str]:
+    return [
+        sys.executable,
+        str(root / "scripts" / "conformance_harness.py"),
+        "--root",
+        str(root),
+        "--format",
+        "json",
+    ]
+
+
+def _parse_conformance_counts(payload: dict) -> dict[str, int]:
+    counts = payload.get("counts", {})
+    if not isinstance(counts, dict):
+        raise ReleaseHarnessError("ADR 0020 conformance output has invalid counts")
+    parsed: dict[str, int] = {}
+    for key in ("pass", "fail", "pending"):
+        value = counts.get(key, 0)
+        if not isinstance(value, int):
+            raise ReleaseHarnessError(
+                f"ADR 0020 conformance output has invalid counts.{key}"
+            )
+        parsed[key] = value
+    return parsed
+
+
+def run_conformance_gate(root: pathlib.Path) -> ConformanceGateResult:
+    command = conformance_harness_command(root)
+    result = subprocess.run(
+        command,
+        cwd=root,
+        check=False,
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        errors="replace",
+    )
+    try:
+        payload = json.loads(result.stdout)
+    except json.JSONDecodeError as exc:
+        stderr = result.stderr.strip()
+        detail = f"; stderr: {stderr}" if stderr else ""
+        raise ReleaseHarnessError(
+            f"ADR 0020 conformance harness did not emit valid JSON: {exc}{detail}"
+        ) from exc
+    if not isinstance(payload, dict):
+        raise ReleaseHarnessError("ADR 0020 conformance output must be a JSON object")
+    status = payload.get("status")
+    if not isinstance(status, str):
+        raise ReleaseHarnessError("ADR 0020 conformance output has invalid status")
+    full_conformance = payload.get("full_conformance")
+    if not isinstance(full_conformance, bool):
+        raise ReleaseHarnessError(
+            "ADR 0020 conformance output has invalid full_conformance"
+        )
+    return ConformanceGateResult(
+        command=tuple(command),
+        exit_code=result.returncode,
+        status=status,
+        full_conformance=full_conformance,
+        counts=_parse_conformance_counts(payload),
+    )
+
+
+def validate_conformance_gate(root: pathlib.Path, plan: ReleasePlan) -> ConformanceGateResult:
+    gate = run_conformance_gate(root)
+    if gate.is_full_pass:
+        return gate
+    if plan.prerelease and gate.is_incomplete_pending:
+        return gate
+    command = " ".join(gate.command)
+    if gate.is_incomplete_pending:
+        raise ReleaseHarnessError(
+            "ADR 0020 conformance harness is incomplete "
+            f"(exit {gate.exit_code}, pending={gate.pending_count}); "
+            f"{command} is not stable-release-ready"
+        )
+    raise ReleaseHarnessError(
+        "ADR 0020 conformance harness failed release gate "
+        f"(exit {gate.exit_code}, status={gate.status!r}, "
+        f"full_conformance={gate.full_conformance})"
+    )
+
+
 def check_release(
     root: pathlib.Path,
     tag: str,
     require_local_tag: bool,
     source_ref: str | None = None,
     validate_publish_metadata: bool = True,
+    validate_conformance: bool = True,
 ) -> ReleasePlan:
     plan = build_release_plan(root, tag, source_ref=source_ref)
     if require_local_tag:
@@ -152,17 +267,26 @@ def check_release(
             "publish metadata validation only supports the checked-out working tree; "
             "re-run with --skip-publish-metadata when using --source-ref"
         )
-    if not validate_publish_metadata:
-        return plan
-    run_checked(
-        [
-            sys.executable,
-            str(root / "scripts" / "check-crates-publish-metadata.py"),
-            "--expected-release-version",
-            plan.version,
-        ],
-        root,
-    )
+    if source_ref and validate_conformance:
+        raise ReleaseHarnessError(
+            "conformance validation only supports the checked-out working tree; "
+            "re-run with --skip-conformance when using --source-ref"
+        )
+    if validate_publish_metadata:
+        run_checked(
+            [
+                sys.executable,
+                str(root / "scripts" / "check-crates-publish-metadata.py"),
+                "--expected-release-version",
+                plan.version,
+            ],
+            root,
+        )
+    if validate_conformance:
+        plan = dataclasses.replace(
+            plan,
+            conformance=validate_conformance_gate(root, plan),
+        )
     return plan
 
 
@@ -184,6 +308,7 @@ def ensure_github_release(
     repo: str | None,
     source_ref: str | None = None,
     validate_publish_metadata: bool = True,
+    validate_conformance: bool = True,
 ) -> ReleasePlan:
     plan = check_release(
         root,
@@ -191,6 +316,7 @@ def ensure_github_release(
         require_local_tag=False,
         source_ref=source_ref,
         validate_publish_metadata=validate_publish_metadata,
+        validate_conformance=validate_conformance,
     )
     with tempfile.NamedTemporaryFile(
         mode="w", encoding="utf-8", suffix=".md", delete=False
@@ -205,6 +331,7 @@ def ensure_github_release(
                 command.append("--latest")
             else:
                 command.append("--prerelease")
+                command.append("--latest=false")
         else:
             command = ["gh", "release", "create", tag, "--verify-tag"]
             if plan.prerelease:
@@ -255,6 +382,11 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
         action="store_true",
         help="Skip the working-tree publish metadata check. Required for historical source refs.",
     )
+    check_parser.add_argument(
+        "--skip-conformance",
+        action="store_true",
+        help="Skip the ADR 0020 conformance harness check. Required for historical source refs.",
+    )
 
     notes_parser = subparsers.add_parser(
         "notes", help="Print the changelog-backed notes body for a release tag."
@@ -286,6 +418,11 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
         action="store_true",
         help="Skip the working-tree publish metadata check. Use this for historical backfill.",
     )
+    release_parser.add_argument(
+        "--skip-conformance",
+        action="store_true",
+        help="Skip the ADR 0020 conformance harness check. Use this for historical backfill.",
+    )
 
     return parser.parse_args(argv)
 
@@ -301,8 +438,15 @@ def main(argv: list[str] | None = None) -> int:
                 args.require_local_tag,
                 source_ref=args.source_ref,
                 validate_publish_metadata=not args.skip_publish_metadata,
+                validate_conformance=not args.skip_conformance,
             )
-            print(f"release check passed for {plan.tag}")
+            if plan.conformance and plan.conformance.is_incomplete_pending:
+                print(
+                    f"release check passed for {plan.tag}; "
+                    "ADR 0020 conformance incomplete, stable promotion blocked"
+                )
+            else:
+                print(f"release check passed for {plan.tag}")
             return 0
         if args.command == "notes":
             plan = build_release_plan(root, args.tag, source_ref=args.source_ref)
@@ -315,8 +459,15 @@ def main(argv: list[str] | None = None) -> int:
                 args.repo,
                 source_ref=args.source_ref,
                 validate_publish_metadata=not args.skip_publish_metadata,
+                validate_conformance=not args.skip_conformance,
             )
-            print(f"GitHub release standardized for {plan.tag}")
+            if plan.conformance and plan.conformance.is_incomplete_pending:
+                print(
+                    f"GitHub release standardized for {plan.tag}; "
+                    "ADR 0020 conformance incomplete, stable promotion blocked"
+                )
+            else:
+                print(f"GitHub release standardized for {plan.tag}")
             return 0
         raise ReleaseHarnessError(f"unknown command: {args.command}")
     except ReleaseHarnessError as exc:

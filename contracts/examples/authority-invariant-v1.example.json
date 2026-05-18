@@ -1,0 +1,24 @@
+{
+  "id": "no_broad_identity_to_untrusted",
+  "name": "No broad identity to untrusted code",
+  "description": "Broad runtime identities must not flow into untrusted pipeline steps.",
+  "severity": "high",
+  "category": "untrusted_with_authority",
+  "match": {
+    "source": {
+      "node_type": "identity",
+      "metadata": {
+        "identity_scope": "broad"
+      }
+    },
+    "sink": {
+      "node_type": "step",
+      "trust_zone": "untrusted"
+    },
+    "path": {
+      "crosses_to": [
+        "untrusted"
+      ]
+    }
+  }
+}

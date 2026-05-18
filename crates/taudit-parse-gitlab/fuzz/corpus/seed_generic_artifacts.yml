@@ -1,0 +1,21 @@
+stages:
+  - build
+  - deploy
+
+build:
+  stage: build
+  script:
+    - make package
+  artifacts:
+    name: "dist-$CI_COMMIT_SHA"
+    paths:
+      - dist/
+      - sbom.json
+
+deploy:
+  stage: deploy
+  needs:
+    - job: build
+      artifacts: true
+  script:
+    - ./deploy.sh dist/

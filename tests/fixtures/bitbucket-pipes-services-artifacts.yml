@@ -1,0 +1,35 @@
+image:
+  name: alpine:3.20@sha256:2bcd26f1b9fdcd2a2de0c4fbe1e2a5d6b5f4f3d3c34f0e4e4f5e2c8c4f1f2a6b
+
+definitions:
+  services:
+    postgres:
+      image: postgres:16
+    docker:
+      memory: 2048
+
+pipelines:
+  default:
+    - step:
+        name: build
+        image: rust:1.78
+        services:
+          - docker
+          - postgres
+        script:
+          - cargo build --locked
+          - pipe: atlassian/aws-s3-deploy:1.1.0
+        artifacts:
+          - target/release/**
+    - step:
+        name: deploy
+        deployment: staging
+        script:
+          - test -d target/release
+          - ./deploy.sh
+  pull-requests:
+    "**":
+      - step:
+          name: pr-artifact-consumer
+          script:
+            - ls target/release || true

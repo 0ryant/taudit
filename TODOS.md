@@ -8,18 +8,27 @@ MoSCoW: **Must** | **Should** | **Could** | **Won't**
 
 ## Must Have
 
-### GitHub Marketplace action publication
+### GitHub Marketplace action proof gate
 
-**Status:** In progress — public `0ryant/taudit-action` repo exists and
-contains the verified v1 wrapper scaffold. External Marketplace publication,
-immutable tag, moving `v1` tag, and hosted smoke remain open.
+**Status:** Proof-gated — implementation checklist items are recorded, but
+this repository has no completed `v1.2.0-rc.1` receipt proving external
+Marketplace publication, installability, immutable tag, moving `v1` tag, or
+hosted smoke. Treat all adopter-facing GitHub Marketplace action wording as
+planned/pending receipt until the proof chain in
+[`docs/rc/v1.2.0/marketplace-proof-state.md`](docs/rc/v1.2.0/marketplace-proof-state.md)
+is complete.
 **Effort:** Medium
-**Impact:** Make taudit installable as a first-class GitHub Marketplace action for CI/CD authority scanning and merge-gate adoption.
+**Impact:** After receipts are recorded, make taudit available as a first-class
+GitHub Marketplace action for CI/CD authority scanning and merge-gate adoption.
 **UX decision:** Ratified in [`docs/research/2026-05-14-github-marketplace-action-ux.md`](docs/research/2026-05-14-github-marketplace-action-ux.md). Marketplace v1 is **verify-first**: `scan` is advisory/bootstrap, `graph` is observability, `verify` is the default team gate.
 **Contract:** [`docs/integrations/github-marketplace-action-contract.md`](docs/integrations/github-marketplace-action-contract.md) defines `dev.taudit.github-action.v1`: input schema, output schema, argv mapping, exit semantics, security invariants, and compatibility rules.
 **Configuration model:** `policy` is only the invariant bundle. Suppressions, `.tauditignore`, and baselines are separate first-class controls and must be exposed/documented separately.
 
 #### Current state
+
+Receipt rule: checked implementation items below record wrapper readiness work
+only. They do not prove that the action is published, installable from
+Marketplace, tag-addressable as `v1`, or hosted-smoked on GitHub runners.
 
 taudit has a local composite action at [`.github/actions/taudit-scan/action.yml`](.github/actions/taudit-scan/action.yml), but this repository is not shaped for direct Marketplace publication:
 
@@ -119,7 +128,7 @@ Create a dedicated public action repository, `0ryant/taudit-action`, with:
   - `uses: 0ryant/taudit-action@v1` for compatible updates
   - full SHA pin for high-control environments
   - taudit CLI version pin via `version`
-- [ ] Update taudit docs to point users at the Marketplace action once published.
+- [ ] Update taudit docs to point users at the Marketplace action after the publication receipt is recorded.
 - [x] Replace stale `cargo install taudit --version 1.0.12 --locked` examples with the current stable version where appropriate.
 - [x] Add a short security model: what the action reads, what it uploads, required permissions, and how it handles untrusted inputs.
 
@@ -154,12 +163,12 @@ Create a dedicated public action repository, `0ryant/taudit-action`, with:
 - [ ] Run the action against this repository's `.github/workflows/` as an advisory self-scan.
 - [ ] Run at least one disposable-repo end-to-end workflow using `uses: 0ryant/taudit-action@<tag>`.
 
-#### Marketplace publish tasks
+#### Marketplace proof tasks
 
-- [x] Confirm repository is public.
-- [ ] Confirm GitHub Marketplace Developer Agreement is accepted for the publishing account/org.
-- [ ] Confirm root `action.yml` has no Marketplace validation warnings.
-- [ ] Confirm action `name` is unique and not a reserved GitHub feature/category/user/org name.
+- [ ] Record receipt confirming the dedicated action repository public readback.
+- [ ] Confirm GitHub Marketplace Developer Agreement is accepted for the publishing account/org and record the receipt or operator note.
+- [ ] Confirm root `action.yml` has no Marketplace validation warnings and record the receipt.
+- [ ] Confirm action `name` is unique and not a reserved GitHub feature/category/user/org name and record the receipt.
 - [ ] Choose primary category; likely `Security` if available, otherwise closest Marketplace category.
 - [ ] Cut immutable release tag for the action repository.
 - [ ] Create/move compatible major tag (`v1`) only after the immutable tag passes hosted smoke.
@@ -175,7 +184,7 @@ Create a dedicated public action repository, `0ryant/taudit-action`, with:
 - [ ] SARIF and graph outputs can be produced without unsafe shell interpolation.
 - [ ] The action works on GitHub-hosted Linux, macOS, and Windows.
 - [ ] Docs explain how the action helps teams lock down pipelines: baseline, gate new authority paths, inspect graph output, and apply suppressions with reviewable keys.
-- [ ] Published Marketplace listing points to current docs and a current stable taudit release.
+- [ ] Marketplace listing receipt shows links to current docs and a current stable taudit release.
 
 #### Won't scope for first Marketplace release
 

@@ -189,6 +189,7 @@ fn build_ado_graph(
     // `checkout: alias`. The result is JSON-encoded into graph metadata
     // for the `template_extends_unpinned_branch` rule to consume.
     process_repositories(&pipeline, content, &mut graph);
+    process_unsupported_resource_carriers(&pipeline, &mut graph);
 
     // Capture top-level `parameters:` declarations (used by
     // parameter_interpolation_into_shell). ADO defaults missing `type:`
@@ -924,6 +925,51 @@ fn process_repositories(pipeline: &AdoPipeline, raw_content: &str, graph: &mut A
     }
 }
 
+/// Surface ADO resource carriers that are parsed but not represented in the
+/// authority graph yet. `resources.repositories[]` is handled above; container,
+/// pipeline, and package resources can carry image, artifact, or endpoint
+/// authority, so returning a clean Complete graph would overstate coverage.
+fn process_unsupported_resource_carriers(pipeline: &AdoPipeline, graph: &mut AuthorityGraph) {
+    let Some(resources) = pipeline.resources.as_ref() else {
+        return;
+    };
+
+    let mut carriers = Vec::new();
+    if resource_carrier_present(&resources.containers) {
+        carriers.push("resources.containers");
+    }
+    if resource_carrier_present(&resources.pipelines) {
+        carriers.push("resources.pipelines");
+    }
+    if resource_carrier_present(&resources.packages) {
+        carriers.push("resources.packages");
+    }
+
+    if carriers.is_empty() {
+        return;
+    }
+
+    graph.mark_partial(
+        GapKind::Structural,
+        format!(
+            "ADO {} present but not modelled — parser only captures resources.repositories[]; resource container, pipeline, or package authority remains unresolved",
+            carriers.join(", ")
+        ),
+    );
+}
+
+fn resource_carrier_present(value: &Option<serde_yaml::Value>) -> bool {
+    match value {
+        None | Some(serde_yaml::Value::Null) => false,
+        Some(serde_yaml::Value::Sequence(seq)) => !seq.is_empty(),
+        Some(serde_yaml::Value::Mapping(map)) => !map.is_empty(),
+        Some(serde_yaml::Value::String(s)) => !s.trim().is_empty(),
+        Some(serde_yaml::Value::Bool(_))
+        | Some(serde_yaml::Value::Number(_))
+        | Some(serde_yaml::Value::Tagged(_)) => true,
+    }
+}
+
 /// Walk a YAML value and record every `template: <ref>@<alias>` alias seen.
 /// Recurses into mappings and sequences so it catches references in extends,
 /// stages, jobs, steps, and conditional blocks indiscriminately.
@@ -1174,6 +1220,8 @@ fn process_steps(
         // Every step has access to System.AccessToken
         graph.add_edge(step_id, token_id, EdgeKind::HasAccessTo);
 
+        process_unsupported_ado_task_gap(step, &step_name, graph);
+
         // checkout step with persistCredentials: true writes the token to .git/config on disk,
         // making it accessible to all subsequent steps and filesystem-level attackers.
         if step.checkout.is_some() && step.persist_credentials == Some(true) {
@@ -1370,6 +1418,54 @@ fn process_steps(
             }
         }
     }
+}
+
+fn process_unsupported_ado_task_gap(step: &AdoStep, step_name: &str, graph: &mut AuthorityGraph) {
+    if let Some(task_ref) = step.task.as_deref() {
+        let task_base = ado_task_base(task_ref);
+
+        if task_base.eq_ignore_ascii_case("DownloadSecureFile") {
+            graph.mark_partial(
+                GapKind::Structural,
+                format!(
+                    "ADO task '{task_ref}' in step '{step_name}' downloads a secure file, but secure file materialization and output path propagation are not modelled"
+                ),
+            );
+        }
+
+        if task_base.eq_ignore_ascii_case("PublishPipelineArtifact")
+            || task_base.eq_ignore_ascii_case("DownloadPipelineArtifact")
+        {
+            graph.mark_partial(
+                GapKind::Structural,
+                format!(
+                    "ADO task '{task_ref}' in step '{step_name}' carries pipeline artifact authority, but pipeline artifact publish/download dataflow is not modelled"
+                ),
+            );
+        }
+    }
+
+    if step.publish.is_some() {
+        graph.mark_partial(
+            GapKind::Structural,
+            format!(
+                "ADO publish shorthand in step '{step_name}' carries pipeline artifact authority, but pipeline artifact publish dataflow is not modelled"
+            ),
+        );
+    }
+
+    if step.download.is_some() {
+        graph.mark_partial(
+            GapKind::Structural,
+            format!(
+                "ADO download shorthand in step '{step_name}' carries pipeline artifact authority, but pipeline artifact download dataflow is not modelled"
+            ),
+        );
+    }
+}
+
+fn ado_task_base(task_ref: &str) -> &str {
+    task_ref.split('@').next().unwrap_or(task_ref).trim()
 }
 
 /// Classify an ADO step, returning (name, trust_zone, inline_script_text).
@@ -2088,11 +2184,18 @@ where
     Ok(parsed)
 }
 
-/// `resources:` block. Only `repositories[]` is modelled today.
+/// `resources:` block. Only `repositories[]` is modelled today; other carriers
+/// are retained just far enough to emit typed coverage gaps.
 #[derive(Debug, Default, Deserialize)]
 pub struct AdoResources {
     #[serde(default)]
     pub repositories: Vec<AdoRepository>,
+    #[serde(default)]
+    pub containers: Option<serde_yaml::Value>,
+    #[serde(default)]
+    pub pipelines: Option<serde_yaml::Value>,
+    #[serde(default)]
+    pub packages: Option<serde_yaml::Value>,
 }
 
 /// A single `resources.repositories[]` entry — declares an external repo
@@ -2379,6 +2482,12 @@ pub struct AdoStep {
     /// Step-level template reference
     #[serde(default)]
     pub template: Option<String>,
+    /// Pipeline artifact publish shorthand.
+    #[serde(default)]
+    pub publish: Option<serde_yaml::Value>,
+    /// Pipeline artifact download shorthand.
+    #[serde(default)]
+    pub download: Option<serde_yaml::Value>,
     #[serde(rename = "displayName", default)]
     pub display_name: Option<String>,
     /// Legacy name alias
@@ -3608,6 +3717,96 @@ jobs:
         // But the job still parses.
         let steps: Vec<_> = graph.nodes_of_kind(NodeKind::Step).collect();
         assert_eq!(steps.len(), 1);
+    }
+
+    #[test]
+    fn resources_containers_and_pipelines_mark_structural_gap_from_fixture() {
+        let yaml = include_str!("../../../tests/fixtures/ado-resources-containers-pipelines.yml");
+        let graph = parse(yaml);
+
+        assert_eq!(graph.completeness, AuthorityCompleteness::Partial);
+        assert!(
+            graph.completeness_gap_kinds.contains(&GapKind::Structural),
+            "container and pipeline resources must be a Structural gap, got: {:?}",
+            graph.completeness_gap_kinds
+        );
+        assert!(
+            graph.completeness_gaps.iter().any(|g| {
+                g.contains("resources.containers")
+                    && g.contains("resources.pipelines")
+                    && g.contains("not modelled")
+            }),
+            "gap must name the unsupported ADO resource carriers, got: {:?}",
+            graph.completeness_gaps
+        );
+
+        let entries = repos_meta(&graph);
+        assert_eq!(entries.len(), 1);
+        assert_eq!(entries[0]["alias"], "shared");
+        assert_eq!(entries[0]["used"], true);
+    }
+
+    #[test]
+    fn secure_files_and_pipeline_artifact_tasks_mark_structural_gap_from_fixture() {
+        let yaml = include_str!("../../../tests/fixtures/ado-resources-secure-files-artifacts.yml");
+        let graph = parse(yaml);
+
+        assert_eq!(graph.completeness, AuthorityCompleteness::Partial);
+        assert!(
+            graph.completeness_gap_kinds.contains(&GapKind::Structural),
+            "secure files and pipeline artifacts must be Structural gaps, got: {:?}",
+            graph.completeness_gap_kinds
+        );
+        assert!(
+            graph.completeness_gaps.iter().any(|g| {
+                g.contains("DownloadSecureFile@1")
+                    && g.contains("secure file")
+                    && g.contains("not modelled")
+            }),
+            "gap must name DownloadSecureFile secure-file semantics, got: {:?}",
+            graph.completeness_gaps
+        );
+        assert!(
+            graph.completeness_gaps.iter().any(|g| {
+                g.contains("PublishPipelineArtifact@1")
+                    && g.contains("pipeline artifact")
+                    && g.contains("not modelled")
+            }),
+            "gap must name PublishPipelineArtifact semantics, got: {:?}",
+            graph.completeness_gaps
+        );
+        assert!(
+            graph.completeness_gaps.iter().any(|g| {
+                g.contains("DownloadPipelineArtifact@2")
+                    && g.contains("pipeline artifact")
+                    && g.contains("not modelled")
+            }),
+            "gap must name DownloadPipelineArtifact semantics, got: {:?}",
+            graph.completeness_gaps
+        );
+        assert!(
+            graph.completeness_gaps.iter().any(|g| {
+                g.contains("publish shorthand")
+                    && g.contains("pipeline artifact")
+                    && g.contains("not modelled")
+            }),
+            "gap must name publish shorthand semantics, got: {:?}",
+            graph.completeness_gaps
+        );
+        assert!(
+            graph.completeness_gaps.iter().any(|g| {
+                g.contains("download shorthand")
+                    && g.contains("pipeline artifact")
+                    && g.contains("not modelled")
+            }),
+            "gap must name download shorthand semantics, got: {:?}",
+            graph.completeness_gaps
+        );
+
+        let entries = repos_meta(&graph);
+        assert_eq!(entries.len(), 1);
+        assert_eq!(entries[0]["alias"], "shared");
+        assert_eq!(entries[0]["used"], true);
     }
 
     #[test]
