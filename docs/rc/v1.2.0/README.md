@@ -12,6 +12,8 @@ inherits the promise.
 
 - [Charter](charter.md) - selected direction, release promise, gates, and first
   tranche.
+- [Code-complete lanes](code-complete-lanes.md) - ADR-backed subtask backlog
+  for parallel agents to take the RC to code complete.
 - [Execution lanes](workstreams/execution-lanes.md) - ownership, merge order, and
   verification matrix for parallel work.
 
