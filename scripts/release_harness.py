@@ -90,10 +90,11 @@ def cli_version(root: pathlib.Path, source_ref: str | None = None) -> str:
 
 def extract_changelog_section(changelog_text: str, tag: str) -> str:
     header_prefix = f"## {tag}"
+    header_re = re.compile(rf"^##\s+{re.escape(tag)}(?:\s|$)")
     lines = changelog_text.splitlines()
     start = None
     for index, line in enumerate(lines):
-        if line.startswith(header_prefix):
+        if header_re.match(line):
             start = index
             break
     if start is None:
@@ -205,6 +206,7 @@ def ensure_github_release(
                 command.append("--latest")
             else:
                 command.append("--prerelease")
+                command.append("--latest=false")
         else:
             command = ["gh", "release", "create", tag, "--verify-tag"]
             if plan.prerelease:

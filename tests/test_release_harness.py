@@ -7,6 +7,7 @@ import sys
 import tempfile
 import textwrap
 import unittest
+from unittest import mock
 
 
 ROOT = pathlib.Path(__file__).resolve().parents[1]
@@ -48,6 +49,30 @@ class ReleaseHarnessTests(unittest.TestCase):
         self.assertIn("## v1.1.2 — 2026-05-13", section)
         self.assertIn("### Fixed", section)
         self.assertNotIn("v1.1.1", section)
+
+    def test_extract_changelog_section_requires_complete_tag_boundary(self) -> None:
+        changelog = textwrap.dedent(
+            """
+            # Changelog
+
+            ## v1.2.0-rc.10
+            - wrong prerelease
+
+            ## v1.2.0-rc.1
+            - right prerelease
+
+            ## v1.2.0
+            - stable release
+            """
+        ).strip()
+
+        prerelease = release_harness.extract_changelog_section(changelog, "v1.2.0-rc.1")
+        self.assertIn("right prerelease", prerelease)
+        self.assertNotIn("wrong prerelease", prerelease)
+
+        stable = release_harness.extract_changelog_section(changelog, "v1.2.0")
+        self.assertIn("stable release", stable)
+        self.assertNotIn("right prerelease", stable)
 
     def test_build_release_plan_requires_matching_cli_version(self) -> None:
         with tempfile.TemporaryDirectory() as tmp_dir:
@@ -113,6 +138,81 @@ class ReleaseHarnessTests(unittest.TestCase):
             plan = release_harness.build_release_plan(root, "v1.1.2", source_ref="v1.1.2")
             self.assertEqual(plan.version, "1.1.2")
             self.assertIn("release body", plan.notes)
+
+    def test_ensure_github_release_creates_prerelease_with_latest_false(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            root = pathlib.Path(tmp_dir)
+            (root / "crates" / "taudit-cli").mkdir(parents=True)
+            (root / "CHANGELOG.md").write_text(
+                "## v1.2.0-rc.1\n\n- release body\n",
+                encoding="utf-8",
+            )
+            (root / "crates" / "taudit-cli" / "Cargo.toml").write_text(
+                "[package]\nname = \"taudit\"\nversion = \"1.2.0-rc.1\"\n",
+                encoding="utf-8",
+            )
+            commands: list[list[str]] = []
+
+            with (
+                mock.patch.object(release_harness, "gh_release_exists", return_value=False),
+                mock.patch.object(
+                    release_harness,
+                    "run_checked",
+                    side_effect=lambda argv, _root: commands.append(argv),
+                ),
+            ):
+                plan = release_harness.ensure_github_release(
+                    root,
+                    "v1.2.0-rc.1",
+                    repo="owner/taudit",
+                    validate_publish_metadata=False,
+                )
+
+            self.assertTrue(plan.prerelease)
+            self.assertEqual(commands[0][:5], ["gh", "release", "create", "v1.2.0-rc.1", "--verify-tag"])
+            self.assertIn("--prerelease", commands[0])
+            self.assertIn("--latest=false", commands[0])
+            self.assertNotIn("--latest", commands[0])
+            self.assertEqual(commands[0][-2:], ["--repo", "owner/taudit"])
+            self.assertEqual(commands[1], ["gh", "release", "view", "v1.2.0-rc.1", "--repo", "owner/taudit"])
+
+    def test_ensure_github_release_normalizes_existing_prerelease_with_latest_false(
+        self,
+    ) -> None:
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            root = pathlib.Path(tmp_dir)
+            (root / "crates" / "taudit-cli").mkdir(parents=True)
+            (root / "CHANGELOG.md").write_text(
+                "## v1.2.0-rc.1\n\n- release body\n",
+                encoding="utf-8",
+            )
+            (root / "crates" / "taudit-cli" / "Cargo.toml").write_text(
+                "[package]\nname = \"taudit\"\nversion = \"1.2.0-rc.1\"\n",
+                encoding="utf-8",
+            )
+            commands: list[list[str]] = []
+
+            with (
+                mock.patch.object(release_harness, "gh_release_exists", return_value=True),
+                mock.patch.object(
+                    release_harness,
+                    "run_checked",
+                    side_effect=lambda argv, _root: commands.append(argv),
+                ),
+            ):
+                plan = release_harness.ensure_github_release(
+                    root,
+                    "v1.2.0-rc.1",
+                    repo=None,
+                    validate_publish_metadata=False,
+                )
+
+            self.assertTrue(plan.prerelease)
+            self.assertEqual(commands[0][:4], ["gh", "release", "edit", "v1.2.0-rc.1"])
+            self.assertIn("--prerelease", commands[0])
+            self.assertIn("--latest=false", commands[0])
+            self.assertNotIn("--latest", commands[0])
+            self.assertEqual(commands[1], ["gh", "release", "view", "v1.2.0-rc.1"])
 
 
 if __name__ == "__main__":
