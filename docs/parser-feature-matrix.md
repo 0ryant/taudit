@@ -13,6 +13,8 @@ corpus and provider lanes add stronger evidence.
   `crates/taudit-parse-gitlab`, `crates/taudit-parse-bitbucket`
 - Fixtures and seeds: `tests/fixtures/**` and
   `crates/taudit-parse-{gha,ado,gitlab}/fuzz/corpus/**`
+- Bitbucket fuzz harness and seeds:
+  `crates/taudit-parse-bitbucket/fuzz/**`
 
 ## State And Gap Vocabulary
 
@@ -58,7 +60,7 @@ promotion.
 | Reusable workflow job calls via `jobs.JOB_ID.uses` | partial | structural | `tests/fixtures/partial-structural.yml`; `crates/taudit-parse-gha/src/lib.rs` inline reusable-workflow tests | Add public same-repo and cross-repo reusable workflow calls, including `secrets: inherit` and mapped secrets. | Release-gated typed partial; no callee body resolution in RC. |
 | Local action and composite action references via `uses: ./...` | partial | structural | `crates/taudit-parse-gha/src/lib.rs` inline composite/local-action tests | Add public local composite, Docker, and JavaScript action examples. | Release-gated typed partial; filesystem action inlining deferred to L3-05. |
 | Job-level `container:` image and options | complete | none | `crates/taudit-parse-gha/src/lib.rs` inline container tests | Add public jobs with string and mapping container forms, pinned and floating images. | Release-gated complete for image/options only. |
-| Service containers, private registry credentials, volumes, ports, and container credentials | unsupported | missing-typed-gap -> structural | MISSING-FIXTURE: gha-service-containers-and-credentials | Add public workflows with `services:`, registry credentials, volumes, and ports. | Deferred to L3-05; do not claim service-container completeness. |
+| Service containers, private registry credentials, volumes, ports, and container credentials | partial | structural | `tests/fixtures/gha-service-containers-and-credentials.yml`; `crates/taudit-parse-gha/fuzz/corpus/seed_services_credentials.yml`; `crates/taudit-parse-gha/src/lib.rs` inline service-container test | Add public workflows with `services:`, registry credentials, volumes, and ports. | Release-gated typed partial; service/container execution surface is flagged, not modelled as complete. |
 | Named `actions/upload-artifact` and `actions/download-artifact` flows | complete | none | `tests/fixtures/propagation-leaky.yml`; `crates/taudit-parse-gha/src/lib.rs` inline artifact tests | Add public artifact handoff workflows with named upload/download pairs. | Release-gated complete for named artifact correlation. |
 | Anonymous upload or wildcard download artifact flows | deferred | none | `crates/taudit-parse-gha/src/lib.rs` inline anonymous artifact tests | Add corpus samples to decide whether wildcard downloads need typed partiality. | Deferred; parser intentionally avoids unsafe correlation. |
 | Shell environment gates (`GITHUB_ENV`, `GITHUB_PATH`, `GITHUB_OUTPUT`) | complete | none | `tests/fixtures/algol-authority-confusion-fixture.yml`; inline env-gate tests | Add public workflows with helper scripts and env-file writes. | Release-gated complete for static string markers; shell execution remains runtime-only. |
@@ -82,7 +84,8 @@ promotion.
 | `dependsOn:` mappings or template-conditioned dependencies | partial | expression | `crates/taudit-parse-ado/src/lib.rs` inline mapping dependsOn tests | Add public template-conditioned dependency examples. | Release-gated typed partial. |
 | Templates, `extends:`, top-level template-expression carriers, and root template fragments | partial | structural or expression | `crates/taudit-parse-ado/src/lib.rs` inline template tests | Add public `extends`, `template`, and parameterized carrier examples. | Release-gated typed partial; no full template expansion in RC. |
 | `resources.repositories[]` and checkout/template alias use | complete | none | `crates/taudit-parse-ado/src/lib.rs` inline repository-resource tests | Add public external repository resources with pinned and branch refs. | Release-gated complete for repository metadata capture, not remote content. |
-| `resources.containers`, `resources.pipelines`, packages, secure files, and pipeline artifacts | unsupported | missing-typed-gap -> structural | MISSING-FIXTURE: ado-resources-secure-files-artifacts | Add public secure-file, publish/download artifact, container-resource, and pipeline-resource samples. | Deferred to L3-06; do not claim artifact or secure-file completeness. |
+| `resources.containers`, `resources.pipelines`, and packages | partial | structural | `tests/fixtures/ado-resources-containers-pipelines.yml`; `tests/fixtures/ado-resources-secure-files-artifacts.yml`; `crates/taudit-parse-ado/fuzz/corpus/seed_resources_containers_pipelines.yml`; `crates/taudit-parse-ado/fuzz/corpus/seed_resources_secure_files_artifacts.yml` | Add public container-resource, pipeline-resource, and package-resource samples. | Release-gated typed partial; resource nodes, endpoint scope, and package/pipeline authority modelling remain deferred. |
+| Secure files and publish/download pipeline artifact tasks plus shorthand | partial | structural | `tests/fixtures/ado-resources-secure-files-artifacts.yml`; `crates/taudit-parse-ado/fuzz/corpus/seed_resources_secure_files_artifacts.yml`; `crates/taudit-parse-ado/src/lib.rs` inline secure-file/artifact task and shorthand test | Add public secure-file and publish/download artifact samples. | Release-gated typed partial; secure-file materialization, output path propagation, and artifact dataflow remain deferred. |
 | Duplicate fields and zero-step wrong-platform carrier traps | partial | structural | `crates/taudit-parse-ado/src/lib.rs` inline duplicate/zero-step tests | Add malformed and wrong-platform corpus files. | Release-gated typed partial. |
 
 ## GitLab CI
@@ -100,7 +103,7 @@ promotion.
 | `workflow:rules:variables` and job `rules:variables` | partial | expression | `crates/taudit-parse-gitlab/src/lib.rs` inline `rules_variables_mark_typed_expression_gap` test | Add public conditional variable examples. | Release-gated typed partial. |
 | Child/downstream pipelines via `trigger:` | dynamic-runtime-only | missing-typed-gap -> structural for dynamic artifact includes | `crates/taudit-parse-gitlab/src/lib.rs` trigger classification code | Add public static downstream and dynamic child-pipeline samples. | Static trigger kind metadata is release-gated; dynamic child body resolution is deferred to L3-07. |
 | `artifacts:reports:dotenv` plus `needs:` / `dependencies:` dotenv flow | complete | none | `crates/taudit-parse-gitlab/src/lib.rs` inline dotenv/needs tests | Add public dotenv handoff samples, including `artifacts: false`. | Release-gated complete for dotenv metadata and upstream-job capture. |
-| Generic GitLab artifacts beyond dotenv reports | unsupported | missing-typed-gap -> structural | MISSING-FIXTURE: gitlab-generic-artifacts | Add public generic artifact upload/download and dependency samples. | Deferred to L3-07 unless corpus shows release-blocking frequency. |
+| Generic GitLab artifacts beyond dotenv reports | partial | structural | `tests/fixtures/gitlab-generic-artifacts.yml`; `crates/taudit-parse-gitlab/fuzz/corpus/seed_generic_artifacts.yml`; `crates/taudit-parse-gitlab/src/lib.rs` inline generic-artifact test | Add public generic artifact upload/download and dependency samples. | Release-gated typed partial; generic artifact dataflow remains deferred beyond dotenv-specific modelling. |
 | Cache key and policy metadata for the first matched cache | complete | none | `crates/taudit-parse-gitlab/src/lib.rs` cache extraction code | Add public single-cache and multi-cache examples. | Release-gated for first cache key/policy signal only; multi-cache semantics deferred. |
 | Duplicate YAML key recovery, multiple YAML documents, and zero-step opaque carrier traps | partial | structural, expression, or opaque | `crates/taudit-parse-gitlab/src/lib.rs` inline duplicate/multi-doc/zero-step tests | Add malformed and wrong-platform corpus files. | Release-gated typed partial. |
 | Group/project/protected variable scopes outside the YAML file | dynamic-runtime-only | none | MISSING-FIXTURE: gitlab-live-variable-scopes | Corpus can include YAML consumers, not live GitLab settings. | Deferred; do not claim scoped variable completeness. |
@@ -118,12 +121,12 @@ promotion.
 | Global and step-level `image:`, service images under `definitions: services`, built-in Docker service, and `pipe:` refs | complete | none | `crates/taudit-parse-bitbucket/src/lib.rs` inline `parses_pipes_services_and_artifacts` test | Add public pipe, service, and custom image samples with pinned/floating variants. | Named tranche support. |
 | Artifacts and sequential artifact consumption | complete | none | `crates/taudit-parse-bitbucket/src/lib.rs` inline artifact test | Add public artifact handoff samples across default, branch, and PR contexts. | Named tranche support; needs broader fixtures before promotion. |
 | `deployment:` name and heuristic environment-approval marker | dynamic-runtime-only | none | `crates/taudit-parse-bitbucket/src/lib.rs` deployment metadata code | Add public deployment names and environment permission examples. | Named tranche metadata only; real deployment permissions deferred to L3-08. |
-| `parallel:` carrier traversal | unsupported | missing-typed-gap -> structural | MISSING-FIXTURE: bitbucket-parallel-semantics | Add public parallel groups with artifacts and services. | Deferred to L3-08; current flattening should not be treated as semantic completeness. |
-| `stage:` grouping and stage-level semantics | unsupported | missing-typed-gap -> structural | MISSING-FIXTURE: bitbucket-stage-semantics | Add public staged pipelines with deployment and artifact use. | Deferred to L3-08. |
-| `caches:`, `clone:`, `size:`, runner options, and workspace options | unsupported | missing-typed-gap -> structural | MISSING-FIXTURE: bitbucket-cache-clone-runner-options | Add public cache, clone-depth/LFS, size, and runner-option samples. | Deferred to L3-08. |
+| `parallel:` carrier traversal | partial | structural | `tests/fixtures/bitbucket-parallel-stage-semantics.yml`; `crates/taudit-parse-bitbucket/fuzz/corpus/parallel-stage.yml`; inline no-sibling-consume regression test | Add public parallel groups with artifacts and services. | Named tranche typed partial; parser traverses member steps for discovery but does not claim complete parallel scheduling/fail-fast/artifact semantics. |
+| `stage:` grouping and stage-level semantics | partial | structural | `tests/fixtures/bitbucket-parallel-stage-semantics.yml`; `crates/taudit-parse-bitbucket/fuzz/corpus/parallel-stage.yml`; inline structural-gap regression test | Add public staged pipelines with deployment and artifact use. | Named tranche typed partial; parser traverses nested steps for discovery but does not claim complete stage-level deployment/condition/artifact semantics. |
+| `caches:`, `clone:`, `size:`, runner options, and workspace options | partial | structural | `tests/fixtures/bitbucket-cache-clone-runner-options.yml`; `crates/taudit-parse-bitbucket/fuzz/corpus/cache-clone-runner-options.yml`; inline fixture-backed structural-gap test | Add public cache, clone-depth/LFS, size, and runner-option samples. | Named tranche typed partial; recognized option surfaces are not semantically modeled as stable support. |
 | Multiple YAML documents and duplicate-key recovery | partial | expression or structural | `crates/taudit-parse-bitbucket/src/lib.rs` duplicate/multi-doc parser branches | Add synthetic fixtures plus public malformed samples if available. | Named tranche typed partial. |
 | Non-mapping step bodies | partial | structural | `crates/taudit-parse-bitbucket/src/lib.rs` parser branch | Add focused fixture with malformed `step:` scalar/sequence. | Named tranche typed partial. |
-| Bitbucket fuzz corpus and top-level fixtures | unsupported | missing-typed-gap -> structural | MISSING-FIXTURE: `crates/taudit-parse-bitbucket/fuzz/corpus`; MISSING-FIXTURE: `tests/fixtures/bitbucket-*.yml` | L3-08 should add broad fixtures, fuzz seed corpus, and a tranche report. | Required before Bitbucket can move from named tranche to release-gated platform. |
+| Bitbucket fuzz corpus, fuzz harness, and top-level fixtures | partial | none | `tests/fixtures/bitbucket-*.yml`; `crates/taudit-parse-bitbucket/fuzz/Cargo.toml`; `crates/taudit-parse-bitbucket/fuzz/fuzz_targets/parse_bitbucket.rs`; `crates/taudit-parse-bitbucket/fuzz/corpus/*.yml` | Add public corpus samples and sustained fuzz runs beyond harness build/smoke evidence. | Named tranche evidence exists, but this is not a promotion to release-gated or stable Bitbucket completeness. |
 
 ## Follow-Up Provider Lane Inputs
 
@@ -136,9 +139,10 @@ promotion.
 - L3-07 GitLab should focus on include/extends/default/inherit resolution
   limits, dynamic child pipelines, generic artifacts, scoped/protected
   variables, and cache/multi-cache semantics.
-- L3-08 Bitbucket should add fixtures and fuzz corpus first, then decide typed
-  gaps for parallel/stage semantics, caches, clone options, secured variables,
-  deployments, pipes, services, and artifact ordering.
+- L3-08 Bitbucket should use the initial fixtures and fuzz harness to expand
+  public corpus evidence, then keep tightening typed gaps for secured
+  variables, deployments, pipes, services, and artifact ordering without
+  promoting the named tranche to stable completeness prematurely.
 
 ## Release Promise Summary
 

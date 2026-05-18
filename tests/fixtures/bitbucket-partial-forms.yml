@@ -1,0 +1,14 @@
+pipelines:
+  default:
+    - step: "not a mapping"
+    - step:
+        name: after-malformed
+        script:
+          - echo still parsed
+---
+pipelines:
+  default:
+    - step:
+        name: ignored-second-document
+        script:
+          - echo ignored

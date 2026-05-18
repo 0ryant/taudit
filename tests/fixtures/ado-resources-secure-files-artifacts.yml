@@ -1,0 +1,57 @@
+trigger: none
+
+resources:
+  repositories:
+    - repository: shared
+      type: git
+      name: Contoso/shared-templates
+      ref: refs/heads/main
+  containers:
+    - container: build_image
+      image: alpine:3.20
+      endpoint: dockerhub-prod
+  pipelines:
+    - pipeline: upstream_security_build
+      source: security-ci
+      branch: main
+      trigger: true
+  packages:
+    - package: shared_tooling
+      type: npm
+      connection: npm-prod
+      name: "@contoso/tooling"
+      version: 1.2.3
+
+jobs:
+  - job: build
+    container: build_image
+    steps:
+      - checkout: shared
+      - task: DownloadSecureFile@1
+        displayName: Fetch signing certificate
+        name: signingCert
+        inputs:
+          secureFile: codesign-prod.p12
+      - script: echo "sign with $(signingCert.secureFilePath)"
+        displayName: Consume secure file path
+      - task: PublishPipelineArtifact@1
+        displayName: Publish build artifact
+        inputs:
+          targetPath: "$(Pipeline.Workspace)/drop"
+          artifact: signed-drop
+      - task: DownloadPipelineArtifact@2
+        displayName: Download upstream artifact
+        inputs:
+          buildType: specific
+          project: security
+          definition: security-ci
+          buildVersionToDownload: latestFromBranch
+          artifactName: sbom
+          targetPath: "$(Pipeline.Workspace)/sbom"
+      - publish: "$(Pipeline.Workspace)/drop-short"
+        displayName: Publish shorthand artifact
+        artifact: shorthand-drop
+      - download: current
+        displayName: Download shorthand artifact
+        artifact: shorthand-drop
+        patterns: "**/*.json"

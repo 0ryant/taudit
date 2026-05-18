@@ -68,7 +68,9 @@ impl PipelineParser for BitbucketParser {
         let definitions = mapping.get("definitions");
         let service_images = collect_defined_services(definitions);
         let global_image = mapping.get("image").and_then(extract_image_str);
-        let Some(pipelines) = mapping.get("pipelines").and_then(|v| v.as_mapping()) else {
+        let pipelines = mapping.get("pipelines").and_then(|v| v.as_mapping());
+        mark_cache_clone_runner_option_gaps(mapping, pipelines, &mut graph);
+        let Some(pipelines) = pipelines else {
             graph.mark_partial(
                 GapKind::Structural,
                 "Bitbucket file has no top-level pipelines: mapping".to_string(),
@@ -177,6 +179,88 @@ fn collect_pipeline_contexts<'a>(
 }
 
 fn graphless_ignore(_: &Value) {}
+
+fn mark_cache_clone_runner_option_gaps(
+    root: &serde_yaml::Mapping,
+    pipelines: Option<&serde_yaml::Mapping>,
+    graph: &mut AuthorityGraph,
+) {
+    let mut paths = Vec::new();
+
+    if root.contains_key("clone") {
+        paths.push("clone".to_string());
+    }
+    if let Some(options) = root.get("options") {
+        if let Some(map) = options.as_mapping() {
+            for key in map.keys().filter_map(|key| key.as_str()) {
+                paths.push(format!("options.{key}"));
+            }
+        } else {
+            paths.push("options".to_string());
+        }
+    }
+    if root
+        .get("definitions")
+        .and_then(|v| v.as_mapping())
+        .and_then(|m| m.get("caches"))
+        .is_some()
+    {
+        paths.push("definitions.caches".to_string());
+    }
+    if let Some(pipelines) = pipelines {
+        collect_step_option_gap_paths(&Value::Mapping(pipelines.clone()), "pipelines", &mut paths);
+    }
+
+    paths.sort();
+    paths.dedup();
+    if paths.is_empty() {
+        return;
+    }
+
+    graph.mark_partial(
+        GapKind::Structural,
+        format!(
+            "Bitbucket cache/clone/runner/workspace options are recognized but not semantically modeled in the v1.2.0-rc.1 named tranche: {}",
+            paths.join(", ")
+        ),
+    );
+}
+
+fn collect_step_option_gap_paths(value: &Value, path: &str, paths: &mut Vec<String>) {
+    match value {
+        Value::Sequence(seq) => {
+            for (idx, item) in seq.iter().enumerate() {
+                collect_step_option_gap_paths(item, &format!("{path}[{idx}]"), paths);
+            }
+        }
+        Value::Mapping(map) => {
+            if let Some(step) = map.get("step") {
+                if let Some(step_map) = step.as_mapping() {
+                    push_step_option_paths(step_map, &format!("{path}.step"), paths);
+                }
+                collect_step_option_gap_paths(step, &format!("{path}.step"), paths);
+            }
+            for (key, child) in map {
+                let Some(key) = key.as_str() else {
+                    continue;
+                };
+                if key == "step" {
+                    continue;
+                }
+                collect_step_option_gap_paths(child, &format!("{path}.{key}"), paths);
+            }
+        }
+        _ => {}
+    }
+}
+
+fn push_step_option_paths(step_map: &serde_yaml::Mapping, path: &str, paths: &mut Vec<String>) {
+    for key in ["caches", "clone", "size", "runs-on"] {
+        if step_map.contains_key(key) {
+            paths.push(format!("{path}.{key}"));
+        }
+    }
+}
 
 fn sanitize_duplicate_mapping_keys(content: &str) -> String {
     #[derive(Default)]
@@ -366,33 +450,121 @@ fn process_step_carrier(
                     prior_artifacts,
                 );
             } else if let Some(parallel) = map.get("parallel") {
-                if let Some(steps) = parallel.get("steps") {
-                    process_step_carrier(
-                        steps,
-                        context,
-                        trigger,
-                        global_image,
-                        service_images,
-                        graph,
-                        secret_ids,
-                        prior_artifacts,
-                    );
-                } else {
-                    process_step_carrier(
-                        parallel,
-                        context,
-                        trigger,
-                        global_image,
-                        service_images,
-                        graph,
-                        secret_ids,
-                        prior_artifacts,
-                    );
-                }
+                process_parallel_carrier(
+                    parallel,
+                    context,
+                    trigger,
+                    global_image,
+                    service_images,
+                    graph,
+                    secret_ids,
+                    prior_artifacts,
+                );
+            } else if let Some(stage) = map.get("stage") {
+                process_stage_carrier(
+                    stage,
+                    context,
+                    trigger,
+                    global_image,
+                    service_images,
+                    graph,
+                    secret_ids,
+                    prior_artifacts,
+                );
             }
         }
         _ => {}
     }
+}
+
+fn process_parallel_carrier(
+    value: &Value,
+    context: &str,
+    trigger: &'static str,
+    global_image: Option<&str>,
+    service_images: &HashMap<String, String>,
+    graph: &mut AuthorityGraph,
+    secret_ids: &mut HashMap<String, NodeId>,
+    prior_artifacts: &mut Vec<NodeId>,
+) {
+    graph.mark_partial(
+        GapKind::Structural,
+        format!(
+            "Bitbucket `parallel:` group in {context} is flattened for step discovery only; fail-fast, scheduling, and intra-group artifact semantics are not fully modeled"
+        ),
+    );
+
+    let steps = value
+        .as_mapping()
+        .and_then(|map| map.get("steps"))
+        .unwrap_or(value);
+    let incoming_artifacts = prior_artifacts.clone();
+    let mut produced_by_group = Vec::new();
+
+    if let Value::Sequence(seq) = steps {
+        for item in seq {
+            let mut sibling_artifacts = incoming_artifacts.clone();
+            process_step_carrier(
+                item,
+                context,
+                trigger,
+                global_image,
+                service_images,
+                graph,
+                secret_ids,
+                &mut sibling_artifacts,
+            );
+            produced_by_group.extend(sibling_artifacts.into_iter().skip(incoming_artifacts.len()));
+        }
+    } else {
+        let mut group_artifacts = incoming_artifacts.clone();
+        process_step_carrier(
+            steps,
+            context,
+            trigger,
+            global_image,
+            service_images,
+            graph,
+            secret_ids,
+            &mut group_artifacts,
+        );
+        produced_by_group.extend(group_artifacts.into_iter().skip(incoming_artifacts.len()));
+    }
+
+    prior_artifacts.extend(produced_by_group);
+}
+
+fn process_stage_carrier(
+    value: &Value,
+    context: &str,
+    trigger: &'static str,
+    global_image: Option<&str>,
+    service_images: &HashMap<String, String>,
+    graph: &mut AuthorityGraph,
+    secret_ids: &mut HashMap<String, NodeId>,
+    prior_artifacts: &mut Vec<NodeId>,
+) {
+    graph.mark_partial(
+        GapKind::Structural,
+        format!(
+            "Bitbucket `stage:` group in {context} is flattened for step discovery only; stage-level deployment, condition, and artifact semantics are not fully modeled"
+        ),
+    );
+
+    let steps = value
+        .as_mapping()
+        .and_then(|map| map.get("steps"))
+        .unwrap_or(value);
+    process_step_carrier(
+        steps,
+        context,
+        trigger,
+        global_image,
+        service_images,
+        graph,
+        secret_ids,
+        prior_artifacts,
+    );
 }
 
 fn process_step(
@@ -724,6 +896,22 @@ mod tests {
         parser.parse(yaml, &source).unwrap()
     }
 
+    fn node_id(graph: &AuthorityGraph, kind: NodeKind, name: &str) -> NodeId {
+        graph
+            .nodes
+            .iter()
+            .find(|node| node.kind == kind && node.name == name)
+            .unwrap_or_else(|| panic!("expected {kind:?} node named {name:?}"))
+            .id
+    }
+
+    fn has_edge(graph: &AuthorityGraph, from: NodeId, to: NodeId, kind: EdgeKind) -> bool {
+        graph
+            .edges
+            .iter()
+            .any(|edge| edge.from == from && edge.to == to && edge.kind == kind)
+    }
+
     #[test]
     fn parses_step_image_script_oidc_and_secret_refs() {
         let yaml = r#"
@@ -784,5 +972,90 @@ pipelines:
             .nodes_of_kind(NodeKind::Artifact)
             .any(|n| n.name == "dist/**"));
         assert!(graph.edges.iter().any(|e| e.kind == EdgeKind::Consumes));
+    }
+
+    #[test]
+    fn bitbucket_cache_clone_runner_options_fixture_marks_structural_gap() {
+        let yaml = include_str!("../../../tests/fixtures/bitbucket-cache-clone-runner-options.yml");
+        let graph = parse(yaml);
+
+        assert_eq!(graph.nodes_of_kind(NodeKind::Step).count(), 2);
+        assert!(
+            graph.completeness_gap_kinds.contains(&GapKind::Structural),
+            "cache/clone/runner options must remain a typed structural partial gap"
+        );
+        assert!(
+            graph
+                .completeness_gaps
+                .iter()
+                .any(|gap| gap.contains("cache") && gap.contains("clone")),
+            "gap reasons should name the unsupported Bitbucket cache/clone/runner options: {:?}",
+            graph.completeness_gaps
+        );
+    }
+
+    #[test]
+    fn bitbucket_parallel_and_stage_fixture_marks_structural_gaps() {
+        let yaml = include_str!("../../../tests/fixtures/bitbucket-parallel-stage-semantics.yml");
+        let graph = parse(yaml);
+
+        assert!(
+            graph.completeness_gap_kinds.contains(&GapKind::Structural),
+            "parallel/stage semantics must remain typed structural partials"
+        );
+        assert!(
+            graph
+                .completeness_gaps
+                .iter()
+                .any(|gap| gap.contains("parallel")),
+            "gap reasons should name deferred Bitbucket parallel semantics: {:?}",
+            graph.completeness_gaps
+        );
+        assert!(
+            graph
+                .completeness_gaps
+                .iter()
+                .any(|gap| gap.contains("stage")),
+            "gap reasons should name deferred Bitbucket stage semantics: {:?}",
+            graph.completeness_gaps
+        );
+        assert_eq!(graph.nodes_of_kind(NodeKind::Step).count(), 4);
+    }
+
+    #[test]
+    fn bitbucket_parallel_siblings_do_not_consume_each_other_artifacts() {
+        let yaml = r#"
+pipelines:
+  default:
+    - parallel:
+        steps:
+          - step:
+              name: linux
+              script:
+                - ./test-linux.sh
+              artifacts:
+                - reports/linux.xml
+          - step:
+              name: windows
+              script:
+                - ./test-windows.sh
+    - step:
+        name: package
+        script:
+          - ./package.sh
+"#;
+        let graph = parse(yaml);
+        let linux_artifact = node_id(&graph, NodeKind::Artifact, "reports/linux.xml");
+        let windows = node_id(&graph, NodeKind::Step, "windows");
+        let package = node_id(&graph, NodeKind::Step, "package");
+
+        assert!(
+            !has_edge(&graph, linux_artifact, windows, EdgeKind::Consumes),
+            "parallel siblings must not consume artifacts produced by each other"
+        );
+        assert!(
+            has_edge(&graph, linux_artifact, package, EdgeKind::Consumes),
+            "artifacts produced by a parallel group should remain available to later sequential steps"
+        );
     }
 }

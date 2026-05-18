@@ -1,0 +1,18 @@
+pipelines:
+  default:
+    - parallel:
+        steps:
+          - step:
+              name: a
+              script: [echo a]
+          - step:
+              name: b
+              script: [echo b]
+    - stage:
+        name: release
+        deployment: production
+        steps:
+          - step:
+              name: publish
+              script:
+                - ./publish.sh "$PUBLISH_TOKEN"

@@ -1,0 +1,20 @@
+options:
+  max-time: 20
+  size: 2x
+clone:
+  depth: full
+  lfs: true
+definitions:
+  caches:
+    cargo: ~/.cargo/registry
+pipelines:
+  default:
+    - step:
+        name: cache-build
+        size: 2x
+        runs-on: [self.hosted, linux]
+        clone:
+          enabled: false
+        caches: [cargo]
+        script:
+          - cargo test

@@ -1,0 +1,19 @@
+definitions:
+  services:
+    docker:
+      memory: 2048
+    postgres:
+      image: postgres:16
+pipelines:
+  default:
+    - step:
+        name: build
+        services: [docker, postgres]
+        script:
+          - pipe: atlassian/aws-s3-deploy:1.1.0
+        artifacts:
+          - dist/**
+    - step:
+        name: deploy
+        script:
+          - cat dist/file
