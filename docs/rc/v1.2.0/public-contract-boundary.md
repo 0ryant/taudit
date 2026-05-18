@@ -1,6 +1,6 @@
 # v1.2.0-rc.1 Public Contract Boundary Matrix
 
-Source decisions: [ADR 0010](../../adr/0010-public-contract-boundary-and-api-readiness.md), [L2-01/L2-02](code-complete-lanes.md#l2-api-schemas-contracts), and the [contract platform workstream](workstreams/contract-platform.md).
+Source decisions: [ADR 0010](../../adr/0010-public-contract-boundary-and-api-readiness.md), [L2-01/L2-02/L2-12](code-complete-lanes.md#l2-api-schemas-contracts), the [contract platform workstream](workstreams/contract-platform.md), and the [contract SemVer rules](contract-semver-rules.md).
 
 Classification values:
 

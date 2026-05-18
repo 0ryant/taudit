@@ -39,6 +39,15 @@ SHA_RE = re.compile(r"^[0-9a-fA-F]{7,64}$")
 DIGEST_RE = re.compile(r"^sha256:[0-9a-f]{64}$")
 ID_RE = re.compile(r"^[a-z0-9][a-z0-9._:-]{0,127}$")
 MANIFEST_SCHEMA_VERSION_RE = re.compile(r"^1\.[0-9]+\.[0-9]+$")
+REPORT_KIND = "taudit.corpus.summary"
+REPORT_CHECK_KIND = "taudit.corpus.report-check"
+RELEASE_EVIDENCE_CONTRACT = "taudit-corpus-report.v1"
+RELEASE_EVIDENCE = {
+    "contract": RELEASE_EVIDENCE_CONTRACT,
+    "claim_ceiling": "parser-completeness-counts-only",
+    "network_mode": "offline",
+    "fetch_performed": False,
+}
 
 
 class CorpusManifestError(RuntimeError):
@@ -232,6 +241,13 @@ def require_string(obj: dict[str, Any], key: str, path: str) -> str:
     return value
 
 
+def require_non_negative_int(obj: dict[str, Any], key: str, path: str) -> int:
+    value = require_key(obj, key, path)
+    if not isinstance(value, int) or isinstance(value, bool) or value < 0:
+        raise CorpusManifestError(f"{path}.{key} must be a non-negative integer")
+    return value
+
+
 def reject_extra(obj: dict[str, Any], allowed: set[str], path: str) -> None:
     extra = sorted(set(obj) - allowed)
     if extra:
@@ -259,6 +275,7 @@ def summarize_expected(manifest: dict[str, Any], manifest_path: pathlib.Path) ->
             gap_kinds,
         )
     finish_summary(summary)
+    validate_release_summary(summary)
     return summary
 
 
@@ -274,6 +291,7 @@ def run_manifest(
         result = scan_entry(entry, manifest_path, config)
         add_result(summary, result, result["status"], result.get("gap_kinds", []))
     finish_summary(summary)
+    validate_release_summary(summary)
     return summary
 
 
@@ -431,8 +449,10 @@ def sorted_entries(manifest: dict[str, Any]) -> list[dict[str, Any]]:
 def new_summary(mode: str, manifest_path: pathlib.Path) -> dict[str, Any]:
     return {
         "schema_version": "1.0.0",
+        "report_kind": REPORT_KIND,
         "mode": mode,
         "manifest_path": str(manifest_path),
+        "release_evidence": dict(RELEASE_EVIDENCE),
         "entry_count": 0,
         "histograms": {
             "completeness": {key: 0 for key in COMPLETENESS},
@@ -481,12 +501,173 @@ def finish_summary(summary: dict[str, Any]) -> None:
     }
 
 
+def validate_release_summary(summary: Any) -> None:
+    require_object(summary, "summary")
+    reject_extra(
+        summary,
+        {
+            "schema_version",
+            "report_kind",
+            "mode",
+            "manifest_path",
+            "release_evidence",
+            "entry_count",
+            "histograms",
+            "entries",
+        },
+        "summary",
+    )
+    require_string(summary, "schema_version", "summary")
+    report_kind = require_string(summary, "report_kind", "summary")
+    if report_kind != REPORT_KIND:
+        raise CorpusManifestError(f"summary.report_kind must be {REPORT_KIND!r}")
+    mode = require_string(summary, "mode", "summary")
+    if mode not in {"expected", "run"}:
+        raise CorpusManifestError("summary.mode must be expected or run")
+    require_string(summary, "manifest_path", "summary")
+    validate_release_evidence(require_key(summary, "release_evidence", "summary"))
+    entry_count = require_non_negative_int(summary, "entry_count", "summary")
+
+    histograms = require_object(require_key(summary, "histograms", "summary"), "histograms")
+    reject_extra(histograms, {"completeness", "gap_kinds", "providers", "failure_kinds"}, "histograms")
+    validate_fixed_histogram(
+        require_key(histograms, "completeness", "histograms"),
+        COMPLETENESS,
+        "histograms.completeness",
+    )
+    validate_fixed_histogram(
+        require_key(histograms, "gap_kinds", "histograms"),
+        GAP_KINDS,
+        "histograms.gap_kinds",
+    )
+    validate_provider_histograms(require_key(histograms, "providers", "histograms"))
+    validate_dynamic_histogram(require_key(histograms, "failure_kinds", "histograms"), "histograms.failure_kinds")
+
+    entries = require_array(summary, "entries", "summary")
+    if entry_count != len(entries):
+        raise CorpusManifestError("summary.entry_count must match entries length")
+
+    expected_completeness = {key: 0 for key in COMPLETENESS}
+    expected_gap_kinds = {key: 0 for key in GAP_KINDS}
+    expected_providers: dict[str, dict[str, int]] = {}
+    expected_failure_kinds: dict[str, int] = {}
+    for index, entry in enumerate(entries):
+        status, provider, gap_kinds = validate_summary_entry(entry, f"summary.entries[{index}]")
+        expected_completeness[status] += 1
+        provider_histogram = expected_providers.setdefault(provider, {key: 0 for key in COMPLETENESS})
+        provider_histogram[status] += 1
+        for kind in gap_kinds:
+            expected_gap_kinds[kind] += 1
+        if status == "failure":
+            failure_kind = entry.get("failure_kind", "unknown")
+            expected_failure_kinds[failure_kind] = expected_failure_kinds.get(failure_kind, 0) + 1
+
+    expected_providers = {key: expected_providers[key] for key in sorted(expected_providers)}
+    expected_failure_kinds = {
+        key: expected_failure_kinds[key] for key in sorted(expected_failure_kinds)
+    }
+    if histograms["completeness"] != expected_completeness:
+        raise CorpusManifestError("histograms.completeness must match entries")
+    if histograms["gap_kinds"] != expected_gap_kinds:
+        raise CorpusManifestError("histograms.gap_kinds must match entries")
+    if histograms["providers"] != expected_providers:
+        raise CorpusManifestError("histograms.providers must match entries")
+    if histograms["failure_kinds"] != expected_failure_kinds:
+        raise CorpusManifestError("histograms.failure_kinds must match entries")
+
+
+def validate_release_evidence(value: Any) -> None:
+    evidence = require_object(value, "release_evidence")
+    reject_extra(evidence, set(RELEASE_EVIDENCE), "release_evidence")
+    for key, expected in RELEASE_EVIDENCE.items():
+        actual = require_key(evidence, key, "release_evidence")
+        if actual != expected:
+            raise CorpusManifestError(f"release_evidence.{key} must be {expected!r}")
+
+
+def validate_fixed_histogram(value: Any, keys: tuple[str, ...], path: str) -> None:
+    histogram = require_object(value, path)
+    reject_extra(histogram, set(keys), path)
+    for key in keys:
+        require_non_negative_int(histogram, key, path)
+
+
+def validate_dynamic_histogram(value: Any, path: str) -> None:
+    histogram = require_object(value, path)
+    for key in sorted(histogram):
+        if not isinstance(key, str) or not key:
+            raise CorpusManifestError(f"{path} keys must be non-empty strings")
+        require_non_negative_int(histogram, key, path)
+
+
+def validate_provider_histograms(value: Any) -> None:
+    providers = require_object(value, "histograms.providers")
+    for provider, histogram in providers.items():
+        if provider not in PROVIDERS:
+            raise CorpusManifestError(f"histograms.providers has unknown provider {provider!r}")
+        validate_fixed_histogram(histogram, COMPLETENESS, f"histograms.providers.{provider}")
+
+
+def validate_summary_entry(entry: Any, path: str) -> tuple[str, str, list[str]]:
+    require_object(entry, path)
+    entry_id = require_string(entry, "id", path)
+    if ID_RE.fullmatch(entry_id) is None:
+        raise CorpusManifestError(f"{path}.id must be a stable lowercase id")
+    provider = require_string(entry, "provider", path)
+    if provider not in PROVIDERS:
+        raise CorpusManifestError(f"{path}.provider must be one of {sorted(PROVIDERS)}")
+    parser = require_string(entry, "parser", path)
+    if parser not in set(PROVIDERS.values()):
+        raise CorpusManifestError(f"{path}.parser must be a known taudit parser crate")
+    if parser != PROVIDERS[provider]:
+        raise CorpusManifestError(f"{path}.parser does not match provider {provider!r}")
+    require_string(entry, "source_url", path)
+    require_string(entry, "local_path", path)
+    status = require_string(entry, "status", path)
+    if status not in COMPLETENESS:
+        raise CorpusManifestError(f"{path}.status must be one of {list(COMPLETENESS)}")
+    gap_kinds = validate_summary_gap_kinds(require_key(entry, "gap_kinds", path), f"{path}.gap_kinds")
+    if status == "failure":
+        require_string(entry, "failure_kind", path)
+        require_string(entry, "failure_detail", path)
+    elif "failure_kind" in entry or "failure_detail" in entry:
+        raise CorpusManifestError(f"{path} failure fields require status failure")
+    if "findings" in entry:
+        require_non_negative_int(entry, "findings", path)
+    return status, provider, gap_kinds
+
+
+def validate_summary_gap_kinds(value: Any, path: str) -> list[str]:
+    if not isinstance(value, list):
+        raise CorpusManifestError(f"{path} must be an array")
+    kinds: list[str] = []
+    for index, kind in enumerate(value):
+        if kind not in GAP_KINDS:
+            raise CorpusManifestError(f"{path}[{index}] must be expression, structural, opaque, or unknown")
+        kinds.append(kind)
+    return kinds
+
+
+def check_report(report_path: pathlib.Path) -> dict[str, Any]:
+    report = load_json(report_path)
+    validate_release_summary(report)
+    return {
+        "schema_version": "1.0.0",
+        "report_kind": REPORT_CHECK_KIND,
+        "status": "pass",
+        "checked_report": str(report_path),
+        "entry_count": report["entry_count"],
+        "histograms": report["histograms"],
+        "release_evidence": dict(RELEASE_EVIDENCE),
+    }
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument(
         "--manifest",
         type=pathlib.Path,
-        required=True,
+        required=False,
         help="Path to a corpus manifest JSON file.",
     )
     subparsers = parser.add_subparsers(dest="command", required=True)
@@ -517,6 +698,16 @@ def build_parser() -> argparse.ArgumentParser:
         default=None,
         help="Optional JSON schema used to validate each scan report.",
     )
+    report_parser = subparsers.add_parser(
+        "check-report",
+        help="Validate a previously emitted corpus summary report.",
+    )
+    report_parser.add_argument(
+        "--report",
+        type=pathlib.Path,
+        required=True,
+        help="Corpus summary JSON emitted by validate or run mode.",
+    )
     return parser
 
 
@@ -529,8 +720,11 @@ def main(argv: list[str] | None = None) -> int:
     parser = build_parser()
     args = parser.parse_args(argv)
     try:
-        manifest_path = args.manifest.resolve()
-        manifest = load_manifest(manifest_path)
+        if args.command in {"validate", "run"}:
+            if args.manifest is None:
+                raise CorpusManifestError("--manifest is required for validate and run")
+            manifest_path = args.manifest.resolve()
+            manifest = load_manifest(manifest_path)
         if args.command == "validate":
             emit_json(summarize_expected(manifest, manifest_path))
             return 0
@@ -549,6 +743,9 @@ def main(argv: list[str] | None = None) -> int:
             )
             emit_json(summary)
             return 1 if summary["histograms"]["completeness"]["failure"] else 0
+        if args.command == "check-report":
+            emit_json(check_report(args.report.resolve()))
+            return 0
         raise CorpusManifestError(f"unknown command: {args.command}")
     except CorpusManifestError as exc:
         print(f"corpus runner error: {exc}", file=sys.stderr)

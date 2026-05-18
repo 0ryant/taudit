@@ -1,0 +1,123 @@
+{
+  "$schema": "https://taudit.dev/schemas/action-intelligence-catalog.v1.json",
+  "schema_version": "1.0.0",
+  "schema_uri": "https://taudit.dev/schemas/action-intelligence-catalog.v1.json",
+  "catalog_version": "0.1.0",
+  "non_exhaustive": true,
+  "entries": [
+    {
+      "id": "github-actions/docker-login-action",
+      "action": {
+        "ecosystem": "github_actions",
+        "name": "docker/login-action",
+        "display_name": "Docker login action"
+      },
+      "version_ref": {
+        "kind": "major_ref",
+        "value": "v3"
+      },
+      "helper_resolution": "action_owned_path",
+      "helper_invocations": [
+        {
+          "helper": "docker",
+          "helper_resolution": "action_owned_path",
+          "authority_transport": ["stdin"],
+          "argument_patterns": ["login --password-stdin"]
+        }
+      ],
+      "authority_transport": ["stdin"],
+      "authority_origin": ["action_input_secret"],
+      "confidence": "medium",
+      "evidence_tier": "catalog",
+      "source_evidence": {
+        "source_anchors": [
+          {
+            "kind": "taudit_doc",
+            "label": "Current stdin-sensitive action coverage",
+            "path": "docs/rules/gha_helper_path_sensitive_stdin.md",
+            "line_start": 12
+          }
+        ]
+      },
+      "deferred": false,
+      "notes": "Example entry only. L4-04 must replace or expand this with reviewed source anchors."
+    },
+    {
+      "id": "github-actions/cloudflare-wrangler-action",
+      "action": {
+        "ecosystem": "github_actions",
+        "name": "cloudflare/wrangler-action",
+        "display_name": "Cloudflare Wrangler action"
+      },
+      "version_ref": {
+        "kind": "major_ref",
+        "value": "v3"
+      },
+      "helper_resolution": "bare_command",
+      "helper_invocations": [
+        {
+          "helper": "wrangler",
+          "helper_resolution": "bare_command",
+          "authority_transport": ["env", "stdin"],
+          "argument_patterns": ["deploy"]
+        }
+      ],
+      "authority_transport": ["env", "stdin"],
+      "authority_origin": ["action_input_secret"],
+      "confidence": "medium",
+      "evidence_tier": "catalog",
+      "source_evidence": {
+        "source_anchors": [
+          {
+            "kind": "taudit_doc",
+            "label": "Current env-sensitive action coverage",
+            "path": "docs/rules/gha_helper_path_sensitive_env.md",
+            "line_start": 13
+          },
+          {
+            "kind": "taudit_fixture",
+            "label": "Exploit graph fixture uses cloudflare/wrangler-action@v3",
+            "path": "crates/taudit-cli/tests/exploit_path_graph.rs",
+            "line_start": 216
+          }
+        ]
+      },
+      "deferred": false,
+      "notes": "Example entry only. It demonstrates multiple public source anchors, not full action analysis."
+    },
+    {
+      "id": "github-actions/codecov-codecov-action",
+      "action": {
+        "ecosystem": "github_actions",
+        "name": "codecov/codecov-action",
+        "display_name": "Codecov action"
+      },
+      "version_ref": {
+        "kind": "unknown",
+        "value": "unknown"
+      },
+      "helper_resolution": "unknown",
+      "helper_invocations": [
+        {
+          "helper": "codecov",
+          "helper_resolution": "unknown",
+          "authority_transport": ["env"],
+          "notes": "Deferred marker only; helper fact needs L4-04 source review."
+        }
+      ],
+      "authority_transport": ["env"],
+      "authority_origin": ["caller_provided_secret"],
+      "confidence": "low",
+      "evidence_tier": "static",
+      "source_evidence": {
+        "witness_status": {
+          "status": "deferred",
+          "explanation": "Catalog contract seed records the shape only. L4-04 must add reviewed source anchors or a public witness label before this becomes a seeded catalog fact."
+        }
+      },
+      "deferred": true,
+      "deferred_reason": "Source-anchor and witness review are intentionally deferred to L4-04.",
+      "notes": "Deferred marker example. Do not treat as a complete catalog entry."
+    }
+  ]
+}

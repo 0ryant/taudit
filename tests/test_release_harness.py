@@ -139,6 +139,84 @@ class ReleaseHarnessTests(unittest.TestCase):
             self.assertEqual(plan.version, "1.1.2")
             self.assertIn("release body", plan.notes)
 
+    def test_conformance_command_uses_adr_0020_json_shape(self) -> None:
+        root = pathlib.Path("C:/work/taudit")
+
+        command = release_harness.conformance_harness_command(root)
+
+        self.assertEqual(command[0], sys.executable)
+        self.assertEqual(
+            command[1],
+            str(root / "scripts" / "conformance_harness.py"),
+        )
+        self.assertEqual(command[2:], ["--root", str(root), "--format", "json"])
+
+    def test_check_release_allows_rc_to_name_incomplete_conformance(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            root = pathlib.Path(tmp_dir)
+            self._write_minimal_release_tree(root, "1.2.0-rc.1", "v1.2.0-rc.1")
+
+            with mock.patch.object(
+                release_harness.subprocess,
+                "run",
+                return_value=self._conformance_process("incomplete", False, 3, pending=10),
+            ):
+                plan = release_harness.check_release(
+                    root,
+                    "v1.2.0-rc.1",
+                    require_local_tag=False,
+                    validate_publish_metadata=False,
+                )
+
+            self.assertTrue(plan.prerelease)
+            self.assertIsNotNone(plan.conformance)
+            self.assertEqual(plan.conformance.status, "incomplete")
+            self.assertEqual(plan.conformance.exit_code, 3)
+
+    def test_check_release_blocks_stable_when_conformance_is_incomplete(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            root = pathlib.Path(tmp_dir)
+            self._write_minimal_release_tree(root, "1.2.0", "v1.2.0")
+
+            with (
+                mock.patch.object(
+                    release_harness.subprocess,
+                    "run",
+                    return_value=self._conformance_process("incomplete", False, 3, pending=10),
+                ),
+                self.assertRaisesRegex(
+                    release_harness.ReleaseHarnessError,
+                    "not stable-release-ready",
+                ),
+            ):
+                release_harness.check_release(
+                    root,
+                    "v1.2.0",
+                    require_local_tag=False,
+                    validate_publish_metadata=False,
+                )
+
+    def test_check_release_accepts_stable_full_conformance(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            root = pathlib.Path(tmp_dir)
+            self._write_minimal_release_tree(root, "1.2.0", "v1.2.0")
+
+            with mock.patch.object(
+                release_harness.subprocess,
+                "run",
+                return_value=self._conformance_process("pass", True, 0, pending=0),
+            ):
+                plan = release_harness.check_release(
+                    root,
+                    "v1.2.0",
+                    require_local_tag=False,
+                    validate_publish_metadata=False,
+                )
+
+            self.assertFalse(plan.prerelease)
+            self.assertIsNotNone(plan.conformance)
+            self.assertTrue(plan.conformance.full_conformance)
+
     def test_ensure_github_release_creates_prerelease_with_latest_false(self) -> None:
         with tempfile.TemporaryDirectory() as tmp_dir:
             root = pathlib.Path(tmp_dir)
@@ -166,6 +244,7 @@ class ReleaseHarnessTests(unittest.TestCase):
                     "v1.2.0-rc.1",
                     repo="owner/taudit",
                     validate_publish_metadata=False,
+                    validate_conformance=False,
                 )
 
             self.assertTrue(plan.prerelease)
@@ -205,6 +284,7 @@ class ReleaseHarnessTests(unittest.TestCase):
                     "v1.2.0-rc.1",
                     repo=None,
                     validate_publish_metadata=False,
+                    validate_conformance=False,
                 )
 
             self.assertTrue(plan.prerelease)
@@ -213,6 +293,48 @@ class ReleaseHarnessTests(unittest.TestCase):
             self.assertIn("--latest=false", commands[0])
             self.assertNotIn("--latest", commands[0])
             self.assertEqual(commands[1], ["gh", "release", "view", "v1.2.0-rc.1"])
+
+    def _write_minimal_release_tree(self, root: pathlib.Path, version: str, tag: str) -> None:
+        (root / "crates" / "taudit-cli").mkdir(parents=True)
+        (root / "CHANGELOG.md").write_text(
+            f"## {tag}\n\n- release body\n",
+            encoding="utf-8",
+        )
+        (root / "crates" / "taudit-cli" / "Cargo.toml").write_text(
+            f"[package]\nname = \"taudit\"\nversion = \"{version}\"\n",
+            encoding="utf-8",
+        )
+
+    def _conformance_process(
+        self,
+        status: str,
+        full_conformance: bool,
+        exit_code: int,
+        *,
+        pending: int,
+    ) -> subprocess.CompletedProcess[str]:
+        stdout = textwrap.dedent(
+            f"""
+            {{
+              "schema": "taudit.conformance-harness.summary.v0",
+              "harness": "adr-0020-offline-skeleton",
+              "status": "{status}",
+              "full_conformance": {str(full_conformance).lower()},
+              "counts": {{
+                "pass": 18,
+                "fail": 0,
+                "pending": {pending}
+              }},
+              "checks": []
+            }}
+            """
+        ).strip()
+        return subprocess.CompletedProcess(
+            ["python", "scripts/conformance_harness.py"],
+            exit_code,
+            stdout=stdout,
+            stderr="",
+        )
 
 
 if __name__ == "__main__":

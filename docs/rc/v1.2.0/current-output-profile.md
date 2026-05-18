@@ -19,8 +19,9 @@ Related decisions and lanes:
   current-output claim.
 - [ADR 0020](../../adr/0020-output-conformance-harness-and-rc-gate.md) requires
   one output conformance gate before the RC tag.
-- [L2-07](code-complete-lanes.md#l2-api-schemas-contracts) owns current-profile
-  checks separate from compatibility schema validation.
+- [L2-07](code-complete-lanes.md#l2-api-schemas-contracts) owns
+  [current-profile checks](current-output-profile-checks.md) separate from
+  compatibility schema validation.
 - [L2-08](code-complete-lanes.md#l2-api-schemas-contracts) owns refreshed
   contract examples from real fixtures.
 - [L5-01 through L5-05](code-complete-lanes.md#l5-cli-reports-sinks-output-identity)
@@ -194,7 +195,7 @@ ANSI styling changes do not create contract churn.
 ## Future Validation Strategy
 
 The ADR 0020 conformance harness should run schema validation first and
-current-profile validation second.
+[current-profile validation](current-output-profile-checks.md) second.
 
 1. Generate fixtures from real CLI commands for complete, partial, suppressed,
    baseline, CloudEvents, SARIF, report JSON, authority graph JSON, and exploit

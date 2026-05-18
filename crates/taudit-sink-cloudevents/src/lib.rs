@@ -63,13 +63,13 @@ pub struct CloudEventV1 {
     /// rule_id_for`. Per CloudEvents 1.0 §3.1, extension attribute names
     /// must be lowercase with no separators — hence `tauditruleid`.
     pub tauditruleid: String,
-    /// CI/CD platform of the underlying pipeline: `"ado"`, `"gha"`, or
-    /// `"gitlab"`. Lets SIEM correlation rules route events by platform
-    /// without re-parsing the `subject` (file path). Source: the resolved
-    /// `Platform` variant for the scanned file, surfaced via
-    /// `graph.metadata["platform"]`. Optional in v1 for backward-compat;
-    /// always emitted by current taudit when the parser stamped the
-    /// metadata key.
+    /// CI/CD platform of the underlying pipeline: `"ado"`, `"gha"`,
+    /// `"gitlab"`, or `"bitbucket"`. Lets SIEM correlation rules route
+    /// events by platform without re-parsing the `subject` (file path).
+    /// Source: the resolved platform token in `graph.metadata["platform"]`,
+    /// normalized at this sink boundary from parser long forms such as
+    /// `"github-actions"` / `"azure-devops"`. Optional in v1 for
+    /// backward-compat; emitted when the metadata key is recognized.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub tauditplatform: Option<String>,
     /// Stable UUID v5 over the fingerprint. Same value as JSON
@@ -127,6 +127,25 @@ fn derive_pipeline_id(graph: &AuthorityGraph) -> String {
         .unwrap_or_else(|| compute_pipeline_identity_material_hash(graph));
 
     format!("urn:taudit:pipeline:{hash}")
+}
+
+fn normalize_platform_token(raw: &str) -> Option<&'static str> {
+    match raw {
+        "gha" | "github-actions" => Some("gha"),
+        "ado" | "azure-devops" => Some("ado"),
+        "gitlab" | "gitlab-ci" => Some("gitlab"),
+        "bitbucket" | "bb" | "bitbucket-pipelines" => Some("bitbucket"),
+        _ => None,
+    }
+}
+
+fn public_finding_payload(finding: &Finding) -> serde_json::Value {
+    let mut data = serde_json::to_value(finding)
+        .unwrap_or_else(|_| serde_json::Value::String(finding.message.clone()));
+    if let Some(obj) = data.as_object_mut() {
+        obj.remove("fingerprint_anchor");
+    }
+    data
 }
 
 /// Map a FindingCategory to a CloudEvents type string.
@@ -429,8 +448,7 @@ fn finding_to_event(
     pipeline_id: &str,
     scan_run_id: &str,
 ) -> CloudEventV1 {
-    let data = serde_json::to_value(finding)
-        .unwrap_or_else(|_| serde_json::Value::String(finding.message.clone()));
+    let data = public_finding_payload(finding);
 
     let completeness_str = match graph.completeness {
         taudit_core::graph::AuthorityCompleteness::Complete => "complete",
@@ -439,16 +457,14 @@ fn finding_to_event(
     };
 
     // Surface the resolved CI/CD platform as an extension attribute when the
-    // parser stamped `metadata["platform"]`. Permitted values: "ado", "gha",
-    // "gitlab". Anything else is dropped — better to omit than to ship a
-    // value SIEM rules can't pattern-match on.
+    // parser stamped `metadata["platform"]`. Both CLI short tokens and parser
+    // long tokens normalize here. Anything else is dropped: better to omit than
+    // ship a value SIEM rules cannot pattern-match on.
     let tauditplatform = graph
         .metadata
         .get("platform")
-        .and_then(|v| match v.as_str() {
-            "ado" | "gha" | "gitlab" => Some(v.clone()),
-            _ => None,
-        });
+        .and_then(|v| normalize_platform_token(v.as_str()))
+        .map(str::to_string);
 
     // Pair each typed `GapKind` with its prose reason. `completeness_gap_kinds`
     // and `completeness_gaps` are append-only parallel vectors maintained by
@@ -640,7 +656,7 @@ mod tests {
         path::PathBuf,
         sync::{Mutex, OnceLock},
     };
-    use taudit_core::finding::{FindingExtras, Recommendation, Severity};
+    use taudit_core::finding::{FindingExtras, FixEffort, Recommendation, Severity};
     use taudit_core::graph::{GapKind, PipelineSource};
 
     fn test_source() -> PipelineSource {
@@ -822,6 +838,80 @@ mod tests {
     }
 
     #[test]
+    fn data_payload_projects_public_safe_extras_and_omits_fingerprint_anchor() {
+        let graph = AuthorityGraph::new(test_source());
+        let mut finding = test_finding(FindingCategory::AuthorityPropagation, Severity::High);
+        finding.extras = FindingExtras {
+            finding_group_id: Some("123e4567-e89b-12d3-a456-426614174000".into()),
+            time_to_fix: Some(FixEffort::Trivial),
+            compensating_controls: vec!["fork check present".into()],
+            suppressed: true,
+            original_severity: Some(Severity::Critical),
+            suppression_reason: Some("reviewed exception".into()),
+            fingerprint_anchor: Some("identity=internal-anchor".into()),
+            confidence_scope: Some("yaml_only".into()),
+            runtime_preconditions: vec!["environment protection remains enabled".into()],
+            portal_control_dependency: true,
+            authority_kinds: vec!["job_token".into(), "artifact".into()],
+            attacker_surface_kinds: vec!["untrusted_checkout".into()],
+            template_resolution_strength: Some("partial".into()),
+            cve_relationship: Some("same_authority_shape".into()),
+        };
+        let findings = vec![finding];
+
+        let mut buf = Vec::new();
+        CloudEventsJsonlSink::default()
+            .emit(&mut buf, &graph, &findings)
+            .unwrap();
+
+        let output = String::from_utf8(buf).unwrap();
+        let event: serde_json::Value =
+            serde_json::from_str(output.lines().next().unwrap()).unwrap();
+        let data = &event["data"];
+
+        assert_eq!(
+            event["tauditfindinggroup"],
+            "123e4567-e89b-12d3-a456-426614174000"
+        );
+        assert_eq!(
+            data["finding_group_id"],
+            "123e4567-e89b-12d3-a456-426614174000"
+        );
+        assert_eq!(data["time_to_fix"], "trivial");
+        assert_eq!(data["compensating_controls"][0], "fork check present");
+        assert_eq!(data["suppressed"], true);
+        assert_eq!(data["original_severity"], "critical");
+        assert_eq!(data["suppression_reason"], "reviewed exception");
+        assert_eq!(data["confidence_scope"], "yaml_only");
+        assert_eq!(
+            data["runtime_preconditions"][0],
+            "environment protection remains enabled"
+        );
+        assert_eq!(data["portal_control_dependency"], true);
+        assert_eq!(data["authority_kinds"][0], "job_token");
+        assert_eq!(data["authority_kinds"][1], "artifact");
+        assert_eq!(data["attacker_surface_kinds"][0], "untrusted_checkout");
+        assert_eq!(data["template_resolution_strength"], "partial");
+        assert_eq!(data["cve_relationship"], "same_authority_shape");
+        assert!(
+            data.get("fingerprint_anchor").is_none(),
+            "fingerprint_anchor is an identity input, not a public CloudEvents data field"
+        );
+
+        let schema = read_json("schemas/finding.v1.json");
+        let validator = jsonschema::validator_for(&schema).expect("finding schema should compile");
+        let errors: Vec<String> = validator
+            .iter_errors(data)
+            .map(|err| err.to_string())
+            .collect();
+        assert!(
+            errors.is_empty(),
+            "CloudEvents data payload with public extras must match finding schema:\n{}",
+            errors.join("\n")
+        );
+    }
+
+    #[test]
     fn event_type_maps_all_categories() {
         let categories = vec![
             (
@@ -913,6 +1003,25 @@ mod tests {
             "checked-in CloudEvent example does not match schema:\n{}",
             errors.join("\n")
         );
+    }
+
+    #[test]
+    fn checked_in_example_contains_current_identity_and_platform_fields() {
+        let event = read_json("contracts/examples/over-privileged-finding.cloudevent.json");
+
+        assert_eq!(event["type"], "io.taudit.finding.authority_propagation");
+        assert_eq!(event["tauditruleid"], "authority_propagation");
+        assert_eq!(event["tauditplatform"], "gha");
+        assert!(event["tauditfindingfingerprint"]
+            .as_str()
+            .is_some_and(|v| v.len() == 32 && v.chars().all(|c| c.is_ascii_hexdigit())));
+        assert!(event["tauditsuppressionkey"].as_str().is_some_and(|v| {
+            v.strip_prefix("sk1_")
+                .is_some_and(|hex| hex.len() == 32 && hex.chars().all(|c| c.is_ascii_hexdigit()))
+        }));
+        assert!(event["tauditfindinggroup"]
+            .as_str()
+            .is_some_and(|v| uuid::Uuid::parse_str(v).is_ok()));
     }
 
     #[test]
@@ -1244,6 +1353,43 @@ mod tests {
     }
 
     #[test]
+    fn platform_metadata_normalizes_parser_tokens_to_public_tokens() {
+        let cases = [
+            ("github-actions", "gha"),
+            ("gha", "gha"),
+            ("azure-devops", "ado"),
+            ("ado", "ado"),
+            ("gitlab", "gitlab"),
+            ("bitbucket", "bitbucket"),
+            ("bb", "bitbucket"),
+        ];
+
+        for (raw, expected) in cases {
+            let mut graph = AuthorityGraph::new(test_source());
+            graph
+                .metadata
+                .insert("platform".to_string(), raw.to_string());
+            let findings = vec![test_finding(
+                FindingCategory::AuthorityPropagation,
+                Severity::High,
+            )];
+
+            let mut buf = Vec::new();
+            CloudEventsJsonlSink::default()
+                .emit(&mut buf, &graph, &findings)
+                .unwrap();
+
+            let event: serde_json::Value =
+                serde_json::from_str(std::str::from_utf8(&buf).unwrap().lines().next().unwrap())
+                    .unwrap();
+            assert_eq!(
+                event["tauditplatform"], expected,
+                "platform metadata token {raw:?} must project as {expected:?}"
+            );
+        }
+    }
+
+    #[test]
     fn missing_platform_metadata_omits_extension_attribute() {
         // Backward-compat: events for graphs that lack the metadata key
         // simply omit the attribute. SIEM consumers see absence, not "null".
@@ -1272,7 +1418,7 @@ mod tests {
     fn unrecognised_platform_value_is_dropped() {
         // Defence-in-depth: a metadata key written by some future code path
         // with a non-canonical value should not leak through. SIEM rules
-        // pattern-match on the closed enum {ado,gha,gitlab}.
+        // pattern-match on the closed enum {ado,gha,gitlab,bitbucket}.
         let mut graph = AuthorityGraph::new(test_source());
         graph
             .metadata

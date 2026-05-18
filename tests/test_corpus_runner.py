@@ -119,6 +119,64 @@ def test_validate_manifest_emits_deterministic_expected_histograms(tmp_path: pat
     ]
 
 
+def test_release_evidence_summary_contract_is_validated(tmp_path: pathlib.Path) -> None:
+    manifest_path = write_manifest(
+        tmp_path,
+        [
+            entry("complete-a", "github_actions", "taudit-parse-gha", "complete"),
+            entry("partial-a", "gitlab_ci", "taudit-parse-gitlab", "partial", ["structural"]),
+            entry("unknown-a", "azure_pipelines", "taudit-parse-ado", "unknown", ["opaque"]),
+        ],
+    )
+
+    manifest = corpus_runner.load_manifest(manifest_path)
+    summary = corpus_runner.summarize_expected(manifest, manifest_path)
+
+    assert summary["report_kind"] == "taudit.corpus.summary"
+    assert summary["release_evidence"] == {
+        "contract": "taudit-corpus-report.v1",
+        "claim_ceiling": "parser-completeness-counts-only",
+        "network_mode": "offline",
+        "fetch_performed": False,
+    }
+    corpus_runner.validate_release_summary(summary)
+
+
+def test_release_summary_validation_rejects_missing_histogram_bucket(tmp_path: pathlib.Path) -> None:
+    manifest_path = write_manifest(
+        tmp_path,
+        [entry("complete-a", "github_actions", "taudit-parse-gha", "complete")],
+    )
+    manifest = corpus_runner.load_manifest(manifest_path)
+    summary = corpus_runner.summarize_expected(manifest, manifest_path)
+    del summary["histograms"]["completeness"]["failure"]
+
+    with pytest.raises(corpus_runner.CorpusManifestError, match=r"completeness.failure"):
+        corpus_runner.validate_release_summary(summary)
+
+
+def test_check_report_command_validates_existing_summary(
+    tmp_path: pathlib.Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    manifest_path = write_manifest(
+        tmp_path,
+        [entry("complete-a", "github_actions", "taudit-parse-gha", "complete")],
+    )
+    manifest = corpus_runner.load_manifest(manifest_path)
+    summary = corpus_runner.summarize_expected(manifest, manifest_path)
+    report_path = tmp_path / "corpus-report.json"
+    report_path.write_text(json.dumps(summary), encoding="utf-8")
+
+    rc = corpus_runner.main(["check-report", "--report", str(report_path)])
+
+    assert rc == 0
+    receipt = json.loads(capsys.readouterr().out)
+    assert receipt["status"] == "pass"
+    assert receipt["checked_report"] == str(report_path.resolve())
+    assert receipt["entry_count"] == 1
+    assert receipt["histograms"]["completeness"]["complete"] == 1
+
+
 def test_invalid_manifest_is_rejected_with_path_context(tmp_path: pathlib.Path) -> None:
     bad = entry("bad-a", "github_actions", "taudit-parse-gha", "complete")
     del bad["license"]

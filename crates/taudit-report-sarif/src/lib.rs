@@ -2071,9 +2071,9 @@ struct SarifResultProperties {
     /// defense report Section 4.
     #[serde(rename = "compensatingControls", skip_serializing_if = "Vec::is_empty")]
     compensating_controls: Vec<String>,
-    /// SARIF 2.1.0 `result.suppressions` shape lives at top-level on
-    /// `SarifResult`, but we mirror the boolean here so consumers reading
-    /// `properties` see the same flag without parsing the suppressions array.
+    /// SARIF 2.1.0 also defines top-level `result.suppressions`. The current
+    /// public taudit projection keeps suppression state in `properties` so
+    /// consumers can read one taudit-owned object consistently across sinks.
     #[serde(rename = "suppressed", skip_serializing_if = "is_false_ref")]
     suppressed: bool,
     /// Pre-downgrade severity when the suppression applicator OR a
@@ -2081,6 +2081,10 @@ struct SarifResultProperties {
     /// want to render "downgraded from Critical" badges.
     #[serde(rename = "originalSeverity", skip_serializing_if = "Option::is_none")]
     original_severity: Option<&'static str>,
+    /// Operator-supplied public suppression justification. It is projected
+    /// only when a suppression matched and the reason exists in the finding.
+    #[serde(rename = "suppressionReason", skip_serializing_if = "Option::is_none")]
+    suppression_reason: Option<String>,
     /// Confidence boundary for the finding, currently `yaml_only` for
     /// built-in static analysis findings.
     #[serde(rename = "confidenceScope", skip_serializing_if = "Option::is_none")]
@@ -2373,6 +2377,7 @@ fn finding_to_result(
     let compensating_controls = finding.extras.compensating_controls.clone();
     let suppressed = finding.extras.suppressed;
     let original_severity = finding.extras.original_severity.map(severity_to_str);
+    let suppression_reason = finding.extras.suppression_reason.clone();
     let confidence_scope = finding.extras.confidence_scope.clone();
     let runtime_preconditions = finding.extras.runtime_preconditions.clone();
     let portal_control_dependency = finding.extras.portal_control_dependency;
@@ -2413,6 +2418,7 @@ fn finding_to_result(
             compensating_controls,
             suppressed,
             original_severity,
+            suppression_reason,
             confidence_scope,
             runtime_preconditions,
             portal_control_dependency,
@@ -2462,7 +2468,9 @@ fn severity_to_security_severity(severity: &Severity) -> &'static str {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use taudit_core::finding::{FindingCategory, FindingExtras, Recommendation, Severity};
+    use taudit_core::finding::{
+        FindingCategory, FindingExtras, FixEffort, Recommendation, Severity,
+    };
     use taudit_core::graph::{AuthorityGraph, PipelineSource};
 
     // ── escape_markdown unit tests ────────────────────────────
@@ -2697,6 +2705,135 @@ mod tests {
         );
         assert_eq!(tv1.len(), 32);
         assert!(tv1.chars().all(|c| c.is_ascii_hexdigit()));
+    }
+
+    #[test]
+    fn sarif_projects_public_finding_extras_and_omits_raw_fingerprint_anchor() {
+        let graph = empty_graph();
+        let mut finding = make_finding(
+            Severity::Medium,
+            FindingCategory::AuthorityPropagation,
+            "helper path authority is inferred from source facts",
+        );
+        finding.extras = FindingExtras {
+            finding_group_id: Some("group-rc-l5-03".to_string()),
+            time_to_fix: Some(FixEffort::Small),
+            compensating_controls: vec!["job-level permissions narrowed".to_string()],
+            suppressed: true,
+            original_severity: Some(Severity::High),
+            suppression_reason: Some("accepted during migration window".to_string()),
+            fingerprint_anchor: Some("workflow:deploy:helper-path".to_string()),
+            confidence_scope: Some("yaml_only".to_string()),
+            runtime_preconditions: vec!["repository allows workflow write token".to_string()],
+            portal_control_dependency: true,
+            authority_kinds: vec!["job_token".to_string(), "secret".to_string()],
+            attacker_surface_kinds: vec!["mutable_dependency_ref".to_string()],
+            template_resolution_strength: Some("partial".to_string()),
+            cve_relationship: Some("analogue_only".to_string()),
+        };
+
+        let sarif = emit_to_string(&graph, &[finding]);
+        let result = &sarif["runs"][0]["results"][0];
+        let properties = result["properties"]
+            .as_object()
+            .expect("SARIF result properties should be an object");
+
+        assert_eq!(properties["findingGroupId"], "group-rc-l5-03");
+        assert!(properties["suppressionKey"]
+            .as_str()
+            .expect("suppressionKey")
+            .starts_with("sk1_"));
+        assert_eq!(properties["timeToFix"], "small");
+        assert_eq!(
+            properties["compensatingControls"]
+                .as_array()
+                .expect("compensatingControls"),
+            &[serde_json::json!("job-level permissions narrowed")]
+        );
+        assert_eq!(properties["suppressed"], true);
+        assert_eq!(properties["originalSeverity"], "high");
+        assert_eq!(
+            properties["suppressionReason"],
+            "accepted during migration window"
+        );
+        assert_eq!(properties["confidenceScope"], "yaml_only");
+        assert_eq!(
+            properties["runtimePreconditions"]
+                .as_array()
+                .expect("runtimePreconditions"),
+            &[serde_json::json!("repository allows workflow write token")]
+        );
+        assert_eq!(properties["portalControlDependency"], true);
+        assert_eq!(
+            properties["authorityKinds"]
+                .as_array()
+                .expect("authorityKinds"),
+            &[serde_json::json!("job_token"), serde_json::json!("secret")]
+        );
+        assert_eq!(
+            properties["attackerSurfaceKinds"]
+                .as_array()
+                .expect("attackerSurfaceKinds"),
+            &[serde_json::json!("mutable_dependency_ref")]
+        );
+        assert_eq!(properties["templateResolutionStrength"], "partial");
+        assert_eq!(properties["cveRelationship"], "analogue_only");
+        assert!(
+            !properties.contains_key("fingerprintAnchor"),
+            "fingerprint_anchor is consumed by fingerprint/suppression identity, not projected raw"
+        );
+    }
+
+    #[test]
+    fn sarif_public_extra_map_documents_projection_decisions() {
+        let repo_root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
+        if !repo_root.join("Cargo.toml").exists() {
+            return;
+        }
+        let path = repo_root.join("docs/rc/v1.2.0/sarif-public-extra-map.md");
+        let doc = std::fs::read_to_string(&path)
+            .unwrap_or_else(|err| panic!("{}: {err}", path.display()));
+
+        for field in [
+            "rule_id",
+            "fingerprint",
+            "suppression_key",
+            "finding_group_id",
+            "source",
+            "time_to_fix",
+            "compensating_controls",
+            "suppressed",
+            "original_severity",
+            "suppression_reason",
+            "fingerprint_anchor",
+            "confidence_scope",
+            "runtime_preconditions",
+            "portal_control_dependency",
+            "authority_kinds",
+            "attacker_surface_kinds",
+            "template_resolution_strength",
+            "cve_relationship",
+            "ordered_authority_evidence",
+        ] {
+            assert!(
+                doc.contains(field),
+                "missing projection decision for {field}"
+            );
+        }
+
+        for property in [
+            "result.ruleId",
+            "partialFingerprints.primaryLocationLineHash",
+            "properties.suppressionKey",
+            "properties.findingGroupId",
+            "properties.suppressionReason",
+            "Non-projected",
+        ] {
+            assert!(
+                doc.contains(property),
+                "missing SARIF mapping text for {property}"
+            );
+        }
     }
 
     #[test]

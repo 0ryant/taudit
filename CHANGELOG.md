@@ -8,6 +8,67 @@ All notable changes to this project will be documented in this file.
 
 _(none yet — populate this paragraph when adding entries that change finding behaviour)_
 
+## v1.2.0-rc.1 — 2026-05-18 (release candidate)
+
+> **Release candidate.** Starts the v1.2 Authority Evidence Platform RC line.
+> The payload is release-gated for RC evaluation, not stable promotion. ADR
+> 0020 conformance is wired and may still report pending checks until the
+> remaining current-output fixtures and ordered-evidence sink projections land.
+
+### Detection delta (read first)
+
+This RC is mostly a contract, parser-measurement, and output-identity hardening
+cut. It should not be treated as a broad new rule burst, but it does make
+provider parser blind spots more explicit: GitHub Actions service containers,
+Azure DevOps resources/secure files/pipeline artifacts, GitLab generic
+artifacts, and Bitbucket caches/pipes/services/parallel/stage forms now surface
+typed completeness gaps instead of silently implying full graph coverage. That
+can change downstream triage by making partial parser evidence visible even when
+finding counts stay the same.
+
+### Added
+
+- ADR-backed RC lane docs for release coordination, public contract boundaries,
+  ordered authority evidence, parser completeness, output identity, adoption
+  proof, and proof-ledger templates.
+- Offline release and QA harnesses for corpus summaries, ADR 0020 conformance,
+  current-output profiles, evidence parity, doc truth scanning, and
+  release-conformance gating.
+- Cross-sink identity coverage for `rule_id`, `fingerprint`,
+  `suppression_key`, and `finding_group_id`.
+- A Python reference consumer proving current report and CloudEvents examples
+  can be read while ignoring unknown future fields.
+- A shared core ordered-authority evidence builder and action-intelligence
+  catalog contract seed for later helper-authority rule wiring.
+- SARIF and CloudEvents projection maps for public-safe finding extras, plus a
+  hostile rendering corpus for control bytes, markdown-like payloads, CRLF/path
+  separators, and long fields.
+- Provider fixtures, docs, and fuzz seeds for GitHub Actions, Azure DevOps,
+  GitLab CI, and Bitbucket parser coverage gaps.
+
+### Changed
+
+- CLI package version is now `1.2.0-rc.1`.
+- CloudEvents examples now include current identity extensions for fingerprint,
+  suppression key, finding group, platform, scan run, correlation, and pipeline
+  identity.
+- Release gates now distinguish RC tag/prerelease publishing from stable
+  promotion and treat incomplete ADR 0020 conformance as RC-allowed but
+  stable-blocking.
+
+### Migration notes
+
+- Expect additive output fields and stricter current-profile validation. JSON,
+  SARIF, CloudEvents, and consumer code should continue to ignore unknown
+  metadata.
+- Parser consumers should honor `AuthorityCompleteness::Partial` and typed gap
+  kinds; visible partials are evidence boundaries, not necessarily new
+  findings.
+- `taudit-api` remains on the `0.4.x` readiness line in this RC; implementation
+  crates remain on the `3.0.x` line unless a later RC intentionally bumps them.
+- Stable `v1.2.0` promotion remains separate and requires the RC conformance,
+  proof receipts, corpus, publish metadata, and release-trust gates to pass.
+
 ## v1.1.5 — 2026-05-18 (stable patch)
 
 ### Detection delta (read first)

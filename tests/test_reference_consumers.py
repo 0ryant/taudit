@@ -63,22 +63,22 @@ def test_cloudevent_example_summarizes_completeness_and_identity_extensions() ->
             "completeness_gap_kinds": [],
             "severity": "critical",
             "category": "authority_propagation",
-            "identity": {
-                "rule_id": "authority_propagation",
-                "fingerprint": None,
-                "suppression_key": None,
-                "finding_group_id": None,
-                "pipeline_id": "urn:taudit:pipeline:sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
-                "scan_run_id": "demo-scan-run-2026-04-19-001",
-                "correlation_id": "demo-flow-2026-04-19-001",
-                "platform": None,
-            },
-            "provenance": {
-                "repo": "taudit",
-                "producer": "taudit-sink-cloudevents",
-                "version": "0.1.1",
-                "kind": "finding",
-            },
+                "identity": {
+                    "rule_id": "authority_propagation",
+                    "fingerprint": "0123456789abcdef0123456789abcdef",
+                    "suppression_key": "sk1_0123456789abcdef0123456789abcdef",
+                    "finding_group_id": "123e4567-e89b-12d3-a456-426614174000",
+                    "pipeline_id": "urn:taudit:pipeline:sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
+                    "scan_run_id": "demo-scan-run-2026-04-19-001",
+                    "correlation_id": "demo-flow-2026-04-19-001",
+                    "platform": "gha",
+                },
+                "provenance": {
+                    "repo": "taudit",
+                    "producer": "taudit-sink-cloudevents",
+                    "version": "3.0.1",
+                    "kind": "finding",
+                },
         }
     ]
 

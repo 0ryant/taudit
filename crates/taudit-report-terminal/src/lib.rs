@@ -84,13 +84,37 @@ fn needs_control_strip(s: &str) -> bool {
     s.chars().any(is_disallowed_control)
 }
 
-/// Sanitise an attacker-controllable string at the terminal render boundary
-/// and return an owned `String` ready to feed into `colored` or `format!`.
-/// Convenience wrapper used at the call sites where we need a `String` (e.g.
-/// `format!("[{label}]", label = clean(name))`).
+/// Sanitise an attacker-controllable inline field at the terminal render
+/// boundary and return an owned `String` ready to feed into `colored` or
+/// `format!`.
+///
+/// `strip_control_chars` deliberately preserves `\n` and `\t` for callers
+/// that own multi-line terminal layout. The fields passed through `clean`
+/// are scalar values interpolated into renderer-owned lines (file names, node
+/// names, messages, recommendations, metadata). Fold attacker-supplied line
+/// breaks/tabs to spaces here so CRLF in a workflow path cannot mint a forged
+/// standalone terminal line.
 #[inline]
 fn clean(s: &str) -> String {
-    strip_control_chars(s).into_owned()
+    let stripped = strip_control_chars(s);
+    if !stripped.chars().any(|c| matches!(c, '\n' | '\t')) {
+        return stripped.into_owned();
+    }
+
+    let mut out = String::with_capacity(stripped.len());
+    let mut previous_space = false;
+    for c in stripped.chars() {
+        if matches!(c, '\n' | '\t') {
+            if !previous_space {
+                out.push(' ');
+                previous_space = true;
+            }
+        } else {
+            previous_space = c == ' ';
+            out.push(c);
+        }
+    }
+    out
 }
 
 macro_rules! w {

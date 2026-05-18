@@ -14549,6 +14549,168 @@ mod tests {
     }
 
     #[test]
+    fn gha_path_mutation_alone_does_not_fire_helper_authority_rules() {
+        let mut g = AuthorityGraph::new(source("ci.yml"));
+        g.metadata
+            .insert(META_PLATFORM.into(), "github-actions".into());
+        let mut writer_meta = std::collections::HashMap::new();
+        writer_meta.insert(META_JOB_NAME.into(), "deploy".into());
+        writer_meta.insert(
+            META_SCRIPT_BODY.into(),
+            "mkdir -p /tmp/fake\necho /tmp/fake >> $GITHUB_PATH".into(),
+        );
+        g.add_node_with_metadata(
+            NodeKind::Step,
+            "path setup only",
+            TrustZone::FirstParty,
+            writer_meta,
+        );
+
+        type RuleFn = fn(&AuthorityGraph) -> Vec<Finding>;
+        let helper_authority_rules: &[(&str, RuleFn)] = &[
+            (
+                "gha_helper_path_sensitive_argv",
+                gha_helper_path_sensitive_argv,
+            ),
+            (
+                "gha_helper_path_sensitive_stdin",
+                gha_helper_path_sensitive_stdin,
+            ),
+            (
+                "gha_helper_path_sensitive_env",
+                gha_helper_path_sensitive_env,
+            ),
+            (
+                "gha_action_minted_secret_to_helper",
+                gha_action_minted_secret_to_helper,
+            ),
+            (
+                "gha_helper_untrusted_path_resolution",
+                gha_helper_untrusted_path_resolution,
+            ),
+            (
+                "later_secret_materialized_after_path_mutation",
+                later_secret_materialized_after_path_mutation,
+            ),
+            (
+                "gha_setup_node_cache_helper_path_handoff",
+                gha_setup_node_cache_helper_path_handoff,
+            ),
+            (
+                "gha_setup_python_cache_helper_path_handoff",
+                gha_setup_python_cache_helper_path_handoff,
+            ),
+            (
+                "gha_setup_python_pip_install_authority_env",
+                gha_setup_python_pip_install_authority_env,
+            ),
+            (
+                "gha_setup_go_cache_helper_path_handoff",
+                gha_setup_go_cache_helper_path_handoff,
+            ),
+            (
+                "gha_docker_setup_qemu_privileged_docker_helper",
+                gha_docker_setup_qemu_privileged_docker_helper,
+            ),
+            (
+                "gha_tool_installer_then_shell_helper_authority",
+                gha_tool_installer_then_shell_helper_authority,
+            ),
+            (
+                "gha_workflow_shell_authority_concentration",
+                gha_workflow_shell_authority_concentration,
+            ),
+            (
+                "gha_action_token_env_before_bare_download_helper",
+                gha_action_token_env_before_bare_download_helper,
+            ),
+            (
+                "gha_composite_bare_helper_after_path_install_with_secret_env",
+                gha_composite_bare_helper_after_path_install_with_secret_env,
+            ),
+            (
+                "gha_pulumi_path_resolved_cli_with_authority",
+                gha_pulumi_path_resolved_cli_with_authority,
+            ),
+            (
+                "gha_pypi_publish_oidc_after_path_mutation",
+                gha_pypi_publish_oidc_after_path_mutation,
+            ),
+            (
+                "gha_changesets_publish_command_with_authority",
+                gha_changesets_publish_command_with_authority,
+            ),
+            (
+                "gha_rubygems_release_git_token_and_oidc_helper",
+                gha_rubygems_release_git_token_and_oidc_helper,
+            ),
+            (
+                "gha_composite_entrypoint_path_shadow_with_secret_env",
+                gha_composite_entrypoint_path_shadow_with_secret_env,
+            ),
+            (
+                "gha_docker_buildx_authority_path_handoff",
+                gha_docker_buildx_authority_path_handoff,
+            ),
+            (
+                "gha_google_deploy_gcloud_credential_path",
+                gha_google_deploy_gcloud_credential_path,
+            ),
+            (
+                "gha_datadog_test_visibility_installer_authority",
+                gha_datadog_test_visibility_installer_authority,
+            ),
+            (
+                "gha_kubernetes_helper_kubeconfig_authority",
+                gha_kubernetes_helper_kubeconfig_authority,
+            ),
+            (
+                "gha_azure_companion_helper_authority",
+                gha_azure_companion_helper_authority,
+            ),
+            (
+                "gha_create_pr_git_token_path_handoff",
+                gha_create_pr_git_token_path_handoff,
+            ),
+            (
+                "gha_import_gpg_private_key_helper_path",
+                gha_import_gpg_private_key_helper_path,
+            ),
+            (
+                "gha_ssh_agent_private_key_to_path_helper",
+                gha_ssh_agent_private_key_to_path_helper,
+            ),
+            (
+                "gha_macos_codesign_cert_security_path",
+                gha_macos_codesign_cert_security_path,
+            ),
+            (
+                "gha_pages_deploy_token_url_to_git_helper",
+                gha_pages_deploy_token_url_to_git_helper,
+            ),
+            (
+                "gha_env_credential_helper_config_redirect_before_authority",
+                gha_env_credential_helper_config_redirect_before_authority,
+            ),
+            (
+                "gha_env_node_options_code_injection_before_node_authority",
+                gha_env_node_options_code_injection_before_node_authority,
+            ),
+            (
+                "gha_env_dyld_or_ld_library_path_before_credential_helper",
+                gha_env_dyld_or_ld_library_path_before_credential_helper,
+            ),
+        ];
+
+        for (rule_id, rule) in helper_authority_rules {
+            assert!(
+                rule(&g).is_empty(),
+                "{rule_id} must not fire on a PATH mutation without a later helper and authority handoff"
+            );
+        }
+    }
+
+    #[test]
     fn later_secret_materialized_after_path_mutation_fires_once_for_helper_edge() {
         let g = gha_helper_graph("azure/login", None);
         let findings = later_secret_materialized_after_path_mutation(&g);

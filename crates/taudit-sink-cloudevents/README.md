@@ -10,12 +10,21 @@ Each emitted line is a CloudEvents 1.0 event with taudit extension attributes, i
 
 - `tauditfindingfingerprint`
 - `tauditsuppressionkey`
+- `tauditfindinggroup`
 - `tauditruleid`
+- `tauditplatform`
 - `tauditcompleteness`
 - `tauditpipelineid`
 - `tauditscanrunid`
 - `correlationid`
 - provenance fields for repository, producer, and version
+
+The `data` payload is the public taudit finding projection. Public extras such as
+`time_to_fix`, `compensating_controls`, suppression metadata, confidence scope,
+runtime preconditions, authority kinds, attacker surface kinds, template
+resolution strength, and CVE relationship are preserved when present.
+`fingerprint_anchor` is not projected; its effect is already captured in
+`tauditfindingfingerprint` and `tauditsuppressionkey`.
 
 ## Install
 
