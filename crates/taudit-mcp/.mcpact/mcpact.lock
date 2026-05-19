@@ -1,0 +1,201 @@
+schema_version = "mcpact.lock.v1"
+package_name = "taudit-mcp"
+package_version = "0.0.1"
+generator = "mcpact-generate 0.1.0"
+trust = "Reviewed"
+source_manifest_sha256 = "e9ae12c6ebf936b1f73911fc2596875ae61325278d6f5294b27c4d84f499d0b4"
+
+[[generated_files]]
+path = ".mcpact/hosts/claude.json"
+bytes = 131
+sha256 = "e5fb3b52451155bc92b75602a8a82ee01ad4a40f3cd5e655ba2e2519953c3c35"
+
+[[generated_files]]
+path = ".mcpact/hosts/codex.toml"
+bytes = 192
+sha256 = "8a2534d8cd0a096bda92a1bbddce885792c7815a496f7590176bc0c24902856f"
+
+[[generated_files]]
+path = ".mcpact/hosts/cursor.json"
+bytes = 131
+sha256 = "e5fb3b52451155bc92b75602a8a82ee01ad4a40f3cd5e655ba2e2519953c3c35"
+
+[[generated_files]]
+path = ".mcpact/source.mcpact.toml"
+bytes = 25482
+sha256 = "e9ae12c6ebf936b1f73911fc2596875ae61325278d6f5294b27c4d84f499d0b4"
+
+[[generated_files]]
+path = ".mcpact/tools/taudit_baseline_init.json"
+bytes = 2053
+sha256 = "443c46e943ee5319272f86b4c62eb09ef79a4fbb51b57fe0838d2d6051fefdb4"
+
+[[generated_files]]
+path = ".mcpact/tools/taudit_baseline_list.json"
+bytes = 714
+sha256 = "912726e96cbbc250e6e6b444d6d421ce10e6e544fde816556efc9022a8ca046a"
+
+[[generated_files]]
+path = ".mcpact/tools/taudit_baseline_promote.json"
+bytes = 2630
+sha256 = "55b2aa69d68ad045121357761a2cbe76b4ceebf68460d45db56a128e777305f4"
+
+[[generated_files]]
+path = ".mcpact/tools/taudit_baseline_rollback.json"
+bytes = 1788
+sha256 = "0377812b2494a66920a939d580aae26bdee07401bae9e014e997ce8923f2308e"
+
+[[generated_files]]
+path = ".mcpact/tools/taudit_diff.json"
+bytes = 1578
+sha256 = "1c4af7f4cead87fc6f899fc9ef4d19c6dce518220f909c4f1cd388ab8b98a3c9"
+
+[[generated_files]]
+path = ".mcpact/tools/taudit_emit_spec.json"
+bytes = 2163
+sha256 = "ed1fc9e7f333d4383e56c4077b59434078595564cdcebef265907de567b734f5"
+
+[[generated_files]]
+path = ".mcpact/tools/taudit_explain.json"
+bytes = 701
+sha256 = "fd73c7677a0e893f4e69b154bc7c5091f334bedddad8523d6b795a65543c8d14"
+
+[[generated_files]]
+path = ".mcpact/tools/taudit_graph.json"
+bytes = 2268
+sha256 = "68db05014065e70534d282216ccc73fa43f033982da77c052dc0f937332ac508"
+
+[[generated_files]]
+path = ".mcpact/tools/taudit_invariants_explain.json"
+bytes = 760
+sha256 = "2fa6955be76ac92c5474e942246ee1ba57300e99b662c2b456a9fd3a19204acb"
+
+[[generated_files]]
+path = ".mcpact/tools/taudit_invariants_list.json"
+bytes = 704
+sha256 = "a6007a32253dbb02ce8e9638cd834b2695ae972128cf7c5d80a5658b5ee8bc92"
+
+[[generated_files]]
+path = ".mcpact/tools/taudit_map.json"
+bytes = 1689
+sha256 = "0d3c981cbfd12182b9dbf1e6eccadd7dc6595d38b8d2cc92b97989aeac3fa88c"
+
+[[generated_files]]
+path = ".mcpact/tools/taudit_remediate_apply.json"
+bytes = 1928
+sha256 = "5d5d7f1b938961bba7e765de3d1f02b6a3de8ff35c6bc08da16cc163317693d9"
+
+[[generated_files]]
+path = ".mcpact/tools/taudit_remediate_suggest.json"
+bytes = 892
+sha256 = "f5153e4e5c69ebfd729ff10787bcb813c6ac9f7ed8bc17da2bde6f6a78bd4700"
+
+[[generated_files]]
+path = ".mcpact/tools/taudit_scan.json"
+bytes = 2281
+sha256 = "c863f0dc0e1345bec1caba3fa010f7b18a556f587b775f6249adbf6e69996bd5"
+
+[[generated_files]]
+path = ".mcpact/tools/taudit_verify.json"
+bytes = 2254
+sha256 = "f2cf778ebf7b8eaeaee0824e6886eb4c578bc08a2ff0f5a61f8662065f80cb1a"
+
+[[generated_files]]
+path = "Cargo.toml"
+bytes = 865
+sha256 = "26d58eae4c91311bf4fcce8a5ad8a7b8f08cb06dba21c9f0e0fc75b85cf4a542"
+
+[[generated_files]]
+path = "README.md"
+bytes = 1885
+sha256 = "28f17b971786b87ba55d50ebe6c772d2be3ca5ee3132693af6cc80e937e90449"
+
+[[generated_files]]
+path = "src/main.rs"
+bytes = 1407
+sha256 = "543971710f55038fb3efd2f4e4098d70a035a3adce76cc08d9af26e38aac7be2"
+
+[[generated_files]]
+path = "src/server_config.rs"
+bytes = 3361
+sha256 = "d4861f3ca26896d4041665a2fea2d20e28662cc3bd506a1fbc024dd8ded5f5bc"
+
+[[generated_files]]
+path = "src/tools/mod.rs"
+bytes = 417
+sha256 = "f78007a62cf37bd904ebf3e07964fe76260e0189700d255839d37855be37faa4"
+
+[[generated_files]]
+path = "src/tools/taudit_baseline_init.rs"
+bytes = 6632
+sha256 = "8ad07d47a1d6db3dd24a900cfdd05d2477485a37b8e427209543016bdfcd79dd"
+
+[[generated_files]]
+path = "src/tools/taudit_baseline_list.rs"
+bytes = 5465
+sha256 = "d50f01a8ddcee4520ce8bc62ed7a68be71f648b8e94cf647056cf62dede236a5"
+
+[[generated_files]]
+path = "src/tools/taudit_baseline_promote.rs"
+bytes = 6708
+sha256 = "5bfbcc292034be071f89d4a332b156383da1bd71a1c6d40d98a1fe5f01905fe0"
+
+[[generated_files]]
+path = "src/tools/taudit_baseline_rollback.rs"
+bytes = 6370
+sha256 = "1692b2b83eb82aa18bdd74aa8825b3dde6c315406645947aaaca334075cd91b4"
+
+[[generated_files]]
+path = "src/tools/taudit_diff.rs"
+bytes = 5922
+sha256 = "d948861dcdffc6799326c545e23766f9b2fb8752f31dd729dd12217ecc1123a1"
+
+[[generated_files]]
+path = "src/tools/taudit_emit_spec.rs"
+bytes = 6504
+sha256 = "05dcac18e6dceef526148db40d0ad5a4072d66344091bca80334d03e4c5a0440"
+
+[[generated_files]]
+path = "src/tools/taudit_explain.rs"
+bytes = 5358
+sha256 = "0a62e16dffae01a2d765a8d484514e85321b73c32c0365081addb952a8de6399"
+
+[[generated_files]]
+path = "src/tools/taudit_graph.rs"
+bytes = 6440
+sha256 = "76e40f697f729a1d641b6bf8bb54700c423cc4ec9078b6f00086231e10b52200"
+
+[[generated_files]]
+path = "src/tools/taudit_invariants_explain.rs"
+bytes = 5507
+sha256 = "e6c611692efdfbd32c1c6f00fdbb28c028dc82c709c6bf38cc0ca1262382d7fc"
+
+[[generated_files]]
+path = "src/tools/taudit_invariants_list.rs"
+bytes = 5539
+sha256 = "cef7624fbfb171d52e85226a3dae08cd3d6fededaaf3b859354c56c261b8fb03"
+
+[[generated_files]]
+path = "src/tools/taudit_map.rs"
+bytes = 5994
+sha256 = "08c413c0bf8a59712cfe96046383b606983011880454b826b2d2e874ad5d8c7f"
+
+[[generated_files]]
+path = "src/tools/taudit_remediate_apply.rs"
+bytes = 6359
+sha256 = "40c4a4cebeff6df950bd5ea09f5e639043d5f0a9cef1247b49f61f30878a6f6f"
+
+[[generated_files]]
+path = "src/tools/taudit_remediate_suggest.rs"
+bytes = 5554
+sha256 = "42531df1fddf1dfa7b08365a10861d320a55a7b4bd609c3030181841b2f13dcd"
+
+[[generated_files]]
+path = "src/tools/taudit_scan.rs"
+bytes = 6581
+sha256 = "84949ca83c0828e5ff586b5eef5cf570212ff375c5ebc535f6188e1751ed8907"
+
+[[generated_files]]
+path = "src/tools/taudit_verify.rs"
+bytes = 6480
+sha256 = "44383a8e116273d4f0444d434d8130c7b49bad5a03155df6a162a2f605273bb9"
