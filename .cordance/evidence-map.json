@@ -1,0 +1,113 @@
+{
+  "schema": "cordance-evidence-map.v1",
+  "pack_id": "26d5cf9a4bbfaf7cd6ba8883bb9176ad0d719c10e87a2411c626d625a6320de3",
+  "rules": [
+    {
+      "rule_id": "R-contracts-1",
+      "text": "Schema contracts/schemas/authority-invariant-v1.schema.json has no example fixture.",
+      "sources": [
+        {
+          "path": "doctrine/principles/event-contracts.md",
+          "kind": "doctrine"
+        }
+      ]
+    },
+    {
+      "rule_id": "R-contracts-1",
+      "text": "Schema contracts/schemas/ecosystem-evidence-envelope-v0.schema.json has no example fixture.",
+      "sources": [
+        {
+          "path": "doctrine/principles/event-contracts.md",
+          "kind": "doctrine"
+        }
+      ]
+    },
+    {
+      "rule_id": "R-contracts-1",
+      "text": "Schema contracts/schemas/taudit-cloudevent-finding-v1.schema.json has no example fixture.",
+      "sources": [
+        {
+          "path": "doctrine/principles/event-contracts.md",
+          "kind": "doctrine"
+        }
+      ]
+    },
+    {
+      "rule_id": "R-observe-1",
+      "text": "Rust project: consider adding the tracing crate for structured logs.",
+      "sources": [
+        {
+          "path": "doctrine/principles/observability.md",
+          "kind": "doctrine"
+        }
+      ]
+    },
+    {
+      "rule_id": "R-naming-1",
+      "text": "Workspace has nested crate layout — verify crate names match directory names.",
+      "sources": [
+        {
+          "path": "doctrine/principles/naming-and-repo-layout.md",
+          "kind": "doctrine"
+        }
+      ]
+    },
+    {
+      "rule_id": "R-schema-1",
+      "text": "Schema file contracts/schemas/authority-invariant-v1.schema.json does not use versioned naming (e.g., foo.v1.schema.json).",
+      "sources": [
+        {
+          "path": "doctrine/principles/event-contracts.md",
+          "kind": "doctrine"
+        }
+      ]
+    },
+    {
+      "rule_id": "R-schema-1",
+      "text": "Schema file contracts/schemas/ecosystem-evidence-envelope-v0.schema.json does not use versioned naming (e.g., foo.v1.schema.json).",
+      "sources": [
+        {
+          "path": "doctrine/principles/event-contracts.md",
+          "kind": "doctrine"
+        }
+      ]
+    },
+    {
+      "rule_id": "R-schema-1",
+      "text": "Schema file contracts/schemas/taudit-cloudevent-finding-v1.schema.json does not use versioned naming (e.g., foo.v1.schema.json).",
+      "sources": [
+        {
+          "path": "doctrine/principles/event-contracts.md",
+          "kind": "doctrine"
+        }
+      ]
+    },
+    {
+      "rule_id": "R-schema-1",
+      "text": "Schema file contracts/schemas/taudit-report.schema.json does not use versioned naming (e.g., foo.v1.schema.json).",
+      "sources": [
+        {
+          "path": "doctrine/principles/event-contracts.md",
+          "kind": "doctrine"
+        }
+      ]
+    },
+    {
+      "rule_id": "doctrine-pin:0ryant/engineering-doctrine",
+      "text": "Doctrine pin: 0ryant/engineering-doctrine @ d48ca70a48dd731d44592f1c456e828c7f9c58cb",
+      "sources": [
+        {
+          "path": "../engineering-doctrine/doctrine/SEMANTIC_INDEX.md",
+          "kind": "doctrine"
+        }
+      ]
+    }
+  ],
+  "outputs": [
+    {
+      "path": "pai-axiom-project-harness-target.json",
+      "sha256": "1ab9e5357b70a475586efcd160be14c28ea0c44bd8e7eabe051f9dcd6ee6c853",
+      "source_ids": []
+    }
+  ]
+}

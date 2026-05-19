@@ -1,0 +1,2561 @@
+{
+  "schema": "cordance-cortex-receipt-v1-candidate",
+  "version": 1,
+  "lifecycle": "candidate_only",
+  "target_cortex_surface": "cortex context-pack admit-cordance",
+  "authority_boundary": {
+    "candidate_only": true,
+    "cortex_truth_allowed": false,
+    "cortex_admission_allowed": false,
+    "durable_promotion_allowed": false,
+    "memory_promotion_allowed": false,
+    "doctrine_promotion_allowed": false,
+    "trusted_history_allowed": false,
+    "release_acceptance_allowed": false,
+    "runtime_authority_allowed": false
+  },
+  "cordance_execution_receipt_v1": {
+    "receipt_id": "cordance-candidate-2026-05-17",
+    "generated_at": "2026-05-17T17:30:54.497878700Z",
+    "execution_state": "candidate_only",
+    "execution_trust_state": "partial_structural_evidence",
+    "runtime_integrity_state": "repo_only_no_runtime_write",
+    "operator_approval_state": "not_bound_for_cortex_promotion",
+    "action_id": "cordance-pack-taudit",
+    "source_context": {
+      "context_id": "c24f071e00378b144f8902217850f6adf77d82c74e5d49432fca1570458f4338",
+      "truth_ceiling": "candidate_evidence_only",
+      "quarantine_state": "not_cleared_by_boundary_crossing"
+    },
+    "execution_trust": {
+      "repo_trust_result": "local_candidate_only",
+      "policy_decision": "deny_authority_grant",
+      "tool_provenance_state": "not_field_level_bound_for_cortex",
+      "token_scope_state": "not_field_level_bound_for_cortex"
+    },
+    "runtime_integrity": {
+      "runtime_write_attempted": false,
+      "runtime_write_authorized": false,
+      "runtime_root_projection": "not_requested"
+    },
+    "operator_approval": {
+      "operator_approval_required_for_promotion": true,
+      "operator_approval_ref": "not_supplied_for_cortex_promotion",
+      "operator_approval_hash": "not_supplied_for_cortex_promotion"
+    },
+    "allowed_claim_language": [
+      "claim_ceiling=candidate",
+      "cordance candidate receipt for cortex context-pack admit-cordance",
+      "candidate-only evidence",
+      "no durable promotion",
+      "no release acceptance"
+    ],
+    "forbidden_uses": [
+      "claim Cortex truth",
+      "claim Cortex admission",
+      "promote Cortex memory",
+      "promote Cortex doctrine",
+      "create trusted history",
+      "claim release acceptance",
+      "authorize runtime writes",
+      "claim P6 or P9 closure",
+      "accept or promote an ADR"
+    ],
+    "source_anchors": [
+      {
+        "source_id": "unclassified:.clippy.toml",
+        "path": ".clippy.toml",
+        "sha256": "9aaf69ab3974962641091b5201f23789c09d27dc7cb9fd43c9c0b72b7050ba3b"
+      },
+      {
+        "source_id": "project_agent_file:.cursor/rules/commit-and-push.mdc",
+        "path": ".cursor/rules/commit-and-push.mdc",
+        "sha256": "e1df4a8ee479b836a16ffa25e853e3fdf6ce4b49f1d0e73722838a0470f2aa12"
+      },
+      {
+        "source_id": "project_agent_file:.cursor/rules/gh-tsafe.mdc",
+        "path": ".cursor/rules/gh-tsafe.mdc",
+        "sha256": "5494c508c4040caf1dd761a8630dc74fc6c236247e1194c68f23609bfc756393"
+      },
+      {
+        "source_id": "unclassified:.cursorignore",
+        "path": ".cursorignore",
+        "sha256": "92d115bd351977ff0965573d8cfb046e2df32635f8b8016086a5177e10dc8ca2"
+      },
+      {
+        "source_id": "unclassified:.github/CODEOWNERS",
+        "path": ".github/CODEOWNERS",
+        "sha256": "4a0daa803bf49ac602bb3293f5c3a6488e95be3f3fb3d5ffcaa179a993ca8133"
+      },
+      {
+        "source_id": "unclassified:.github/ISSUE_TEMPLATE/bug_report.md",
+        "path": ".github/ISSUE_TEMPLATE/bug_report.md",
+        "sha256": "0090394dbd2d8a113a53f91ec87b2dd58819d728ad4c1c18a1e30027a5a32a0b"
+      },
+      {
+        "source_id": "unclassified:.github/ISSUE_TEMPLATE/config.yml",
+        "path": ".github/ISSUE_TEMPLATE/config.yml",
+        "sha256": "0f48ef6910438eaa0596164d1eaba8358d0471603968a333355777c09e7798e1"
+      },
+      {
+        "source_id": "unclassified:.github/ISSUE_TEMPLATE/feature_request.md",
+        "path": ".github/ISSUE_TEMPLATE/feature_request.md",
+        "sha256": "e28cb33765df4a8b7386bcffae8f1531cfcb20c1ee869a0888fb18372b5ca90d"
+      },
+      {
+        "source_id": "unclassified:.github/actions/taudit-scan/action.yml",
+        "path": ".github/actions/taudit-scan/action.yml",
+        "sha256": "b2fb57e3ff483ec8f7cd6e5178be23b8d00abb647898a6fcbabc08d5a1a1cf31"
+      },
+      {
+        "source_id": "unclassified:.github/dependabot.yml",
+        "path": ".github/dependabot.yml",
+        "sha256": "7dadffb8a512945ddeb954a4a0ad69613a4ca95614d50854644d08b2d3f2064f"
+      },
+      {
+        "source_id": "project_release_gate:.github/workflows/finops.yml",
+        "path": ".github/workflows/finops.yml",
+        "sha256": "e1adb5559f5c1b429cc0e02f4d1b6ee789bc83bccee4a4f489ae709d2e51c42d"
+      },
+      {
+        "source_id": "project_release_gate:.github/workflows/governance.yml",
+        "path": ".github/workflows/governance.yml",
+        "sha256": "72618fefa06b87e2d7cac26921ddd7d753ea048287242de30dd19ec79f1a51a6"
+      },
+      {
+        "source_id": "project_release_gate:.github/workflows/mutation-coverage.yml",
+        "path": ".github/workflows/mutation-coverage.yml",
+        "sha256": "13bc75b6af17370ab3679384fe39930bade3601cf0440244c3f053545258e74c"
+      },
+      {
+        "source_id": "project_release_gate:.github/workflows/publish-cellos-ghcr.yml",
+        "path": ".github/workflows/publish-cellos-ghcr.yml",
+        "sha256": "ca89bf543592ad88fae7cc8d5804b1fa9b9ce2fc935dc958ac7e31aa5baccb37"
+      },
+      {
+        "source_id": "project_release_gate:.github/workflows/quality.yml",
+        "path": ".github/workflows/quality.yml",
+        "sha256": "5b7f12e15a5227a472bc9353e655169c958d2ec67a265d1f94c3af2ea261c405"
+      },
+      {
+        "source_id": "project_release_gate:.github/workflows/release-plz.yml",
+        "path": ".github/workflows/release-plz.yml",
+        "sha256": "2469360d76373443ccc2d64a4f076dea393fe401d67c95e192d2a54c0eb3ee6a"
+      },
+      {
+        "source_id": "project_release_gate:.github/workflows/release.yml",
+        "path": ".github/workflows/release.yml",
+        "sha256": "e0b2961af82b5dba970231fc9bf4d365f3a2303c9b03c96d9ca8d178a38b73d9"
+      },
+      {
+        "source_id": "project_release_gate:.github/workflows/scheduled-fuzz.yml",
+        "path": ".github/workflows/scheduled-fuzz.yml",
+        "sha256": "efc763f01e21fe9571e65541bc8077ee2523d9c25964f5221422bfb11fe5d61f"
+      },
+      {
+        "source_id": "project_release_gate:.github/workflows/security.yml",
+        "path": ".github/workflows/security.yml",
+        "sha256": "58f97ba555fd934a08a951ed4f088e6b4990bd668834f6dafad839f98d63fc6a"
+      },
+      {
+        "source_id": "project_release_gate:.github/workflows/stack-integration.yml",
+        "path": ".github/workflows/stack-integration.yml",
+        "sha256": "b2824b1bf703c894f7cdb4fc668a15a81ed0627d3fdd47fc2f796c0eacc1cc0e"
+      },
+      {
+        "source_id": "project_release_gate:.github/workflows/taudit-pr-diff.yml",
+        "path": ".github/workflows/taudit-pr-diff.yml",
+        "sha256": "526603eb18f87860270ba658f0263bbca86de0025a17116485bc74accbfe2317"
+      },
+      {
+        "source_id": "unclassified:.gitignore",
+        "path": ".gitignore",
+        "sha256": "2beefc725e58bd1b5f00fc70960533b47d939879ecfeadd480443ffbd44e61ca"
+      },
+      {
+        "source_id": "unclassified:.gitlab-ci.yml",
+        "path": ".gitlab-ci.yml",
+        "sha256": "c615a706c60a7f2532aa698a9665e40676fbc39b61840d8d01e7f3e60fd23503"
+      },
+      {
+        "source_id": "unclassified:.gitleaks.toml",
+        "path": ".gitleaks.toml",
+        "sha256": "fe9ac4e78266e7b16caa3de39a0a43e1bef1a990cc5be4321ca3eef14aaad833"
+      },
+      {
+        "source_id": "unclassified:.yamllint",
+        "path": ".yamllint",
+        "sha256": "355f6d26aa50de057e6cc128c127ee571eb299623de569fb32f7e2014500886f"
+      },
+      {
+        "source_id": "unclassified:.zizmor.yml",
+        "path": ".zizmor.yml",
+        "sha256": "1d060daccf70089e0276abc00cc67c63e55ad790642048ed1fbbdcfb38d3765e"
+      },
+      {
+        "source_id": "project_readme:CHANGELOG.md",
+        "path": "CHANGELOG.md",
+        "sha256": "9505ff4d6bf0dba077fe696e355394cf50423d0911bca0f53e224740d58f5182"
+      },
+      {
+        "source_id": "project_readme:CONTRIBUTING.md",
+        "path": "CONTRIBUTING.md",
+        "sha256": "322349b2532a22ccd68f2f7d844e668776a69971a58cff8c86dbd7a3c4fdd884"
+      },
+      {
+        "source_id": "unclassified:Cargo.lock",
+        "path": "Cargo.lock",
+        "sha256": "d44f85f864128c851517e37387509f406f4a813efca3b4303e69004d7fe81d9a"
+      },
+      {
+        "source_id": "unclassified:Cargo.toml",
+        "path": "Cargo.toml",
+        "sha256": "3cead51bd776046d749da3d67287dca8c28265b97375e13260f5a82bb0520cc9"
+      },
+      {
+        "source_id": "unclassified:LICENSE",
+        "path": "LICENSE",
+        "sha256": "e45e59fa68befb37c5b99f8f56a907031bce745448569db847ddec2b7011658b"
+      },
+      {
+        "source_id": "project_readme:README.md",
+        "path": "README.md",
+        "sha256": "90d739919d52d967c63ad463bffe7fdb1b9bcc981fc65e3888ea97d20c6d9174"
+      },
+      {
+        "source_id": "project_readme:SECURITY.md",
+        "path": "SECURITY.md",
+        "sha256": "803bb2516ac214a1fc5dbf6d7318bc7d9b79989218d09f51768f4cc2a9072a75"
+      },
+      {
+        "source_id": "unclassified:SUPPORT.md",
+        "path": "SUPPORT.md",
+        "sha256": "4c17f9736e9e6b319eb4b154e21e1fd757df009bdd93bd4bace6e8e7e1e22c8d"
+      },
+      {
+        "source_id": "unclassified:THREAT_MODEL.md",
+        "path": "THREAT_MODEL.md",
+        "sha256": "e02f30cd6f738cf841ad3994443c4ebc37018c68dc39bbd42535d4020d96d526"
+      },
+      {
+        "source_id": "unclassified:TODOS.md",
+        "path": "TODOS.md",
+        "sha256": "351688062d59f0ad0792d1e9e2a97a0bffb0e3c6cbf83e3968e11da3a48b9ba1"
+      },
+      {
+        "source_id": "unclassified:USERGUIDE.md",
+        "path": "USERGUIDE.md",
+        "sha256": "e2548e8eb4763d390bfb8abdb8d3341e03c8e603c312a719d2f1419b387b9794"
+      },
+      {
+        "source_id": "unclassified:azure-pipelines.stack-integration.yml",
+        "path": "azure-pipelines.stack-integration.yml",
+        "sha256": "20e6ff8153e99bb3389cbfdf15685f45372c1f3931b5461d2a14b605f58eae4c"
+      },
+      {
+        "source_id": "unclassified:azure-pipelines.yml",
+        "path": "azure-pipelines.yml",
+        "sha256": "e7225d368d5a31d07f274acd1fc15b6b46a77dc2dd13cb743cb6b9bb3a45b3d2"
+      },
+      {
+        "source_id": "unclassified:bitbucket-pipelines.yml",
+        "path": "bitbucket-pipelines.yml",
+        "sha256": "89c5f27c50b76d7f0cf338c097d950c0ade9bd49f5cdf6f685967ae6f38cb39b"
+      },
+      {
+        "source_id": "project_contract:contracts/examples/clean-report.json",
+        "path": "contracts/examples/clean-report.json",
+        "sha256": "6059359881cac215f78485416145d0c8187c29426a3265d17c6afa4402fa16ff"
+      },
+      {
+        "source_id": "project_contract:contracts/examples/ecosystem-evidence-envelope.example.json",
+        "path": "contracts/examples/ecosystem-evidence-envelope.example.json",
+        "sha256": "fac0ebd47c1209134eeb8fdd22d28732f8c9dcd93e1639f195140724c48c2a6e"
+      },
+      {
+        "source_id": "project_contract:contracts/examples/over-privileged-finding.cloudevent.json",
+        "path": "contracts/examples/over-privileged-finding.cloudevent.json",
+        "sha256": "ea8835cace8683cf1fa504b69c016222631a7cee938f09b4a0abb7548e862bae"
+      },
+      {
+        "source_id": "project_contract:contracts/examples/over-privileged-report.json",
+        "path": "contracts/examples/over-privileged-report.json",
+        "sha256": "a3eada365574f05730a9027379b227ec5db846bed99d652099028d7415ddbc94"
+      },
+      {
+        "source_id": "project_schema:contracts/schemas/authority-invariant-v1.schema.json",
+        "path": "contracts/schemas/authority-invariant-v1.schema.json",
+        "sha256": "b5e936777ff92951eeef5811bce8559541286b059212ea387c014681ab2763d3"
+      },
+      {
+        "source_id": "project_schema:contracts/schemas/ecosystem-evidence-envelope-v0.schema.json",
+        "path": "contracts/schemas/ecosystem-evidence-envelope-v0.schema.json",
+        "sha256": "20d444ce502312622d147ca86220444396185ef0a9d680da49e531197fe2abc0"
+      },
+      {
+        "source_id": "project_schema:contracts/schemas/taudit-cloudevent-finding-v1.schema.json",
+        "path": "contracts/schemas/taudit-cloudevent-finding-v1.schema.json",
+        "sha256": "836867e17251ac256ee2c1b9ce6b72ef129c5c307645feed6467dff03b552b09"
+      },
+      {
+        "source_id": "project_schema:contracts/schemas/taudit-report.schema.json",
+        "path": "contracts/schemas/taudit-report.schema.json",
+        "sha256": "e0e0b070872c7872859d4a2656ac8af7848f6d7946f5749b36e7ab305f13fa1b"
+      },
+      {
+        "source_id": "project_source_code:crates/taudit-api/Cargo.toml",
+        "path": "crates/taudit-api/Cargo.toml",
+        "sha256": "47f819d1ef6fe4457e4dfe9ca8107ea5e18d5bd969501dfa88f9ddec99699b6c"
+      },
+      {
+        "source_id": "project_source_code:crates/taudit-api/src/lib.rs",
+        "path": "crates/taudit-api/src/lib.rs",
+        "sha256": "097d46ee61878cf16a89e3845ba22da308d0a538ce92691ff8302c530aedacd0"
+      },
+      {
+        "source_id": "project_source_code:crates/taudit-cli/Cargo.toml",
+        "path": "crates/taudit-cli/Cargo.toml",
+        "sha256": "417f33ee40d5b704e84a3c8ba217dce5db1fb9b0ba74ac766f6bbe593c4cb498"
+      },
+      {
+        "source_id": "project_source_code:crates/taudit-cli/src/error_hints.rs",
+        "path": "crates/taudit-cli/src/error_hints.rs",
+        "sha256": "c4bf248f30cf008d13c756c71818818f9ef42a890eb472ca492ab71577083233"
+      },
+      {
+        "source_id": "project_source_code:crates/taudit-cli/src/main.rs",
+        "path": "crates/taudit-cli/src/main.rs",
+        "sha256": "6b8351014c3be9b22d557b424dc4c905f6879a722776e52981ccf0d5a188de78"
+      },
+      {
+        "source_id": "project_source_code:crates/taudit-cli/src/remediate.rs",
+        "path": "crates/taudit-cli/src/remediate.rs",
+        "sha256": "a8fab9f136e8426cd3636a1639b8cc24c9cf78b59eb1e5cbfa09a1c6f60d8f92"
+      },
+      {
+        "source_id": "project_source_code:crates/taudit-cli/src/stdio_epipe.rs",
+        "path": "crates/taudit-cli/src/stdio_epipe.rs",
+        "sha256": "1028b4cfd5bb95ae0dfdbe3b38b82215b4fafb047b913855ef6ea2a9f3a1101f"
+      },
+      {
+        "source_id": "project_source_code:crates/taudit-cli/static/after-long-help.txt",
+        "path": "crates/taudit-cli/static/after-long-help.txt",
+        "sha256": "354a0685d954d0d3272aac9106b567c760c224d240481a8a7176f507855f90eb"
+      },
+      {
+        "source_id": "project_test:crates/taudit-cli/tests/broken_pipe.rs",
+        "path": "crates/taudit-cli/tests/broken_pipe.rs",
+        "sha256": "4d87cfec627a3800900ec06e970775287fc6d139675fdc6c9e3721363b4a38e3"
+      },
+      {
+        "source_id": "project_test:crates/taudit-cli/tests/cli_contract.rs",
+        "path": "crates/taudit-cli/tests/cli_contract.rs",
+        "sha256": "ca82208804ac24cb1340208fa1ec21550de1ef1f47247f94219918522427b556"
+      },
+      {
+        "source_id": "project_test:crates/taudit-cli/tests/common/mod.rs",
+        "path": "crates/taudit-cli/tests/common/mod.rs",
+        "sha256": "d6a36ea5523704e4b91232e4618de33c5bc3f650f65672f2bbe101cc31ee3481"
+      },
+      {
+        "source_id": "project_test:crates/taudit-cli/tests/corpus_cli_suite.rs",
+        "path": "crates/taudit-cli/tests/corpus_cli_suite.rs",
+        "sha256": "5f698c9313b57c999c66212823a7d700f8246577ee47b55e9e282951cd7bfed7"
+      },
+      {
+        "source_id": "project_test:crates/taudit-cli/tests/cross_sink_contract.rs",
+        "path": "crates/taudit-cli/tests/cross_sink_contract.rs",
+        "sha256": "d432720a239f04f0f6d19a7a3e23dcdae1666d20a7b35939d558e53b1d0f8557"
+      },
+      {
+        "source_id": "project_test:crates/taudit-cli/tests/exploit_path_graph.rs",
+        "path": "crates/taudit-cli/tests/exploit_path_graph.rs",
+        "sha256": "bbf772ebfd909c8c5968a2440c23c8a020a856f70d58315a1fde51c55ef10a5b"
+      },
+      {
+        "source_id": "project_test:crates/taudit-cli/tests/graph_summary.rs",
+        "path": "crates/taudit-cli/tests/graph_summary.rs",
+        "sha256": "98f7f4b6996326acb120d2d0e2bd58141a468e0948f2657c7be8dce27fa4ea90"
+      },
+      {
+        "source_id": "project_test:crates/taudit-cli/tests/integration.rs",
+        "path": "crates/taudit-cli/tests/integration.rs",
+        "sha256": "ef6d726d133cc28e9662442b6b8e1e012b479270d3fa8bb2f11a95bb604a85a8"
+      },
+      {
+        "source_id": "project_test:crates/taudit-cli/tests/output_injection_corpus.rs",
+        "path": "crates/taudit-cli/tests/output_injection_corpus.rs",
+        "sha256": "ffba7f3f4a81e0a358db7c5af3c408d50cce2108107be753a918e513d47a5fc6"
+      },
+      {
+        "source_id": "project_test:crates/taudit-cli/tests/phase4_graph_flags.rs",
+        "path": "crates/taudit-cli/tests/phase4_graph_flags.rs",
+        "sha256": "b48e51d4d65ab7f976f81e5fb95278d72b15caa139558fedfeb616217038497f"
+      },
+      {
+        "source_id": "project_test:crates/taudit-cli/tests/release_workflow_attestation.rs",
+        "path": "crates/taudit-cli/tests/release_workflow_attestation.rs",
+        "sha256": "9c1939d2ec9c5464f46b808be0d0a4a8d9987546cfc4d0d166016cc7c0086670"
+      },
+      {
+        "source_id": "project_test:crates/taudit-cli/tests/remediate_contract.rs",
+        "path": "crates/taudit-cli/tests/remediate_contract.rs",
+        "sha256": "44289da4d1e552d41d22f741b89ac528362126c47e4fd4015fe8da6c012fbde6"
+      },
+      {
+        "source_id": "project_test:crates/taudit-cli/tests/rich_labels.rs",
+        "path": "crates/taudit-cli/tests/rich_labels.rs",
+        "sha256": "229a56666fa952aa5bf46b49aa778983181a0ebe254aaea2007060e7990a41a3"
+      },
+      {
+        "source_id": "project_test:crates/taudit-cli/tests/snapshot_ado.rs",
+        "path": "crates/taudit-cli/tests/snapshot_ado.rs",
+        "sha256": "eae1fad1bdb4a2d84aaeb5c123e53ae99ceb51f129ca1e03d1b9bbc41196f227"
+      },
+      {
+        "source_id": "project_test:crates/taudit-cli/tests/snapshot_gha.rs",
+        "path": "crates/taudit-cli/tests/snapshot_gha.rs",
+        "sha256": "ba1efe7b406d0e4212769a1302c53e1684b505f0c6ad18247e317ee2af1644ed"
+      },
+      {
+        "source_id": "project_test:crates/taudit-cli/tests/snapshot_gitlab.rs",
+        "path": "crates/taudit-cli/tests/snapshot_gitlab.rs",
+        "sha256": "d42c01347e79d7a0844ecbcf7df84ba6c2371c6b3773777d3ddf7e1d44bd120c"
+      },
+      {
+        "source_id": "project_test:crates/taudit-cli/tests/snapshots/snapshot_ado__ado_keyvault_plaintext_findings.snap",
+        "path": "crates/taudit-cli/tests/snapshots/snapshot_ado__ado_keyvault_plaintext_findings.snap",
+        "sha256": "f6a1fc7b617f21d0cc121b622d275cf254c997abdecceada853af7ea9085adf1"
+      },
+      {
+        "source_id": "project_test:crates/taudit-cli/tests/snapshots/snapshot_ado__ado_setvariable_all_findings.snap",
+        "path": "crates/taudit-cli/tests/snapshots/snapshot_ado__ado_setvariable_all_findings.snap",
+        "sha256": "8f7ac0d256ef89caed297b6c58031c68ce6cbefe7291bce31e5c0300e8a3a600"
+      },
+      {
+        "source_id": "project_test:crates/taudit-cli/tests/snapshots/snapshot_ado__ado_setvariable_finding_0.snap",
+        "path": "crates/taudit-cli/tests/snapshots/snapshot_ado__ado_setvariable_finding_0.snap",
+        "sha256": "29b9a8a09101ea1347e4ed18a8d6703f13ce430ec9fb39e28ba387001c55d573"
+      },
+      {
+        "source_id": "project_test:crates/taudit-cli/tests/snapshots/snapshot_ado__ado_setvariable_finding_1.snap",
+        "path": "crates/taudit-cli/tests/snapshots/snapshot_ado__ado_setvariable_finding_1.snap",
+        "sha256": "01678bf7fa335cb7104eea186f7e93bf4ab9307ac17841e567b4ffde884e9423"
+      },
+      {
+        "source_id": "project_test:crates/taudit-cli/tests/snapshots/snapshot_ado__ado_setvariable_finding_2.snap",
+        "path": "crates/taudit-cli/tests/snapshots/snapshot_ado__ado_setvariable_finding_2.snap",
+        "sha256": "c546ca80a37aa848ed5afe24c68aa2c28acc7a1576b273d9466431ccfe12e66b"
+      },
+      {
+        "source_id": "project_test:crates/taudit-cli/tests/snapshots/snapshot_ado__ado_setvariable_finding_3.snap",
+        "path": "crates/taudit-cli/tests/snapshots/snapshot_ado__ado_setvariable_finding_3.snap",
+        "sha256": "e4339b643ea95d541cb0d5ba3cd63dae91a42bb1b76202228a198a74cad4cf9e"
+      },
+      {
+        "source_id": "project_test:crates/taudit-cli/tests/snapshots/snapshot_ado__ado_setvariable_json_report.snap",
+        "path": "crates/taudit-cli/tests/snapshots/snapshot_ado__ado_setvariable_json_report.snap",
+        "sha256": "182af3cabe4ddc824cebee328fcc6b9e9ef2fea9a05d3ba33d4a0ac72000e8c4"
+      },
+      {
+        "source_id": "project_test:crates/taudit-cli/tests/snapshots/snapshot_ado__ado_setvariable_sarif_results.snap",
+        "path": "crates/taudit-cli/tests/snapshots/snapshot_ado__ado_setvariable_sarif_results.snap",
+        "sha256": "af9c99c39bfc73bdbb72f953afa686857609db7ed27f0751b7b5615096a3dd91"
+      },
+      {
+        "source_id": "project_test:crates/taudit-cli/tests/snapshots/snapshot_ado__ado_shared_pool_all_findings.snap",
+        "path": "crates/taudit-cli/tests/snapshots/snapshot_ado__ado_shared_pool_all_findings.snap",
+        "sha256": "bffe04fd3f81815916da8391eea235d69c001c0c4feafc35059904b0c3844594"
+      },
+      {
+        "source_id": "project_test:crates/taudit-cli/tests/snapshots/snapshot_ado__ado_shared_pool_finding_0.snap",
+        "path": "crates/taudit-cli/tests/snapshots/snapshot_ado__ado_shared_pool_finding_0.snap",
+        "sha256": "f932fcff69f799a694391360e8ffa0e16ab0dc9df6c582933f9fb8cf1d997dea"
+      },
+      {
+        "source_id": "project_test:crates/taudit-cli/tests/snapshots/snapshot_ado__ado_shared_pool_finding_1.snap",
+        "path": "crates/taudit-cli/tests/snapshots/snapshot_ado__ado_shared_pool_finding_1.snap",
+        "sha256": "97bba19252a5d5473a4252937298ec6ec4b1a5d0fd7fd666e1b9ed777e510765"
+      },
+      {
+        "source_id": "project_test:crates/taudit-cli/tests/snapshots/snapshot_ado__ado_shared_pool_finding_2.snap",
+        "path": "crates/taudit-cli/tests/snapshots/snapshot_ado__ado_shared_pool_finding_2.snap",
+        "sha256": "dc55c12f22b35185384102f3df22be01d98b8c53994fd7aa1f562cf1595851dc"
+      },
+      {
+        "source_id": "project_test:crates/taudit-cli/tests/snapshots/snapshot_ado__ado_shared_pool_finding_3.snap",
+        "path": "crates/taudit-cli/tests/snapshots/snapshot_ado__ado_shared_pool_finding_3.snap",
+        "sha256": "5d919a4508000289c457e93bdbde80cf4476ef5145101ba7b9f5468b4f236e30"
+      },
+      {
+        "source_id": "project_test:crates/taudit-cli/tests/snapshots/snapshot_ado__ado_shared_pool_finding_4.snap",
+        "path": "crates/taudit-cli/tests/snapshots/snapshot_ado__ado_shared_pool_finding_4.snap",
+        "sha256": "fad4c284c401dbcbbae321a7412735587ff4888f1cb60f3ed4d86ed4b868be16"
+      },
+      {
+        "source_id": "project_test:crates/taudit-cli/tests/snapshots/snapshot_ado__ado_shared_pool_json_report.snap",
+        "path": "crates/taudit-cli/tests/snapshots/snapshot_ado__ado_shared_pool_json_report.snap",
+        "sha256": "f3dc4d1652459a8d185a7d2b271bf19ea9bf4d1a2b04c12a610ea5ee32197137"
+      },
+      {
+        "source_id": "project_test:crates/taudit-cli/tests/snapshots/snapshot_ado__ado_shared_pool_sarif_results.snap",
+        "path": "crates/taudit-cli/tests/snapshots/snapshot_ado__ado_shared_pool_sarif_results.snap",
+        "sha256": "a2cf025d28584610551fc42cd45514d759da279ec77e126106ea43893fa824dd"
+      },
+      {
+        "source_id": "project_test:crates/taudit-cli/tests/snapshots/snapshot_ado__ado_terraform_autoapprove_findings.snap",
+        "path": "crates/taudit-cli/tests/snapshots/snapshot_ado__ado_terraform_autoapprove_findings.snap",
+        "sha256": "50e2181b0f51ad7f80a2a1263f5041701f3e12428f602c970d37ddc5317261b4"
+      },
+      {
+        "source_id": "project_test:crates/taudit-cli/tests/snapshots/snapshot_gha__gha_clean_all_findings.snap",
+        "path": "crates/taudit-cli/tests/snapshots/snapshot_gha__gha_clean_all_findings.snap",
+        "sha256": "49622d25562fbf2fc1f51083c629f108faf3742bed1514ff9fe4b3917a46ee5e"
+      },
+      {
+        "source_id": "project_test:crates/taudit-cli/tests/snapshots/snapshot_gha__gha_clean_finding_0.snap",
+        "path": "crates/taudit-cli/tests/snapshots/snapshot_gha__gha_clean_finding_0.snap",
+        "sha256": "7239ca2b8161d5448f3ded61b58e538e4ac17f120afeb5b8f62eba1b9c9677d9"
+      },
+      {
+        "source_id": "project_test:crates/taudit-cli/tests/snapshots/snapshot_gha__gha_clean_json_report.snap",
+        "path": "crates/taudit-cli/tests/snapshots/snapshot_gha__gha_clean_json_report.snap",
+        "sha256": "5e99c8b618420f658fcba37cdb11e4e45235484071d5e8e690d4856d94bc6220"
+      },
+      {
+        "source_id": "project_test:crates/taudit-cli/tests/snapshots/snapshot_gha__gha_clean_sarif_results.snap",
+        "path": "crates/taudit-cli/tests/snapshots/snapshot_gha__gha_clean_sarif_results.snap",
+        "sha256": "9d0ed27570fc37f6ff7701ab163c7635af3c8a8fc962d4d2f2b808dc6daf0354"
+      },
+      {
+        "source_id": "project_test:crates/taudit-cli/tests/snapshots/snapshot_gha__gha_over_privileged_all_findings.snap",
+        "path": "crates/taudit-cli/tests/snapshots/snapshot_gha__gha_over_privileged_all_findings.snap",
+        "sha256": "6a526e76e0ec2f88a16926383c46edcb6a0dad6a5ae79ece47cb95dc5a3ceba4"
+      },
+      {
+        "source_id": "project_test:crates/taudit-cli/tests/snapshots/snapshot_gha__gha_over_privileged_finding_0.snap",
+        "path": "crates/taudit-cli/tests/snapshots/snapshot_gha__gha_over_privileged_finding_0.snap",
+        "sha256": "38310eebe97c2276dbc97d5abe9d36c87da59fd95fb848e691307526c4ee334f"
+      },
+      {
+        "source_id": "project_test:crates/taudit-cli/tests/snapshots/snapshot_gha__gha_over_privileged_finding_1.snap",
+        "path": "crates/taudit-cli/tests/snapshots/snapshot_gha__gha_over_privileged_finding_1.snap",
+        "sha256": "c5d7c4db697c2d652ebdd1d56f9c6f2c83191cd1a80cb95cf92b83db0356dc2b"
+      },
+      {
+        "source_id": "project_test:crates/taudit-cli/tests/snapshots/snapshot_gha__gha_over_privileged_finding_10.snap",
+        "path": "crates/taudit-cli/tests/snapshots/snapshot_gha__gha_over_privileged_finding_10.snap",
+        "sha256": "4e5f8c90c1f4778b6472c1d1bf1e6853533fec89996e0041ac2580fcdbd32ca9"
+      },
+      {
+        "source_id": "project_test:crates/taudit-cli/tests/snapshots/snapshot_gha__gha_over_privileged_finding_11.snap",
+        "path": "crates/taudit-cli/tests/snapshots/snapshot_gha__gha_over_privileged_finding_11.snap",
+        "sha256": "64fa31b45a514c1474cba74196d070404c2fb4ff32265f0b29d572ed3f094845"
+      },
+      {
+        "source_id": "project_test:crates/taudit-cli/tests/snapshots/snapshot_gha__gha_over_privileged_finding_2.snap",
+        "path": "crates/taudit-cli/tests/snapshots/snapshot_gha__gha_over_privileged_finding_2.snap",
+        "sha256": "02a6f8bb1e6f31811cf2e73a87e6df99b4238e1a9c30e1e8974b634f0a41a147"
+      },
+      {
+        "source_id": "project_test:crates/taudit-cli/tests/snapshots/snapshot_gha__gha_over_privileged_finding_3.snap",
+        "path": "crates/taudit-cli/tests/snapshots/snapshot_gha__gha_over_privileged_finding_3.snap",
+        "sha256": "e08395382220bcdf7abec706038610ac589f271fde54f504beea55fe3c08f4dd"
+      },
+      {
+        "source_id": "project_test:crates/taudit-cli/tests/snapshots/snapshot_gha__gha_over_privileged_finding_4.snap",
+        "path": "crates/taudit-cli/tests/snapshots/snapshot_gha__gha_over_privileged_finding_4.snap",
+        "sha256": "b1d06cfab47878fdc72333aff318dbafe2d1638ab809d832a33ff0fe8392f520"
+      },
+      {
+        "source_id": "project_test:crates/taudit-cli/tests/snapshots/snapshot_gha__gha_over_privileged_finding_5.snap",
+        "path": "crates/taudit-cli/tests/snapshots/snapshot_gha__gha_over_privileged_finding_5.snap",
+        "sha256": "5d0bc18695747240c9303a22d91d48d024a9c9eac421c0e6945e943a62fd92a6"
+      },
+      {
+        "source_id": "project_test:crates/taudit-cli/tests/snapshots/snapshot_gha__gha_over_privileged_finding_6.snap",
+        "path": "crates/taudit-cli/tests/snapshots/snapshot_gha__gha_over_privileged_finding_6.snap",
+        "sha256": "e2d88b1453517722c37e18af8ea0efb7fbd31b0cfe7c866b4af796d3fa53ac9b"
+      },
+      {
+        "source_id": "project_test:crates/taudit-cli/tests/snapshots/snapshot_gha__gha_over_privileged_finding_7.snap",
+        "path": "crates/taudit-cli/tests/snapshots/snapshot_gha__gha_over_privileged_finding_7.snap",
+        "sha256": "c9ea705f0fb0433411a141f190a66479413527f67e2f0f5b74dcb31e2b93cb01"
+      },
+      {
+        "source_id": "project_test:crates/taudit-cli/tests/snapshots/snapshot_gha__gha_over_privileged_finding_8.snap",
+        "path": "crates/taudit-cli/tests/snapshots/snapshot_gha__gha_over_privileged_finding_8.snap",
+        "sha256": "d65652261b4d72c84ad1529346e689ca11c7e5b369d339fb4bafc8b0c9f0e886"
+      },
+      {
+        "source_id": "project_test:crates/taudit-cli/tests/snapshots/snapshot_gha__gha_over_privileged_finding_9.snap",
+        "path": "crates/taudit-cli/tests/snapshots/snapshot_gha__gha_over_privileged_finding_9.snap",
+        "sha256": "43affd0e2e31badf8522a0839275e6edea2cb296406fc6834011e5f0cf37150f"
+      },
+      {
+        "source_id": "project_test:crates/taudit-cli/tests/snapshots/snapshot_gha__gha_over_privileged_json_report.snap",
+        "path": "crates/taudit-cli/tests/snapshots/snapshot_gha__gha_over_privileged_json_report.snap",
+        "sha256": "63af43ea2d221e2cb9406f66e99091c25cdac671f68659161aa2e39d158e6627"
+      },
+      {
+        "source_id": "project_test:crates/taudit-cli/tests/snapshots/snapshot_gha__gha_over_privileged_sarif_results.snap",
+        "path": "crates/taudit-cli/tests/snapshots/snapshot_gha__gha_over_privileged_sarif_results.snap",
+        "sha256": "bbd1cf8ca2210e5c9754f339e9e9b60180debd56a0d41bdecae9bcacd15dde20"
+      },
+      {
+        "source_id": "project_test:crates/taudit-cli/tests/snapshots/snapshot_gha__gha_over_privileged_terminal.snap",
+        "path": "crates/taudit-cli/tests/snapshots/snapshot_gha__gha_over_privileged_terminal.snap",
+        "sha256": "ff03a71fe60d393c14a0bfd551699377fea9292022a91014a364ea95547e3456"
+      },
+      {
+        "source_id": "project_test:crates/taudit-cli/tests/snapshots/snapshot_gha__gha_propagation_all_findings.snap",
+        "path": "crates/taudit-cli/tests/snapshots/snapshot_gha__gha_propagation_all_findings.snap",
+        "sha256": "7a05d484929a073fa647a4ccf2349c06c1133ef732da2eaa67d7afc6c949ecf9"
+      },
+      {
+        "source_id": "project_test:crates/taudit-cli/tests/snapshots/snapshot_gha__gha_propagation_finding_0.snap",
+        "path": "crates/taudit-cli/tests/snapshots/snapshot_gha__gha_propagation_finding_0.snap",
+        "sha256": "e9d79e34147e9e23339b6f87a5ce15d404d0625a1af75060beb1e5e94bbe9049"
+      },
+      {
+        "source_id": "project_test:crates/taudit-cli/tests/snapshots/snapshot_gha__gha_propagation_finding_1.snap",
+        "path": "crates/taudit-cli/tests/snapshots/snapshot_gha__gha_propagation_finding_1.snap",
+        "sha256": "8a85bb8878aa8d40557d165efb309f04b03e2e1b17f5cab5da41a78ab8b381e9"
+      },
+      {
+        "source_id": "project_test:crates/taudit-cli/tests/snapshots/snapshot_gha__gha_propagation_finding_10.snap",
+        "path": "crates/taudit-cli/tests/snapshots/snapshot_gha__gha_propagation_finding_10.snap",
+        "sha256": "f6b5758394f4a133f3b3713c408d979a04998b37b51be75a7f9f3c49b5b5f8c6"
+      },
+      {
+        "source_id": "project_test:crates/taudit-cli/tests/snapshots/snapshot_gha__gha_propagation_finding_11.snap",
+        "path": "crates/taudit-cli/tests/snapshots/snapshot_gha__gha_propagation_finding_11.snap",
+        "sha256": "9a9c32a417b86e98736936c59826b2ac0e7b66071385acb19915a25db04685e5"
+      },
+      {
+        "source_id": "project_test:crates/taudit-cli/tests/snapshots/snapshot_gha__gha_propagation_finding_12.snap",
+        "path": "crates/taudit-cli/tests/snapshots/snapshot_gha__gha_propagation_finding_12.snap",
+        "sha256": "1caa7448d511c5fe9fe9956239982d2c29228f11b0bfcb66d6322b9150799f8a"
+      },
+      {
+        "source_id": "project_test:crates/taudit-cli/tests/snapshots/snapshot_gha__gha_propagation_finding_13.snap",
+        "path": "crates/taudit-cli/tests/snapshots/snapshot_gha__gha_propagation_finding_13.snap",
+        "sha256": "b06b73d44126a10f36781aa897fa246aea1883056e1e851dd90b74f86e611fe4"
+      },
+      {
+        "source_id": "project_test:crates/taudit-cli/tests/snapshots/snapshot_gha__gha_propagation_finding_2.snap",
+        "path": "crates/taudit-cli/tests/snapshots/snapshot_gha__gha_propagation_finding_2.snap",
+        "sha256": "699e32b719bcb5dd93971fc438897a145e32b1bbeb3c65e9292bab5904ca6320"
+      },
+      {
+        "source_id": "project_test:crates/taudit-cli/tests/snapshots/snapshot_gha__gha_propagation_finding_3.snap",
+        "path": "crates/taudit-cli/tests/snapshots/snapshot_gha__gha_propagation_finding_3.snap",
+        "sha256": "c81f24c231934802b20037b87c9ae5271562775890d0cb2f10a0cb44d30df064"
+      },
+      {
+        "source_id": "project_test:crates/taudit-cli/tests/snapshots/snapshot_gha__gha_propagation_finding_4.snap",
+        "path": "crates/taudit-cli/tests/snapshots/snapshot_gha__gha_propagation_finding_4.snap",
+        "sha256": "322dfb06a2669f77947504fc78506b95a95871ded12ebd461aa1c376a6527b3d"
+      },
+      {
+        "source_id": "project_test:crates/taudit-cli/tests/snapshots/snapshot_gha__gha_propagation_finding_5.snap",
+        "path": "crates/taudit-cli/tests/snapshots/snapshot_gha__gha_propagation_finding_5.snap",
+        "sha256": "16023fb088c3633b66d6b4f77522e48dccdccabaf66a631de3cf618a4a7ad0d0"
+      },
+      {
+        "source_id": "project_test:crates/taudit-cli/tests/snapshots/snapshot_gha__gha_propagation_finding_6.snap",
+        "path": "crates/taudit-cli/tests/snapshots/snapshot_gha__gha_propagation_finding_6.snap",
+        "sha256": "362bab1f577bfcbd236a5c11b1713ecdaab81f1396b50d060cca04ab3b09d68e"
+      },
+      {
+        "source_id": "project_test:crates/taudit-cli/tests/snapshots/snapshot_gha__gha_propagation_finding_7.snap",
+        "path": "crates/taudit-cli/tests/snapshots/snapshot_gha__gha_propagation_finding_7.snap",
+        "sha256": "ce87d8d4da6cdabb83c6eef707db0e22a5cca5d3aa41b917fa42ff7471d5a881"
+      },
+      {
+        "source_id": "project_test:crates/taudit-cli/tests/snapshots/snapshot_gha__gha_propagation_finding_8.snap",
+        "path": "crates/taudit-cli/tests/snapshots/snapshot_gha__gha_propagation_finding_8.snap",
+        "sha256": "9e426a95d363c5c6ad196079ce687bedfd6c4784debd5b83bacb415497694698"
+      },
+      {
+        "source_id": "project_test:crates/taudit-cli/tests/snapshots/snapshot_gha__gha_propagation_finding_9.snap",
+        "path": "crates/taudit-cli/tests/snapshots/snapshot_gha__gha_propagation_finding_9.snap",
+        "sha256": "1006f537f07758604889790ca52a403e875ef38ebb344a969dce7940ce634ac7"
+      },
+      {
+        "source_id": "project_test:crates/taudit-cli/tests/snapshots/snapshot_gha__gha_propagation_json_report.snap",
+        "path": "crates/taudit-cli/tests/snapshots/snapshot_gha__gha_propagation_json_report.snap",
+        "sha256": "d3195ffa5385e278fa4a500f52584836c81178865bb9e1aee5a5b904ac1f168e"
+      },
+      {
+        "source_id": "project_test:crates/taudit-cli/tests/snapshots/snapshot_gha__gha_propagation_sarif_results.snap",
+        "path": "crates/taudit-cli/tests/snapshots/snapshot_gha__gha_propagation_sarif_results.snap",
+        "sha256": "afea772976c70f36e72d3ed7abf815bf451a94f147dcbf7887d5e5e290b2010d"
+      },
+      {
+        "source_id": "project_test:crates/taudit-cli/tests/snapshots/snapshot_gha__gha_prt_all_findings.snap",
+        "path": "crates/taudit-cli/tests/snapshots/snapshot_gha__gha_prt_all_findings.snap",
+        "sha256": "48688078340734bd25b944483d0b03f9427f1e9beb93a4bf4fc170635b7bb16d"
+      },
+      {
+        "source_id": "project_test:crates/taudit-cli/tests/snapshots/snapshot_gha__gha_prt_finding_0.snap",
+        "path": "crates/taudit-cli/tests/snapshots/snapshot_gha__gha_prt_finding_0.snap",
+        "sha256": "3be32ae2af4754d0f00f27e22e3e3481712f28b4f0f0a39424c2fa36b09f2dbc"
+      },
+      {
+        "source_id": "project_test:crates/taudit-cli/tests/snapshots/snapshot_gha__gha_prt_finding_1.snap",
+        "path": "crates/taudit-cli/tests/snapshots/snapshot_gha__gha_prt_finding_1.snap",
+        "sha256": "28ef3494b1449dddf9d3b24a4102849d90cd067b91f69b19d3bce79f85fecdbd"
+      },
+      {
+        "source_id": "project_test:crates/taudit-cli/tests/snapshots/snapshot_gha__gha_prt_finding_10.snap",
+        "path": "crates/taudit-cli/tests/snapshots/snapshot_gha__gha_prt_finding_10.snap",
+        "sha256": "16cf1264ccc12e29644bffca015e387ca9e34642013e56a524f7cf9b7b105b02"
+      },
+      {
+        "source_id": "project_test:crates/taudit-cli/tests/snapshots/snapshot_gha__gha_prt_finding_11.snap",
+        "path": "crates/taudit-cli/tests/snapshots/snapshot_gha__gha_prt_finding_11.snap",
+        "sha256": "696fa2ec490e9be9f192539e1b2bb546f0f8b67359f54ddc504bd01fb4d65c0a"
+      },
+      {
+        "source_id": "project_test:crates/taudit-cli/tests/snapshots/snapshot_gha__gha_prt_finding_12.snap",
+        "path": "crates/taudit-cli/tests/snapshots/snapshot_gha__gha_prt_finding_12.snap",
+        "sha256": "a35ba3d57463b08b52253f7341b5ba0e2f754e98ac5cf9d1f3cc1e67776367b3"
+      },
+      {
+        "source_id": "project_test:crates/taudit-cli/tests/snapshots/snapshot_gha__gha_prt_finding_2.snap",
+        "path": "crates/taudit-cli/tests/snapshots/snapshot_gha__gha_prt_finding_2.snap",
+        "sha256": "31bf0dee9f8bcf9fcaac7341a792988b083238c0cb2a471eb4318757b20db7f5"
+      },
+      {
+        "source_id": "project_test:crates/taudit-cli/tests/snapshots/snapshot_gha__gha_prt_finding_3.snap",
+        "path": "crates/taudit-cli/tests/snapshots/snapshot_gha__gha_prt_finding_3.snap",
+        "sha256": "451e8b768e0840a3759681591d5bdeabd84c54ac190c95d4ac8d777e942b90e3"
+      },
+      {
+        "source_id": "project_test:crates/taudit-cli/tests/snapshots/snapshot_gha__gha_prt_finding_4.snap",
+        "path": "crates/taudit-cli/tests/snapshots/snapshot_gha__gha_prt_finding_4.snap",
+        "sha256": "c4a03499000ff90cec83f6d842d92f92afaaf7f3af880b4ea36119c7e048f6c4"
+      },
+      {
+        "source_id": "project_test:crates/taudit-cli/tests/snapshots/snapshot_gha__gha_prt_finding_5.snap",
+        "path": "crates/taudit-cli/tests/snapshots/snapshot_gha__gha_prt_finding_5.snap",
+        "sha256": "7b53a849ef7321f8e4c6503371cfc4ec68496f86310d4e189b17b32f704db048"
+      },
+      {
+        "source_id": "project_test:crates/taudit-cli/tests/snapshots/snapshot_gha__gha_prt_finding_6.snap",
+        "path": "crates/taudit-cli/tests/snapshots/snapshot_gha__gha_prt_finding_6.snap",
+        "sha256": "e0b3b2d9faf3d865e102aaa8f738dba60c2987176757b74c2be76538a9662066"
+      },
+      {
+        "source_id": "project_test:crates/taudit-cli/tests/snapshots/snapshot_gha__gha_prt_finding_7.snap",
+        "path": "crates/taudit-cli/tests/snapshots/snapshot_gha__gha_prt_finding_7.snap",
+        "sha256": "0a66920e0b60847e283766101fe3bc3dd2cfef247540c067521ce6b5960e5afb"
+      },
+      {
+        "source_id": "project_test:crates/taudit-cli/tests/snapshots/snapshot_gha__gha_prt_finding_8.snap",
+        "path": "crates/taudit-cli/tests/snapshots/snapshot_gha__gha_prt_finding_8.snap",
+        "sha256": "5d0bc18695747240c9303a22d91d48d024a9c9eac421c0e6945e943a62fd92a6"
+      },
+      {
+        "source_id": "project_test:crates/taudit-cli/tests/snapshots/snapshot_gha__gha_prt_finding_9.snap",
+        "path": "crates/taudit-cli/tests/snapshots/snapshot_gha__gha_prt_finding_9.snap",
+        "sha256": "e2d88b1453517722c37e18af8ea0efb7fbd31b0cfe7c866b4af796d3fa53ac9b"
+      },
+      {
+        "source_id": "project_test:crates/taudit-cli/tests/snapshots/snapshot_gha__gha_write_all_secrets_findings.snap",
+        "path": "crates/taudit-cli/tests/snapshots/snapshot_gha__gha_write_all_secrets_findings.snap",
+        "sha256": "add627f620dad9219e47347cd472fcea26015ff52c624a9a2b7c9338d2e740b2"
+      },
+      {
+        "source_id": "project_test:crates/taudit-cli/tests/snapshots/snapshot_gitlab__gitlab_creds_all_findings.snap",
+        "path": "crates/taudit-cli/tests/snapshots/snapshot_gitlab__gitlab_creds_all_findings.snap",
+        "sha256": "0653c766bc8c682e60d4c9bd23202069960e6f15d77224981987d89df2cfc162"
+      },
+      {
+        "source_id": "project_test:crates/taudit-cli/tests/snapshots/snapshot_gitlab__gitlab_creds_finding_0.snap",
+        "path": "crates/taudit-cli/tests/snapshots/snapshot_gitlab__gitlab_creds_finding_0.snap",
+        "sha256": "94682ce919519b2c939a7d137932ddf0923cc853b110059070903ba71ab67d71"
+      },
+      {
+        "source_id": "project_test:crates/taudit-cli/tests/snapshots/snapshot_gitlab__gitlab_creds_finding_1.snap",
+        "path": "crates/taudit-cli/tests/snapshots/snapshot_gitlab__gitlab_creds_finding_1.snap",
+        "sha256": "404ec000515ed74ae0266e14d7e93e0fd23dd6d7d533d7a1659502712ef9b339"
+      },
+      {
+        "source_id": "project_test:crates/taudit-cli/tests/snapshots/snapshot_gitlab__gitlab_creds_finding_2.snap",
+        "path": "crates/taudit-cli/tests/snapshots/snapshot_gitlab__gitlab_creds_finding_2.snap",
+        "sha256": "9586c26aabb543776f3344c19cf67896ee5aa8b86bcc2c056182d259a4b8f420"
+      },
+      {
+        "source_id": "project_test:crates/taudit-cli/tests/snapshots/snapshot_gitlab__gitlab_creds_finding_3.snap",
+        "path": "crates/taudit-cli/tests/snapshots/snapshot_gitlab__gitlab_creds_finding_3.snap",
+        "sha256": "3194d3f015be6a7de9f44fda5f0028678c390983647803d9294e67243d64ae5a"
+      },
+      {
+        "source_id": "project_test:crates/taudit-cli/tests/snapshots/snapshot_gitlab__gitlab_creds_finding_4.snap",
+        "path": "crates/taudit-cli/tests/snapshots/snapshot_gitlab__gitlab_creds_finding_4.snap",
+        "sha256": "4b7fa138ff3026b7b4dcd67243dd06d6b39bc3032acd40145ab2038cffa3251f"
+      },
+      {
+        "source_id": "project_test:crates/taudit-cli/tests/snapshots/snapshot_gitlab__gitlab_creds_finding_5.snap",
+        "path": "crates/taudit-cli/tests/snapshots/snapshot_gitlab__gitlab_creds_finding_5.snap",
+        "sha256": "cc55e35a19b8160afc25f7b2cd849cc14671e507d944710690ed6038ed6f71b3"
+      },
+      {
+        "source_id": "project_test:crates/taudit-cli/tests/snapshots/snapshot_gitlab__gitlab_creds_finding_6.snap",
+        "path": "crates/taudit-cli/tests/snapshots/snapshot_gitlab__gitlab_creds_finding_6.snap",
+        "sha256": "49ec2c460d3657bee3b210692c56f753569142cb76c4bc2177d130b86ae44e53"
+      },
+      {
+        "source_id": "project_test:crates/taudit-cli/tests/snapshots/snapshot_gitlab__gitlab_creds_finding_7.snap",
+        "path": "crates/taudit-cli/tests/snapshots/snapshot_gitlab__gitlab_creds_finding_7.snap",
+        "sha256": "4e0abc7d6821602c5b74e92c18291b6fdf3ed0bff6548008e6c5abfd98bfb0c0"
+      },
+      {
+        "source_id": "project_test:crates/taudit-cli/tests/snapshots/snapshot_gitlab__gitlab_creds_json_report.snap",
+        "path": "crates/taudit-cli/tests/snapshots/snapshot_gitlab__gitlab_creds_json_report.snap",
+        "sha256": "dd9de240d419e644678b4dbbbb6a2e150f6607c7110dba25bcbf71545bce42f4"
+      },
+      {
+        "source_id": "project_test:crates/taudit-cli/tests/snapshots/snapshot_gitlab__gitlab_creds_sarif_results.snap",
+        "path": "crates/taudit-cli/tests/snapshots/snapshot_gitlab__gitlab_creds_sarif_results.snap",
+        "sha256": "afaa50d58359bf8f9b2bb45e66d65e39c78e2f6d802529755efa6a0ca3b60fb1"
+      },
+      {
+        "source_id": "project_test:crates/taudit-cli/tests/snapshots/snapshot_gitlab__gitlab_docker_floating_findings.snap",
+        "path": "crates/taudit-cli/tests/snapshots/snapshot_gitlab__gitlab_docker_floating_findings.snap",
+        "sha256": "92d5ac65bee81ef40ab05a68fd997e6aff42967469c45676330eccced5a19d38"
+      },
+      {
+        "source_id": "project_test:crates/taudit-cli/tests/snapshots/snapshot_gitlab__gitlab_mr_trigger_secrets_findings.snap",
+        "path": "crates/taudit-cli/tests/snapshots/snapshot_gitlab__gitlab_mr_trigger_secrets_findings.snap",
+        "sha256": "c1fe94b68d8ce17dd481c11401302ebcafcb8264443b1eb394a62548a5d97068"
+      },
+      {
+        "source_id": "project_source_code:crates/taudit-core/Cargo.toml",
+        "path": "crates/taudit-core/Cargo.toml",
+        "sha256": "1444a172a959db55c307e2a8184b35f1bda81b365195cdc1e677ca7cf9cfe51c"
+      },
+      {
+        "source_id": "project_source_code:crates/taudit-core/benches/bench_custom_rules.rs",
+        "path": "crates/taudit-core/benches/bench_custom_rules.rs",
+        "sha256": "67bb2ee35c91feb2767ef0ab8cd7e1a588e573d67fec7da35d2c3ecd8e234052"
+      },
+      {
+        "source_id": "project_source_code:crates/taudit-core/benches/bench_propagation.rs",
+        "path": "crates/taudit-core/benches/bench_propagation.rs",
+        "sha256": "4d9c43fd06363002567f5d9a9cd1808a888d55ce999fe7e843cdc15ecfdb9744"
+      },
+      {
+        "source_id": "project_source_code:crates/taudit-core/benches/bench_rules.rs",
+        "path": "crates/taudit-core/benches/bench_rules.rs",
+        "sha256": "5e656e26fa8c26b5d3941a7b7043f8ee2b3d3f397f97ddc45a7b10a0fa7ab1fe"
+      },
+      {
+        "source_id": "project_source_code:crates/taudit-core/src/baselines.rs",
+        "path": "crates/taudit-core/src/baselines.rs",
+        "sha256": "8f9f83ed9c77a8c01e2277ddf7281917594eda5a42dd0dc680ba8802ab5338e5"
+      },
+      {
+        "source_id": "project_source_code:crates/taudit-core/src/custom_rules.rs",
+        "path": "crates/taudit-core/src/custom_rules.rs",
+        "sha256": "3025e7d23d231c22c78ea750e5ec569e8e042334d4ce302019fe905eed33e1b8"
+      },
+      {
+        "source_id": "project_source_code:crates/taudit-core/src/error.rs",
+        "path": "crates/taudit-core/src/error.rs",
+        "sha256": "e30660bf5cf86ca63467c8076d4487785870a13db3ab3b431bce34b73b9a160f"
+      },
+      {
+        "source_id": "project_source_code:crates/taudit-core/src/exploit_path.rs",
+        "path": "crates/taudit-core/src/exploit_path.rs",
+        "sha256": "edc3bf7a4cb50d629c0b242c53b8c3f141d2547350daef20b96fcb33eaa67f0c"
+      },
+      {
+        "source_id": "project_source_code:crates/taudit-core/src/finding.rs",
+        "path": "crates/taudit-core/src/finding.rs",
+        "sha256": "74a1d3ace33dfd7bb8d02050f1c3c9a80dc5df948d805c2212a4829793c0ad15"
+      },
+      {
+        "source_id": "project_source_code:crates/taudit-core/src/graph.rs",
+        "path": "crates/taudit-core/src/graph.rs",
+        "sha256": "927c13a62891384ed7df1637eee3ad53669f1403c8d66b9d04aa880a9e9cbddb"
+      },
+      {
+        "source_id": "project_source_code:crates/taudit-core/src/ignore.rs",
+        "path": "crates/taudit-core/src/ignore.rs",
+        "sha256": "a3781153e55e94a7464058d17afe0bb3891ebb088887d9487f05dff3ba3b2901"
+      },
+      {
+        "source_id": "project_source_code:crates/taudit-core/src/lib.rs",
+        "path": "crates/taudit-core/src/lib.rs",
+        "sha256": "c91b69c3e5f79eef306008021b044229b6f30a0716894575ce1ac004dc055352"
+      },
+      {
+        "source_id": "project_source_code:crates/taudit-core/src/map.rs",
+        "path": "crates/taudit-core/src/map.rs",
+        "sha256": "6fa13c2b33390bb268f5a076290590033bf08b6484d62077b756aec4f2072dde"
+      },
+      {
+        "source_id": "project_source_code:crates/taudit-core/src/ports.rs",
+        "path": "crates/taudit-core/src/ports.rs",
+        "sha256": "9024b4b3307bea716b4a917a213a3b2fa082f314aec5de85008b636c13d03476"
+      },
+      {
+        "source_id": "project_source_code:crates/taudit-core/src/propagation.rs",
+        "path": "crates/taudit-core/src/propagation.rs",
+        "sha256": "3a0d38658e001960ca94930435968230e767feda62ad0f4a8da6404d7d0b8ad8"
+      },
+      {
+        "source_id": "project_source_code:crates/taudit-core/src/rules.rs",
+        "path": "crates/taudit-core/src/rules.rs",
+        "sha256": "a97f325d7177915da6ccba6dffa25199d78b61645eb247bb7e37bbcac2290eaa"
+      },
+      {
+        "source_id": "project_source_code:crates/taudit-core/src/summary.rs",
+        "path": "crates/taudit-core/src/summary.rs",
+        "sha256": "4805d83663e2bae703ff54ee243f35f7565ee9a4456243e3ded9577cd1966ca6"
+      },
+      {
+        "source_id": "project_source_code:crates/taudit-core/src/suppressions.rs",
+        "path": "crates/taudit-core/src/suppressions.rs",
+        "sha256": "93e01594a65499603c37dd2ba293771da55af1259eb5f328870832600d76530a"
+      },
+      {
+        "source_id": "project_source_code:crates/taudit-parse-ado/Cargo.toml",
+        "path": "crates/taudit-parse-ado/Cargo.toml",
+        "sha256": "51a3a84d2064c771e640d19fb0ce68981bfcf62ec1f08378ecc3a106511b6df6"
+      },
+      {
+        "source_id": "project_source_code:crates/taudit-parse-ado/benches/bench_parse.rs",
+        "path": "crates/taudit-parse-ado/benches/bench_parse.rs",
+        "sha256": "5a2b9c4934ff851f4b2751573db101d46ea8de39080a8b43c04ece215de61052"
+      },
+      {
+        "source_id": "project_source_code:crates/taudit-parse-ado/fuzz/Cargo.lock",
+        "path": "crates/taudit-parse-ado/fuzz/Cargo.lock",
+        "sha256": "d496cadf3fa880e6c2e84209a9f3c81a8082533b23ac68b448ef39acd2c8ca48"
+      },
+      {
+        "source_id": "project_source_code:crates/taudit-parse-ado/fuzz/Cargo.toml",
+        "path": "crates/taudit-parse-ado/fuzz/Cargo.toml",
+        "sha256": "ebca3f0a5621692a9c65ca4818b408b4ed7b3536028cf97567b649456894b75e"
+      },
+      {
+        "source_id": "project_source_code:crates/taudit-parse-ado/fuzz/corpus/seed_minimal.yml",
+        "path": "crates/taudit-parse-ado/fuzz/corpus/seed_minimal.yml",
+        "sha256": "2adcb1989452531f4b7bf79e16f9df550da8715fde43dfb7e0f8600ded2e66c3"
+      },
+      {
+        "source_id": "project_source_code:crates/taudit-parse-ado/fuzz/corpus/seed_setvariable.yml",
+        "path": "crates/taudit-parse-ado/fuzz/corpus/seed_setvariable.yml",
+        "sha256": "554be106f0e35e4fed55caf15f9dce6ff784a761092121d6f19067f4490db6dc"
+      },
+      {
+        "source_id": "project_source_code:crates/taudit-parse-ado/fuzz/corpus/seed_shared_pool.yml",
+        "path": "crates/taudit-parse-ado/fuzz/corpus/seed_shared_pool.yml",
+        "sha256": "b47031c4417700fcb9537bcbcc23dbc07a91b8ec07034d210d08a7fc464469ec"
+      },
+      {
+        "source_id": "project_source_code:crates/taudit-parse-ado/fuzz/fuzz_targets/parse_ado.rs",
+        "path": "crates/taudit-parse-ado/fuzz/fuzz_targets/parse_ado.rs",
+        "sha256": "2c7f4a73d8066fb2c65c0129b9efde04b3eecccfc87b8324b6b2516046944e70"
+      },
+      {
+        "source_id": "project_source_code:crates/taudit-parse-ado/src/lib.rs",
+        "path": "crates/taudit-parse-ado/src/lib.rs",
+        "sha256": "414a27bda9f697bea90aac7a762d0efb9bf1496ec4e32176e697e07f255fa1ed"
+      },
+      {
+        "source_id": "project_source_code:crates/taudit-parse-bitbucket/Cargo.toml",
+        "path": "crates/taudit-parse-bitbucket/Cargo.toml",
+        "sha256": "74962566fd438e09864f654fd9994c1eb80bcb39fa04f818a7626ce5169246cf"
+      },
+      {
+        "source_id": "project_source_code:crates/taudit-parse-bitbucket/src/lib.rs",
+        "path": "crates/taudit-parse-bitbucket/src/lib.rs",
+        "sha256": "44ab251b098a1e584145b34615376e5c90bd518fdcd480595d4137efa029a93e"
+      },
+      {
+        "source_id": "project_source_code:crates/taudit-parse-gha/Cargo.toml",
+        "path": "crates/taudit-parse-gha/Cargo.toml",
+        "sha256": "775acdcfb4830dac2d63a24e3d2e7129d5bbbd2f658c3cff8b4845dcec5abc5e"
+      },
+      {
+        "source_id": "project_source_code:crates/taudit-parse-gha/benches/bench_parse.rs",
+        "path": "crates/taudit-parse-gha/benches/bench_parse.rs",
+        "sha256": "e26da8db3705af66efb566ecd60e7d441f5cbc5e91d1b6f96e0ed88fee775b8d"
+      },
+      {
+        "source_id": "project_source_code:crates/taudit-parse-gha/fuzz/Cargo.lock",
+        "path": "crates/taudit-parse-gha/fuzz/Cargo.lock",
+        "sha256": "166361cba21e08897d6f4bc3f227bbcd88995f29a8d94aa240986c60762979d8"
+      },
+      {
+        "source_id": "project_source_code:crates/taudit-parse-gha/fuzz/Cargo.toml",
+        "path": "crates/taudit-parse-gha/fuzz/Cargo.toml",
+        "sha256": "c81a5a709bc05da6f8054a8d9c6f053e20b8bf82832c7a3a3ae6f741d361d7e1"
+      },
+      {
+        "source_id": "project_source_code:crates/taudit-parse-gha/fuzz/corpus/seed_clean.yml",
+        "path": "crates/taudit-parse-gha/fuzz/corpus/seed_clean.yml",
+        "sha256": "793713e3ed4b9cd79a09d3c0203c5bb00d835f99560ef28209052eb12ae34223"
+      },
+      {
+        "source_id": "project_source_code:crates/taudit-parse-gha/fuzz/corpus/seed_empty.yml",
+        "path": "crates/taudit-parse-gha/fuzz/corpus/seed_empty.yml",
+        "sha256": "5eb0b800dea440431895bb0207c8378fd377a91972d9c1a4649ce7df09a2fbe9"
+      },
+      {
+        "source_id": "project_source_code:crates/taudit-parse-gha/fuzz/corpus/seed_over_privileged.yml",
+        "path": "crates/taudit-parse-gha/fuzz/corpus/seed_over_privileged.yml",
+        "sha256": "675dcc03be312f3de8452ccc7332aeef64637f44b4236c84a1cb8e7c5292351c"
+      },
+      {
+        "source_id": "project_source_code:crates/taudit-parse-gha/fuzz/corpus/seed_prt.yml",
+        "path": "crates/taudit-parse-gha/fuzz/corpus/seed_prt.yml",
+        "sha256": "786cd29c03fe92be2a36698a100d5666b782267aaf71345f81c2298e92a9cbc6"
+      },
+      {
+        "source_id": "project_source_code:crates/taudit-parse-gha/fuzz/fuzz_targets/parse_gha.rs",
+        "path": "crates/taudit-parse-gha/fuzz/fuzz_targets/parse_gha.rs",
+        "sha256": "378ac8c0c6e6c3033e8e07db6e596cec95a13c3f0b5ab99ee047e0ca0dcd7a2c"
+      },
+      {
+        "source_id": "project_source_code:crates/taudit-parse-gha/src/lib.rs",
+        "path": "crates/taudit-parse-gha/src/lib.rs",
+        "sha256": "282c29651d9747dea43a5f8645b065ddb0ecd23b8f7791cc1b1ab9d5d3656307"
+      },
+      {
+        "source_id": "project_source_code:crates/taudit-parse-gitlab/Cargo.toml",
+        "path": "crates/taudit-parse-gitlab/Cargo.toml",
+        "sha256": "2da1ce29efdc9ecce72b5ff168a0ce9e4097febd0bf9968666717751d5aa0cb6"
+      },
+      {
+        "source_id": "project_source_code:crates/taudit-parse-gitlab/benches/bench_parse.rs",
+        "path": "crates/taudit-parse-gitlab/benches/bench_parse.rs",
+        "sha256": "9c22beec64c6a71e41c68b44ab30cd4b3be278c959cd4e6f2d38fe2dee2809ab"
+      },
+      {
+        "source_id": "project_source_code:crates/taudit-parse-gitlab/fuzz/Cargo.lock",
+        "path": "crates/taudit-parse-gitlab/fuzz/Cargo.lock",
+        "sha256": "58ff78b5bc1816a939746e8e874cdc463943d597b1b38e02eb75f8a0a99e1be5"
+      },
+      {
+        "source_id": "project_source_code:crates/taudit-parse-gitlab/fuzz/Cargo.toml",
+        "path": "crates/taudit-parse-gitlab/fuzz/Cargo.toml",
+        "sha256": "b5aeed9ea78ec4d9298a3840029b89b8e1ef649edc05a0ebc0abc21ef487fa75"
+      },
+      {
+        "source_id": "project_source_code:crates/taudit-parse-gitlab/fuzz/corpus/seed_docker.yml",
+        "path": "crates/taudit-parse-gitlab/fuzz/corpus/seed_docker.yml",
+        "sha256": "5d7e3e3c8d7fbd112b6224fdf6b6a5fad59cbb39eb6772a1acbb05a4937cbf2f"
+      },
+      {
+        "source_id": "project_source_code:crates/taudit-parse-gitlab/fuzz/corpus/seed_minimal.yml",
+        "path": "crates/taudit-parse-gitlab/fuzz/corpus/seed_minimal.yml",
+        "sha256": "7e2fe594bf95160919365c455d2a81657284a01d61995126eeb578d2dc2c5548"
+      },
+      {
+        "source_id": "project_source_code:crates/taudit-parse-gitlab/fuzz/corpus/seed_secrets.yml",
+        "path": "crates/taudit-parse-gitlab/fuzz/corpus/seed_secrets.yml",
+        "sha256": "b9c60df20cbf0843ed244f96a147ce404dc9871c3a9d907ab65a4388121a0a8d"
+      },
+      {
+        "source_id": "project_source_code:crates/taudit-parse-gitlab/fuzz/fuzz_targets/parse_gitlab.rs",
+        "path": "crates/taudit-parse-gitlab/fuzz/fuzz_targets/parse_gitlab.rs",
+        "sha256": "70b11b0f3cdb07945aff764e2717ea8250084b65751e35d5f95dd53787f7ce94"
+      },
+      {
+        "source_id": "project_source_code:crates/taudit-parse-gitlab/src/lib.rs",
+        "path": "crates/taudit-parse-gitlab/src/lib.rs",
+        "sha256": "d8a21c2178f0ad6cce12e3892a26850899229436188d2630d2a9541f048fd3f5"
+      },
+      {
+        "source_id": "project_source_code:crates/taudit-report-json/Cargo.toml",
+        "path": "crates/taudit-report-json/Cargo.toml",
+        "sha256": "fae7c6243c6de51d6abb48506bd6153b96f975e92cf004e128ebaf1bd9a36dc5"
+      },
+      {
+        "source_id": "project_source_code:crates/taudit-report-json/src/lib.rs",
+        "path": "crates/taudit-report-json/src/lib.rs",
+        "sha256": "17e3ad2cdfa5f12facb76cbbed795908bf237bfd0de2e0fb8487b5a1d237dd61"
+      },
+      {
+        "source_id": "project_source_code:crates/taudit-report-sarif/Cargo.toml",
+        "path": "crates/taudit-report-sarif/Cargo.toml",
+        "sha256": "0b41008f6ed06900070f25ff6970d0cd281e19dbb73b1f7be520a5cc91943d13"
+      },
+      {
+        "source_id": "project_source_code:crates/taudit-report-sarif/src/lib.rs",
+        "path": "crates/taudit-report-sarif/src/lib.rs",
+        "sha256": "325265e176c3344b4ba34ac48f152d58cfa2b754175d015f250b8e31e0b373e7"
+      },
+      {
+        "source_id": "project_source_code:crates/taudit-report-terminal/Cargo.toml",
+        "path": "crates/taudit-report-terminal/Cargo.toml",
+        "sha256": "2f31622bbff01757459fb59789cab637ac082a87a813a35787eb2fd4b802b5e6"
+      },
+      {
+        "source_id": "project_source_code:crates/taudit-report-terminal/src/lib.rs",
+        "path": "crates/taudit-report-terminal/src/lib.rs",
+        "sha256": "b2b23627656cdd1c936a6b1342e640e1792a89698b0e09be53bbdbb430f5184a"
+      },
+      {
+        "source_id": "project_source_code:crates/taudit-sink-cloudevents/Cargo.toml",
+        "path": "crates/taudit-sink-cloudevents/Cargo.toml",
+        "sha256": "1c42b63729cedfadf29e0c0f3f4f57b4cf483fcd6f26d72670d69a8c48c93cdd"
+      },
+      {
+        "source_id": "project_source_code:crates/taudit-sink-cloudevents/src/lib.rs",
+        "path": "crates/taudit-sink-cloudevents/src/lib.rs",
+        "sha256": "66c992a57a873eff5d6ac79f718aef1d2d7ef6d18baabedb13834175ad09dd8e"
+      },
+      {
+        "source_id": "project_release_gate:deny.toml",
+        "path": "deny.toml",
+        "sha256": "002e42ddd0173b72d50191d7ad260f5ffd5616259177554a769a3e99e77a1ba0"
+      },
+      {
+        "source_id": "unclassified:docs/AAA_CODE_COMPLETION_ROADMAP.md",
+        "path": "docs/AAA_CODE_COMPLETION_ROADMAP.md",
+        "sha256": "e7a603c2efd3de8831097936f09d5f5b13d21c6b5a774872a5984b11801a9520"
+      },
+      {
+        "source_id": "unclassified:docs/DOCTRINE.md",
+        "path": "docs/DOCTRINE.md",
+        "sha256": "67ab7a1ac2e2f82cf8d602d94aaeedfebf1b7091ed3090aebd56c304a93fad7a"
+      },
+      {
+        "source_id": "unclassified:docs/RELEASE_GATES.md",
+        "path": "docs/RELEASE_GATES.md",
+        "sha256": "2159c39f13de9cf1b7019d6d3d6ee89e2e50340c68654cd84f4c371430244d6c"
+      },
+      {
+        "source_id": "unclassified:docs/ROADMAP.md",
+        "path": "docs/ROADMAP.md",
+        "sha256": "03fe7c47180316cb0b16b892cf0e3ae8e53b35a5b3e8b03f9c5f261d03c57aa5"
+      },
+      {
+        "source_id": "unclassified:docs/SEMANTIC_INDEX.md",
+        "path": "docs/SEMANTIC_INDEX.md",
+        "sha256": "f07a19b7f55cb12c9f8ccc0e21fe1175821a64f3cd57b2547252a7cbb3f13a14"
+      },
+      {
+        "source_id": "unclassified:docs/adoption-day0-day1.md",
+        "path": "docs/adoption-day0-day1.md",
+        "sha256": "0187b72f58a65db10fb4420e3345ff86860aedacf749eb52c78f6ec41dfd6618"
+      },
+      {
+        "source_id": "project_adr:docs/adr/0001-graph-native-exports-and-leverage.md",
+        "path": "docs/adr/0001-graph-native-exports-and-leverage.md",
+        "sha256": "c666c5b3f067a861a49a2247e307bfc477037b34c215e248a4ae45a246d64868"
+      },
+      {
+        "source_id": "project_adr:docs/adr/0002-authority-signal-roadmap-phased.md",
+        "path": "docs/adr/0002-authority-signal-roadmap-phased.md",
+        "sha256": "ad7affad1faa0338a2f3c912752b28b2d3678662871b9aa73830fe3a9d76e8dd"
+      },
+      {
+        "source_id": "project_adr:docs/adr/0003-strategic-spine-adoption-phased.md",
+        "path": "docs/adr/0003-strategic-spine-adoption-phased.md",
+        "sha256": "6e54df5449f9b1999b24cb52e9509edcd6d382efcac35a9885f094b458dd1151"
+      },
+      {
+        "source_id": "project_adr:docs/adr/0004-prereleases-publish-to-crates-io.md",
+        "path": "docs/adr/0004-prereleases-publish-to-crates-io.md",
+        "sha256": "5d74dd115a30450c3a0ebadbd217d995a0f6dcd4cff033b5c53bf517baad6a84"
+      },
+      {
+        "source_id": "project_adr:docs/adr/0005-authority-edge-classifier-and-witness-handoff.md",
+        "path": "docs/adr/0005-authority-edge-classifier-and-witness-handoff.md",
+        "sha256": "ab2d60c5cbb108f59ac382a1802b3ea04a9bd9717b68a5a1ab029be5ed1c2ba0"
+      },
+      {
+        "source_id": "project_adr:docs/adr/0006-exploit-path-view-and-ruleset.md",
+        "path": "docs/adr/0006-exploit-path-view-and-ruleset.md",
+        "sha256": "2ef254d0ea009d07c83e5e0f4c00cd5bc86cfe847c9e61dd88cfa3899c5fec60"
+      },
+      {
+        "source_id": "project_adr:docs/adr/0007-standardize-release-harness.md",
+        "path": "docs/adr/0007-standardize-release-harness.md",
+        "sha256": "b37739de5cff1a0a65f2a363844d445022249b2503d8382568ea1fbccbeea833"
+      },
+      {
+        "source_id": "project_adr:docs/adr/0008-synthesize-research-into-maintained-artifacts.md",
+        "path": "docs/adr/0008-synthesize-research-into-maintained-artifacts.md",
+        "sha256": "b1872befa7d2cfc180b891397b2fe542e7a2eee588f8f6f4afd2332212de96c0"
+      },
+      {
+        "source_id": "project_adr:docs/adr/README.md",
+        "path": "docs/adr/README.md",
+        "sha256": "66b5dbfa0da3b5eb8d63255b5f49a8b6ac24e51807e0e2b357dc07e2c3be0383"
+      },
+      {
+        "source_id": "unclassified:docs/authority-graph.md",
+        "path": "docs/authority-graph.md",
+        "sha256": "5498d547388d8174166aff7aa1f0c00dd4f941da40d7169eb5a04bb150427353"
+      },
+      {
+        "source_id": "unclassified:docs/authority-invariants.md",
+        "path": "docs/authority-invariants.md",
+        "sha256": "df4abc7551cd3f977f312889c3fcbe832a58fa755a5b207e1f55a689ffe9bf2b"
+      },
+      {
+        "source_id": "unclassified:docs/baselines.md",
+        "path": "docs/baselines.md",
+        "sha256": "56d9b81c4bcad432b60c67fde0c066e0a3b6df95f7a5fc1f205dc1000d87299d"
+      },
+      {
+        "source_id": "unclassified:docs/contributing/dogfood-taudit-verify.md",
+        "path": "docs/contributing/dogfood-taudit-verify.md",
+        "sha256": "17f8fe71d505e2e5ff8121c9b50359bc2760effd513f03fcaf9444015aca7390"
+      },
+      {
+        "source_id": "unclassified:docs/corpus-research.md",
+        "path": "docs/corpus-research.md",
+        "sha256": "8b0606a4c508bae16f3df2ce9b0e041fc42c25896d93b233379871a3a8ea84fd"
+      },
+      {
+        "source_id": "unclassified:docs/custom-rules.md",
+        "path": "docs/custom-rules.md",
+        "sha256": "d63790b1ff0d3b450d164152f5182ce3f93573cdfd0512b7097cdb9a90d36cb8"
+      },
+      {
+        "source_id": "unclassified:docs/demos/assets/expo-docs-authority.dot",
+        "path": "docs/demos/assets/expo-docs-authority.dot",
+        "sha256": "ac1ac2797a8de6961e80c1b1eb82b4ed21b1a894cb810563a921f74a2e75f955"
+      },
+      {
+        "source_id": "unclassified:docs/demos/assets/expo-docs-authority.png",
+        "path": "docs/demos/assets/expo-docs-authority.png",
+        "sha256": "f3b046a91fa1bbf961926fb093b84ef31fbecfbcd3c4d0321b16aa1f6a767c0e"
+      },
+      {
+        "source_id": "unclassified:docs/demos/assets/expo-docs-exploit.dot",
+        "path": "docs/demos/assets/expo-docs-exploit.dot",
+        "sha256": "7c5b607810da287e84cbf949891627627f0ec27121cf2db8019b08f23a91767c"
+      },
+      {
+        "source_id": "unclassified:docs/demos/assets/expo-docs-exploit.png",
+        "path": "docs/demos/assets/expo-docs-exploit.png",
+        "sha256": "3941cbcf6e673751b73d093ebee19e5d23d1daa4f9a90ace566d5687e0d8aa81"
+      },
+      {
+        "source_id": "unclassified:docs/demos/assets/expo-docs-taudit-summary.json",
+        "path": "docs/demos/assets/expo-docs-taudit-summary.json",
+        "sha256": "1d9d63eee866330f56f384a036ad4a0cd9851480bfbf50015102a54453c3ed86"
+      },
+      {
+        "source_id": "unclassified:docs/demos/corpus-expo-docs-authority-exploit-story.md",
+        "path": "docs/demos/corpus-expo-docs-authority-exploit-story.md",
+        "sha256": "a7c75bb016efc5152de16483cc4766c6d1ed2a9a319c8b5ec1fc9648b6df4adb"
+      },
+      {
+        "source_id": "unclassified:docs/dogfood-corpus.md",
+        "path": "docs/dogfood-corpus.md",
+        "sha256": "3329ec9c3474943e788313ea3643f8100d1eb2e1ba6a80de6339877b79e9f78f"
+      },
+      {
+        "source_id": "unclassified:docs/examples/ci-gate-taudit-verify.yml",
+        "path": "docs/examples/ci-gate-taudit-verify.yml",
+        "sha256": "cd829f90b2945612a8ab78ccebdc9c409980d0ae557c919d7ab6435de6f95c38"
+      },
+      {
+        "source_id": "unclassified:docs/feature-maturity.md",
+        "path": "docs/feature-maturity.md",
+        "sha256": "18890006d5b20f9ffc9c7ac60af5eb6916442c78ba9236e78979c65c4878aa2f"
+      },
+      {
+        "source_id": "unclassified:docs/finding-fingerprint.md",
+        "path": "docs/finding-fingerprint.md",
+        "sha256": "d3567ecb2992c536cc89b21659997773e48ba7cf6a407d86b6f46c17f532c8d8"
+      },
+      {
+        "source_id": "unclassified:docs/finding-output-enhancements.md",
+        "path": "docs/finding-output-enhancements.md",
+        "sha256": "6f92eed691ccd7943549560493e16f32ddb72c4b31468f9ef47955c20800c6b8"
+      },
+      {
+        "source_id": "unclassified:docs/gaps-implementation-prompt.md",
+        "path": "docs/gaps-implementation-prompt.md",
+        "sha256": "5af9d33f1d207dc942bab850c1eae66d6231d3ef4dd52acd5825870676d19d43"
+      },
+      {
+        "source_id": "unclassified:docs/golden-paths.md",
+        "path": "docs/golden-paths.md",
+        "sha256": "0776bde01c17832f68c22034cf9ae646e0151895b2570c70c44bfbeecfdd652b"
+      },
+      {
+        "source_id": "unclassified:docs/integrations/axiom-consumer.md",
+        "path": "docs/integrations/axiom-consumer.md",
+        "sha256": "ea468f735e9de8b1cd082f8c8e82aaacbbc5345bc41aa1d0df80fec32ea55846"
+      },
+      {
+        "source_id": "unclassified:docs/integrations/ci-mirrors.md",
+        "path": "docs/integrations/ci-mirrors.md",
+        "sha256": "b6ec7c4a80f553ec2dd782587116122e1fd1f61bd15f5e9960bd10013f585a1e"
+      },
+      {
+        "source_id": "unclassified:docs/integrations/index.md",
+        "path": "docs/integrations/index.md",
+        "sha256": "e200f0e4f9dd9eac0ea22754848986391937a7db155f09fc0945a8f35f883543"
+      },
+      {
+        "source_id": "unclassified:docs/integrations/tsign-consumer.md",
+        "path": "docs/integrations/tsign-consumer.md",
+        "sha256": "2f0da40518e2b319a92a22065294d90e3e7c12c6ff256a547c29fec115151261"
+      },
+      {
+        "source_id": "unclassified:docs/jobs-phased-lanes.md",
+        "path": "docs/jobs-phased-lanes.md",
+        "sha256": "426d1158fb8ec408725d6a69bbef7d88843c233c10d636626d8f21d4385c8bef"
+      },
+      {
+        "source_id": "unclassified:docs/media/README.md",
+        "path": "docs/media/README.md",
+        "sha256": "2ec72f3caa6fdaf23c716bcbfdffffaf893f7559f569b2331d0903e7f60f3c53"
+      },
+      {
+        "source_id": "unclassified:docs/perf-baseline.md",
+        "path": "docs/perf-baseline.md",
+        "sha256": "615ceb4d8b82df0787098e4f89e1b9870a17fd70af9e02c45cf216d646960e35"
+      },
+      {
+        "source_id": "unclassified:docs/policies/cookbook-partial-graphs.md",
+        "path": "docs/policies/cookbook-partial-graphs.md",
+        "sha256": "5bd4904381c152fe6e8caefeda2aabd8825ed65c3436b86c4f0c000623dece0e"
+      },
+      {
+        "source_id": "unclassified:docs/positioning.md",
+        "path": "docs/positioning.md",
+        "sha256": "f82eccee97842dc1802e5e01bdb7af23391299cb296bc01e082521be1566f403"
+      },
+      {
+        "source_id": "unclassified:docs/release-notes/linkedin-v1.1.2.md",
+        "path": "docs/release-notes/linkedin-v1.1.2.md",
+        "sha256": "5e854ba79fb0c5094ca8e242b1de8cba57e35aa581057ba249a52fa3a89e6ac3"
+      },
+      {
+        "source_id": "unclassified:docs/release-operations.md",
+        "path": "docs/release-operations.md",
+        "sha256": "a2cf518c42fd228aa92a0e150829c1f63e92627130f693b254e728f57c247b01"
+      },
+      {
+        "source_id": "unclassified:docs/release-strategy.md",
+        "path": "docs/release-strategy.md",
+        "sha256": "349d5f4dc7fc87576d6c4a9e4d5e8a898984a25793b1ec5c444cd60d46dde5ed"
+      },
+      {
+        "source_id": "unclassified:docs/release-trust.md",
+        "path": "docs/release-trust.md",
+        "sha256": "ce09926844319147e9667103226b5f5f7aed32d88e36017eb5c2dc0acfed39e1"
+      },
+      {
+        "source_id": "unclassified:docs/remediation.md",
+        "path": "docs/remediation.md",
+        "sha256": "d30225544c98e71eb5f26afdfca3e1c35198a62ae5a6f0e1ea96e854bc1bfa02"
+      },
+      {
+        "source_id": "unclassified:docs/research/2026-04-27-agent-prompt-slsa-provenance-reconciliation.md",
+        "path": "docs/research/2026-04-27-agent-prompt-slsa-provenance-reconciliation.md",
+        "sha256": "3ebe680c5f10a2ceef20311ceda57f6a86aa9444d07111afbab170972eeb991d"
+      },
+      {
+        "source_id": "unclassified:docs/research/2026-04-27-council-docs-golden-paths-screenshots.md",
+        "path": "docs/research/2026-04-27-council-docs-golden-paths-screenshots.md",
+        "sha256": "d15efaa271f4d7f1d26ce452712f582acf1fe61de2dd4e7b2719c49689a7c5ba"
+      },
+      {
+        "source_id": "unclassified:docs/research/2026-04-27-council-graph-as-product.md",
+        "path": "docs/research/2026-04-27-council-graph-as-product.md",
+        "sha256": "8288d01859505baf3357c1b5ac6a12237d730b37c238ba42c04b44c766401b71"
+      },
+      {
+        "source_id": "unclassified:docs/research/2026-04-27-graph-as-product-research.md",
+        "path": "docs/research/2026-04-27-graph-as-product-research.md",
+        "sha256": "9bed9069cf719c90548ed62167a97dd1ae481e6509a1f79e9cf40a3024938bc1"
+      },
+      {
+        "source_id": "unclassified:docs/research/2026-04-27-implementation-backlog.md",
+        "path": "docs/research/2026-04-27-implementation-backlog.md",
+        "sha256": "364735a18f32b736489df634a1f8dc8740d4abafd7ef70d271603538f54ceed6"
+      },
+      {
+        "source_id": "unclassified:docs/research/2026-05-05-algol-rule-corpus-signal-gate.md",
+        "path": "docs/research/2026-05-05-algol-rule-corpus-signal-gate.md",
+        "sha256": "cc3b7710772f1e987404957ad3d7e3bcfe5c315a34f892f67413cbc10fe500a9"
+      },
+      {
+        "source_id": "unclassified:docs/research/2026-05-05-algol-rule-intake-env-redirect-and-callee-input.md",
+        "path": "docs/research/2026-05-05-algol-rule-intake-env-redirect-and-callee-input.md",
+        "sha256": "bd1c59fda3a69c15e985478efcde83010feb868c94e04eba60455b5f7f36916a"
+      },
+      {
+        "source_id": "unclassified:docs/research/2026-05-05-algol-rule-intake-index.md",
+        "path": "docs/research/2026-05-05-algol-rule-intake-index.md",
+        "sha256": "1ac69bff72e6b669b0672163851ecc2c564eccb57c364a369afee688455df029"
+      },
+      {
+        "source_id": "unclassified:docs/research/2026-05-05-corpus-vuln-scan.md",
+        "path": "docs/research/2026-05-05-corpus-vuln-scan.md",
+        "sha256": "5a5457b9e5039c0c7da3f6b3aa7e28d547cfb9a2724471b22570f3d3c06bfee3"
+      },
+      {
+        "source_id": "unclassified:docs/research/2026-05-05-non-gha-corpus-parser-gap.md",
+        "path": "docs/research/2026-05-05-non-gha-corpus-parser-gap.md",
+        "sha256": "abe61f4f3185cf8f2ffe82946b33e0f4e9520f0a921f99801334daab2326db71"
+      },
+      {
+        "source_id": "unclassified:docs/research/2026-05-06-authority-class-quintet-rule-intake.md",
+        "path": "docs/research/2026-05-06-authority-class-quintet-rule-intake.md",
+        "sha256": "da364f3cc7a3190d99127a54cf7959f013ad04dd387ac38a87d6c1e4c5409781"
+      },
+      {
+        "source_id": "unclassified:docs/research/2026-05-06-manifest-authority-confusion-rule-intake.md",
+        "path": "docs/research/2026-05-06-manifest-authority-confusion-rule-intake.md",
+        "sha256": "cb12fc48f341c2a918e4d3bbaf638dd9666d8c46933fb605fbb11f4355f3a661"
+      },
+      {
+        "source_id": "unclassified:docs/research/2026-05-06-trust-channel-authority-rule-intake.md",
+        "path": "docs/research/2026-05-06-trust-channel-authority-rule-intake.md",
+        "sha256": "8bc11ceddbfd2a6cac175d12b2e553957ff46a9dd728716c6a9ca5d2bb70abd1"
+      },
+      {
+        "source_id": "unclassified:docs/research/BACKLOG-helper-resolution-authority-edges-adr0005.md",
+        "path": "docs/research/BACKLOG-helper-resolution-authority-edges-adr0005.md",
+        "sha256": "1f44c751e3f28a316f307186c33c838951264b8881b2fbcde09c21399f869096"
+      },
+      {
+        "source_id": "unclassified:docs/research/BACKLOG-parser-depth-adr0003.md",
+        "path": "docs/research/BACKLOG-parser-depth-adr0003.md",
+        "sha256": "6e7755d4f11c575a548bf040c63f2e94895eb953efba5a208b3d7b9b88a43d95"
+      },
+      {
+        "source_id": "unclassified:docs/research/PHASE1-lanes.md",
+        "path": "docs/research/PHASE1-lanes.md",
+        "sha256": "14a6a5ee72345ee0c1318758277585ff40559d854a8230746ab356a7bdea775a"
+      },
+      {
+        "source_id": "unclassified:docs/research/case-study-live-demo.md",
+        "path": "docs/research/case-study-live-demo.md",
+        "sha256": "588e230330d05f3d4beefdc795aa936b8f26746b41ed7c92043b68fecd78e7c1"
+      },
+      {
+        "source_id": "unclassified:docs/research/ci-hygiene-decisions.md",
+        "path": "docs/research/ci-hygiene-decisions.md",
+        "sha256": "ceafe1dad8af7e5e014f5bb4b899cf7c3db7470658bace0c8c1eb4d939eea6e5"
+      },
+      {
+        "source_id": "unclassified:docs/research/cve-to-taudit-rules.md",
+        "path": "docs/research/cve-to-taudit-rules.md",
+        "sha256": "173c128cd67ba11827021f3e25e985afa73fa6b7d3d12763a0c9f1c13e53c2ca"
+      },
+      {
+        "source_id": "unclassified:docs/research/fixtures/praetorian-gemini-code.yml",
+        "path": "docs/research/fixtures/praetorian-gemini-code.yml",
+        "sha256": "9c2e8e43cab09b2a893e0c28a54d4c1eb97edbf3fb5e0d8b392cc80a729336e9"
+      },
+      {
+        "source_id": "unclassified:docs/research/fixtures/rspack-release-canary.yml",
+        "path": "docs/research/fixtures/rspack-release-canary.yml",
+        "sha256": "158a940257edad9fab45e8b03d402e5243c8de729128babdb4000d4b70f89452"
+      },
+      {
+        "source_id": "unclassified:docs/research/fixtures/ultralytics-format-cb260c2-prt.yml",
+        "path": "docs/research/fixtures/ultralytics-format-cb260c2-prt.yml",
+        "sha256": "8c780d5026654e0dc2ded8623cb4a2dd861f55ac733540159c1897c2ed4c2ddc"
+      },
+      {
+        "source_id": "unclassified:docs/research/fixtures/ultralytics-format-main-branch.yml",
+        "path": "docs/research/fixtures/ultralytics-format-main-branch.yml",
+        "sha256": "875dbe1bce27b49b27c7fe27401c568413f7ae627995f84ddc9ead2af8ff30f2"
+      },
+      {
+        "source_id": "unclassified:docs/research/prt-sample-scan-2026-04-29.json",
+        "path": "docs/research/prt-sample-scan-2026-04-29.json",
+        "sha256": "cc9241836ec04946bd684f5789a71dc307b34ec7346ca721450ba50c246558b8"
+      },
+      {
+        "source_id": "unclassified:docs/research/pull-request-target-sample-study.md",
+        "path": "docs/research/pull-request-target-sample-study.md",
+        "sha256": "9fd6ec81e7a5bbbbab5d89e8a944f352eb996787eb10f535c4a2cb0ca71b82eb"
+      },
+      {
+        "source_id": "unclassified:docs/rules/add_spn_with_inline_script.md",
+        "path": "docs/rules/add_spn_with_inline_script.md",
+        "sha256": "f222f14ef60c9455e0035cae81638129c0b252941321c457c02e5c4a2ae978bf"
+      },
+      {
+        "source_id": "unclassified:docs/rules/artifact_boundary_crossing.md",
+        "path": "docs/rules/artifact_boundary_crossing.md",
+        "sha256": "e821656065cc35a2b09f7cd0e4fc3f8b2844a0af6149da05ff82a3441f08a67d"
+      },
+      {
+        "source_id": "unclassified:docs/rules/authority_cycle.md",
+        "path": "docs/rules/authority_cycle.md",
+        "sha256": "61db35176f98a35d36dab1474fa0288c7004c02be88f6687e9ca00ef3ce965e2"
+      },
+      {
+        "source_id": "unclassified:docs/rules/authority_propagation.md",
+        "path": "docs/rules/authority_propagation.md",
+        "sha256": "b5e4a74c1cf1416449ab9e80fe4071e18e188acbfb179f9ce4c97964d021a82e"
+      },
+      {
+        "source_id": "unclassified:docs/rules/cache_key_crosses_trust_boundary.md",
+        "path": "docs/rules/cache_key_crosses_trust_boundary.md",
+        "sha256": "a70f2eb23fb831d0e63a34bc5287dad06d410775ea87e8cff2a68aeb57c84310"
+      },
+      {
+        "source_id": "unclassified:docs/rules/checkout_self_pr_exposure.md",
+        "path": "docs/rules/checkout_self_pr_exposure.md",
+        "sha256": "a4e5500b01344bac39dbdd6f2dc8e7d7bfde4d166371f654365bd5bdfa7cc6cf"
+      },
+      {
+        "source_id": "unclassified:docs/rules/child_pipeline_trigger_inherits_authority.md",
+        "path": "docs/rules/child_pipeline_trigger_inherits_authority.md",
+        "sha256": "a5e4fad44ea15f54b4d7106f97cd9d2b4f219cdfc85cbc6eac87f045cc283e4f"
+      },
+      {
+        "source_id": "unclassified:docs/rules/ci_job_token_to_external_api.md",
+        "path": "docs/rules/ci_job_token_to_external_api.md",
+        "sha256": "3096b609fd7db1d204b90ce4819dc7a530e3552cc9ea2120ef7dddeb93380a78"
+      },
+      {
+        "source_id": "unclassified:docs/rules/ci_token_triggers_downstream_with_variable_passthrough.md",
+        "path": "docs/rules/ci_token_triggers_downstream_with_variable_passthrough.md",
+        "sha256": "c82fdcf8a75e0512658d7681754284c2622415e0b1ef06454b552a19301a35fe"
+      },
+      {
+        "source_id": "unclassified:docs/rules/cross_workflow_authority_chain.md",
+        "path": "docs/rules/cross_workflow_authority_chain.md",
+        "sha256": "94b4c437ae7506111ffd5fa97963a59df2611d11805dfaa21ae72d0bafcaf172"
+      },
+      {
+        "source_id": "unclassified:docs/rules/dind_service_grants_host_authority.md",
+        "path": "docs/rules/dind_service_grants_host_authority.md",
+        "sha256": "97bf577b4d70b7dbb0db1f408de99013ce52a958b442bfbc8bc40c8f88ae1c71"
+      },
+      {
+        "source_id": "unclassified:docs/rules/dotenv_artifact_flows_to_privileged_deployment.md",
+        "path": "docs/rules/dotenv_artifact_flows_to_privileged_deployment.md",
+        "sha256": "5cc20aadd53c9ad3244267275ae2b7b9afcb7d1791b2824c959545eea5672152"
+      },
+      {
+        "source_id": "unclassified:docs/rules/floating_image.md",
+        "path": "docs/rules/floating_image.md",
+        "sha256": "1ab14c40d25e94bf2fc2d4d5febdc8bb368c5fb9557844d8ccdffd15efcc3791"
+      },
+      {
+        "source_id": "unclassified:docs/rules/gh_cli_with_default_token_escalating.md",
+        "path": "docs/rules/gh_cli_with_default_token_escalating.md",
+        "sha256": "bb1b5204ff5f21f28040c5fe0c5712767e3d939afa457139ac4c80e903ec6b82"
+      },
+      {
+        "source_id": "unclassified:docs/rules/gha_action_minted_secret_to_helper.md",
+        "path": "docs/rules/gha_action_minted_secret_to_helper.md",
+        "sha256": "a080cd3f4a017aae43d5ece9592c7f3a167ebf26b520423e95a61324adb18ebc"
+      },
+      {
+        "source_id": "unclassified:docs/rules/gha_action_token_env_before_bare_download_helper.md",
+        "path": "docs/rules/gha_action_token_env_before_bare_download_helper.md",
+        "sha256": "3451ddeeb76a8ddc8be42fa5ec1c72e5ca5c893b040b8124f8b292a16efe8842"
+      },
+      {
+        "source_id": "unclassified:docs/rules/gha_api_workflow_run_artifact_to_autonomous_agent_to_git_push.md",
+        "path": "docs/rules/gha_api_workflow_run_artifact_to_autonomous_agent_to_git_push.md",
+        "sha256": "123924005cd194bc335384327f3c97820347d938711500cb11d3361233b5da15"
+      },
+      {
+        "source_id": "unclassified:docs/rules/gha_attestation_config_driven_gate_from_workspace_file.md",
+        "path": "docs/rules/gha_attestation_config_driven_gate_from_workspace_file.md",
+        "sha256": "543929b458cd341fd815df72f578fe17833bcb48d79846120f69d19c206e0b63"
+      },
+      {
+        "source_id": "unclassified:docs/rules/gha_attestation_subject_digest_from_step_output_unverified.md",
+        "path": "docs/rules/gha_attestation_subject_digest_from_step_output_unverified.md",
+        "sha256": "db1074464c9356722bfecf26325b6db65f59895938aba14fb351f2cb533ef0ee"
+      },
+      {
+        "source_id": "unclassified:docs/rules/gha_attestation_subject_path_workspace_glob_with_pr_trigger.md",
+        "path": "docs/rules/gha_attestation_subject_path_workspace_glob_with_pr_trigger.md",
+        "sha256": "f6231ff9d9d88c67df21746a8e227d0c515d7262e1eec80ed09e7d7c234f7086"
+      },
+      {
+        "source_id": "unclassified:docs/rules/gha_azure_companion_helper_authority.md",
+        "path": "docs/rules/gha_azure_companion_helper_authority.md",
+        "sha256": "0c9b9f554e04d4949a3830c82a4f5e583fc18b8f688e5a075007eb2ee66c6001"
+      },
+      {
+        "source_id": "unclassified:docs/rules/gha_changesets_publish_command_with_authority.md",
+        "path": "docs/rules/gha_changesets_publish_command_with_authority.md",
+        "sha256": "a5b5a0d485851b2fc42691845b6da88c9b339c922c19d4ff5b8bd9076a205e9a"
+      },
+      {
+        "source_id": "unclassified:docs/rules/gha_composite_bare_helper_after_path_install_with_secret_env.md",
+        "path": "docs/rules/gha_composite_bare_helper_after_path_install_with_secret_env.md",
+        "sha256": "84c0436b7fb969f2364ce17af6b25467e1d256fb44f28be1255c876473697c87"
+      },
+      {
+        "source_id": "unclassified:docs/rules/gha_composite_entrypoint_path_shadow_with_secret_env.md",
+        "path": "docs/rules/gha_composite_entrypoint_path_shadow_with_secret_env.md",
+        "sha256": "679e907912f8e0f914817ed449df1e20a293d6172b6ed7bcae68507d3cfb5a8b"
+      },
+      {
+        "source_id": "unclassified:docs/rules/gha_container_image_attacker_influenced_with_secret_env.md",
+        "path": "docs/rules/gha_container_image_attacker_influenced_with_secret_env.md",
+        "sha256": "ae993e010203def4e12036ff66c5917eaa19f30b822f8e0dbc035a316956fc70"
+      },
+      {
+        "source_id": "unclassified:docs/rules/gha_create_pr_git_token_path_handoff.md",
+        "path": "docs/rules/gha_create_pr_git_token_path_handoff.md",
+        "sha256": "7a47d9778dc8a2cd04efb3b11ee431f958484fc0554c05fc649fa3be89195d8a"
+      },
+      {
+        "source_id": "unclassified:docs/rules/gha_crossforge_mirror_checkout_with_token_push.md",
+        "path": "docs/rules/gha_crossforge_mirror_checkout_with_token_push.md",
+        "sha256": "c0c6c0f31f991ff10bab825f0f5cac939c4b8517c4bee53acb302c6429117b90"
+      },
+      {
+        "source_id": "unclassified:docs/rules/gha_crossrepo_org_credential_multiplexing.md",
+        "path": "docs/rules/gha_crossrepo_org_credential_multiplexing.md",
+        "sha256": "faccd54d895b664670e94f447b93fe9b0d9fddfb64ee7d2489cf7f909b8f3718"
+      },
+      {
+        "source_id": "unclassified:docs/rules/gha_crossrepo_secrets_inherit_unreviewed_callee.md",
+        "path": "docs/rules/gha_crossrepo_secrets_inherit_unreviewed_callee.md",
+        "sha256": "b75df0044b428affb0b7c8508ab8734bddbb3850f78d553abb6b28d67f71c0f0"
+      },
+      {
+        "source_id": "unclassified:docs/rules/gha_crossrepo_workflow_call_floating_ref_cascade.md",
+        "path": "docs/rules/gha_crossrepo_workflow_call_floating_ref_cascade.md",
+        "sha256": "7f81bfd54bf47d5fc288c94a807a6085b0a2747216fe0345d51e957f7381115f"
+      },
+      {
+        "source_id": "unclassified:docs/rules/gha_datadog_test_visibility_installer_authority.md",
+        "path": "docs/rules/gha_datadog_test_visibility_installer_authority.md",
+        "sha256": "7aa122f7810c63f398d7f4545a1d269e55d320da43553a5ac2f8eafe466bb15b"
+      },
+      {
+        "source_id": "unclassified:docs/rules/gha_docker_buildx_authority_path_handoff.md",
+        "path": "docs/rules/gha_docker_buildx_authority_path_handoff.md",
+        "sha256": "c6a3414c696239c7762c2f520f79b69c04cdded0e868e2c10831d7bca9415783"
+      },
+      {
+        "source_id": "unclassified:docs/rules/gha_docker_setup_qemu_privileged_docker_helper.md",
+        "path": "docs/rules/gha_docker_setup_qemu_privileged_docker_helper.md",
+        "sha256": "3f15d4d1a905970a7cf6aaffe390e7dc05a69b478a68eb22f62e8ca44c492ee1"
+      },
+      {
+        "source_id": "unclassified:docs/rules/gha_env_credential_helper_config_redirect_before_authority.md",
+        "path": "docs/rules/gha_env_credential_helper_config_redirect_before_authority.md",
+        "sha256": "0c79e609fe9f1e87d4bad7afa22ae6568d0df56c9a37fab4b78ae545539a46f1"
+      },
+      {
+        "source_id": "unclassified:docs/rules/gha_env_dyld_or_ld_library_path_before_credential_helper.md",
+        "path": "docs/rules/gha_env_dyld_or_ld_library_path_before_credential_helper.md",
+        "sha256": "3a88a146f714e70e60b3de9345cc0a82be9482c34662604e92f7a80b63507e4b"
+      },
+      {
+        "source_id": "unclassified:docs/rules/gha_env_node_options_code_injection_before_node_authority.md",
+        "path": "docs/rules/gha_env_node_options_code_injection_before_node_authority.md",
+        "sha256": "92dc5eb7068f3151583a5e78a4f939ffdf0d18026d063d176172d0c9b1571618"
+      },
+      {
+        "source_id": "unclassified:docs/rules/gha_floating_remote_script_before_publish_sink.md",
+        "path": "docs/rules/gha_floating_remote_script_before_publish_sink.md",
+        "sha256": "a6d2eb23bc6cac81a4ed7798a4b23e87d950cab71a9432be85f23703310cb90b"
+      },
+      {
+        "source_id": "unclassified:docs/rules/gha_google_deploy_gcloud_credential_path.md",
+        "path": "docs/rules/gha_google_deploy_gcloud_credential_path.md",
+        "sha256": "19720efd5d8735b87ae26632ef8bfab0d6d714217ac32e77c956204f792a25f2"
+      },
+      {
+        "source_id": "unclassified:docs/rules/gha_helper_path_sensitive_argv.md",
+        "path": "docs/rules/gha_helper_path_sensitive_argv.md",
+        "sha256": "a3f5caabbeee6a1d367751b8a6c2d18f0bf459bf53f2b97b6499d9679e4b389e"
+      },
+      {
+        "source_id": "unclassified:docs/rules/gha_helper_path_sensitive_env.md",
+        "path": "docs/rules/gha_helper_path_sensitive_env.md",
+        "sha256": "18e40239affc155e534f44fa5912bdcc7b473521b12e3a33b410ecc2927b3af2"
+      },
+      {
+        "source_id": "unclassified:docs/rules/gha_helper_path_sensitive_stdin.md",
+        "path": "docs/rules/gha_helper_path_sensitive_stdin.md",
+        "sha256": "987f41f844476a0593257c639c08959eef6bde0a9de51da745b1fb1c311d8fbf"
+      },
+      {
+        "source_id": "unclassified:docs/rules/gha_helper_untrusted_path_resolution.md",
+        "path": "docs/rules/gha_helper_untrusted_path_resolution.md",
+        "sha256": "806661785e36b3388e3becea30a04fdffda25bc8d8030d2346dcc8db413069d1"
+      },
+      {
+        "source_id": "unclassified:docs/rules/gha_identity_cosign_certificate_identity_repo_only_no_ref.md",
+        "path": "docs/rules/gha_identity_cosign_certificate_identity_repo_only_no_ref.md",
+        "sha256": "eed0dbfb87fb144d54d8645d89728a777b657b877b9b9582d575c15401c464b5"
+      },
+      {
+        "source_id": "unclassified:docs/rules/gha_import_gpg_private_key_helper_path.md",
+        "path": "docs/rules/gha_import_gpg_private_key_helper_path.md",
+        "sha256": "0797b45d44df221bab6cb8a52078639f6048a9421c55edfd6d7ede556e53e8f0"
+      },
+      {
+        "source_id": "unclassified:docs/rules/gha_issue_comment_command_to_write_token.md",
+        "path": "docs/rules/gha_issue_comment_command_to_write_token.md",
+        "sha256": "84f6416c150e8a7e15b69dfaed21faad528735f01005d4b1ac80145eb0ab03f0"
+      },
+      {
+        "source_id": "unclassified:docs/rules/gha_kubernetes_helper_kubeconfig_authority.md",
+        "path": "docs/rules/gha_kubernetes_helper_kubeconfig_authority.md",
+        "sha256": "526b0fbb72df6430b76012add61ffe877dc00e34f2186a29ed0e0a8f28382e71"
+      },
+      {
+        "source_id": "unclassified:docs/rules/gha_macos_codesign_cert_security_path.md",
+        "path": "docs/rules/gha_macos_codesign_cert_security_path.md",
+        "sha256": "ed8f828a0ee89e48473de84da2f91fa8d51c1aa2c2439e92949b35d1687e2746"
+      },
+      {
+        "source_id": "unclassified:docs/rules/gha_manifest_cargo_build_rs_pull_request_with_token.md",
+        "path": "docs/rules/gha_manifest_cargo_build_rs_pull_request_with_token.md",
+        "sha256": "f04b86657824899082fd0c1d4a7275d58c8e285ce7d1bd9c9a040dda5f38fbf8"
+      },
+      {
+        "source_id": "unclassified:docs/rules/gha_manifest_makefile_with_pr_trigger_and_secrets.md",
+        "path": "docs/rules/gha_manifest_makefile_with_pr_trigger_and_secrets.md",
+        "sha256": "52bdec2292dd4f4fb69a3c6c32efbfebd78ea69773966b3e542eeb875ae3ebfa"
+      },
+      {
+        "source_id": "unclassified:docs/rules/gha_manifest_npm_lifecycle_hook_pr_trigger_with_token.md",
+        "path": "docs/rules/gha_manifest_npm_lifecycle_hook_pr_trigger_with_token.md",
+        "sha256": "73662ad572e83c3a3fc5240a1b4d28295e8c32c014feebc641dd9c48e3391bb9"
+      },
+      {
+        "source_id": "unclassified:docs/rules/gha_manifest_python_m_build_with_pr_credentials.md",
+        "path": "docs/rules/gha_manifest_python_m_build_with_pr_credentials.md",
+        "sha256": "ad878d76de10dcce48bb1fbaa3beb2c715f74a08926cda9b3865f3654eb9610b"
+      },
+      {
+        "source_id": "unclassified:docs/rules/gha_manifest_submodules_recursive_with_pr_authority.md",
+        "path": "docs/rules/gha_manifest_submodules_recursive_with_pr_authority.md",
+        "sha256": "d505695cce52c203680c4206f82e8c25a197a44538564e4bf48ade4460309b6c"
+      },
+      {
+        "source_id": "unclassified:docs/rules/gha_manual_dispatch_ref_to_privileged_checkout.md",
+        "path": "docs/rules/gha_manual_dispatch_ref_to_privileged_checkout.md",
+        "sha256": "649c62f15cdf69717f0971e6022ca237cd51b506f4eceb7b1605364ab05d242c"
+      },
+      {
+        "source_id": "unclassified:docs/rules/gha_pages_deploy_token_url_to_git_helper.md",
+        "path": "docs/rules/gha_pages_deploy_token_url_to_git_helper.md",
+        "sha256": "93634db6609f033d48de975f6a8c585c866d452c7f6818000acd8af51cdbdfe7"
+      },
+      {
+        "source_id": "unclassified:docs/rules/gha_pat_remote_url_write.md",
+        "path": "docs/rules/gha_pat_remote_url_write.md",
+        "sha256": "a301671d27add10e4efaf64404e09ebbbf3bf7091c72c86f974eb3d47ca2aee7"
+      },
+      {
+        "source_id": "unclassified:docs/rules/gha_post_action_input_retarget_to_cache_save.md",
+        "path": "docs/rules/gha_post_action_input_retarget_to_cache_save.md",
+        "sha256": "df7ffaa717dbe9e9345d412aeebb894f39ffb6af16a1c2af9eab8a14105d5175"
+      },
+      {
+        "source_id": "unclassified:docs/rules/gha_post_ambient_env_cleanup_path.md",
+        "path": "docs/rules/gha_post_ambient_env_cleanup_path.md",
+        "sha256": "0d12e42c62a40e0191d0c81c99916620d37218b19f254e9f38e5bf3bd6eda349"
+      },
+      {
+        "source_id": "unclassified:docs/rules/gha_pr_build_pushes_publishable_image.md",
+        "path": "docs/rules/gha_pr_build_pushes_publishable_image.md",
+        "sha256": "fbd9008ad28e43a857e2dd498113ea5b82013ea1bd990bae4e5d4d85e8a0df44"
+      },
+      {
+        "source_id": "unclassified:docs/rules/gha_pulumi_path_resolved_cli_with_authority.md",
+        "path": "docs/rules/gha_pulumi_path_resolved_cli_with_authority.md",
+        "sha256": "3561f6811a315ed7156bc335b53c4685b85931f74ac6bee6a9ca08e5401f6034"
+      },
+      {
+        "source_id": "unclassified:docs/rules/gha_pypi_publish_oidc_after_path_mutation.md",
+        "path": "docs/rules/gha_pypi_publish_oidc_after_path_mutation.md",
+        "sha256": "b7787a443a15fa9886d0cc49c98d3c5432ac666ca8d073558d25e7b369960b86"
+      },
+      {
+        "source_id": "unclassified:docs/rules/gha_remote_script_in_authority_job.md",
+        "path": "docs/rules/gha_remote_script_in_authority_job.md",
+        "sha256": "64447b8d6ff512f57a95d6a8f4ba2fb7b5d031307395385125e20808c0c8fe91"
+      },
+      {
+        "source_id": "unclassified:docs/rules/gha_rubygems_release_git_token_and_oidc_helper.md",
+        "path": "docs/rules/gha_rubygems_release_git_token_and_oidc_helper.md",
+        "sha256": "5af8b6e6150ae5ac0b8bf2e678a949af0172c97b557100d67416225f63eaae88"
+      },
+      {
+        "source_id": "unclassified:docs/rules/gha_runner_lifecycle_self_hosted_pr_no_isolation.md",
+        "path": "docs/rules/gha_runner_lifecycle_self_hosted_pr_no_isolation.md",
+        "sha256": "bdbca667a9d43466633724ac584c3fa46345b722329e6d0894f0b7117615b9f4"
+      },
+      {
+        "source_id": "unclassified:docs/rules/gha_script_injection_to_privileged_shell.md",
+        "path": "docs/rules/gha_script_injection_to_privileged_shell.md",
+        "sha256": "2b834113b73f0fa47c79b46e4a4540aaa084200544ab21b7a692f5c79b767dd3"
+      },
+      {
+        "source_id": "unclassified:docs/rules/gha_secret_output_after_helper_login.md",
+        "path": "docs/rules/gha_secret_output_after_helper_login.md",
+        "sha256": "7e0af992b4e04e871ff2d1cb4a40399d3eb2e5cb486e0a00cbe7a7fb18561741"
+      },
+      {
+        "source_id": "unclassified:docs/rules/gha_setup_go_cache_helper_path_handoff.md",
+        "path": "docs/rules/gha_setup_go_cache_helper_path_handoff.md",
+        "sha256": "97991c5b46c694d7d475b970979d76aa32498e0ebd9f95e6c3594f3b6e137362"
+      },
+      {
+        "source_id": "unclassified:docs/rules/gha_setup_node_cache_helper_path_handoff.md",
+        "path": "docs/rules/gha_setup_node_cache_helper_path_handoff.md",
+        "sha256": "9a77aea3a77cc302dd4317c6776038b5a3ea3dee1627290815857c8ebf61e8eb"
+      },
+      {
+        "source_id": "unclassified:docs/rules/gha_setup_python_cache_helper_path_handoff.md",
+        "path": "docs/rules/gha_setup_python_cache_helper_path_handoff.md",
+        "sha256": "85e96f153ced127cd450d35f0dbf4905df598ff54c3901bbfda0ad9f07ac7333"
+      },
+      {
+        "source_id": "unclassified:docs/rules/gha_setup_python_pip_install_authority_env.md",
+        "path": "docs/rules/gha_setup_python_pip_install_authority_env.md",
+        "sha256": "b3100695d84039ec10dda02ec06c382e1820d494a3b706157f15699f746ae104"
+      },
+      {
+        "source_id": "unclassified:docs/rules/gha_ssh_agent_private_key_to_path_helper.md",
+        "path": "docs/rules/gha_ssh_agent_private_key_to_path_helper.md",
+        "sha256": "5ae175a5fb7e3d8c284b0f202328741300c30d405b4c073ea183d589d4f8fbd2"
+      },
+      {
+        "source_id": "unclassified:docs/rules/gha_telemetry_autonomous_agent_input_from_untrusted_event.md",
+        "path": "docs/rules/gha_telemetry_autonomous_agent_input_from_untrusted_event.md",
+        "sha256": "dc9a00679e626a1610d3cd3ae2ba61ecd33aaac88e5c35c965ae8cf33402c55c"
+      },
+      {
+        "source_id": "unclassified:docs/rules/gha_telemetry_debug_flag_with_secret_env.md",
+        "path": "docs/rules/gha_telemetry_debug_flag_with_secret_env.md",
+        "sha256": "b1c7620daee99d745a8a3c00c03b775b6de6ce035d3a77b6c482c4c4849e491c"
+      },
+      {
+        "source_id": "unclassified:docs/rules/gha_telemetry_pr_or_issue_text_to_external_sink.md",
+        "path": "docs/rules/gha_telemetry_pr_or_issue_text_to_external_sink.md",
+        "sha256": "856e6180bb147767a18184620af5c543cfca17d3a72f296b3ca43b09d99a879f"
+      },
+      {
+        "source_id": "unclassified:docs/rules/gha_temporal_oidc_freshness_across_multistep_build.md",
+        "path": "docs/rules/gha_temporal_oidc_freshness_across_multistep_build.md",
+        "sha256": "400afb738a14a2aa7f63e94d49f5be5f628479e913140f4fa6b46e881f7a5050"
+      },
+      {
+        "source_id": "unclassified:docs/rules/gha_terraform_wrapper_sensitive_output.md",
+        "path": "docs/rules/gha_terraform_wrapper_sensitive_output.md",
+        "sha256": "154b4b32a3855f42f63ff811a20e6e77802fee077b324aa6c61e80699c92eed7"
+      },
+      {
+        "source_id": "unclassified:docs/rules/gha_token_remote_url_with_trace_or_process_exposure.md",
+        "path": "docs/rules/gha_token_remote_url_with_trace_or_process_exposure.md",
+        "sha256": "b3d38be8d27e3fc11a489815a858ade27845019cfadefee27758c63ecf72aaaa"
+      },
+      {
+        "source_id": "unclassified:docs/rules/gha_tool_installer_then_shell_helper_authority.md",
+        "path": "docs/rules/gha_tool_installer_then_shell_helper_authority.md",
+        "sha256": "62958a78065f22d1f918a11eb2e711599c907afca431a109fad3bf0fe978b2f2"
+      },
+      {
+        "source_id": "unclassified:docs/rules/gha_toolcache_absolute_path_downgrade.md",
+        "path": "docs/rules/gha_toolcache_absolute_path_downgrade.md",
+        "sha256": "de2648ca1024675e4b2d0ec5c918469dd439c5a14b48bd896a8d666b3509c0c3"
+      },
+      {
+        "source_id": "unclassified:docs/rules/gha_verifier_gh_attestation_missing_source_digest_check.md",
+        "path": "docs/rules/gha_verifier_gh_attestation_missing_source_digest_check.md",
+        "sha256": "ecd0d378791433379798f0c2ef1428f0fedb72dc3163dc6fab2aa9658b4c06e6"
+      },
+      {
+        "source_id": "unclassified:docs/rules/gha_workflow_call_container_image_input_secrets_inherit.md",
+        "path": "docs/rules/gha_workflow_call_container_image_input_secrets_inherit.md",
+        "sha256": "13f3b111cbe503bdd779654fff992a87f242b0f49c953cbe08b620b1adf0c1ab"
+      },
+      {
+        "source_id": "unclassified:docs/rules/gha_workflow_call_runner_label_input_privilege_escalation.md",
+        "path": "docs/rules/gha_workflow_call_runner_label_input_privilege_escalation.md",
+        "sha256": "82539514d42adcc436c17cc6340846dc50f7e84d49d97622ac00e93221f7c0f2"
+      },
+      {
+        "source_id": "unclassified:docs/rules/gha_workflow_run_artifact_metadata_to_privileged_api.md",
+        "path": "docs/rules/gha_workflow_run_artifact_metadata_to_privileged_api.md",
+        "sha256": "47f9396b1d7ca89c9df8b0ae1c19b7646f0548edf7b1cbe38c1de26f51b133f6"
+      },
+      {
+        "source_id": "unclassified:docs/rules/gha_workflow_run_artifact_poisoning_to_privileged_consumer.md",
+        "path": "docs/rules/gha_workflow_run_artifact_poisoning_to_privileged_consumer.md",
+        "sha256": "df1bfb1040cb19b4490ac43e25c6ea259dae7ba18e32a710bb62c1c075b186fe"
+      },
+      {
+        "source_id": "unclassified:docs/rules/gha_workflow_run_artifact_report_to_pr_comment.md",
+        "path": "docs/rules/gha_workflow_run_artifact_report_to_pr_comment.md",
+        "sha256": "e9d754cdecac6321d5ca853896adb4df29f63ae99c13feb2f9edfb1684dd4c27"
+      },
+      {
+        "source_id": "unclassified:docs/rules/gha_workflow_run_artifact_to_blob_storage_token.md",
+        "path": "docs/rules/gha_workflow_run_artifact_to_blob_storage_token.md",
+        "sha256": "16385d61cf6ec9a7251929c793ea20c3eb98eb06ef8ea91d81dc1eb9b4c74c4d"
+      },
+      {
+        "source_id": "unclassified:docs/rules/gha_workflow_run_artifact_to_build_scan_publish.md",
+        "path": "docs/rules/gha_workflow_run_artifact_to_build_scan_publish.md",
+        "sha256": "0820cf96ba049b08c989f1c87835da8d2f9cae232374e779b636bab3c880df13"
+      },
+      {
+        "source_id": "unclassified:docs/rules/gha_workflow_shell_authority_concentration.md",
+        "path": "docs/rules/gha_workflow_shell_authority_concentration.md",
+        "sha256": "6b82c97d33217b9fb83d9dc26719d072a8330646e7fe67424368d61d25d214e7"
+      },
+      {
+        "source_id": "unclassified:docs/rules/gitlab_deploy_job_missing_protected_branch_only.md",
+        "path": "docs/rules/gitlab_deploy_job_missing_protected_branch_only.md",
+        "sha256": "504e6e7320ef5e0cdb6864e2d097f3d4669b10eeacbfae4200393a6766f78840"
+      },
+      {
+        "source_id": "unclassified:docs/rules/homoglyph_in_action_ref.md",
+        "path": "docs/rules/homoglyph_in_action_ref.md",
+        "sha256": "2715288ae3c55a3276350c21cc596ec6efbfc69cb2914f500f08a6d1b64b9cb9"
+      },
+      {
+        "source_id": "unclassified:docs/rules/id_token_audience_overscoped.md",
+        "path": "docs/rules/id_token_audience_overscoped.md",
+        "sha256": "ae4633df336f5621e2ae1d9dcb89dc8443184d5006d2d4c180f9c5b7a22aea54"
+      },
+      {
+        "source_id": "unclassified:docs/rules/index.md",
+        "path": "docs/rules/index.md",
+        "sha256": "1324aab62d3b610302041517d1692cfa9fdc55c84562220995c803ab1c202520"
+      },
+      {
+        "source_id": "unclassified:docs/rules/interactive_debug_action_in_authority_workflow.md",
+        "path": "docs/rules/interactive_debug_action_in_authority_workflow.md",
+        "sha256": "fbbb1d03506dfcea5a3c7432b6fa0e9115663a262e8a4692810d9a900f9a945f"
+      },
+      {
+        "source_id": "unclassified:docs/rules/keyvault_secret_to_plaintext.md",
+        "path": "docs/rules/keyvault_secret_to_plaintext.md",
+        "sha256": "ec6584704c8ff27a525e7113962be446bc6e229e41f9ccc4479ba7303400e6df"
+      },
+      {
+        "source_id": "unclassified:docs/rules/later_secret_materialized_after_path_mutation.md",
+        "path": "docs/rules/later_secret_materialized_after_path_mutation.md",
+        "sha256": "e985ffdf352b5bb8e9aeeab4bfb8090fefbccb10889c89ed4cd7f0baabf7fe0a"
+      },
+      {
+        "source_id": "unclassified:docs/rules/long_lived_credential.md",
+        "path": "docs/rules/long_lived_credential.md",
+        "sha256": "d606077a06ca6d742fa9f05bfd2880db1cecae69beeb613d5e31264099031687"
+      },
+      {
+        "source_id": "unclassified:docs/rules/long_lived_secret_without_oidc_recommendation.md",
+        "path": "docs/rules/long_lived_secret_without_oidc_recommendation.md",
+        "sha256": "4b02116ba07f2969ddcda99a8ce9eb1932114e710757de37a7da18132d50df70"
+      },
+      {
+        "source_id": "unclassified:docs/rules/manual_dispatch_input_to_url_or_command.md",
+        "path": "docs/rules/manual_dispatch_input_to_url_or_command.md",
+        "sha256": "b8ea7e9dbd5251b671615a3fe2cc4e246ed6bae3396db8d9fae442e880af2e8a"
+      },
+      {
+        "source_id": "unclassified:docs/rules/no_workflow_level_permissions_block.md",
+        "path": "docs/rules/no_workflow_level_permissions_block.md",
+        "sha256": "bb78459b5e2b2210f0b5153ce5f11b3986634fa6de001060e4a4bca105974187"
+      },
+      {
+        "source_id": "unclassified:docs/rules/over_privileged_identity.md",
+        "path": "docs/rules/over_privileged_identity.md",
+        "sha256": "fe59b8e1baac9ffd4900230ae1aa6b90d35da34fd58418063423745c8ff83bba"
+      },
+      {
+        "source_id": "unclassified:docs/rules/parameter_interpolation_into_shell.md",
+        "path": "docs/rules/parameter_interpolation_into_shell.md",
+        "sha256": "ab009e54b6775259a3d1ff295690194d70a531d85f19fecf9252d76f85a99923"
+      },
+      {
+        "source_id": "unclassified:docs/rules/pat_embedded_in_git_remote_url.md",
+        "path": "docs/rules/pat_embedded_in_git_remote_url.md",
+        "sha256": "9d9eb4bb770db8be5d375a1f42d03d4c5cc0a24b530ae138318582b1b0902b62"
+      },
+      {
+        "source_id": "unclassified:docs/rules/persisted_credential.md",
+        "path": "docs/rules/persisted_credential.md",
+        "sha256": "7b0b63de2d9c1d5f90e123def335df69b657b5dabaec1eb744187dfd0322365c"
+      },
+      {
+        "source_id": "unclassified:docs/rules/pr_build_pushes_image_with_floating_credentials.md",
+        "path": "docs/rules/pr_build_pushes_image_with_floating_credentials.md",
+        "sha256": "0412237482891b56a10f74d0bca598212408852ab19818b7b5e65ccb84f9d7b4"
+      },
+      {
+        "source_id": "unclassified:docs/rules/pr_specific_cache_key_in_default_branch_consumer.md",
+        "path": "docs/rules/pr_specific_cache_key_in_default_branch_consumer.md",
+        "sha256": "ba4df76757cd8bf82e44fc5a6d720922483d9bd2caeada030cd9fbe921d61572"
+      },
+      {
+        "source_id": "unclassified:docs/rules/pr_trigger_with_floating_action_ref.md",
+        "path": "docs/rules/pr_trigger_with_floating_action_ref.md",
+        "sha256": "aba464869a01bd61a11ecb95f7fdc8a3c4582e5ae650cf6231c0bf7b1527efa0"
+      },
+      {
+        "source_id": "unclassified:docs/rules/prod_deploy_job_no_environment_gate.md",
+        "path": "docs/rules/prod_deploy_job_no_environment_gate.md",
+        "sha256": "dfc8fff88c36e73b7094bdb87049e90730f2140f123471882524192e89be8686"
+      },
+      {
+        "source_id": "unclassified:docs/rules/pull_request_workflow_inconsistent_fork_check.md",
+        "path": "docs/rules/pull_request_workflow_inconsistent_fork_check.md",
+        "sha256": "0aab95a21850f615fa13a90a596ab1e7eccf44a80a557e73b295f318fc690369"
+      },
+      {
+        "source_id": "unclassified:docs/rules/risky_trigger_with_authority.md",
+        "path": "docs/rules/risky_trigger_with_authority.md",
+        "sha256": "98a6c2882d0d853aa40bf25e95c5a47e0ac3d792413c7e3a2d6a453b4ad25a07"
+      },
+      {
+        "source_id": "unclassified:docs/rules/runtime_script_fetched_from_floating_url.md",
+        "path": "docs/rules/runtime_script_fetched_from_floating_url.md",
+        "sha256": "3cd458a1a7bb129bc816ef957a30c571274b5710e8949057f4a8d59803fc0f3d"
+      },
+      {
+        "source_id": "unclassified:docs/rules/script_injection_via_untrusted_context.md",
+        "path": "docs/rules/script_injection_via_untrusted_context.md",
+        "sha256": "6b0cdae24754402fc04f2f0bb64e027e628cb039e6fc2be9b019d89f23798b81"
+      },
+      {
+        "source_id": "unclassified:docs/rules/security_job_silently_skipped.md",
+        "path": "docs/rules/security_job_silently_skipped.md",
+        "sha256": "5e68a74c4fee7f03889ac3314472be3ccff3d8a97c21e7e8d3faf6a0daa7ecc0"
+      },
+      {
+        "source_id": "unclassified:docs/rules/self_hosted_pool_pr_hijack.md",
+        "path": "docs/rules/self_hosted_pool_pr_hijack.md",
+        "sha256": "e2163d7c094c5b9e6bca4bccb21de20a9aba07135e2ff23ada7ad380769307f6"
+      },
+      {
+        "source_id": "unclassified:docs/rules/self_mutating_pipeline.md",
+        "path": "docs/rules/self_mutating_pipeline.md",
+        "sha256": "432dc2b93aa0c1f02adcc671ffd3beba115d55600eee5b2d27b1f07a97715748"
+      },
+      {
+        "source_id": "unclassified:docs/rules/sensitive_value_in_job_output.md",
+        "path": "docs/rules/sensitive_value_in_job_output.md",
+        "sha256": "e0965e33aa13fccb642946a77cc001328bbdcd7a2392a58cf3736b720e984a1d"
+      },
+      {
+        "source_id": "unclassified:docs/rules/service_connection_scope_mismatch.md",
+        "path": "docs/rules/service_connection_scope_mismatch.md",
+        "sha256": "1d7eb05b77f640489dba806d91c59aa2f4a8fc98d94c0b46517d2c7192ebd353"
+      },
+      {
+        "source_id": "unclassified:docs/rules/setvariable_issecret_false.md",
+        "path": "docs/rules/setvariable_issecret_false.md",
+        "sha256": "ecb79bd342ead3d9f35cc05cd8ab6803c7e4349b016c7915fe34469ab7d7644b"
+      },
+      {
+        "source_id": "unclassified:docs/rules/shared_self_hosted_pool_no_isolation.md",
+        "path": "docs/rules/shared_self_hosted_pool_no_isolation.md",
+        "sha256": "d7f22d1a20f51f357830aa95ba3f9ca5834b87bbb832b0bd324b63d1354ffc36"
+      },
+      {
+        "source_id": "unclassified:docs/rules/short_lived_sas_in_command_line.md",
+        "path": "docs/rules/short_lived_sas_in_command_line.md",
+        "sha256": "d9a92faf3896e1e36c0bbcb53268203578d278b552d99f7d3fb452f13b26fb51"
+      },
+      {
+        "source_id": "unclassified:docs/rules/template_extends_unpinned_branch.md",
+        "path": "docs/rules/template_extends_unpinned_branch.md",
+        "sha256": "14148a214517d7a7eda4c7d0f51e8aa203e1ce7b38b33d00a1948de0c6fa250a"
+      },
+      {
+        "source_id": "unclassified:docs/rules/template_repo_ref_is_feature_branch.md",
+        "path": "docs/rules/template_repo_ref_is_feature_branch.md",
+        "sha256": "5af33731917a96dd3e8f1cc3c99542b824022b7d2886d34eaa0b83197f12ee05"
+      },
+      {
+        "source_id": "unclassified:docs/rules/terraform_auto_approve_in_prod.md",
+        "path": "docs/rules/terraform_auto_approve_in_prod.md",
+        "sha256": "43a63bb80d4451a786f3bee78564464563360b78c0cc5f88e38b535ebfc05323"
+      },
+      {
+        "source_id": "unclassified:docs/rules/terraform_output_via_setvariable_shell_expansion.md",
+        "path": "docs/rules/terraform_output_via_setvariable_shell_expansion.md",
+        "sha256": "2372d7df7f5177637ad2f978e954aeacefe80b0633ee5e6087afaee5d50fbf2d"
+      },
+      {
+        "source_id": "unclassified:docs/rules/trigger_context_mismatch.md",
+        "path": "docs/rules/trigger_context_mismatch.md",
+        "sha256": "7742648ce61c53fe68b99724f98d9b1b4f860d9e3a939914c0c9738d78fc0b51"
+      },
+      {
+        "source_id": "unclassified:docs/rules/unpinned_action.md",
+        "path": "docs/rules/unpinned_action.md",
+        "sha256": "5be539f50dd10cc28183a2b27892bf78381b996b82aeaee98f2083862b01013a"
+      },
+      {
+        "source_id": "unclassified:docs/rules/unpinned_include_remote_or_branch_ref.md",
+        "path": "docs/rules/unpinned_include_remote_or_branch_ref.md",
+        "sha256": "88463b7138e3388075fb4b311fba017db4293402d8e39814bfec49a250d11ec3"
+      },
+      {
+        "source_id": "unclassified:docs/rules/unsafe_pr_artifact_in_workflow_run_consumer.md",
+        "path": "docs/rules/unsafe_pr_artifact_in_workflow_run_consumer.md",
+        "sha256": "3c08999c8717414ceebf9f8c4fea81ce70495368a0ec72fa8012b6ce47cbccb0"
+      },
+      {
+        "source_id": "unclassified:docs/rules/untrusted_api_response_to_env_sink.md",
+        "path": "docs/rules/untrusted_api_response_to_env_sink.md",
+        "sha256": "970149251311fc03e2b6034f794f00e2b8aacc0d38046560c095cd26c21f4a20"
+      },
+      {
+        "source_id": "unclassified:docs/rules/untrusted_ci_var_in_shell_interpolation.md",
+        "path": "docs/rules/untrusted_ci_var_in_shell_interpolation.md",
+        "sha256": "3f933cc55f256eab39f7b633e5142e456b94a95c09c13c234011f44bcd84cd4f"
+      },
+      {
+        "source_id": "unclassified:docs/rules/untrusted_with_authority.md",
+        "path": "docs/rules/untrusted_with_authority.md",
+        "sha256": "035dcc8df845ed4e768c6444f4430a102aa3a42abbf4b53961c62fa2da2a2c4d"
+      },
+      {
+        "source_id": "unclassified:docs/rules/uplift_without_attestation.md",
+        "path": "docs/rules/uplift_without_attestation.md",
+        "sha256": "7e003e93635bdaf24935b7a1b488668031474f8e5295c60a69e0dd48ee47933c"
+      },
+      {
+        "source_id": "unclassified:docs/rules/variable_group_in_pr_job.md",
+        "path": "docs/rules/variable_group_in_pr_job.md",
+        "sha256": "f9263f298bb3edcfdbe48cf61a9ed62de61abe9c43b701a9968fa29baafa7a01"
+      },
+      {
+        "source_id": "unclassified:docs/rules/vm_remote_exec_via_pipeline_secret.md",
+        "path": "docs/rules/vm_remote_exec_via_pipeline_secret.md",
+        "sha256": "e3c11b7d60806c52d2e2f3902c1c975d24eac4946f5a4c9f9ca9bbcefc10e80e"
+      },
+      {
+        "source_id": "unclassified:docs/seam-freeze-v1.md",
+        "path": "docs/seam-freeze-v1.md",
+        "sha256": "45ffec6a5f374fb94f0c7454911b75828817959002829b55c4772fecdf85512d"
+      },
+      {
+        "source_id": "unclassified:docs/self-hosting-scan.md",
+        "path": "docs/self-hosting-scan.md",
+        "sha256": "5e225c1041dbc2a39f6e3cf659785d054fa270dfd1caf2536722a4035757afa3"
+      },
+      {
+        "source_id": "unclassified:docs/suppressions.md",
+        "path": "docs/suppressions.md",
+        "sha256": "7485356f99a92fc2dc109fd24123dae48705c1b44cdb4231e6b4b11abc2a0c48"
+      },
+      {
+        "source_id": "unclassified:docs/v1-rule-id-decisions.md",
+        "path": "docs/v1-rule-id-decisions.md",
+        "sha256": "2f1dcde2e49fcbe39b3f92c44889e88dfafd6b926a64564d3c8c644a183d4048"
+      },
+      {
+        "source_id": "unclassified:docs/v1-schema-decisions.md",
+        "path": "docs/v1-schema-decisions.md",
+        "sha256": "48b92d48ef311e8d70ce0b16c728ff536234fefeb09311b3014f72a0d505cf4e"
+      },
+      {
+        "source_id": "unclassified:docs/verify.md",
+        "path": "docs/verify.md",
+        "sha256": "cb99515e7cedc2adae251107e9572d06f04c7262eb7bd97fdf963e0b7bcfb297"
+      },
+      {
+        "source_id": "unclassified:examples/consumers/README.md",
+        "path": "examples/consumers/README.md",
+        "sha256": "e28635ffbca81ae944ee8dc55811f6e9791d050ee724681924116bb6cc2adc60"
+      },
+      {
+        "source_id": "unclassified:examples/consumers/go/README.md",
+        "path": "examples/consumers/go/README.md",
+        "sha256": "d37a67ead58e602bc9948321e58b09dbf34993fd5d3e7602707bfe70d916d7f0"
+      },
+      {
+        "source_id": "unclassified:examples/consumers/go/go.mod",
+        "path": "examples/consumers/go/go.mod",
+        "sha256": "8832a712201b0bb832f77079d1857b68699a4e58ee4c69995d75b8252450fa92"
+      },
+      {
+        "source_id": "project_source_code:examples/consumers/go/main.go",
+        "path": "examples/consumers/go/main.go",
+        "sha256": "3a4eb57e46cc17667dfb62ffb91c14245a8ee316bcf9767f342332eb1f8c2832"
+      },
+      {
+        "source_id": "project_source_code:examples/consumers/python/blast_radius.py",
+        "path": "examples/consumers/python/blast_radius.py",
+        "sha256": "7d1a3f454b84b03183921de302cf3f09123c473c40ca6b1c9351ace6e7e4bd5f"
+      },
+      {
+        "source_id": "project_source_code:examples/consumers/typescript/find-cycles.ts",
+        "path": "examples/consumers/typescript/find-cycles.ts",
+        "sha256": "fc0b80e669807223347c6e2eeb47d9074431776c5593bb8a8e39a092b1c2199b"
+      },
+      {
+        "source_id": "unclassified:infra/finops-smoke/.terraform.lock.hcl",
+        "path": "infra/finops-smoke/.terraform.lock.hcl",
+        "sha256": "d5eb586451874a0bc3c368b8effac1d043307f1369572cedc19db31260d07929"
+      },
+      {
+        "source_id": "unclassified:infra/finops-smoke/README.md",
+        "path": "infra/finops-smoke/README.md",
+        "sha256": "e83c699635e97171a7f3d23c7a3e40e51328e91cd751576c70d4697008cea299"
+      },
+      {
+        "source_id": "unclassified:infra/finops-smoke/main.tf",
+        "path": "infra/finops-smoke/main.tf",
+        "sha256": "d1072d9c1f64fb2300d0041fd3ef3bba244c7753d93e5f58d22566ae815beb81"
+      },
+      {
+        "source_id": "unclassified:infra/finops-smoke/versions.tf",
+        "path": "infra/finops-smoke/versions.tf",
+        "sha256": "7b66d01c2e0a84deb66fbd2d55d36e00e17a93b8ed255bf159c092215cc6e8de"
+      },
+      {
+        "source_id": "unclassified:invariants/examples/negation-example.yml",
+        "path": "invariants/examples/negation-example.yml",
+        "sha256": "c1ac8a95052da04161254affac34807a4cf871f18747b8eaed90afdb32a5847a"
+      },
+      {
+        "source_id": "unclassified:invariants/policies/algol-authority-confusion-extensions-future.yml",
+        "path": "invariants/policies/algol-authority-confusion-extensions-future.yml",
+        "sha256": "cb11fef80ab0eb8100ae724770c06ff6279f6eaae9c6fd6079819f89a8e92db4"
+      },
+      {
+        "source_id": "unclassified:invariants/policies/algol-authority-confusion-extensions.yml",
+        "path": "invariants/policies/algol-authority-confusion-extensions.yml",
+        "sha256": "7b72ff8093f4d96a97e0305330be43f3b13add54c099b11b861ca7f638aeb35c"
+      },
+      {
+        "source_id": "unclassified:invariants/policies/example-enterprise-ado.yml",
+        "path": "invariants/policies/example-enterprise-ado.yml",
+        "sha256": "a6a62558075ac6c21d5d6ccad9752868311dda15cb6e6d859a3093e26921b71a"
+      },
+      {
+        "source_id": "unclassified:invariants/starter/README.md",
+        "path": "invariants/starter/README.md",
+        "sha256": "c928aea119f4cbd0e430e39660d068583039fbd776af10512c72b814ca723d82"
+      },
+      {
+        "source_id": "unclassified:invariants/starter/bundled-strict-policy.yml",
+        "path": "invariants/starter/bundled-strict-policy.yml",
+        "sha256": "4db06325002cb8d448a90a7223830ae3ebf9ae1a6ed6d2cb3a5791f08a17088a"
+      },
+      {
+        "source_id": "unclassified:invariants/starter/no-broad-identity-to-untrusted.yml",
+        "path": "invariants/starter/no-broad-identity-to-untrusted.yml",
+        "sha256": "f0d978e0069b77efae69e8a8ee3f5f297ccc5374a258ade2ea900e6ee3313af6"
+      },
+      {
+        "source_id": "unclassified:invariants/starter/no-non-first-party-images.yml",
+        "path": "invariants/starter/no-non-first-party-images.yml",
+        "sha256": "2d85c30c42cba4c35af8f244f13f79113915c6d84bf7a1b70ba69b1c1351b273"
+      },
+      {
+        "source_id": "unclassified:invariants/starter/no-pr-trigger-with-broad-identity.yml",
+        "path": "invariants/starter/no-pr-trigger-with-broad-identity.yml",
+        "sha256": "552171665964b9e49517ea8532ccf7dadb0a19f0599e7057c104b1a5a1ca8756"
+      },
+      {
+        "source_id": "unclassified:invariants/starter/no-script-step-without-env-approval.yml",
+        "path": "invariants/starter/no-script-step-without-env-approval.yml",
+        "sha256": "b45a1e8b4c6c6f2a13d3b4359d71f48418ddb84f7b62adea74d4a21e6d5ceaaf"
+      },
+      {
+        "source_id": "unclassified:invariants/starter/no-third-party-step-with-identity.yml",
+        "path": "invariants/starter/no-third-party-step-with-identity.yml",
+        "sha256": "ec5880733f8fd336adfd43be47389bb857ce4bfa80dd2f6d59519794bd2339e1"
+      },
+      {
+        "source_id": "unclassified:invariants/starter/no-untrusted-image-anywhere.yml",
+        "path": "invariants/starter/no-untrusted-image-anywhere.yml",
+        "sha256": "361f019dd7b55fa68ebd5341b210209cb8c05d2b3bad19ea32e48fba872dc1a9"
+      },
+      {
+        "source_id": "unclassified:invariants/starter/no-untrusted-image-with-secret.yml",
+        "path": "invariants/starter/no-untrusted-image-with-secret.yml",
+        "sha256": "0b032b0bd5e5eb75a8f1f680d57b521a5edd7a79378954f2f943b6789277d94c"
+      },
+      {
+        "source_id": "unclassified:invariants/starter/no-untrusted-with-prod-secret.yml",
+        "path": "invariants/starter/no-untrusted-with-prod-secret.yml",
+        "sha256": "4d3397f93d3f93756844a8a4c44e004e98044ec60b8ecc7dd1e587c73a66894c"
+      },
+      {
+        "source_id": "unclassified:invariants/starter/no-untrusted-with-secret.yml",
+        "path": "invariants/starter/no-untrusted-with-secret.yml",
+        "sha256": "a932a84d3a5692bb3be8edfefaef8ff715bb48046b5d345c4c8aacdc8600c864"
+      },
+      {
+        "source_id": "unclassified:invariants/starter/no-write-permissions-on-pr.yml",
+        "path": "invariants/starter/no-write-permissions-on-pr.yml",
+        "sha256": "f2cf2506f4cc74073c0f85aa681814724425dea8b1fc12ea3de6b02c240d86c9"
+      },
+      {
+        "source_id": "unclassified:invariants/starter/only-oidc-identities.yml",
+        "path": "invariants/starter/only-oidc-identities.yml",
+        "sha256": "2c5f9b94b542833ef224ba890d345aea1f660978690e6f10aede9d6d7dca063c"
+      },
+      {
+        "source_id": "unclassified:invariants/starter/prefer-oidc-over-static-secrets.yml",
+        "path": "invariants/starter/prefer-oidc-over-static-secrets.yml",
+        "sha256": "89bbf442ecd8ea567cb76670d024eb0c7469806b070da11895654f365c52bdd9"
+      },
+      {
+        "source_id": "unclassified:justfile",
+        "path": "justfile",
+        "sha256": "131318a5cea95b7de91ee81456ae9599c4263d345efbcf0456ab7f0b415ca028"
+      },
+      {
+        "source_id": "unclassified:man/taudit.1",
+        "path": "man/taudit.1",
+        "sha256": "0648aee8adcce6466936cf255abb62a9c0de0ea9a23af82f95bceb9a94815395"
+      },
+      {
+        "source_id": "unclassified:packaging/README.md",
+        "path": "packaging/README.md",
+        "sha256": "19738c9d918e1cb96c6b12601325f053d60f6777c8b9cc5a4ab0c5cf13fcb16a"
+      },
+      {
+        "source_id": "unclassified:packaging/docker/cellos-supervisor/Dockerfile",
+        "path": "packaging/docker/cellos-supervisor/Dockerfile",
+        "sha256": "e4f1c52c040550e6788c0b896355a2e964c725eb5875ed1b2f32fab999cef7ca"
+      },
+      {
+        "source_id": "unclassified:packaging/homebrew/taudit.rb",
+        "path": "packaging/homebrew/taudit.rb",
+        "sha256": "f6749e64f31773c95ef4ae523e6b7ee6e7d7fec88fe0ebd8881ff439faad4008"
+      },
+      {
+        "source_id": "unclassified:packaging/nix/taudit.nix",
+        "path": "packaging/nix/taudit.nix",
+        "sha256": "437cd5d70f1f8baf302fbd6d94b5f8168f21d8b2c6ca1230bc9bf4422eb10ffb"
+      },
+      {
+        "source_id": "unclassified:pai-axiom-project-harness-target.json",
+        "path": "pai-axiom-project-harness-target.json",
+        "sha256": "1ab9e5357b70a475586efcd160be14c28ea0c44bd8e7eabe051f9dcd6ee6c853"
+      },
+      {
+        "source_id": "unclassified:release/README.md",
+        "path": "release/README.md",
+        "sha256": "514d28685a924ee43ce2aa6489c7273d5978f41a62b3ac4ff478e929bb5205db"
+      },
+      {
+        "source_id": "unclassified:release/taudit.pub",
+        "path": "release/taudit.pub",
+        "sha256": "e4af34bc817bf705ff4318316b92046a87bc22f17f0c19bb7c8f362a65c6337f"
+      },
+      {
+        "source_id": "project_release_gate:release-plz.toml",
+        "path": "release-plz.toml",
+        "sha256": "4d04e8d1d0db7db88475a46a3c509e9f83782b1dbbe634a8f36f05e7ebea8bae"
+      },
+      {
+        "source_id": "project_release_gate:rust-toolchain.toml",
+        "path": "rust-toolchain.toml",
+        "sha256": "e5dbdf08928df755c70a6592438ced843a78756c4f5eace02de4ccfeaef8ea84"
+      },
+      {
+        "source_id": "unclassified:rustfmt.toml",
+        "path": "rustfmt.toml",
+        "sha256": "d4ff97c5a8cf7946bb5523ae2bfeb7af691cb5e5459b192e4e38bfba04dffad2"
+      },
+      {
+        "source_id": "unclassified:schemas/authority-graph.v1.json",
+        "path": "schemas/authority-graph.v1.json",
+        "sha256": "cbc8f5bafc609f4b08ae9e303166bc662991b85288c0cbfa31fb89c6336eb790"
+      },
+      {
+        "source_id": "unclassified:schemas/authority-propagation-summary.v1.json",
+        "path": "schemas/authority-propagation-summary.v1.json",
+        "sha256": "c0ffcd174e3fc38a4f56ab44ade6767e9b6fa0c6dd433cfcbba86f67136d0b05"
+      },
+      {
+        "source_id": "unclassified:schemas/baseline.v1.json",
+        "path": "schemas/baseline.v1.json",
+        "sha256": "58bf8ac8914e91b8a334002ca7a2abf6e14d004e15625a261d9484c22f1fe15f"
+      },
+      {
+        "source_id": "unclassified:schemas/exploit-graph.v1.json",
+        "path": "schemas/exploit-graph.v1.json",
+        "sha256": "fa3f58a9b02f370b2af0ead69dbf264ad2bb6dad293d319d398f0fdba11c9a63"
+      },
+      {
+        "source_id": "unclassified:schemas/finding.v1.json",
+        "path": "schemas/finding.v1.json",
+        "sha256": "a87c81a92904c4875ed50a52d506bae04ab9fb0823af041746eda4c7e8aa8e39"
+      },
+      {
+        "source_id": "unclassified:scripts/cellos_smoke.sh",
+        "path": "scripts/cellos_smoke.sh",
+        "sha256": "688659c8233e3f5be2917cd1578923f6a46b8bc468cdb3f9db767fb924769f02"
+      },
+      {
+        "source_id": "unclassified:scripts/cellos_smoke_docker.sh",
+        "path": "scripts/cellos_smoke_docker.sh",
+        "sha256": "41c195a3f14bd9a2a8e46782b704e0e88064842b987e89918a1aa5e17c6a336c"
+      },
+      {
+        "source_id": "project_source_code:scripts/check-crates-publish-metadata.py",
+        "path": "scripts/check-crates-publish-metadata.py",
+        "sha256": "54cd898225e83775cb8492b0a39d2f4a7d2021ebfe60ffca90cf1770ba8910c6"
+      },
+      {
+        "source_id": "unclassified:scripts/ecosystem-governance-integrations.sh",
+        "path": "scripts/ecosystem-governance-integrations.sh",
+        "sha256": "ceb3d3a54aa4bdc69ccd1364adcb8c378940f427c3d63f12bc8ba7fa8338dc7c"
+      },
+      {
+        "source_id": "project_source_code:scripts/extract_finding_categories.py",
+        "path": "scripts/extract_finding_categories.py",
+        "sha256": "66c0697ebe9ce2dd8d53943071b184771ba8a4ec9fb2d6b50ea6350a55356efc"
+      },
+      {
+        "source_id": "project_source_code:scripts/generate-authority-invariant-schema.py",
+        "path": "scripts/generate-authority-invariant-schema.py",
+        "sha256": "46aab2d3142bab40186d57d42a796ccee44805e52ef7284a6605a6af76c90675"
+      },
+      {
+        "source_id": "unclassified:scripts/golden-paths.sh",
+        "path": "scripts/golden-paths.sh",
+        "sha256": "1e19d7bddeaa239ea18b3cd882a4ad0d7dfde455d8adcadcf8a23429abd37270"
+      },
+      {
+        "source_id": "unclassified:scripts/install-ci-linters.sh",
+        "path": "scripts/install-ci-linters.sh",
+        "sha256": "96cd7884780a03e719554d6467b5c5d873fb19e94e7c9742dfb331a79c5a6325"
+      },
+      {
+        "source_id": "unclassified:scripts/install-governance-tools.sh",
+        "path": "scripts/install-governance-tools.sh",
+        "sha256": "4cb8725df597254322fd4cdfb548143516973d21b8cad4019101f5d4742d8519"
+      },
+      {
+        "source_id": "unclassified:scripts/pre-commit",
+        "path": "scripts/pre-commit",
+        "sha256": "078a796f3f479edc19c7bf628d291810ea5bace18f8d173bdf805653eb982f8a"
+      },
+      {
+        "source_id": "unclassified:scripts/pre-push",
+        "path": "scripts/pre-push",
+        "sha256": "ec50f6d1078079c377b21fa33dd4e4e9e06d6cf094adcd9d1ba2fa58c82109e2"
+      },
+      {
+        "source_id": "unclassified:scripts/quality-gate.sh",
+        "path": "scripts/quality-gate.sh",
+        "sha256": "44546f127f79f60bc69f9137d60d5fe50eb17d946ecda222fc0023cea6ff702e"
+      },
+      {
+        "source_id": "project_source_code:scripts/release_harness.py",
+        "path": "scripts/release_harness.py",
+        "sha256": "dc2de7afc428ba75f87187e555c5a73dfd567307ca0db8c97fbecc21987a55d8"
+      },
+      {
+        "source_id": "project_source_code:scripts/research/analyze_workflow_corpus.py",
+        "path": "scripts/research/analyze_workflow_corpus.py",
+        "sha256": "648cab046807b441f692dc5388367d3e9390ebafe4cddebf5b1a6b87a73a1a7a"
+      },
+      {
+        "source_id": "project_source_code:scripts/research/harvest_workflow_yamls.py",
+        "path": "scripts/research/harvest_workflow_yamls.py",
+        "sha256": "1162458602ab52b3de549de81e90052b8b9a4173e022ca460a0aedf3fba9a814"
+      },
+      {
+        "source_id": "project_source_code:scripts/research/prt_repo_sample_scan.py",
+        "path": "scripts/research/prt_repo_sample_scan.py",
+        "sha256": "6a6d8905040489bdf0049c35c0e646f087aa5dbde4178f74a902ba743f12a370"
+      },
+      {
+        "source_id": "project_source_code:scripts/research/vuln_scan_workflow_corpus.py",
+        "path": "scripts/research/vuln_scan_workflow_corpus.py",
+        "sha256": "b5cc8344083c64ea3b165538cbe6718afe95ce8d9fbf5667e0915ebee2316979"
+      },
+      {
+        "source_id": "unclassified:scripts/tool-versions.env",
+        "path": "scripts/tool-versions.env",
+        "sha256": "d2eb2ea044129a591700814886adc9eba3ed9c34f0ed63a136c4d88695ae6f21"
+      },
+      {
+        "source_id": "project_source_code:scripts/validate-authority-invariant-yaml.py",
+        "path": "scripts/validate-authority-invariant-yaml.py",
+        "sha256": "5c08871deb011360165798da64033448da617fedce045676795e59d37f693710"
+      },
+      {
+        "source_id": "unclassified:standardise-ecosystem.md",
+        "path": "standardise-ecosystem.md",
+        "sha256": "3518f25c9c731fc1a1757c1fe79082d17d6d36ff11d0c24d13fedbb3f9643759"
+      },
+      {
+        "source_id": "project_test:tests/fixtures/ado-setvariable.yml",
+        "path": "tests/fixtures/ado-setvariable.yml",
+        "sha256": "49d2e2383ccb0fbcd86feb8cdb8aa717d92295361915b55aae1881ed4cc402e3"
+      },
+      {
+        "source_id": "project_test:tests/fixtures/ado-shared-pool.yml",
+        "path": "tests/fixtures/ado-shared-pool.yml",
+        "sha256": "63140bf4a2d33b569372be91d004bad1a3b8585769ebc8bb308cd66d57faa241"
+      },
+      {
+        "source_id": "project_test:tests/fixtures/algol-authority-confusion-fixture.yml",
+        "path": "tests/fixtures/algol-authority-confusion-fixture.yml",
+        "sha256": "496c93ad3726aceed6162e804af0ffb2215260bf3941988238ecb58658d2f001"
+      },
+      {
+        "source_id": "project_test:tests/fixtures/clean.yml",
+        "path": "tests/fixtures/clean.yml",
+        "sha256": "793713e3ed4b9cd79a09d3c0203c5bb00d835f99560ef28209052eb12ae34223"
+      },
+      {
+        "source_id": "project_test:tests/fixtures/gitlab-creds.yml",
+        "path": "tests/fixtures/gitlab-creds.yml",
+        "sha256": "c25151c9d2822013f7663bc61662103660ed6692f612095d4f9e82ffc3178f43"
+      },
+      {
+        "source_id": "project_test:tests/fixtures/over-privileged.yml",
+        "path": "tests/fixtures/over-privileged.yml",
+        "sha256": "880b1221ef2605e192ec53c2b84d3c760ca5a46d055bc3e6cde3546ca2647fa9"
+      },
+      {
+        "source_id": "project_test:tests/fixtures/partial-structural.yml",
+        "path": "tests/fixtures/partial-structural.yml",
+        "sha256": "ca6fcbb14e1a68a7ef6afe4bbe1c53385527212ee5cbaa6881e5f51369441b42"
+      },
+      {
+        "source_id": "project_test:tests/fixtures/propagation-leaky.yml",
+        "path": "tests/fixtures/propagation-leaky.yml",
+        "sha256": "e9b3a55d0c5c6ca0f6b15c853c8d8ac730973cf792d4c0a7ffdeb18b2ecc9ec9"
+      },
+      {
+        "source_id": "project_test:tests/fixtures/verify-golden-noop-policy.yml",
+        "path": "tests/fixtures/verify-golden-noop-policy.yml",
+        "sha256": "f5a728da13c22c967f5b205ff5989e6566ebae5e6f0587aa05aff21066760298"
+      },
+      {
+        "source_id": "project_test:tests/test_release_harness.py",
+        "path": "tests/test_release_harness.py",
+        "sha256": "5344753bdb91ef65da90480bf89d948e6cd297daf44fcb17518116b2ccf98849"
+      }
+    ],
+    "residual_risk": [
+      "Cortex may reject or quarantine this receipt under its native parser.",
+      "claim_ceiling=candidate_evidence_only",
+      "claim_ceiling=candidate"
+    ]
+  },
+  "residual_gaps": [
+    "Cortex field-level tool_provenance consumer absent",
+    "Cortex operator approval hash binding absent"
+  ]
+}
