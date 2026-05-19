@@ -1,8 +1,10 @@
-# ADR 0020 Conformance Harness Skeleton
+# ADR 0020 Conformance Harness
 
-This document records the L5-11 offline skeleton for
-`v1.2.0-rc.1`. It creates the local command shape required by ADR 0020 without
-claiming full output conformance.
+This document records the current ADR 0020 output conformance harness for
+`v1.2.0-rc.1`. The harness is now a release gate, not a placeholder inventory.
+It validates checked-in contract examples, generated CLI artifacts, current
+profile receipts, cross-sink parity, reference consumers, and Rust contract
+tests from the checked-out repository.
 
 ## Command
 
@@ -12,59 +14,67 @@ Run from the repository root:
 python scripts/conformance_harness.py --root . --format json
 ```
 
-`--format text` is available for humans. The JSON output is deterministic for a
-given repository state and contains:
+`--format text` is available for humans. `--skip-generated` exists only for
+fast unit tests of the harness itself; release checks must run generated checks.
 
-- `status`: `pass` when all checks are implemented and clean, `incomplete`
-  when placeholder checks remain, otherwise `fail`;
-- `full_conformance`: always `false` in this skeleton;
-- `counts`: implemented pass/fail counts plus pending placeholder count;
+The JSON output is deterministic for a given repository state and contains:
+
+- `harness`: `adr-0020-output-conformance`;
+- `status`: `pass`, `fail`, or `incomplete`;
+- `full_conformance`: `true` only when generated checks ran and every gate
+  passed;
+- `generated_checks`: whether CLI-generated artifacts were produced and
+  validated;
+- `counts`: pass/fail/pending totals;
 - `checks`: ordered check records with `id`, `kind`, `status`, `path`, and
   `message`.
 
-The process exits `0` only for full pass, `3` while placeholder checks remain,
-and `1` when an implemented check fails.
+The process exits `0` for pass, `3` for incomplete, and `1` for a failed
+implemented check. Release tooling treats `incomplete` as not release-ready for
+the RC tag and not stable-release-ready for the stable tag.
 
-## Implemented Offline Checks
+## Implemented Checks
 
-The skeleton currently checks only local files and never uses network access.
+The harness runs local-only checks. It does not use network access.
 
-- Presence of configured schema and example paths under `contracts/` and
-  `schemas/`.
-- Discovery of checked-in `contracts/examples/*.json`.
-- JSON parsing for every discovered contract example.
+- Required schema, example, and fixture path presence.
+- JSON parsing for every checked-in `contracts/examples/*.json` file.
+- Current-output profile checks for checked-in report JSON and CloudEvents
+  examples.
+- Reference consumer coverage for report and CloudEvents identity fields.
+- Generated CLI report JSON, SARIF, and CloudEvents fixtures from
+  `tests/fixtures/over-privileged.yml`.
+- Current-output profile checks across the generated JSON, SARIF, and
+  CloudEvents artifacts.
+- Evidence parity across generated JSON, SARIF, and CloudEvents artifacts.
+- Generated exploit graph JSON and current-profile validation.
+- Generated baseline files and baseline current-profile validation.
+- Terminal `--no-color --verbose` identity and triage rendering checks.
+- Rust contract tests for suppression/baseline exit semantics, cross-sink
+  identity, and hostile rendering.
 
-Failure output names the violated path, which gives ADR 0020 a stable local
-starting point before generated fixture and schema-validation work lands.
+## Ordered Evidence Boundary
 
-## Pending Slots
+`ordered_authority_evidence` is explicitly deferred for this RC unless and
+until production JSON, SARIF, CloudEvents, exploit graph, and terminal verbose
+projection all emit the public object. The harness accepts only the documented
+absence of that one field as a scoped RC deferral. Any other current-profile or
+parity pending item is a release-blocking failure.
 
-The harness deliberately includes pending placeholders for current-profile and
-parity work:
+The deferral must be named in `CHANGELOG.md`,
+`current-output-profile.md`, `evidence-parity-harness.md`, and
+`operator-evidence-output-guide.md`. If any of those files stop recording the
+boundary, the conformance harness fails.
 
-- report JSON;
-- CloudEvents;
-- SARIF;
-- exploit graph JSON;
-- suppressions and baselines;
-- terminal verbose output;
-- identity parity;
-- evidence parity;
-- reference consumers;
-- exit-code matrix.
+## Not Claimed
 
-These placeholders are not release evidence. They preserve the ADR 0020 surface
-area so L2, L5, QA, and L1 can wire concrete checks into known slots.
-
-## Not Yet Claimed
-
-This skeleton does not validate JSON Schema, generate CLI fixtures, compare
-cross-sink identity, run reference consumers, validate SARIF, check current
-profile field presence, or enforce the exit-code matrix. `full_conformance:
-false` must remain until those checks are implemented and verified.
+This harness proves the local checked-out artifacts it generates and inspects.
+It does not prove a GitHub release exists, crates.io publication happened, SBOM
+assets were uploaded, attestations verify, or docs.rs rendered. Those receipts
+remain under `docs/proof/v1.2.0-rc.1/` and the release harness.
 
 ## Next Dependency Unblocked
 
-QA and L1 can now reference a local conformance command while L2/L5 replace the
-placeholder slots with generated fixture, schema, current-profile, and parity
-checks.
+QA-08 and L1 can use the ADR 0020 command as a hard RC release gate. L4/L5 can
+ship `ordered_authority_evidence` later by replacing the documented deferral
+with positive generated fixtures and parity checks across every promised sink.

@@ -1,5 +1,6 @@
 {
   "schema_version": "1.0.0",
+  "schema_uri": "https://taudit.dev/schemas/taudit-report.schema.json",
   "graph": {
     "source": {
       "file": "tests/fixtures/clean.yml"
@@ -11,8 +12,8 @@
         "name": "GITHUB_TOKEN",
         "trust_zone": "first_party",
         "metadata": {
-          "permissions": "{ contents: read }",
-          "identity_scope": "constrained"
+          "identity_scope": "constrained",
+          "permissions": "{ contents: read }"
         }
       },
       {
@@ -29,14 +30,23 @@
         "kind": "step",
         "name": "test[0]",
         "trust_zone": "third_party",
-        "metadata": {}
+        "metadata": {
+          "checkout_self": "true",
+          "gha_action": "actions/checkout",
+          "gha_runs_on": "ubuntu-latest",
+          "job_name": "test"
+        }
       },
       {
         "id": 3,
         "kind": "step",
         "name": "Run tests",
         "trust_zone": "first_party",
-        "metadata": {}
+        "metadata": {
+          "gha_runs_on": "ubuntu-latest",
+          "job_name": "test",
+          "script_body": "cargo test"
+        }
       }
     ],
     "edges": [
@@ -50,19 +60,35 @@
         "id": 1,
         "from": 2,
         "to": 0,
-        "kind": "has_access_to"
+        "kind": "has_access_to",
+        "authority_summary": {
+          "trust_zone": "first_party",
+          "identity_scope": "constrained",
+          "permissions_summary": "{ contents: read }"
+        }
       },
       {
         "id": 2,
         "from": 3,
         "to": 0,
-        "kind": "has_access_to"
+        "kind": "has_access_to",
+        "authority_summary": {
+          "trust_zone": "first_party",
+          "identity_scope": "constrained",
+          "permissions_summary": "{ contents: read }"
+        }
       }
     ],
-    "completeness": "complete"
+    "completeness": "complete",
+    "metadata": {
+      "platform": "github-actions",
+      "trigger": "push",
+      "triggers": "push"
+    }
   },
   "findings": [
     {
+      "rule_id": "authority_propagation",
       "severity": "medium",
       "category": "authority_propagation",
       "path": {
@@ -86,7 +112,15 @@
         "type": "tsafe_remediation",
         "command": "tsafe exec --ns <scoped-namespace> -- <command>",
         "explanation": "Scope GITHUB_TOKEN to only the steps that need it"
-      }
+      },
+      "source": "built-in",
+      "finding_group_id": "d1a15035-912f-54fc-9a00-83454134fad6",
+      "confidence_scope": "yaml_only",
+      "authority_kinds": [
+        "job_token"
+      ],
+      "fingerprint": "54dd866ebc2a71aba56f1582cba09e6d",
+      "suppression_key": "sk1_a3420d47fc91d0bfcf9947e95be46277"
     }
   ],
   "summary": {
@@ -98,6 +132,16 @@
     "info": 0,
     "total_nodes": 4,
     "total_edges": 3,
-    "completeness": "complete"
+    "completeness": "complete",
+    "graph_risk_summary": {
+      "authority_roots": 1,
+      "untrusted_sinks": 0,
+      "mutable_refs": 0,
+      "publication_adjacent_sinks": 0,
+      "delegation_hops": 0,
+      "protected_resource_categories": [
+        "identity"
+      ]
+    }
   }
 }

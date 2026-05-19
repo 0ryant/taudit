@@ -2,9 +2,9 @@
 
 Release candidate name: `v1.2.0-rc.1: Authority Evidence Platform`.
 
-This is the Wave 1 release-coordination map for L1. It shapes the RC lane; it
-does not publish the release, edit the changelog, bump manifests, or claim any
-unmerged behavior.
+This started as the Wave 1 release-coordination map for L1. The current status
+below reflects the RC gate wiring that has since landed in the checked-out
+tree; it still does not prove publication receipts.
 
 ## Sources
 
@@ -23,9 +23,10 @@ Observed before this map was written:
 - CLI product crate `taudit` is still `1.1.5`.
 - `taudit-api` is still `0.4.1`.
 - implementation crates are still on `3.0.1`.
-- `CHANGELOG.md` has no `## v1.2.0-rc.1` section yet.
-- `docs/RELEASE_GATES.md` still contains current-cycle language for
-  `1.1.0-rc.1`; L1-07 remains pending.
+- `CHANGELOG.md` contains a `## v1.2.0-rc.1` section with the detection delta
+  first and an explicit `ordered_authority_evidence` RC deferral.
+- `docs/RELEASE_GATES.md` contains v1.2 RC tag gates and treats incomplete ADR
+  0020 conformance as an RC blocker.
 
 ## Version Map
 
@@ -35,8 +36,8 @@ Observed before this map was written:
 | `taudit-api` | Current baseline is `0.4.1`. It may stay there only if no public Rust or wire-contract change ships. | L2 must decide stay `0.4.1`, bump prerelease minor, or defer promotion. | L1-02, L1-04, L2-01, L2-02 |
 | implementation crates | Current baseline is `3.0.1` across core, parsers, reporters, and CloudEvents sink. | If any implementation crate changes or published Rust API changes, L1 must bump intentionally and coherently. | L1-02, L1-04 |
 | schemas | Existing schema files are not yet an RC readiness claim. | L2/L5 must prove graph JSON, scan JSON, SARIF, CloudEvents, exploit graph, baselines, suppressions, and examples. | L2-01, L2-06, L2-07, L2-08, ADR 0020 |
-| output identity | `rule_id`, `fingerprint`, `suppression_key`, and `finding_group_id` are the RC identity surface to map. | Identity parity across JSON, SARIF, CloudEvents, and terminal output is pending. Do not claim `finding_group_id` readiness yet. | L2-04, L5-01 |
-| suppressions | Existing stable output includes `suppression_key`; that is baseline evidence, not the full RC suppression claim. | Suppression, baseline, and exit-code semantics remain pending until ADR 0018/L5 gates pass. | L5-07, L5-08, ADR 0018 |
+| output identity | `rule_id`, `fingerprint`, `suppression_key`, and `finding_group_id` are checked across JSON, SARIF, CloudEvents, and terminal verbose by the current ADR 0020 gate. | Broader platform/provenance token normalization stays separate from the four-field identity claim. | L2-04, L5-01 |
+| suppressions | Existing stable output includes `suppression_key`, and ADR 0020 runs the suppression/baseline exit matrix plus generated baseline profile checks. | Broader suppression metadata scenarios remain tracked by L5-07/L5-08, but the RC gate now has concrete coverage instead of a placeholder. | L5-07, L5-08, ADR 0018 |
 | release assets | Stable trust surface is the target: archives, checksums, SPDX and CycloneDX SBOMs, GitHub attestations, crates.io, and docs.rs. | RC receipts do not exist before the tag workflow. Record them under `docs/proof/v1.2.0-rc.1/` only after they exist. | L1-08, L6-05, ADR 0021 |
 
 ## Detection delta (read first)
@@ -70,8 +71,8 @@ not claimed.
 | [L1-03](code-complete-lanes.md#l1-release-coordination) | PENDING | CLI is currently `1.1.5`; bump to `1.2.0-rc.1` later, then update lockfile if needed. |
 | [L1-04](code-complete-lanes.md#l1-release-coordination) | PENDING | Keep or bump API/implementation crates only after public Rust and wire-contract impact is known. |
 | [L1-05](code-complete-lanes.md#l1-release-coordination) | COMPLETE | Release harness tests now cover prerelease creation and existing-prerelease normalization with `--latest=false`; live GitHub validation remains out of scope for offline tests. |
-| [L1-06](code-complete-lanes.md#l1-release-coordination) | PENDING | ADR 0020 defines the conformance harness gate; local recipe and CI/release wiring remain pending. |
-| [L1-07](code-complete-lanes.md#l1-release-coordination) | PENDING | `docs/RELEASE_GATES.md` still needs an RC-tag versus stable-promotion refresh for the v1.2 cycle. |
+| [L1-06](code-complete-lanes.md#l1-release-coordination) | COMPLETE | `scripts/release_harness.py check` runs ADR 0020 and blocks RC/stable checks unless full conformance passes. |
+| [L1-07](code-complete-lanes.md#l1-release-coordination) | COMPLETE | `docs/RELEASE_GATES.md` distinguishes RC tag/publish gates from stable promotion and names ADR 0020 incomplete output as an RC blocker. |
 | [L1-08](code-complete-lanes.md#l1-release-coordination) | PENDING | Proof receipts are post-tag-workflow evidence and must not be prefilled. |
 
 ## Acceptance Gates
@@ -82,7 +83,7 @@ The RC is tag-ready only when these gates are satisfied with fresh evidence:
 | --- | --- | --- |
 | Release harness | `python scripts/release_harness.py check --tag v1.2.0-rc.1` exits zero after CLI/changelog alignment. | PENDING |
 | Publish metadata | `python scripts/check-crates-publish-metadata.py --expected-release-version 1.2.0-rc.1` exits zero after version-map decisions. | PENDING |
-| Conformance harness | ADR 0020 local command or `just` recipe exists and CI/release path invokes it. | PENDING |
+| Conformance harness | `python scripts/conformance_harness.py --root . --format json` reports `status: pass`, zero pending checks, and `full_conformance: true`; `scripts/release_harness.py check --tag v1.2.0-rc.1` invokes it. | CURRENT GATE |
 | Changelog | `CHANGELOG.md` contains `## v1.2.0-rc.1`, detection delta first, migration notes, and crate-version map. | PENDING |
 | Proof receipts | Release asset, checksum, SBOM, attestation, crates.io, and docs.rs receipts exist under `docs/proof/v1.2.0-rc.1/`. | PENDING |
 
@@ -103,8 +104,9 @@ The RC is tag-ready only when these gates are satisfied with fresh evidence:
 
 ## Next Dependency Unblocked
 
-This map unblocks L1-02 shaping and lets L2/L5 return concrete version-impact
-inputs without requiring a changelog edit during Wave 1.
+This map now anchors the remaining release-readiness work: fresh command
+evidence, proof receipts, publish metadata, SBOM/provenance receipts, and
+post-tag readback.
 
 ## Residual Risk
 

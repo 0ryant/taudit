@@ -14,9 +14,9 @@ Related decisions and lanes:
 - [ADR 0013](../../adr/0013-evidence-rendering-and-output-ceiling.md) defines
   public evidence fields and the default-output ceiling.
 - [L2-03](code-complete-lanes.md#l2-api-schemas-contracts) owns the
-  `ordered_authority_evidence` field freeze. Until that lands in code and
-  fixtures, ordered evidence is a required pending profile dependency, not a
-  current-output claim.
+  `ordered_authority_evidence` field freeze. The wire-field docs and core
+  builder exist, but production sink projection is explicitly deferred for this
+  RC and is not a current-output claim.
 - [ADR 0020](../../adr/0020-output-conformance-harness-and-rc-gate.md) requires
   one output conformance gate before the RC tag.
 - [L2-07](code-complete-lanes.md#l2-api-schemas-contracts) owns
@@ -50,13 +50,13 @@ fields, and absence of fields that ADR 0013 keeps outside default output.
 
 | Surface | Already visible in schemas/examples | Pending Wave 2/3 work |
 | --- | --- | --- |
-| Report JSON | The report schema defines `schema_uri` and finding identity/evidence/suppression fields as optional for compatibility. Checked-in report examples currently contain only the older required finding shape. Runtime snapshots already show `schema_uri`, `rule_id`, `source`, `fingerprint`, `suppression_key`, `finding_group_id`, and public evidence extras. Ordered authority evidence is still pending L2-03/L4/L5 implementation. | L2-07 must make these current-profile assertions. L2-08 must refresh examples from real fixtures. L5-01 already proves basic identity parity; L5-02 must prove evidence parity, including ordered evidence once shipped. |
-| CloudEvents | The CloudEvents schema defines envelope/provenance fields and extension attributes for rule, fingerprint, suppression, platform, finding group, pipeline id, scan run id, and completeness. The checked-in CloudEvent example includes provenance, pipeline id, scan run id, completeness, and `tauditruleid`, but lacks fingerprint, suppression key, platform, and finding group. Platform projection is pending because parser-stamped long tokens and schema short tokens are not yet normalized into one current contract. | L5-04/L5-06 must finish mapping and drift checks. L2-08 must refresh examples so current extensions are visible. |
+| Report JSON | The report schema defines `schema_uri` and finding identity/evidence/suppression fields as optional for compatibility. Checked-in report examples now include the current identity fields, `schema_uri`, source, graph summary, and public evidence extras that the profile checks. Ordered authority evidence remains the named RC deferral. | ADR 0020 validates checked-in and generated report JSON. L5-02 must prove ordered evidence parity once that public object ships. |
+| CloudEvents | The CloudEvents schema defines envelope/provenance fields and extension attributes for rule, fingerprint, suppression, platform, finding group, pipeline id, scan run id, and completeness. The checked-in CloudEvent example now includes current identity extensions and profile-covered provenance fields. Platform projection is profile-checked where emitted, but broader token normalization remains a separate L5-06 contract concern. | ADR 0020 validates checked-in and generated CloudEvents. L5-06 still owns platform-token drift decisions outside the current fixture path. |
 | SARIF | There is no taudit-owned compatibility schema under `contracts/`. SARIF snapshots show `result.ruleId`, `partialFingerprints.primaryLocationLineHash`, `partialFingerprints["taudit/v1"]`, and taudit properties such as `suppressionKey`, `findingGroupId`, `confidenceScope`, `authorityKinds`, and `taudit-source`. | L5-01/L5-03 must make the projection map explicit and test every public finding extra or documented non-projection. |
 | Exploit graph JSON | `schemas/exploit-graph.v1.json` is already strict: it requires `schema_version`, `schema_uri`, `view`, `source`, `paths`, `summary`, and per-path rule/helper/transport/origin/node/edge fields. | L2-11 and ADR 0020 must validate empty, positive, downgrade-suppressed, and observed-evidence-disabled cases in the conformance harness. |
 | Baselines | `schemas/baseline.v1.json` requires baseline schema version, pipeline identity, capture provenance, and per-finding `fingerprint`, `rule_id`, `severity`, and `first_seen_at`. | L5-07 must prove scan/verify/baseline/threshold/waiver behavior. Current-profile checks should cover baseline files only when a baseline fixture is generated. |
 | Suppressions | Finding schemas include `suppressed`, `original_severity`, and `suppression_reason`; docs define `.taudit-suppressions.yml` locators by `fingerprint` or `suppression_key`. Checked-in contract examples do not cover a matched suppression case. | L5-08 must prove suppression metadata survives JSON, SARIF, and CloudEvents even when human output hides or downgrades a finding. |
-| Terminal verbose | Terminal code supports verbose node detail: node name, kind, trust zone, identity scope, permissions, digest, and inferred marker. It also surfaces custom-rule source labels. It does not yet expose enough current identity/evidence/suppression detail for ADR 0012. | L5-05 must add readable sanitized verbose rendering for identity, evidence, and suppression fields, then snapshot it. |
+| Terminal verbose | Terminal code supports verbose node detail: node name, kind, trust zone, identity scope, permissions, digest, and inferred marker. It also renders public finding identity fields: `rule_id`, `fingerprint`, `suppression_key`, and `finding_group_id`. Ordered authority evidence chain rendering remains deferred with the machine-sink field. | ADR 0020 regex-checks verbose identity and triage output. L5-05/L4 still own ordered-evidence prose once the public object ships. |
 
 ## Current-Profile Assertions
 
@@ -79,9 +79,9 @@ Profile validation must assert:
   `authority_kinds`, `attacker_surface_kinds`,
   `template_resolution_strength`, `time_to_fix`, and
   `compensating_controls`;
-- `ordered_authority_evidence` appears when the L2-03/L4 ordered evidence
-  model ships; until then, profile validation must keep it pending rather than
-  silently passing as absent;
+- `ordered_authority_evidence` appears only after production sink projection
+  ships; until then, profile validation must report the documented RC deferral
+  rather than silently passing as absent;
 - matched suppression fixtures include `suppressed`,
   `original_severity`, and `suppression_reason` according to the configured
   waiver mode;
@@ -183,11 +183,11 @@ sanitized, and sufficient for triage. It should include:
 - custom-rule provenance when the finding source is custom;
 - node detail for involved nodes: name, kind, trust zone, identity scope,
   permissions, digest prefix, and inferred marker when present;
-- ADR 0012 identity once L5-05 lands: rule id, fingerprint,
-  suppression key, and finding group id;
-- public evidence and suppression cues once L5-05 lands, including ordered
-  evidence cues after L2-03/L4 make them public, without exposing ADR 0013
-  internal-only fields.
+- ADR 0012 identity: rule id, fingerprint, suppression key, and finding group
+  id;
+- public evidence and suppression cues when present, including ordered evidence
+  cues only after L4/L5 make `ordered_authority_evidence` a production sink
+  claim, without exposing ADR 0013 internal-only fields.
 
 Terminal checks should be regex-based over `--no-color --verbose` output so
 ANSI styling changes do not create contract churn.
@@ -227,8 +227,7 @@ QA-04 a shared checklist for the conformance harness.
 
 ## Residual Risk
 
-This document is a design target, not proof that every field is currently
-implemented or projected. It was written from the observed schemas, examples,
-snapshots, ADRs, and RC lane docs available during Wave 2. Concurrent workers
-may update examples, sinks, or lane docs after this pass; re-run the profile
-design check before treating it as release evidence.
+This document is a profile target and boundary map. Release evidence comes from
+the ADR 0020 conformance harness and completed proof receipts, not this design
+text by itself. Re-run the profile and conformance checks before treating a sink
+change as release evidence.

@@ -228,6 +228,29 @@ def test_report_json_tracks_ordered_evidence_gap_as_pending(tmp_path: pathlib.Pa
     )
 
 
+def test_multiple_report_json_artifacts_do_not_cross_compare_each_other(
+    tmp_path: pathlib.Path,
+) -> None:
+    first_path = write_json(
+        tmp_path,
+        "first.json",
+        current_report("00000000000000000000000000000000"),
+    )
+    second_path = write_json(
+        tmp_path,
+        "second.json",
+        current_report("11111111111111111111111111111111"),
+    )
+
+    receipt = current_output_profile_check.check_current_profile(
+        report_json=[first_path, second_path],
+    )
+
+    assert receipt["status"] == "incomplete"
+    assert receipt["counts"]["fail"] == 0
+    assert not any(issue["surface"] == "cross-surface" for issue in receipt["issues"])
+
+
 def test_checked_in_cloudevent_example_satisfies_current_profile() -> None:
     receipt = current_output_profile_check.check_current_profile(
         cloudevent_json=[ROOT / "contracts" / "examples" / "over-privileged-finding.cloudevent.json"],

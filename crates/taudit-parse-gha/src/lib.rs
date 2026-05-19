@@ -1670,11 +1670,11 @@ pub enum ContainerConfig {
         #[serde(default)]
         options: Option<String>,
         #[serde(default)]
-        credentials: Option<serde_yaml::Value>,
+        credentials: Option<Box<serde_yaml::Value>>,
         #[serde(default)]
-        ports: Option<serde_yaml::Value>,
+        ports: Option<Box<serde_yaml::Value>>,
         #[serde(default)]
-        volumes: Option<serde_yaml::Value>,
+        volumes: Option<Box<serde_yaml::Value>>,
     },
 }
 

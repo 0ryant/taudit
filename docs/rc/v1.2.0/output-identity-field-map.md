@@ -25,10 +25,10 @@ Reporters and sinks only project identity. Core and `taudit-api` own meaning. Re
 | JSON field | `findings[].rule_id`; baselines also record `baseline_findings[].rule_id`; suppression entries require `rule_id` for operator review. |
 | SARIF projection | `runs[].results[].ruleId`. |
 | CloudEvents projection | `tauditruleid` extension attribute. `type` remains category-scoped routing, not the exact rule id. |
-| Terminal verbose projection | Current: no dedicated identity line for built-ins; custom-rule messages may include the bracketed id in the rendered message. Pending L5-05 should render an explicit rule id for triage. |
+| Terminal verbose projection | Current: rendered on the verbose `Identity:` line as `rule_id`. Custom-rule messages may also include the bracketed id in rendered prose. |
 | Baseline/suppression role | Stored with baseline and suppression records for display, audit, and mismatch diagnosis. Lookup is by `fingerprint` or `suppression_key`, not by rule id alone. |
 | Stability semantics | Snake_case built-in id, or custom invariant id when the message starts with a valid `[id]` prefix. Renaming a public id changes identity and needs migration/release notes. |
-| Current/pending status | Current/proven for JSON, SARIF, and CloudEvents by `cross_sink_contract.rs`; terminal projection pending L5-05. |
+| Current/pending status | Current/proven for JSON, SARIF, CloudEvents, and terminal verbose by `cross_sink_contract.rs`, terminal reporter tests, and ADR 0020. |
 
 ### `fingerprint`
 
@@ -38,10 +38,10 @@ Reporters and sinks only project identity. Core and `taudit-api` own meaning. Re
 | JSON field | `findings[].fingerprint`. |
 | SARIF projection | `runs[].results[].partialFingerprints.primaryLocationLineHash` and `runs[].results[].partialFingerprints["taudit/v1"]`. |
 | CloudEvents projection | `tauditfindingfingerprint` extension attribute. |
-| Terminal verbose projection | Current: not projected. Pending L5-05 should expose it in verbose mode without changing the value. |
+| Terminal verbose projection | Current: rendered on the verbose `Identity:` line as `fingerprint`. |
 | Baseline/suppression role | Precise dedup identity. It is the per-finding baseline key and one accepted `.taudit-suppressions.yml` locator. `--dedupe-against` also reads CloudEvents `tauditfindingfingerprint`. |
 | Stability semantics | v3 is 32 lowercase hex chars: SHA-256 truncated to 128 bits. Inputs are rule id, normalized scanned file path, category, root authority, ordered involved-node names, and `extras.fingerprint_anchor`. It is insensitive to wall-clock time, taudit version within the line, host/cwd, display message text, and reporter sanitization. |
-| Current/pending status | Current/proven across JSON, SARIF, CloudEvents, baseline material, and existing fingerprint docs. Terminal projection pending L5-05. |
+| Current/pending status | Current/proven across JSON, SARIF, CloudEvents, baseline material, terminal verbose, and existing fingerprint docs. |
 
 ### `suppression_key`
 
@@ -51,10 +51,10 @@ Reporters and sinks only project identity. Core and `taudit-api` own meaning. Re
 | JSON field | `findings[].suppression_key`. |
 | SARIF projection | `runs[].results[].properties.suppressionKey`. |
 | CloudEvents projection | `tauditsuppressionkey` extension attribute. |
-| Terminal verbose projection | Current: not projected. Pending L5-05 should expose it in verbose mode for operator waiver workflows. |
+| Terminal verbose projection | Current: rendered on the verbose `Identity:` line as `suppression_key`. |
 | Baseline/suppression role | Stable waiver identity for `.taudit-suppressions.yml`; critical-waiver expiry validation checks both `fingerprint` and `suppression_key`. Baselines currently key entries by `fingerprint`, not by `suppression_key`. |
 | Stability semantics | `sk1_` plus 32 lowercase hex chars. Inputs preserve rule, scanned file path, category, root authority, and `extras.fingerprint_anchor`, but deliberately exclude ordered involved-node names so reviewed waivers can survive unrelated topology edits. |
-| Current/pending status | Current/proven for JSON, SARIF, and CloudEvents equality by the L5-01 cross-sink contract tests. L5-07/L5-08 still own matched suppression behavior, expiry, downgrade/tag-only modes, and metadata survival when human output hides a finding. |
+| Current/pending status | Current/proven for JSON, SARIF, CloudEvents, and terminal verbose equality by the L5-01 cross-sink contract tests, terminal reporter tests, and ADR 0020. L5-07/L5-08 still own matched suppression behavior, expiry, downgrade/tag-only modes, and metadata survival when human output hides a finding. |
 
 ### `finding_group_id`
 
@@ -64,10 +64,10 @@ Reporters and sinks only project identity. Core and `taudit-api` own meaning. Re
 | JSON field | `findings[].finding_group_id`. |
 | SARIF projection | `runs[].results[].properties.findingGroupId`. |
 | CloudEvents projection | `tauditfindinggroup` extension attribute. |
-| Terminal verbose projection | Current: not projected. Pending L5-05 can expose it if verbose triage needs grouping without SIEM tooling. |
+| Terminal verbose projection | Current: rendered on the verbose `Identity:` line as `finding_group_id`. |
 | Baseline/suppression role | Grouping and collapse key for SIEMs and dashboards. It is not a baseline key and not a suppression locator. |
 | Stability semantics | UUID v5 over the finding `fingerprint` in a fixed namespace. Same fingerprint means same group id; changed fingerprint means changed group id. Namespace changes are major-version breaks. |
-| Current/pending status | Current/proven for JSON, SARIF, and CloudEvents equality by the L5-01 cross-sink contract tests. Terminal projection and suppression/baseline behavior remain separate L5-05/L5-07/L5-08 work. |
+| Current/pending status | Current/proven for JSON, SARIF, CloudEvents, and terminal verbose equality by the L5-01 cross-sink contract tests, terminal reporter tests, and ADR 0020. Suppression/baseline behavior remains separate L5-07/L5-08 work. |
 
 ### Platform Token
 
