@@ -101,7 +101,7 @@ def check_current_profile(
 ) -> dict[str, Any]:
     issues: list[Issue] = []
     artifacts: list[ArtifactReceipt] = []
-    identity_surfaces: list[tuple[str, list[dict[str, Any]]]] = []
+    identity_surfaces: dict[str, list[dict[str, Any]]] = {}
 
     for path in report_json or []:
         before = len(issues)
@@ -109,7 +109,7 @@ def check_current_profile(
         identities: list[dict[str, Any]] = []
         if doc is not None:
             identities = _check_report_json(doc, path, issues)
-            identity_surfaces.append(("report-json", identities))
+            identity_surfaces.setdefault("report-json", []).extend(identities)
         artifacts.append(_artifact_receipt("report-json", path, issues[before:]))
 
     for path in cloudevent_json or []:
@@ -119,7 +119,7 @@ def check_current_profile(
         for index, doc in enumerate(docs):
             identities.append(_check_cloudevent(doc, path, index, issues))
         if docs:
-            identity_surfaces.append(("cloudevents", identities))
+            identity_surfaces.setdefault("cloudevents", []).extend(identities)
         artifacts.append(_artifact_receipt("cloudevents", path, issues[before:]))
 
     for path in sarif_json or []:
@@ -128,7 +128,7 @@ def check_current_profile(
         identities = []
         if doc is not None:
             identities = _check_sarif(doc, path, issues)
-            identity_surfaces.append(("sarif", identities))
+            identity_surfaces.setdefault("sarif", []).extend(identities)
         artifacts.append(_artifact_receipt("sarif", path, issues[before:]))
 
     for path in exploit_graph_json or []:
@@ -147,7 +147,7 @@ def check_current_profile(
 
     if len(identity_surfaces) > 1:
         before = len(issues)
-        _check_cross_surface_identity(identity_surfaces, issues)
+        _check_cross_surface_identity(list(identity_surfaces.items()), issues)
         if len(issues) > before:
             artifacts.append(
                 _artifact_receipt(
