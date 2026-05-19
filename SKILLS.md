@@ -12,6 +12,9 @@ Use taudit when the question is "what authority does this pipeline actually gran
 - [baseline-init-for-existing-repos](#skill-baseline-init-for-existing-repos) — capture a per-pipeline baseline so `verify` only fails on NEW findings
 - [graph-export-as-artifact](#skill-graph-export-as-artifact) — emit the canonical authority graph as the first-class artifact (`dot` / `mermaid` / `json` / `summary`)
 - [severity-threshold-in-CI](#skill-severity-threshold-in-ci) — route findings into CI gates by severity (`--severity-threshold high`), with critical findings always exiting non-zero
+- [skills-via-mcp](#skills-via-mcp) — the same CLI surface as 15 MCP tools (mcpact-compiled `taudit-mcp` adapter)
+  - [scan-via-mcp](#skill-scan-via-mcp) — `taudit_scan` over MCP transport for code-scanning ingestion
+  - [graph-via-mcp](#skill-graph-via-mcp) — `taudit_graph` for downstream tool consumption
 
 ---
 
@@ -163,3 +166,124 @@ taudit scan .github/workflows/ \
 - **Not a CVE scanner** (use [trivy](https://github.com/aquasecurity/trivy)) — taudit reasons about *authority propagation in pipeline definitions*, not about vulnerabilities in compiled dependencies.
 - **Not a policy engine** (use [checkov](https://github.com/bridgecrewio/checkov)) — taudit evaluates *built-in graph predicates + custom invariants over the authority graph*, not a separate policy runtime over arbitrary IaC.
 - **Not a runtime monitor** — taudit reads pipeline YAML offline, always. If you need runtime observation, that's the job of `corcept` (hooks) or `cellos` (cell lifecycle events).
+
+---
+
+## Skills via MCP
+
+> The same CLI surface, exposed as MCP tools so agents (Claude, Cursor, Codex, custom MCP clients) drive taudit over JSON-RPC instead of shelling out. The MCP adapter is `crates/taudit-mcp`, compiled from `taudit.mcpact.toml` via [mcpact](https://github.com/0ryant/mcpact). Trust ceiling = `Reviewed`. Audit events land in `.mcpact/audit.jsonl` per tool invocation.
+
+### MCP tool inventory
+
+15 tools cover the operator-facing CLI surface. Authority class declares what the tool does to the workspace; trust ceiling matches the manifest (`Reviewed`) and is raised by promotion to `Signed` after `mcpact sign`.
+
+| MCP tool | taudit-cli command | Authority class | Trust ceiling | Approval |
+|---|---|---|---|---|
+| `taudit_scan` | `taudit scan` | Observe | Reviewed | never |
+| `taudit_verify` | `taudit verify` | Plan | Reviewed | never |
+| `taudit_graph` | `taudit graph` | Observe | Reviewed | never |
+| `taudit_map` | `taudit map` | Observe | Reviewed | never |
+| `taudit_diff` | `taudit diff` | Observe | Reviewed | never |
+| `taudit_explain` | `taudit explain` | Observe | Reviewed | never |
+| `taudit_baseline_init` | `taudit baseline init` | Mutate | Reviewed (Signed-eligible) | on-mutation |
+| `taudit_baseline_list` | `taudit baseline review` | Observe | Reviewed | never |
+| `taudit_baseline_promote` | `taudit baseline accept` | Mutate | Reviewed (Signed-eligible) | on-mutation |
+| `taudit_baseline_rollback` | `taudit baseline diff` | Observe | Reviewed | never |
+| `taudit_remediate_suggest` | `taudit remediate suggest` | Observe | Reviewed | never |
+| `taudit_remediate_apply` | `taudit remediate --unstable apply` | Mutate | Reviewed (Signed-eligible) | always |
+| `taudit_emit_spec` | `taudit emit-spec` | Observe | Reviewed | never |
+| `taudit_invariants_list` | `taudit invariants list` | Observe | Reviewed | never |
+| `taudit_invariants_explain` | `taudit explain` (alias) | Observe | Reviewed | never |
+
+Notes:
+- `taudit baseline` only has `init / accept / diff / review` subcommands. The matrix names `_list / _promote / _rollback` map onto `review / accept / diff` respectively, with explanatory comments in the manifest.
+- `taudit_invariants_explain` is an alias for `taudit_explain`: taudit-cli ships `invariants list` but not `invariants explain`. The same built-in rule corpus answers both names.
+- Mutate-class tools (`baseline_init`, `baseline_promote`, `remediate_apply`) are constrained `within_workspace` and produce audit events including the argument set; `remediate_apply` is `approval=always` because it rewrites pipeline files.
+
+---
+
+## Skill: scan-via-mcp
+
+**When:** An MCP-driven agent or pipeline ingestion service needs taudit findings without invoking the CLI directly. `taudit_scan` exposes the full scan surface (formats: `terminal` / `json` / `sarif` / `cloudevents`; platforms: `github-actions` / `azure-devops` / `gitlab` / `bitbucket`; severity routing; custom invariants directory) as a structured tool call. Use this when the consumer is already an MCP client — agents (Claude, Cursor, Codex), an MCP-aware audit pipeline, or a long-running daemon that maintains an MCP session.
+
+**How (golden invocation):**
+
+```bash
+# 1. Launch the MCP server (stdio transport)
+cargo run -p taudit-mcp --release
+# server now waits for JSON-RPC over stdin/stdout
+
+# 2. Register with a host. The generated host manifests live under
+# `crates/taudit-mcp/.mcpact/hosts/{claude.json,codex.toml,cursor.json}`
+# — copy or symlink the appropriate one into the host's MCP config.
+
+# 3. JSON-RPC call (illustrative — most MCP clients hide this wire format):
+#    method: "tools/call"
+#    params:
+#      name: "taudit_scan"
+#      arguments:
+#        paths: ".github/workflows/"
+#        format: "sarif"
+#        severity_threshold: "high"
+#        platform: "github-actions"
+```
+
+**Expected output:** A tool-result payload with the same JSON / SARIF / CloudEvents body that `taudit scan` would emit on stdout (`mode = "json"`, `max_bytes = 4194304`). Every invocation appends a CloudEvent to `.mcpact/audit.jsonl` recording the tool name, argument set, and verdict — even successful Observe calls. The MCP layer enforces `within_workspace` on every `path`-typed argument, so a path escape from the agent is rejected before taudit is spawned.
+
+**Common pitfalls:**
+- The MCP wrapper is a **read-only Observe** — it never gates exit-code outcomes. To gate CI on findings, drive `taudit_verify` (Plan class) and key off its tool-result `success` field, or use the CLI directly. Don't try to read taudit's exit code through the MCP tool result.
+- `taudit_scan` is informational: structural success returns 0 even when findings exist. The severity-threshold routing happens inside taudit; the MCP boundary does not relitigate it.
+- Audit events are append-only and include argument values unless redacted in the manifest. If your scan paths are sensitive, mark the argument `redact = true` in `taudit.mcpact.toml` before regenerating.
+- The crate paths in `crates/taudit-mcp/Cargo.toml` carry the canonical mcpact-generator-path fix (`../../../../../../mcpact/crates/...`). Do not let an editor or `mcpact generate --force` rewrite them — the generator's normalisation only works when the out dir is under the mcpact repo.
+
+**See also:** [`taudit.mcpact.toml`](./taudit.mcpact.toml), [`crates/taudit-mcp/.mcpact/tools/taudit_scan.json`](crates/taudit-mcp/.mcpact/tools/taudit_scan.json), [scan-then-verify](#skill-scan-then-verify) (CLI equivalent).
+
+---
+
+## Skill: graph-via-mcp
+
+**When:** A downstream MCP tool (tsign, axiom, custom auditors) needs the authority graph as a programmatic dependency. `taudit_graph` exposes the same four formats as the CLI (`json` / `dot` / `mermaid` / `summary`) and the same `--view` selector (`authority` / `exploit`) plus the dense-graph guard, but inside an MCP session you can keep the server warm between calls — useful for sweep workflows that emit a graph per file across a monorepo.
+
+**How (golden invocation):**
+
+```bash
+# Start the MCP server (one process serves all 15 tools)
+cargo run -p taudit-mcp --release
+
+# Tool call — illustrative wire-level JSON for tools/call:
+# {
+#   "method": "tools/call",
+#   "params": {
+#     "name": "taudit_graph",
+#     "arguments": {
+#       "paths": ".github/workflows/release.yml",
+#       "format": "json",
+#       "view": "authority"
+#     }
+#   }
+# }
+#
+# Diagram fan-out — re-issue with different `format` arg per consumer:
+#   format=dot      -> downstream Graphviz renderer
+#   format=mermaid  -> wiki / Markdown surface
+#   format=summary  -> propagation rollup (`schemas/authority-propagation-summary.v1.json`)
+```
+
+**Expected output:** Tool result body is the same content the CLI would print to stdout (`mode = "json"`, `max_bytes = 4194304`). For `format = "json"`, the body validates against [`schemas/authority-graph.v1.json`](schemas/authority-graph.v1.json) with the full `{ schema_version, schema_uri, graph: { source, nodes, edges, completeness, completeness_gaps, completeness_gap_kinds, metadata } }` envelope — identical bytes to running the CLI. Server is stateless between calls; concurrent tool calls are supported (each spawns a separate `taudit graph` subprocess under the `taudit-mcp` runtime's timeout policy).
+
+**Common pitfalls:**
+- The MCP tool inherits the CLI's "stdout only" contract — there is no `output` argument because `taudit graph` itself has no `-o` / `--output` flag. The tool result IS the graph. Don't try to pass a destination path.
+- `--job` semantics are unchanged: it filters `dot` and `mermaid` outputs but **not** `json` or `summary`. JSON / summary are always the full graph by design so downstream gating sees `completeness_gaps`.
+- `partial` graphs are a floor on risk, not a fatal error — the JSON envelope carries `completeness` + `completeness_gaps` for every emit. Downstream tools should branch on `completeness != "complete"` before promoting a graph into doctrine or tsign attestations.
+- Mutate-class operations (baseline writes, remediate apply) are separate tools with explicit approval gates. `taudit_graph` is Observe-only — never let an agent script up a `graph` -> `remediate_apply` chain without re-entering the approval flow.
+
+**See also:** [`taudit.mcpact.toml`](./taudit.mcpact.toml), [`crates/taudit-mcp/.mcpact/tools/taudit_graph.json`](crates/taudit-mcp/.mcpact/tools/taudit_graph.json), [graph-export-as-artifact](#skill-graph-export-as-artifact) (CLI equivalent), [`docs/authority-graph.md`](docs/authority-graph.md).
+
+---
+
+## How the MCP layer composes with the ecosystem
+
+- **mcpact** is the build tool: `mcpact validate taudit.mcpact.toml` gates the manifest in `quality.yml`, and `mcpact generate` produces `crates/taudit-mcp/` deterministically (regen against /tmp produces a byte-identical lockfile and per-tool specs).
+- **The 8 MCP-serving siblings** (cortex, cordance, doctrine-mcp, mcpact, tsafe, tapprove, corcept, aegress) and now taudit-mcp share the same wire contract — agents drive any of them through the same JSON-RPC tool-call shape.
+- **cellos** remains the supervisor surface (control plane outside MCP). `taudit_emit_spec` is the bridge: it emits a CellOS execution-cell spec that the cellos supervisor can launch.
+- **The CLI surface is unchanged.** `taudit-mcp` shells out to the `taudit` binary on PATH; the MCP adapter never reimplements scan/verify/graph logic. Authority over the canonical analysis stays in `crates/taudit-cli`.
