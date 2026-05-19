@@ -24,23 +24,23 @@ def test_report_example_summarizes_completeness_and_finding_identity() -> None:
         {
             "kind": "report",
             "schema_version": "1.0.0",
-            "schema_uri": None,
+            "schema_uri": "https://taudit.dev/schemas/taudit-report.schema.json",
             "source_file": "tests/fixtures/over-privileged.yml",
             "graph_completeness": "complete",
             "graph_completeness_gap_kinds": [],
             "summary_completeness": "complete",
             "summary_completeness_gap_kinds": [],
-            "total_findings": 11,
+            "total_findings": 12,
             "finding_identities": [
                 {
                     "index": 0,
                     "severity": "critical",
                     "category": "authority_propagation",
-                    "rule_id": None,
-                    "fingerprint": None,
-                    "suppression_key": None,
-                    "finding_group_id": None,
-                    "source": None,
+                    "rule_id": "authority_propagation",
+                    "fingerprint": "4fcb0ea3e689660d49c8697adbb53c96",
+                    "suppression_key": "sk1_baa05c71e4fb7f4099b00ef0b6ecf2ad",
+                    "finding_group_id": "92bf2ec5-0f45-5eb2-b6c2-099ccfcd9e5b",
+                    "source": "built-in",
                 }
             ],
         }

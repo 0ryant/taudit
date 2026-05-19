@@ -2,7 +2,10 @@ use std::borrow::Cow;
 
 use colored::Colorize;
 use taudit_core::error::TauditError;
-use taudit_core::finding::{Finding, FindingSource, Recommendation, Severity};
+use taudit_core::finding::{
+    compute_finding_group_id, compute_fingerprint, compute_suppression_key, rule_id_for, Finding,
+    FindingSource, Recommendation, Severity,
+};
 use taudit_core::graph::{AuthorityCompleteness, AuthorityGraph, EdgeKind, GapKind, NodeKind};
 use taudit_core::ports::ReportSink;
 
@@ -312,6 +315,10 @@ impl<W: std::io::Write> ReportSink<W> for TerminalReport {
                 message_clean.bold()
             )?;
 
+            if self.verbose {
+                emit_verbose_finding_identity(w, graph, finding)?;
+            }
+
             // Propagation path
             // SECURITY: every `node.name` originates from YAML keys (step
             // names, secret names, environment names). All are
@@ -527,6 +534,30 @@ fn emit_verbose_nodes<W: std::io::Write>(
         }
     }
     Ok(())
+}
+
+fn emit_verbose_finding_identity<W: std::io::Write>(
+    w: &mut W,
+    graph: &AuthorityGraph,
+    finding: &Finding,
+) -> Result<(), TauditError> {
+    let rule_id = rule_id_for(finding);
+    let fingerprint = compute_fingerprint(finding, graph);
+    let suppression_key = compute_suppression_key(finding, graph);
+    let finding_group_id = finding
+        .extras
+        .finding_group_id
+        .clone()
+        .unwrap_or_else(|| compute_finding_group_id(&fingerprint));
+    wln!(
+        w,
+        "  {} rule_id: {}, fingerprint: {}, suppression_key: {}, finding_group_id: {}",
+        "Identity:".bright_black(),
+        clean(&rule_id),
+        clean(&fingerprint),
+        clean(&suppression_key),
+        clean(&finding_group_id),
+    )
 }
 
 /// Print the run-level banner (call once before the scan loop).
@@ -826,6 +857,31 @@ mod tests {
             .expect("emit should succeed");
         let raw = String::from_utf8(buf).expect("utf-8 output");
         strip_ansi(&raw)
+    }
+
+    #[test]
+    fn verbose_rendering_includes_current_output_identity_fields() {
+        let graph = test_graph();
+        let findings = vec![test_finding()];
+
+        let out = render_with(&graph, &findings, true);
+
+        assert!(
+            out.contains("rule_id: unpinned_action"),
+            "verbose output must name the current-output rule id:\n{out}"
+        );
+        assert!(
+            out.contains("fingerprint: "),
+            "verbose output must include the stable finding fingerprint:\n{out}"
+        );
+        assert!(
+            out.contains("suppression_key: sk1_"),
+            "verbose output must include the stable suppression key:\n{out}"
+        );
+        assert!(
+            out.contains("finding_group_id: "),
+            "verbose output must include the finding group id:\n{out}"
+        );
     }
 
     #[test]

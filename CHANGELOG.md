@@ -12,8 +12,10 @@ _(none yet — populate this paragraph when adding entries that change finding b
 
 > **Release candidate.** Starts the v1.2 Authority Evidence Platform RC line.
 > The payload is release-gated for RC evaluation, not stable promotion. ADR
-> 0020 conformance is wired and may still report pending checks until the
-> remaining current-output fixtures and ordered-evidence sink projections land.
+> 0020 conformance is wired against the current output contract. The
+> `ordered_authority_evidence` object remains an explicit RC deferral: the core
+> builder and wire-field docs exist, but production JSON/SARIF/CloudEvents
+> projection is not a current-output claim for this RC.
 
 ### Detection delta (read first)
 
@@ -53,8 +55,9 @@ finding counts stay the same.
   suppression key, finding group, platform, scan run, correlation, and pipeline
   identity.
 - Release gates now distinguish RC tag/prerelease publishing from stable
-  promotion and treat incomplete ADR 0020 conformance as RC-allowed but
-  stable-blocking.
+  promotion. ADR 0020 must pass for the current output contract; scoped
+  deferrals such as `ordered_authority_evidence` must be named here and in the
+  RC operator docs rather than appearing as pending harness placeholders.
 
 ### Migration notes
 

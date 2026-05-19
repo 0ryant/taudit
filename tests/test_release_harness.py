@@ -151,27 +151,28 @@ class ReleaseHarnessTests(unittest.TestCase):
         )
         self.assertEqual(command[2:], ["--root", str(root), "--format", "json"])
 
-    def test_check_release_allows_rc_to_name_incomplete_conformance(self) -> None:
+    def test_check_release_blocks_rc_when_conformance_is_incomplete(self) -> None:
         with tempfile.TemporaryDirectory() as tmp_dir:
             root = pathlib.Path(tmp_dir)
             self._write_minimal_release_tree(root, "1.2.0-rc.1", "v1.2.0-rc.1")
 
-            with mock.patch.object(
-                release_harness.subprocess,
-                "run",
-                return_value=self._conformance_process("incomplete", False, 3, pending=10),
+            with (
+                mock.patch.object(
+                    release_harness.subprocess,
+                    "run",
+                    return_value=self._conformance_process("incomplete", False, 3, pending=10),
+                ),
+                self.assertRaisesRegex(
+                    release_harness.ReleaseHarnessError,
+                    "not release-ready",
+                ),
             ):
-                plan = release_harness.check_release(
+                release_harness.check_release(
                     root,
                     "v1.2.0-rc.1",
                     require_local_tag=False,
                     validate_publish_metadata=False,
                 )
-
-            self.assertTrue(plan.prerelease)
-            self.assertIsNotNone(plan.conformance)
-            self.assertEqual(plan.conformance.status, "incomplete")
-            self.assertEqual(plan.conformance.exit_code, 3)
 
     def test_check_release_blocks_stable_when_conformance_is_incomplete(self) -> None:
         with tempfile.TemporaryDirectory() as tmp_dir:
