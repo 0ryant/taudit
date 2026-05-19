@@ -62,9 +62,10 @@ complete, partial, suppressed, or downgraded. It preserves structured values
 through normal JSON encoding; rendered terminal or SARIF text must not be used
 to recompute identity.
 
-Current RC boundary: `ordered_authority_evidence` has a core skeleton, but the
-current profile still treats cross-sink projection as a pending dependency
-until L2/L4/L5 wiring and fixtures land.
+Current RC boundary: `ordered_authority_evidence` has a core builder and frozen
+wire-field docs, but production JSON/SARIF/CloudEvents projection is not a
+current-output claim for this RC. The ADR 0020 gate accepts only that documented
+deferral; any other profile or parity pending item blocks release.
 
 ## SARIF
 
@@ -116,13 +117,15 @@ authority-route language. It intentionally stays compact for CI logs.
 
 Verbose terminal output may add public node details such as node kind, trust
 zone, identity scope, permissions, digest prefix, inferred markers, and typed
-gap labels. It remains public output. It must not expose disclosure scores,
-CVE workflow metadata, witness-spec next actions, canary values, private hosted
-run artifacts, or observed sink claims without explicit observed evidence.
+gap labels. It also renders current identity fields for triage: `rule_id`,
+`fingerprint`, `suppression_key`, and `finding_group_id`. It remains public
+output. It must not expose disclosure scores, CVE workflow metadata,
+witness-spec next actions, canary values, private hosted run artifacts, or
+observed sink claims without explicit observed evidence.
 
-Current RC boundary: terminal verbose identity and evidence rendering is still
-owned by L5-05 in the current-output profile. Until that lane lands, use JSON,
-SARIF, or CloudEvents for stable identity joins.
+Current RC boundary: terminal verbose identity is covered by the ADR 0020
+gate, but ordered authority evidence chain rendering remains deferred with the
+same `ordered_authority_evidence` ceiling as machine sinks.
 
 ## Evidence Language
 

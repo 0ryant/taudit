@@ -525,7 +525,6 @@ fn build_predicate(
     }
 
     let mut saw_cross_job_path = false;
-    let mut saw_ordering_failure = false;
 
     for receive_event in events {
         let Some((helper_id, authority_id, confidence, receive_common)) =
@@ -555,16 +554,13 @@ fn build_predicate(
         }
 
         if authority.step_index() > helper.step_index() {
-            saw_ordering_failure = true;
             continue;
         }
 
         if receive_common.step_index != helper.step_index() {
-            saw_ordering_failure = true;
             continue;
         }
 
-        let mut same_job_path_without_order = false;
         for path_event in events
             .iter()
             .filter(|event| matches!(event, OrderedEvidenceEvent::PathMutation { .. }))
@@ -584,19 +580,11 @@ fn build_predicate(
                     same_job_caveat: true,
                 });
             }
-
-            same_job_path_without_order = true;
-        }
-
-        if same_job_path_without_order {
-            saw_ordering_failure = true;
         }
     }
 
     if saw_cross_job_path {
         Err(OrderedEvidenceBuildError::CrossJobScope)
-    } else if saw_ordering_failure {
-        Err(OrderedEvidenceBuildError::OrderingInvariantNotSatisfied)
     } else {
         Err(OrderedEvidenceBuildError::OrderingInvariantNotSatisfied)
     }

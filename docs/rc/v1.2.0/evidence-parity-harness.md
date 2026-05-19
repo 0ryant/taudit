@@ -1,9 +1,10 @@
 # L5-02 Evidence Parity Harness
 
-Status: offline harness skeleton for `v1.2.0-rc.1`.
+Status: offline parity harness wired into ADR 0020 for `v1.2.0-rc.1`.
 
-This lane adds a Python-only harness for saved output fixtures. It does not
-change JSON, SARIF, CloudEvents, core, parser, or CLI sink implementation.
+This lane adds a Python-only harness for saved output fixtures. The harness
+does not generate fixtures itself; ADR 0020 now generates report JSON, SARIF,
+and CloudEvents fixtures and then runs this parity check over them.
 
 ## Scope
 
@@ -14,10 +15,10 @@ presence across three saved payloads:
 - SARIF 2.1.0 JSON;
 - CloudEvents finding output, either one JSON object, a JSON array, or JSONL.
 
-It is intentionally a fixture checker. It does not generate fixtures, execute
-taudit, validate schemas, compare rendered terminal output, or prove sink
-values are byte-identical. Existing Rust cross-sink tests continue to own value
-parity for identity fields.
+It is intentionally a fixture checker. It does not execute taudit, validate
+schemas, compare rendered terminal output, or prove every evidence value is
+byte-identical. ADR 0020 owns generated fixture creation, while Rust cross-sink
+tests continue to own value parity for identity fields.
 
 ## Compared Fields
 
@@ -86,13 +87,15 @@ They cover:
 ## Residual Risk
 
 This harness currently compares key presence, not field values or full object
-equivalence. It also depends on saved fixtures supplied by later release lanes.
-L5-02 remains incomplete until generated current-output fixtures include a
-positive helper-authority finding with `ordered_authority_evidence` across JSON,
-SARIF, and CloudEvents.
+equivalence. The ADR 0020 gate accepts `ordered_authority_evidence` absence only
+as the documented RC deferral. L5-02 remains incomplete for the ordered-evidence
+claim until generated current-output fixtures include a positive
+helper-authority finding with `ordered_authority_evidence` across JSON, SARIF,
+CloudEvents, and terminal verbose output.
 
 ## Next Dependency Unblocked
 
-QA-04 and ADR 0020 release wiring can now call a stable offline command for
-L5-02 evidence-key parity and distinguish real fixture drift from the known
-ordered-evidence implementation gap.
+QA-04 and ADR 0020 release wiring can now distinguish real fixture drift from
+the known ordered-evidence implementation gap. Once L4/L5 emit the ordered
+object, this harness should flip from documented deferral handling to positive
+cross-sink presence checks.

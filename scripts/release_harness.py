@@ -235,14 +235,13 @@ def validate_conformance_gate(root: pathlib.Path, plan: ReleasePlan) -> Conforma
     gate = run_conformance_gate(root)
     if gate.is_full_pass:
         return gate
-    if plan.prerelease and gate.is_incomplete_pending:
-        return gate
     command = " ".join(gate.command)
     if gate.is_incomplete_pending:
+        readiness_target = "release-ready" if plan.prerelease else "stable-release-ready"
         raise ReleaseHarnessError(
             "ADR 0020 conformance harness is incomplete "
             f"(exit {gate.exit_code}, pending={gate.pending_count}); "
-            f"{command} is not stable-release-ready"
+            f"{command} is not {readiness_target}"
         )
     raise ReleaseHarnessError(
         "ADR 0020 conformance harness failed release gate "
@@ -440,13 +439,7 @@ def main(argv: list[str] | None = None) -> int:
                 validate_publish_metadata=not args.skip_publish_metadata,
                 validate_conformance=not args.skip_conformance,
             )
-            if plan.conformance and plan.conformance.is_incomplete_pending:
-                print(
-                    f"release check passed for {plan.tag}; "
-                    "ADR 0020 conformance incomplete, stable promotion blocked"
-                )
-            else:
-                print(f"release check passed for {plan.tag}")
+            print(f"release check passed for {plan.tag}")
             return 0
         if args.command == "notes":
             plan = build_release_plan(root, args.tag, source_ref=args.source_ref)
@@ -461,13 +454,7 @@ def main(argv: list[str] | None = None) -> int:
                 validate_publish_metadata=not args.skip_publish_metadata,
                 validate_conformance=not args.skip_conformance,
             )
-            if plan.conformance and plan.conformance.is_incomplete_pending:
-                print(
-                    f"GitHub release standardized for {plan.tag}; "
-                    "ADR 0020 conformance incomplete, stable promotion blocked"
-                )
-            else:
-                print(f"GitHub release standardized for {plan.tag}")
+            print(f"GitHub release standardized for {plan.tag}")
             return 0
         raise ReleaseHarnessError(f"unknown command: {args.command}")
     except ReleaseHarnessError as exc:

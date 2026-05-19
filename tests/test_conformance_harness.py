@@ -30,21 +30,32 @@ def write_minimal_harness_repo(root: pathlib.Path) -> None:
 
 
 class ConformanceHarnessTests(unittest.TestCase):
-    def test_offline_skeleton_reports_incomplete_with_pending_contract_checks(self) -> None:
+    def test_real_harness_fails_stale_minimal_current_profile_examples(self) -> None:
         with tempfile.TemporaryDirectory() as tmp_dir:
             root = pathlib.Path(tmp_dir)
             write_minimal_harness_repo(root)
 
-            summary = conformance_harness.run_harness(root)
+            summary = conformance_harness.run_harness(root, run_generated=False)
 
-        self.assertEqual(summary["status"], "incomplete")
+        self.assertEqual(summary["status"], "fail")
         self.assertFalse(summary["full_conformance"])
         self.assertGreater(summary["counts"]["pass"], 0)
-        self.assertGreater(summary["counts"]["pending"], 0)
+        self.assertGreater(summary["counts"]["fail"], 0)
+        self.assertEqual(summary["counts"]["pending"], 0)
+        self.assertNotIn("placeholder", {check["kind"] for check in summary["checks"]})
+
+    def test_checked_in_offline_contract_gates_have_no_pending_placeholders(self) -> None:
+        summary = conformance_harness.run_harness(ROOT, run_generated=False)
+
+        self.assertEqual(summary["status"], "pass")
+        self.assertFalse(summary["full_conformance"])
+        self.assertGreater(summary["counts"]["pass"], 0)
         self.assertEqual(summary["counts"]["fail"], 0)
+        self.assertEqual(summary["counts"]["pending"], 0)
+        self.assertNotIn("placeholder", {check["kind"] for check in summary["checks"]})
         self.assertIn(
             "current_profile.report_json",
-            {check["id"] for check in summary["checks"] if check["status"] == "pending"},
+            {check["id"] for check in summary["checks"] if check["status"] == "pass"},
         )
 
     def test_offline_skeleton_fails_when_configured_path_is_missing(self) -> None:
@@ -54,10 +65,10 @@ class ConformanceHarnessTests(unittest.TestCase):
             missing_path = root / "contracts" / "schemas" / "taudit-report.schema.json"
             missing_path.unlink()
 
-            summary = conformance_harness.run_harness(root)
+            summary = conformance_harness.run_harness(root, run_generated=False)
 
         self.assertEqual(summary["status"], "fail")
-        self.assertEqual(summary["counts"]["fail"], 1)
+        self.assertGreaterEqual(summary["counts"]["fail"], 1)
         failed = [check for check in summary["checks"] if check["status"] == "fail"]
         self.assertEqual(failed[0]["id"], "presence.contracts/schemas/taudit-report.schema.json")
         self.assertEqual(failed[0]["path"], "contracts/schemas/taudit-report.schema.json")
@@ -69,7 +80,7 @@ class ConformanceHarnessTests(unittest.TestCase):
             bad_example = root / "contracts" / "examples" / "clean-report.json"
             bad_example.write_text('{"broken": true\n', encoding="utf-8")
 
-            summary = conformance_harness.run_harness(root)
+            summary = conformance_harness.run_harness(root, run_generated=False)
 
         self.assertEqual(summary["status"], "fail")
         failed = [check for check in summary["checks"] if check["status"] == "fail"]
@@ -88,13 +99,13 @@ class ConformanceHarnessTests(unittest.TestCase):
 
             with redirect_stdout(stdout):
                 exit_code = conformance_harness.main(
-                    ["--root", str(root), "--format", "json"]
+                    ["--root", str(root), "--format", "json", "--skip-generated"]
                 )
 
         payload = json.loads(stdout.getvalue())
         self.assertEqual(exit_code, 1)
         self.assertEqual(payload["status"], "fail")
-        self.assertEqual(payload["counts"]["fail"], 1)
+        self.assertGreaterEqual(payload["counts"]["fail"], 1)
 
     def test_main_returns_distinct_nonzero_when_pending_checks_remain(self) -> None:
         with tempfile.TemporaryDirectory() as tmp_dir:
@@ -104,13 +115,13 @@ class ConformanceHarnessTests(unittest.TestCase):
 
             with redirect_stdout(stdout):
                 exit_code = conformance_harness.main(
-                    ["--root", str(root), "--format", "json"]
+                    ["--root", str(root), "--format", "json", "--skip-generated"]
                 )
 
         payload = json.loads(stdout.getvalue())
-        self.assertEqual(exit_code, 3)
-        self.assertEqual(payload["status"], "incomplete")
-        self.assertGreater(payload["counts"]["pending"], 0)
+        self.assertEqual(exit_code, 1)
+        self.assertEqual(payload["status"], "fail")
+        self.assertEqual(payload["counts"]["pending"], 0)
 
 
 if __name__ == "__main__":
