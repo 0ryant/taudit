@@ -1,6 +1,6 @@
 [package]
 name = "taudit-mcp"
-version = "0.0.1"
+version = "0.1.0-pre"
 edition = "2021"
 license = "AGPL-3.0-or-later"
 description = "MCP adapter for taudit — pipeline authority-graph scan / verify / graph / map / diff / baseline / remediate / invariants surface"
