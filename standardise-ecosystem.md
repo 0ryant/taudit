@@ -25,11 +25,11 @@ substrate that aligns to this standard.
 
 | Axis | Detail |
 | --- | --- |
-| **Role** | Local-first, auditable AI memory substrate. Provides the persistent memory layer that `pai-axiom` (the operator's AI agent runtime) depends on at runtime. |
+| **Role** | Local-first, auditable AI memory substrate. Provides a persistent memory layer that agent harnesses (e.g. the operator's developer harness) can consume at runtime via MCP. The relationship is runtime-detectable: a consumer that has not installed cortex degrades gracefully. |
 | **Governance** | Governed separately by its own ADR ledger (`docs/adr/`). It is not bound by this standard, but it voluntarily aligns to the same quality-gate shape, tool version pins, and SBOM target. |
 | **taudit relationship** | cortex consumes `taudit` to self-audit its own CI pipelines. It is not in the three-way peer cross-validation loop (taudit/tsafe/CellOS), but it runs `taudit verify` against its own Azure DevOps pipeline on every build. |
 | **Quality alignment** | Matches the `quality` job step order, Rust MSRV 1.88, `deny.toml` mandatory settings, SHA-pinned Actions, and dual MIT OR Apache-2.0 license. Divergences and gaps are documented in `cortex/docs/ECOSYSTEM.md`. |
-| **pai-axiom** | `pai-axiom` is the operator's AI agent runtime. Cortex is the memory substrate it depends on. Neither `cortex` nor `pai-axiom` is a peer in this ecosystem; cortex is a downstream consumer of taudit and an upstream dependency of pai-axiom. |
+| **Consumers** | Cortex exposes its surface over MCP. Any agent harness (the operator's developer harness is one such consumer) can discover and bind to it at runtime; absence is a degraded-but-functional state, not a build error. No cortex consumer is a peer in this ecosystem. |
 
 AI assistants working in the `cortex` repo should read `cortex/docs/ECOSYSTEM.md` for the full
 alignment declaration before making CI or governance changes.
