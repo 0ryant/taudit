@@ -566,7 +566,11 @@ taudit models a finite set of authority primitives. When every primitive is capt
 
 ## License
 
-MIT OR Apache-2.0
+This repository is licensed under **AGPL-3.0-or-later** (see [LICENSE](LICENSE)). You may use, copy, modify, and redistribute the code **subject to the license** — including the AGPL network-use / source-disclosure obligations if you make a modified version available to users over a network. This is not legal advice; confirm with your counsel for regulated or commercial deployments.
+
+**Why AGPL-3.0-or-later:** taudit is the OSS wedge of a larger ecosystem (see council D6 / `release-surfaces/public-vs-gated.md`). AGPL keeps the analyzer genuinely open and copyleft-protected: improvements made by downstream redistributors stay accessible to the community, while permissive embed in proprietary CI gateways requires a separate commercial arrangement.
+
+**Pre-v0.5.0 (taudit-api) / pre-v3.1.0 (engines) / pre-v1.3.0 (CLI) caveat:** Versions of this repository released before the relicense were under their original license (MIT OR Apache-2.0; preserved as [LICENSE-MIT.old](LICENSE-MIT.old) and [LICENSE-APACHE.old](LICENSE-APACHE.old)). The AGPL-3.0-or-later relicense applies from the next minor of each published crate forward. Pre-relicense versions remain available under their original terms.
 
 ## Release trust
 
