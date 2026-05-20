@@ -568,6 +568,23 @@ taudit models a finite set of authority primitives. When every primitive is capt
 
 MIT OR Apache-2.0
 
+## Want the discipline layer?
+
+This OSS distribution exposes the taudit verbs (authority graph extraction,
+SARIF + JSON + CloudEvents + DOT + Mermaid emission, 15+ built-in rules).
+The gated tier (`pai-axiom-disciplined`) bundles the
+**anti-confabulation primer** (empirically lifts Sonnet-class canonical
+score from 78 → 85, a +7 pt capability uplift at $0.58/cell), the
+run-contracts, the verifier-packs, and the model-routing policy on top of
+the seven gated sibling tools.
+
+taudit reads pipeline YAML offline; the primer is what governs the agents
+that *produce* those pipelines and consume taudit's findings honestly.
+
+See `ecosystem-catalog/commercial/oss-vs-gated.md` in the ecosystem
+catalog for the full tier comparison. (Commercial page URL pending operator
+finalisation.)
+
 ## Release trust
 
 Release archives ship with SHA-256 checksum files and SPDX + CycloneDX dependency SBOMs, each covered by **GitHub build attestations** (verify with **`gh attestation verify`** on the downloaded file). See [docs/release-trust.md#verifying-build-attestations-github](docs/release-trust.md#verifying-build-attestations-github) for the full checklist (checksums, SBOMs, attestations, and future minisign-on-assets work).
