@@ -2,7 +2,7 @@
 name = "taudit-mcp"
 version = "0.0.1"
 edition = "2021"
-license = "Apache-2.0"
+license = "AGPL-3.0-or-later"
 description = "MCP adapter for taudit — pipeline authority-graph scan / verify / graph / map / diff / baseline / remediate / invariants surface"
 
 # Local-dev fix (mirrors the aegress-mcp canonical fix):
