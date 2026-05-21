@@ -54,6 +54,7 @@ CODE_REVIEW_FINDINGS_*.md
 # Ad-hoc demo outputs (regenerate; see docs/golden-paths.md)
 /security.svg
 /verify.sarif.json
+/demo/
 
 # Local AI session state — never committed
 MEMORY/

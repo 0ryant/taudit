@@ -1,9 +1,0 @@
-{
-  "mcpServers": {
-    "taudit-mcp": {
-      "args": [],
-      "command": "target/debug\\taudit-mcp",
-      "cwd": "."
-    }
-  }
-}

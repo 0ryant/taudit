@@ -12,7 +12,6 @@ members = [
     "crates/taudit-report-json",
     "crates/taudit-report-sarif",
     "crates/taudit-sink-cloudevents",
-    "crates/taudit-mcp",
 ]
 
 [workspace.package]

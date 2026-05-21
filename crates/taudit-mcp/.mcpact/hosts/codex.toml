@@ -1,5 +1,0 @@
-# McPact-generated MCP server registration for OpenAI Codex CLI.
-# Merge into ~/.codex/config.toml under [mcp_servers].
-[mcp_servers.taudit-mcp]
-command = "target/debug\\taudit-mcp"
-cwd = "."
