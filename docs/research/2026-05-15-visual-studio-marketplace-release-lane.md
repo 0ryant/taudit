@@ -1,16 +1,16 @@
 # Visual Studio Marketplace Release/Test Lane
 
 Date: 2026-05-15
-Scope: release and test sequence for a future `taudit` VS Code extension
-published to Visual Studio Marketplace under publisher `algol`.
+Scope: historical release and test sequence for the first `taudit` VS Code
+extension published to Visual Studio Marketplace under publisher `algol`.
 
 Status: lane definition plus local publish-ready evidence. The repository now
 contains an in-tree extension scaffold at `integrations/vscode-extension/`,
 local `npm run check` passed, `npm run test:integration` passed,
 `vsce package` passed, `npm run smoke:vsix` passed, and `npm run preflight`
-passed. A Marketplace publish attempt was made with a tsafe-provided PAT and
-failed on publisher permissions for `Algol`, not on packaging or auth
-transport.
+passed. This record originally captured a failed Marketplace publish attempt
+caused by publisher authorization. A later live-listing observation moved the
+current work into post-publish install and hardening tasks.
 
 ## Inputs
 
@@ -225,9 +225,15 @@ under **Growth And Discoverability Tasks** (`V27-V36`).
 
 ## Current Blockers
 
-- A Marketplace PAT now exists in tsafe, but the PAT principal lacks publish
-  rights on publisher `Algol`.
-- No hosted VSIX install/activation smoke path is recorded.
-- GitHub-hosted runner smoke is currently not a reliable first lane because the
-  prior Marketplace tranche observed a billing/spending-limit blocker before
-  runner execution.
+2026-05-23 update: live Marketplace listings are now visible for
+`Algol.taudit-vscode` and `Algol.taudit-azure-pipelines`. The historical
+publish blockers below should not be treated as current install blockers
+without rechecking Marketplace and hosted release evidence.
+
+Residual proof gaps:
+
+- fresh hosted VSIX install/activation smoke should be recorded for each new
+  VS Code extension release
+- Marketplace copy and repo docs need a post-publish synchronization pass
+- install growth and operator hardening work now lives in
+  [`2026-05-23-marketplace-install-and-hardening-subtasks.md`](2026-05-23-marketplace-install-and-hardening-subtasks.md)

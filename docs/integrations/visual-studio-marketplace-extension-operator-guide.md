@@ -1,9 +1,10 @@
 # VS Code Extension Operator Guide
 
-Status: implementation guide for the in-repo `taudit` VS Code extension under
-`integrations/vscode-extension/`. This guide documents the current operator
-surface and release-preflight path. It does not claim that the extension has
-already been published to Visual Studio Marketplace.
+Status: implementation and installation guide for the live `taudit` VS Code
+extension under `integrations/vscode-extension/`.
+
+Install from Visual Studio Marketplace:
+<https://marketplace.visualstudio.com/items?itemName=Algol.taudit-vscode>
 
 ## What The Extension Is
 
@@ -193,16 +194,20 @@ Still CLI-first:
   settings contract
 - direct automation of SARIF upload or CI mutation
 
-## Release Blockers
+## Post-Publish Hardening
 
-The remaining blockers are operational, not product-shape:
+The extension is installable from Visual Studio Marketplace. The remaining
+work is post-publish hardening:
 
-- the Marketplace PAT principal currently lacks publish rights on publisher
-  `Algol`
-- no successful Azure hosted preflight run is recorded yet
+- keep Marketplace copy synchronized with repo docs
+- record fresh hosted install and activation smoke evidence for each release
+- keep policy, ignore file, suppressions, and baseline controls explicit
+- preserve clear partial-graph wording as adoption grows
 
 ## Related
 
 - [`visual-studio-marketplace-extension-contract.md`](visual-studio-marketplace-extension-contract.md)
+- [`../marketing/visual-studio-marketplace-install-brief.md`](../marketing/visual-studio-marketplace-install-brief.md)
+- [`../research/2026-05-23-marketplace-install-and-hardening-subtasks.md`](../research/2026-05-23-marketplace-install-and-hardening-subtasks.md)
 - [`../research/2026-05-15-visual-studio-marketplace-publish-track.md`](../research/2026-05-15-visual-studio-marketplace-publish-track.md)
 - [`../research/2026-05-15-visual-studio-marketplace-release-lane.md`](../research/2026-05-15-visual-studio-marketplace-release-lane.md)

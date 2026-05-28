@@ -3,6 +3,9 @@
 Audit GitHub Actions, Azure Pipelines, GitLab CI, and Bitbucket pipelines from
 VS Code with policy gates, advisory findings, and authority or exploit graphs.
 
+Install from Visual Studio Marketplace:
+<https://marketplace.visualstudio.com/items?itemName=Algol.taudit-vscode>
+
 Use it when you want a local workflow for CI/CD policy review without writing
 ad hoc shell commands.
 

@@ -28,6 +28,7 @@ Records in this directory capture **significant** product and technical decision
 | [0022](0022-adoption-doc-version-and-link-policy.md) | Adoption doc version and link policy |
 | [0023](0023-ecosystem-evidence-envelope-and-stack-contracts.md) | Ecosystem evidence envelope and stack contracts |
 | [0024](0024-external-diagnostic-intake-boundary.md) | External diagnostic intake boundary |
+| [0025](0025-marketplace-install-and-operator-hardening.md) | Visual Studio Marketplace install path and operator hardening |
 
 ## Conventions
 

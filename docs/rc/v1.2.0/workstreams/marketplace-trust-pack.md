@@ -22,10 +22,10 @@ taudit is already positioned as a CI/CD authority graph analyzer: the graph is t
 - Release trust is documented: release archives, checksums, SPDX/CycloneDX SBOMs, and GitHub artifact attestation verification are described in `docs/release-trust.md`.
 - GitHub Action contract is implemented on paper: `docs/integrations/github-marketplace-action-contract.md` defines `dev.taudit.github-action.v1`, typed inputs, outputs, exit semantics, no raw passthrough, and security invariants.
 - GitHub Action implementation evidence exists but publication is still blocked: `TODOS.md`, `docs/research/2026-05-14-marketplace-action-tranche-record.md`, `docs/research/2026-05-14-marketplace-publish-supervised-tranche.md`, and `docs/research/2026-05-15-marketplace-runtime-tranche.md` record the dedicated `0ryant/taudit-action` repo, local tests, local smoke, a later graph-mode drift fix, and the hard blocker that hosted smoke failed before runner execution because of GitHub billing/spending-limit state.
-- Azure DevOps contract is implemented: `docs/integrations/azure-devops-marketplace-extension-contract.md` defines `dev.taudit.azure-pipelines-task.v1`; `integrations/azure-devops-extension/package.json` and `integrations/azure-devops-extension/vss-extension.json` currently show extension version `0.1.9`.
+- Azure DevOps contract is implemented: `docs/integrations/azure-devops-marketplace-extension-contract.md` defines `dev.taudit.azure-pipelines-task.v1`; `integrations/azure-devops-extension/package.json` and `integrations/azure-devops-extension/vss-extension.json` currently show extension version `0.1.9`; the Visual Studio Marketplace listing is linked from the contract and integration index.
 - Azure live proof is defined but not yet recorded: `docs/integrations/azure-devops-live-proof-checklist.md` requires one real `Taudit@1` run covering `scan`, authority graph, exploit graph, `verify`, output variables, and a published `taudit-task-smoke` artifact.
-- VS Code surface exists in-tree: `integrations/vscode-extension/package.json` shows `algol.taudit-vscode` version `0.1.6`; `docs/integrations/visual-studio-marketplace-extension-operator-guide.md` documents commands, controls, local preflight, and Azure hosted preflight.
-- VS Code evidence needs reconciliation: `docs/research/2026-05-15-marketplace-runtime-tranche.md` claims `algol.taudit-vscode@0.1.6` was published, while `docs/integrations/visual-studio-marketplace-extension-operator-guide.md` still says it does not claim publication and lists publisher permission / hosted preflight blockers.
+- VS Code surface exists in-tree: `integrations/vscode-extension/package.json` shows `algol.taudit-vscode` version `0.1.6`; `docs/integrations/visual-studio-marketplace-extension-operator-guide.md` documents commands, controls, local preflight, Azure hosted preflight, and the live Marketplace install link.
+- VS Code publication-state docs are reconciled as of 2026-05-23: `docs/integrations/visual-studio-marketplace-extension-operator-guide.md` now treats the extension as installable, while fresh hosted install/activation evidence remains a proof gap for release receipts.
 - Media plan is concrete: `docs/integrations/marketplace-media-shot-list.md` names the minimum VS Code and Azure screenshots/GIF, stable filenames, proof surfaces, and storage target for marketplace assets.
 - Adoption docs exist and should be linked from listings: `docs/golden-paths.md` provides stable copy-paste flows; `docs/adoption-day0-day1.md` covers install, policy, baselines, suppressions, exit codes, and CI gates.
 
@@ -44,7 +44,7 @@ taudit is already positioned as a CI/CD authority graph analyzer: the graph is t
   - local `npm run preflight` evidence from `integrations/vscode-extension/`
   - hosted Azure preflight evidence from `azure-pipelines.vscode-extension.yml`
   - VSIX artifact path/checksum, install/uninstall smoke, and one command smoke for `verify`, `scan`, authority graph, exploit graph, and `showOutput`
-  - resolved publication state so operator guide, research ledger, package metadata, and marketplace listing do not contradict each other
+  - fresh release proof so operator guide, research ledger, package metadata, and marketplace listing stay synchronized
 - Marketplace media pack:
   - stable assets under `docs/integrations/assets/marketplace/` following `docs/integrations/marketplace-media-shot-list.md`
   - at minimum: VS Code verify success, VS Code authority graph, VS Code exploit graph, policy-bootstrap GIF, Azure task run success, Azure task outputs/artifact proof
@@ -60,7 +60,7 @@ taudit is already positioned as a CI/CD authority graph analyzer: the graph is t
 - Each operator surface has one runnable first-use path and one proof receipt that cites exact run URL or local command, commit/tag, adapter version, taudit version, and result.
 - GitHub Action is not called Marketplace-ready until hosted runner execution passes and `0ryant/taudit-action@v1` resolves to a verified immutable tag.
 - Azure DevOps is not called live-proven until the `Taudit@1` smoke produces expected output variables and the `taudit-task-smoke` artifact contents named in `docs/integrations/azure-devops-live-proof-checklist.md`.
-- VS Code is not called publish-proven until local and hosted preflight, VSIX install smoke, and Marketplace install/listing state are reconciled across `docs/integrations/visual-studio-marketplace-extension-operator-guide.md` and `docs/research/2026-05-15-marketplace-runtime-tranche.md`.
+- VS Code is not called release-proven for a new version until local and hosted preflight, VSIX install smoke, and Marketplace install/listing state are recorded across `docs/integrations/visual-studio-marketplace-extension-operator-guide.md` and the relevant research ledger.
 - All wrappers preserve taudit exit semantics: `0` pass, `1` violations, `2` config/cannot-decide error, as documented in `docs/integrations/github-marketplace-action-contract.md`, `docs/integrations/azure-devops-marketplace-extension-contract.md`, and `docs/integrations/visual-studio-marketplace-extension-contract.md`.
 - Proof media is based on real operator surfaces or committed fixtures, not mockups, and uses stable filenames from `docs/integrations/marketplace-media-shot-list.md`.
 - Release trust claims are bounded to what `docs/release-trust.md` actually ships: checksums, SBOMs, GitHub build attestations, and future minisign as not yet shipped.
@@ -70,7 +70,7 @@ taudit is already positioned as a CI/CD authority graph analyzer: the graph is t
 
 - External account state can block proof: GitHub billing/spending limit, Marketplace Developer Agreement, Azure hosted minutes, Azure DevOps publisher/PAT rights, and org extension installation are outside the repo.
 - The action implementation lives in a dedicated external repository, so local docs can drift from `0ryant/taudit-action` unless every receipt records the action commit/tag.
-- Current docs already show drift risk: VS Code publication state conflicts between `docs/integrations/visual-studio-marketplace-extension-operator-guide.md` and `docs/research/2026-05-15-marketplace-runtime-tranche.md`; examples also mix recent taudit versions across docs.
+- Current docs still show drift risk: examples mix recent taudit versions across docs, and live Marketplace state can drift from repo manifests unless each release records receipts.
 - Screenshots can overclaim. A YAML screenshot is not a live receipt; a local smoke is not a hosted runner proof; a marketplace page is not proof the adapter ran correctly.
 - Non-goals for this RC: automatic policy authoring, raw `extra-args`, automatic CI mutation, built-in third-party upload/SIEM publishing, broad PAT scopes, verified-publisher/top-publisher badge claims, or changing taudit core graph semantics.
 

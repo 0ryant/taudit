@@ -107,11 +107,13 @@ around it:
   GitHub Actions.
 
 - **VS Code extension**: [`integrations/vscode-extension/README.md`](integrations/vscode-extension/README.md)
-  — local verify, scan, and graph commands over a locally installed `taudit`
-  binary.
+  — install [`Algol.taudit-vscode`](https://marketplace.visualstudio.com/items?itemName=Algol.taudit-vscode)
+  from Visual Studio Marketplace for local verify, scan, and graph commands
+  over a locally installed `taudit` binary.
 - **Azure DevOps task**: [`integrations/azure-devops-extension/README.md`](integrations/azure-devops-extension/README.md)
-  — `Taudit@1` for Azure Pipelines with typed task inputs and version-pinned
-  release-asset execution.
+  — install [`Algol.taudit-azure-pipelines`](https://marketplace.visualstudio.com/items?itemName=Algol.taudit-azure-pipelines)
+  from Visual Studio Marketplace for `Taudit@1` in Azure Pipelines with typed
+  task inputs and version-pinned release-asset execution.
 
 These wrappers do not embed a separate taudit engine. If a pipeline or editor
 surface runs `taudit`, that execution surface is still auditable by `taudit`

@@ -1,8 +1,8 @@
 # Visual Studio Marketplace Publish Track
 
 Date: 2026-05-15
-Scope: first publish path for a future `taudit` VS Code extension under the
-Visual Studio Marketplace publisher `algol`.
+Scope: historical first publish path for the `taudit` VS Code extension under
+the Visual Studio Marketplace publisher `algol`.
 
 ## Source Of Truth
 
@@ -25,6 +25,12 @@ Visual Studio Marketplace publisher `algol`.
   - <https://code.visualstudio.com/api/references/extension-manifest>
 
 ## Current State
+
+2026-05-23 update: live Marketplace listings are now visible for
+`Algol.taudit-vscode` and `Algol.taudit-azure-pipelines`. Treat this publish
+track as historical release-readiness context. Current install messaging and
+post-publish hardening tasks live in
+[`2026-05-23-marketplace-install-and-hardening-subtasks.md`](2026-05-23-marketplace-install-and-hardening-subtasks.md).
 
 - [x] V1: Publisher exists: `algol`.
 - [x] V2: Extension package exists in this repo at
@@ -300,15 +306,18 @@ Rules:
 4. V23-V26: publish and document the operational path.
 5. V27-V36: improve discoverability, conversion, and trust signals.
 
-## Known Blockers
+## Historical Blockers And Current Residual Gaps
 
-- Marketplace PAT transport now exists via tsafe, but the PAT principal lacks
+These were the historical blockers before the live listing appeared:
+
+- Marketplace PAT transport existed via tsafe, but the PAT principal lacked
   publish rights on publisher `Algol`.
-- The Azure hosted preflight lane exists, but no successful hosted run is
-  recorded yet.
-- GitHub-hosted smoke is currently blocked on account billing / spending-limit
-  issues, so the publish lane should prefer Azure Pipelines or another working
-  hosted environment for the first real smoke.
+- The Azure hosted preflight lane existed, but no successful hosted run was
+  recorded.
+- GitHub-hosted smoke was blocked on account billing / spending-limit issues.
+
+Current residual gaps after the live listing observation are tracked in
+[`2026-05-23-marketplace-install-and-hardening-subtasks.md`](2026-05-23-marketplace-install-and-hardening-subtasks.md).
 
 ## Versioning Decision
 

@@ -3,6 +3,9 @@
 Status: implemented v1 contract for the `algol.taudit-azure-pipelines` Azure
 DevOps extension.
 
+Live listing:
+<https://marketplace.visualstudio.com/items?itemName=Algol.taudit-azure-pipelines>
+
 This document defines the first-class Azure Pipelines task surface for taudit.
 It is the Azure DevOps pipeline-step counterpart to the GitHub Marketplace
 action and the VS Code extension.

@@ -1,7 +1,10 @@
 # Visual Studio Marketplace Extension Contract
 
-Status: proposed v1 product contract for a future `taudit` VS Code extension
-published through Visual Studio Marketplace under publisher `algol`.
+Status: implemented v1 product contract for the live `taudit` VS Code
+extension published through Visual Studio Marketplace under publisher `algol`.
+
+Live listing:
+<https://marketplace.visualstudio.com/items?itemName=Algol.taudit-vscode>
 
 Doctrine basis:
 
@@ -13,9 +16,8 @@ Doctrine basis:
   commands, settings, defaults, and result shapes are versioned contract.
 
 This document defines the product contract the extension implementation,
-Marketplace manifest, README, tests, and release notes must satisfy. It does
-not claim that a VS Code extension artifact, VSIX, Marketplace listing, or
-publish automation exists today.
+Marketplace manifest, README, tests, and release notes must continue to
+satisfy.
 
 ## Contract Identity
 

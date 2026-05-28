@@ -4,6 +4,9 @@ Azure DevOps Marketplace packaging for `Taudit@1`, a pipeline task that blocks
 unsafe Azure Pipelines before merge with taudit policy gates, reviewable
 workflow findings, and authority or exploit graph artifacts.
 
+Install from Visual Studio Marketplace:
+<https://marketplace.visualstudio.com/items?itemName=Algol.taudit-azure-pipelines>
+
 Use it to make taudit visible in Azure Pipelines as an installable task:
 
 - `verify` blocks unsafe authority paths with repo-local policy

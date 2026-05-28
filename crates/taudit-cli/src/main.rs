@@ -4108,10 +4108,12 @@ fn cmd_graph(
 
         match (view, format) {
             (GraphView::Exploit, GraphFormat::Json) => {
+                let findings = taudit_core::rules::run_all_rules(&graph, max_hops);
                 let mut json = taudit_core::exploit_path::render_json_pretty(
                     &graph,
                     taudit_core::exploit_path::ExploitGraphOptions {
                         job: job.as_deref(),
+                        findings: Some(&findings),
                     },
                 )
                 .map_err(|e| anyhow::anyhow!("exploit graph JSON error: {e}"))?
@@ -4120,10 +4122,12 @@ fn cmd_graph(
                 try_write_stdout(&json)?;
             }
             (GraphView::Exploit, GraphFormat::Summary) => {
+                let findings = taudit_core::rules::run_all_rules(&graph, max_hops);
                 let mut json = taudit_core::exploit_path::render_summary_pretty(
                     &graph,
                     taudit_core::exploit_path::ExploitGraphOptions {
                         job: job.as_deref(),
+                        findings: Some(&findings),
                     },
                 )
                 .map_err(|e| anyhow::anyhow!("exploit graph summary JSON error: {e}"))?
@@ -4132,10 +4136,12 @@ fn cmd_graph(
                 try_write_stdout(&json)?;
             }
             (GraphView::Exploit, GraphFormat::Dot) => {
+                let findings = taudit_core::rules::run_all_rules(&graph, max_hops);
                 let mut dot = taudit_core::exploit_path::render_dot(
                     &graph,
                     taudit_core::exploit_path::ExploitGraphOptions {
                         job: job.as_deref(),
+                        findings: Some(&findings),
                     },
                 )
                 .into_bytes();
@@ -4143,10 +4149,12 @@ fn cmd_graph(
                 try_write_stdout(&dot)?;
             }
             (GraphView::Exploit, GraphFormat::Mermaid) => {
+                let findings = taudit_core::rules::run_all_rules(&graph, max_hops);
                 let mut mer = taudit_core::exploit_path::render_mermaid(
                     &graph,
                     taudit_core::exploit_path::ExploitGraphOptions {
                         job: job.as_deref(),
+                        findings: Some(&findings),
                     },
                 )
                 .into_bytes();
