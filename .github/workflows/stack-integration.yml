@@ -33,7 +33,7 @@ jobs:
     # Fork PRs: skip — default GITHUB_TOKEN cannot read base-org private siblings.
     if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
     steps:
-      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
 
       - name: Rust toolchain
         uses: dtolnay/rust-toolchain@98e1b82157cd469e843cb7f524c1313b4ad9492c # 1.88
@@ -63,7 +63,7 @@ jobs:
       - name: Checkout tsafe (sibling)
         id: checkout_tsafe
         continue-on-error: true
-        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
         with:
           repository: ${{ steps.siblings.outputs.tsafe_repo }}
           path: _siblings/tsafe
@@ -92,7 +92,7 @@ jobs:
             "or ensure GITHUB_TOKEN can read ${{ steps.siblings.outputs.tsafe_repo }}."
 
       - name: Log in to GHCR (CellOS supervisor image)
-        uses: docker/login-action@4907a6ddec9925e35a0a9e82d7399ccc52663121 # v4.1.0
+        uses: docker/login-action@650006c6eb7dba73a995cc03b0b2d7f5ca915bee # v4.2.0
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
@@ -130,7 +130,7 @@ jobs:
         if: steps.cellos_pull.outcome != 'success'
         id: checkout_cellos
         continue-on-error: true
-        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
         with:
           repository: ${{ steps.siblings.outputs.cellos_repo }}
           path: _siblings/cellos
