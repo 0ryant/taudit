@@ -2,12 +2,12 @@
 
 use crate::server_config;
 use async_trait::async_trait;
+use mcpact_audit::AuditSink;
+use mcpact_mcp::{McpTool, ToolCallResult, ToolDefinition};
+use mcpact_runtime::{ExecutionPlan, Executor};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use serde_json::json;
-use mcpact_mcp::{McpTool, ToolCallResult, ToolDefinition};
-use mcpact_runtime::{ExecutionPlan, Executor};
-use mcpact_audit::AuditSink;
 use std::collections::BTreeSet;
 
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
@@ -29,7 +29,9 @@ pub struct TauditBaselineInitArgs {
 pub struct Tool;
 
 impl Tool {
-    pub fn new() -> Self { Self }
+    pub fn new() -> Self {
+        Self
+    }
 }
 
 #[async_trait]
@@ -52,13 +54,17 @@ impl McpTool for Tool {
             Err(err) => return ToolCallResult::error(format!("invalid arguments: {err}")),
         };
 
-        let tool_spec: mcpact_manifest::ToolSpec = match serde_json::from_str(include_str!(concat!("../../.mcpact/tools/taudit_baseline_init.json"))) {
+        let tool_spec: mcpact_manifest::ToolSpec = match serde_json::from_str(include_str!(
+            concat!("../../.mcpact/tools/taudit_baseline_init.json")
+        )) {
             Ok(spec) => spec,
             Err(err) => return ToolCallResult::error(format!("tool spec load failed: {err}")),
         };
         let args_json = match serde_json::to_value(&args) {
             Ok(value) => value,
-            Err(err) => return ToolCallResult::error(format!("argument serialization failed: {err}")),
+            Err(err) => {
+                return ToolCallResult::error(format!("argument serialization failed: {err}"))
+            }
         };
         let workspace = std::env::current_dir().unwrap_or_else(|_| std::path::PathBuf::from("."));
         let ctx = mcpact_policy::PolicyContext {
@@ -93,35 +99,44 @@ impl McpTool for Tool {
             }
         }
 
-        let mut plan = ExecutionPlan::new(server_config::binary_path().to_string_lossy().to_string());
+        let mut plan =
+            ExecutionPlan::new(server_config::binary_path().to_string_lossy().to_string());
         plan.argv = Vec::new();
         plan.argv.push("baseline".into());
         plan.argv.push("init".into());
         plan.argv.push(args.paths.to_string());
         if args.captured_by.is_some() {
-        plan.argv.push("--captured-by".into());
-        plan.argv.push(match args.captured_by { Some(v) => v, None => String::new() });
+            plan.argv.push("--captured-by".into());
+            plan.argv.push(args.captured_by.unwrap_or_default());
         }
         if args.invariants_dir.is_some() {
-        plan.argv.push("--invariants-dir".into());
-        plan.argv.push(match args.invariants_dir { Some(v) => v, None => String::new() });
+            plan.argv.push("--invariants-dir".into());
+            plan.argv.push(args.invariants_dir.unwrap_or_default());
         }
         if args.max_hops.is_some() {
-        plan.argv.push("--max-hops".into());
-        plan.argv.push(match args.max_hops { Some(v) => v.to_string(), None => String::new() });
+            plan.argv.push("--max-hops".into());
+            plan.argv.push(match args.max_hops {
+                Some(v) => v.to_string(),
+                None => String::new(),
+            });
         }
         if args.platform.is_some() {
-        plan.argv.push("--platform".into());
-        plan.argv.push(match args.platform { Some(v) => v, None => String::new() });
+            plan.argv.push("--platform".into());
+            plan.argv.push(args.platform.unwrap_or_default());
         }
         if args.root.is_some() {
-        plan.argv.push("--root".into());
-        plan.argv.push(match args.root { Some(v) => v, None => String::new() });
+            plan.argv.push("--root".into());
+            plan.argv.push(args.root.unwrap_or_default());
         }
         let redacted = Vec::new();
         plan.redacted_arg_indexes = redacted;
         plan.env.inherit = false;
-        plan.env.allow = vec!["USER".into(), "HOSTNAME".into(), "USERNAME".into(), "COMPUTERNAME".into()];
+        plan.env.allow = vec![
+            "USER".into(),
+            "HOSTNAME".into(),
+            "USERNAME".into(),
+            "COMPUTERNAME".into(),
+        ];
 
         plan.timeout = std::time::Duration::from_secs(300);
         plan.max_output_bytes = 1048576;
@@ -129,9 +144,13 @@ impl McpTool for Tool {
         plan.authority = mcpact_core::AuthorityClass::Mutate;
 
         let plan_for_audit = plan.clone();
-        match Executor::default().execute(plan).await {
+        match Executor.execute(plan).await {
             Ok(result) => {
-                let event = mcpact_audit::EvidenceEvent::tool_executed("taudit_baseline_init", &plan_for_audit, &result);
+                let event = mcpact_audit::EvidenceEvent::tool_executed(
+                    "taudit_baseline_init",
+                    &plan_for_audit,
+                    &result,
+                );
                 let sink = server_config::audit_sink();
                 let _ = sink.emit(&event).await;
                 if let Some(value) = result.structured {

@@ -64,7 +64,9 @@ pub fn init(binary_name: &str) -> Result<(), String> {
 
 /// Resolved binary path for execution plans.
 pub fn binary_path() -> &'static Path {
-    RESOLVED_BINARY.get().expect("server binary was not resolved at startup")
+    RESOLVED_BINARY
+        .get()
+        .expect("server binary was not resolved at startup")
 }
 
 /// Manifest trust ceiling.
@@ -78,8 +80,8 @@ pub const AUDIT_CLOUDEVENTS_URL: Option<&str> = None;
 
 /// Resolved JSONL audit path from manifest (supports `audit.xdg_state`).
 pub fn audit_jsonl_path() -> PathBuf {
-    let manifest: mcpact_manifest::Manifest = toml::from_str(SOURCE_MANIFEST)
-        .expect("embedded manifest must parse");
+    let manifest: mcpact_manifest::Manifest =
+        toml::from_str(SOURCE_MANIFEST).expect("embedded manifest must parse");
     mcpact_manifest::resolve_audit_jsonl_path(&manifest.audit, &manifest.package.name)
 }
 

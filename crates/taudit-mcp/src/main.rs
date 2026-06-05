@@ -8,7 +8,9 @@ use mcpact_mcp::ToolRegistry;
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     server_config::init("taudit")?;
-    let _ = std::process::Command::new(server_config::binary_path()).args(["--version".to_string()]).status();
+    let _ = std::process::Command::new(server_config::binary_path())
+        .args(["--version".to_string()])
+        .status();
 
     let mut registry = ToolRegistry::new();
     registry.register(tools::taudit_baseline_init::Tool::new());

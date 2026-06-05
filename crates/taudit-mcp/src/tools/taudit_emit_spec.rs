@@ -2,12 +2,12 @@
 
 use crate::server_config;
 use async_trait::async_trait;
+use mcpact_audit::AuditSink;
+use mcpact_mcp::{McpTool, ToolCallResult, ToolDefinition};
+use mcpact_runtime::{ExecutionPlan, Executor};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use serde_json::json;
-use mcpact_mcp::{McpTool, ToolCallResult, ToolDefinition};
-use mcpact_runtime::{ExecutionPlan, Executor};
-use mcpact_audit::AuditSink;
 use std::collections::BTreeSet;
 
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
@@ -31,7 +31,9 @@ pub struct TauditEmitSpecArgs {
 pub struct Tool;
 
 impl Tool {
-    pub fn new() -> Self { Self }
+    pub fn new() -> Self {
+        Self
+    }
 }
 
 #[async_trait]
@@ -42,9 +44,13 @@ impl McpTool for Tool {
             name: "taudit_emit_spec".into(),
             title: Some("Emit CellOS spec".into()),
             description: "Emit a CellOS execution-cell spec that runs taudit scan.".into(),
-            input_schema: serde_json::to_value(&schema).unwrap_or_else(|_| json!({"type":"object"})),
+            input_schema: serde_json::to_value(&schema)
+                .unwrap_or_else(|_| json!({"type":"object"})),
             output_schema: None,
-            annotations: Some(mcpact_mcp::ToolDefinition::mcpact_annotations(mcpact_core::AuthorityClass::Observe, server_config::TRUST)),
+            annotations: Some(mcpact_mcp::ToolDefinition::mcpact_annotations(
+                mcpact_core::AuthorityClass::Observe,
+                server_config::TRUST,
+            )),
         }
     }
 
@@ -54,13 +60,17 @@ impl McpTool for Tool {
             Err(err) => return ToolCallResult::error(format!("invalid arguments: {err}")),
         };
 
-        let tool_spec: mcpact_manifest::ToolSpec = match serde_json::from_str(include_str!(concat!("../../.mcpact/tools/taudit_emit_spec.json"))) {
+        let tool_spec: mcpact_manifest::ToolSpec = match serde_json::from_str(include_str!(
+            concat!("../../.mcpact/tools/taudit_emit_spec.json")
+        )) {
             Ok(spec) => spec,
             Err(err) => return ToolCallResult::error(format!("tool spec load failed: {err}")),
         };
         let args_json = match serde_json::to_value(&args) {
             Ok(value) => value,
-            Err(err) => return ToolCallResult::error(format!("argument serialization failed: {err}")),
+            Err(err) => {
+                return ToolCallResult::error(format!("argument serialization failed: {err}"))
+            }
         };
         let workspace = std::env::current_dir().unwrap_or_else(|_| std::path::PathBuf::from("."));
         let ctx = mcpact_policy::PolicyContext {
@@ -95,30 +105,36 @@ impl McpTool for Tool {
             }
         }
 
-        let mut plan = ExecutionPlan::new(server_config::binary_path().to_string_lossy().to_string());
+        let mut plan =
+            ExecutionPlan::new(server_config::binary_path().to_string_lossy().to_string());
         plan.argv = Vec::new();
         plan.argv.push("emit-spec".into());
         plan.argv.push(args.target.to_string());
         if args.id.is_some() {
-        plan.argv.push("--id".into());
-        plan.argv.push(match args.id { Some(v) => v, None => String::new() });
+            plan.argv.push("--id".into());
+            plan.argv.push(args.id.unwrap_or_default());
         }
         if args.output.is_some() {
-        plan.argv.push("--output".into());
-        plan.argv.push(match args.output { Some(v) => v, None => String::new() });
+            plan.argv.push("--output".into());
+            plan.argv.push(args.output.unwrap_or_default());
         }
         if args.platform.is_some() {
-        plan.argv.push("--platform".into());
-        plan.argv.push(match args.platform { Some(v) => v, None => String::new() });
+            plan.argv.push("--platform".into());
+            plan.argv.push(args.platform.unwrap_or_default());
         }
-        if args.quiet { plan.argv.push("--quiet".into()); }
+        if args.quiet {
+            plan.argv.push("--quiet".into());
+        }
         if args.severity_threshold.is_some() {
-        plan.argv.push("--severity-threshold".into());
-        plan.argv.push(match args.severity_threshold { Some(v) => v, None => String::new() });
+            plan.argv.push("--severity-threshold".into());
+            plan.argv.push(args.severity_threshold.unwrap_or_default());
         }
         if args.ttl_seconds.is_some() {
-        plan.argv.push("--ttl-seconds".into());
-        plan.argv.push(match args.ttl_seconds { Some(v) => v.to_string(), None => String::new() });
+            plan.argv.push("--ttl-seconds".into());
+            plan.argv.push(match args.ttl_seconds {
+                Some(v) => v.to_string(),
+                None => String::new(),
+            });
         }
         let redacted = Vec::new();
         plan.redacted_arg_indexes = redacted;
@@ -130,9 +146,13 @@ impl McpTool for Tool {
         plan.authority = mcpact_core::AuthorityClass::Observe;
 
         let plan_for_audit = plan.clone();
-        match Executor::default().execute(plan).await {
+        match Executor.execute(plan).await {
             Ok(result) => {
-                let event = mcpact_audit::EvidenceEvent::tool_executed("taudit_emit_spec", &plan_for_audit, &result);
+                let event = mcpact_audit::EvidenceEvent::tool_executed(
+                    "taudit_emit_spec",
+                    &plan_for_audit,
+                    &result,
+                );
                 let sink = server_config::audit_sink();
                 let _ = sink.emit(&event).await;
                 if let Some(value) = result.structured {
