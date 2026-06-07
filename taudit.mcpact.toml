@@ -1,0 +1,951 @@
+schema_version = "mcpact.manifest.v1"
+
+[package]
+name = "taudit-mcp"
+version = "0.0.1"
+description = "MCP adapter for taudit — pipeline authority-graph scan / verify / graph / map / diff / baseline / remediate / invariants surface"
+# trust = "Reviewed" — operator-reviewed local manifest. Upgrade to "Signed" via
+# `mcpact sign taudit.mcpact.toml` after the workspace signing key is provisioned.
+trust = "Reviewed"
+
+[cli]
+name = "taudit"
+binary = "taudit"
+version_command = ["--version"]
+
+[audit]
+sink = "jsonl"
+path = ".mcpact/audit.jsonl"
+
+# -----------------------------------------------------------------------------
+# Notes on operator-directive coverage (2026-05-19):
+#
+# - taudit-cli's `baseline` subcommands are `init / accept / diff / review` —
+#   *not* `init / list / promote / rollback` as named in the original task
+#   matrix. We map the actual CLI surface and use the closest semantic match:
+#     taudit_baseline_init      → `baseline init`    (Mutate, Signed)
+#     taudit_baseline_list      → `baseline review`  (Observe — listing waivers
+#                                                     across baselines)
+#     taudit_baseline_promote   → `baseline accept`  (Mutate, Signed — append
+#                                                     a waiver = "promote" a
+#                                                     finding into the baseline)
+#     taudit_baseline_rollback  → `baseline diff`    (Observe — taudit has no
+#                                                     CLI rollback for baselines;
+#                                                     `baseline diff` is the
+#                                                     authoritative comparison
+#                                                     surface, kept as Observe)
+# - taudit-cli's `remediate` subcommands are `suggest / diff / apply / rollback
+#   / list-backups`. We expose `suggest` and `apply` per the directive. `apply`
+#   gates on the CLI's own `--unstable` flag and remains approval-gated here.
+# - taudit-cli has `taudit explain` (built-in rule docs) and `taudit invariants
+#   list` (loaded invariant table) but *no* `invariants explain` subcommand —
+#   the directive's `taudit_invariants_explain` maps onto `taudit explain`,
+#   which is also already exposed as `taudit_explain`. To preserve the matrix
+#   we surface both names as separate tools; both call `taudit explain` and the
+#   second is a deliberate alias for callers expecting the per-invariant name.
+# -----------------------------------------------------------------------------
+
+# -----------------------------------------------------------------------------
+# taudit_scan — pipeline scan, informational, always exits 0 on structural
+# success. Read-only against the workspace; emits JSON / SARIF / CloudEvents.
+# -----------------------------------------------------------------------------
+
+[[tools]]
+name = "taudit_scan"
+title = "Scan pipeline"
+description = "Scan pipeline file(s) for authority findings. Informational; exits 0 unless a structural error occurs."
+command = ["scan"]
+
+[tools.args.paths]
+type = "path"
+required = true
+description = "Pipeline YAML file or directory to scan"
+position = 1
+must_exist = true
+within_workspace = true
+
+[tools.args.format]
+type = "enum"
+required = false
+description = "Output format"
+flag = "--format"
+values = ["terminal", "json", "sarif", "cloudevents"]
+default = "json"
+
+[tools.args.severity_threshold]
+type = "enum"
+required = false
+description = "Filter findings shown in output to this severity or higher"
+flag = "--severity-threshold"
+values = ["critical", "high", "medium", "low", "info"]
+
+[tools.args.platform]
+type = "enum"
+required = false
+description = "CI/CD platform; default is auto-detect"
+flag = "--platform"
+values = ["auto", "github-actions", "azure-devops", "gitlab", "bitbucket"]
+
+[tools.args.max_hops]
+type = "integer"
+required = false
+description = "Maximum propagation depth for BFS analysis"
+flag = "--max-hops"
+
+[tools.args.quiet]
+type = "bool"
+required = false
+description = "Summary-only output"
+flag = "--quiet"
+
+[tools.args.invariants_dir]
+type = "path"
+required = false
+description = "Directory containing custom Authority Invariant YAML files"
+flag = "--invariants-dir"
+within_workspace = true
+
+[tools.output]
+mode = "json"
+max_bytes = 4194304
+expose_stderr = false
+
+[tools.policy]
+authority = "Observe"
+read_only = true
+network = false
+writes_files = false
+approval = "never"
+timeout_seconds = 300
+
+[tools.env]
+inherit = false
+allow = ["NO_COLOR"]
+
+# -----------------------------------------------------------------------------
+# taudit_verify — policy-gated enforcement. Read-only against the workspace;
+# the exit-code IS the gate. We classify as Plan (it is the planning-time
+# enforcement entrypoint, not a mutation).
+# -----------------------------------------------------------------------------
+
+[[tools]]
+name = "taudit_verify"
+title = "Verify policy invariants"
+description = "Enforce policy invariants; exit non-zero on any violation. Read-only against the workspace."
+command = ["verify"]
+
+[tools.args.paths]
+type = "path"
+required = true
+description = "Pipeline YAML file or directory to verify"
+position = 1
+must_exist = true
+within_workspace = true
+
+[tools.args.policy]
+type = "path"
+required = true
+description = "Policy source: invariant YAML file or directory"
+flag = "--policy"
+must_exist = true
+within_workspace = true
+
+[tools.args.format]
+type = "enum"
+required = false
+description = "Output format for violations"
+flag = "--format"
+values = ["text", "json", "sarif"]
+default = "json"
+
+[tools.args.platform]
+type = "enum"
+required = false
+description = "CI/CD platform; default is auto-detect"
+flag = "--platform"
+values = ["auto", "github-actions", "azure-devops", "gitlab", "bitbucket"]
+
+[tools.args.max_hops]
+type = "integer"
+required = false
+description = "Maximum propagation depth"
+flag = "--max-hops"
+
+[tools.args.include_builtin]
+type = "bool"
+required = false
+description = "Also run the 61 built-in rules"
+flag = "--include-builtin"
+
+[tools.args.severity_threshold]
+type = "enum"
+required = false
+description = "Only count violations at or above this severity"
+flag = "--severity-threshold"
+values = ["critical", "high", "medium", "low", "info"]
+
+[tools.output]
+mode = "json"
+max_bytes = 4194304
+expose_stderr = true
+
+[tools.policy]
+authority = "Plan"
+read_only = true
+network = false
+writes_files = false
+approval = "never"
+timeout_seconds = 300
+
+[tools.env]
+inherit = false
+allow = ["NO_COLOR"]
+
+# -----------------------------------------------------------------------------
+# taudit_graph — emit graph views (JSON / DOT / Mermaid / summary). Writes to
+# stdout only (no -o flag in the CLI). Observe authority.
+# -----------------------------------------------------------------------------
+
+[[tools]]
+name = "taudit_graph"
+title = "Emit authority graph"
+description = "Emit graph views (JSON, DOT, Mermaid, or summary) over the authority graph."
+command = ["graph"]
+
+[tools.args.paths]
+type = "path"
+required = true
+description = "Pipeline YAML file or directory"
+position = 1
+must_exist = true
+within_workspace = true
+
+[tools.args.format]
+type = "enum"
+required = false
+description = "Output format"
+flag = "--format"
+values = ["json", "dot", "mermaid", "summary"]
+default = "json"
+
+[tools.args.view]
+type = "enum"
+required = false
+description = "Graph view: canonical authority or exploit (mutable-state to helper paths)"
+flag = "--view"
+values = ["authority", "exploit"]
+
+[tools.args.platform]
+type = "enum"
+required = false
+description = "CI/CD platform; default is auto-detect"
+flag = "--platform"
+values = ["auto", "github-actions", "azure-devops", "gitlab", "bitbucket"]
+
+[tools.args.max_hops]
+type = "integer"
+required = false
+description = "Maximum propagation depth for summary format"
+flag = "--max-hops"
+
+[tools.args.job]
+type = "string"
+required = false
+description = "Restrict diagram output to subgraph reachable from a single job (dot / mermaid only)"
+flag = "--job"
+
+[tools.args.rich_labels]
+type = "bool"
+required = false
+description = "Include trust zone and key node metadata in diagram labels"
+flag = "--rich-labels"
+
+[tools.output]
+mode = "json"
+max_bytes = 4194304
+expose_stderr = false
+
+[tools.policy]
+authority = "Observe"
+read_only = true
+network = false
+writes_files = false
+approval = "never"
+timeout_seconds = 300
+
+[tools.env]
+inherit = false
+allow = []
+
+# -----------------------------------------------------------------------------
+# taudit_map — human-readable authority map (step x authority). Observe.
+# -----------------------------------------------------------------------------
+
+[[tools]]
+name = "taudit_map"
+title = "Authority map"
+description = "Show authority map — which steps access which secrets/identities."
+command = ["map"]
+
+[tools.args.paths]
+type = "path"
+required = true
+description = "Pipeline YAML file or directory"
+position = 1
+must_exist = true
+within_workspace = true
+
+[tools.args.format]
+type = "enum"
+required = false
+description = "Output format: text table, DOT, or Mermaid"
+flag = "--format"
+values = ["text", "dot", "mermaid"]
+
+[tools.args.platform]
+type = "enum"
+required = false
+description = "CI/CD platform; default is auto-detect"
+flag = "--platform"
+values = ["auto", "github-actions", "azure-devops", "gitlab", "bitbucket"]
+
+[tools.args.job]
+type = "string"
+required = false
+description = "Restrict output to a single job"
+flag = "--job"
+
+[tools.args.rich_labels]
+type = "bool"
+required = false
+description = "Include trust zone and key node metadata in diagram labels"
+flag = "--rich-labels"
+
+[tools.output]
+mode = "text"
+max_bytes = 1048576
+expose_stderr = false
+
+[tools.policy]
+authority = "Observe"
+read_only = true
+network = false
+writes_files = false
+approval = "never"
+timeout_seconds = 300
+
+[tools.env]
+inherit = false
+allow = ["NO_COLOR"]
+
+# -----------------------------------------------------------------------------
+# taudit_diff — diff findings between two pipeline versions. Observe.
+# -----------------------------------------------------------------------------
+
+[[tools]]
+name = "taudit_diff"
+title = "Diff pipeline versions"
+description = "Diff findings between two pipeline versions."
+command = ["diff"]
+
+[tools.args.before]
+type = "path"
+required = true
+description = "Before pipeline YAML file"
+position = 1
+must_exist = true
+within_workspace = true
+
+[tools.args.after]
+type = "path"
+required = true
+description = "After pipeline YAML file"
+position = 2
+must_exist = true
+within_workspace = true
+
+[tools.args.format]
+type = "enum"
+required = false
+description = "Output format"
+flag = "--format"
+values = ["terminal", "json"]
+default = "json"
+
+[tools.args.platform]
+type = "enum"
+required = false
+description = "CI/CD platform; default is auto-detect"
+flag = "--platform"
+values = ["auto", "github-actions", "azure-devops", "gitlab", "bitbucket"]
+
+[tools.args.max_hops]
+type = "integer"
+required = false
+description = "Maximum propagation depth"
+flag = "--max-hops"
+
+[tools.output]
+mode = "json"
+max_bytes = 2097152
+expose_stderr = false
+
+[tools.policy]
+authority = "Observe"
+read_only = true
+network = false
+writes_files = false
+approval = "never"
+timeout_seconds = 300
+
+[tools.env]
+inherit = false
+allow = []
+
+# -----------------------------------------------------------------------------
+# taudit_explain — print built-in rule descriptions / remediation. Observe.
+# Read-only: prints product documentation strings.
+# -----------------------------------------------------------------------------
+
+[[tools]]
+name = "taudit_explain"
+title = "Explain rule"
+description = "List built-in rule IDs, or print one rule's full description and remediation."
+command = ["explain"]
+
+[tools.args.rule]
+type = "string"
+required = false
+description = "Rule id to explain (e.g. `unpinned_action`). Omit to list all rules."
+position = 1
+
+[tools.output]
+mode = "text"
+max_bytes = 524288
+expose_stderr = false
+
+[tools.policy]
+authority = "Observe"
+read_only = true
+network = false
+writes_files = false
+approval = "never"
+timeout_seconds = 60
+
+[tools.env]
+inherit = false
+allow = ["NO_COLOR"]
+
+# -----------------------------------------------------------------------------
+# taudit_baseline_init — snapshot current findings into `.taudit/baselines/`.
+# Mutate (writes to `.taudit/baselines/`); approval on-mutation; Reviewed
+# trust at manifest level so we mark this tool's trust ceiling via `Signed`
+# documentation in SKILLS.md but the in-toml policy is approval-gated.
+# -----------------------------------------------------------------------------
+
+[[tools]]
+name = "taudit_baseline_init"
+title = "Initialise baseline"
+description = "Snapshot CURRENT findings on the given pipelines into `.taudit/baselines/<pipeline-content-hash>.json`."
+command = ["baseline", "init"]
+
+[tools.args.paths]
+type = "path"
+required = true
+description = "Pipeline path(s); files or directories"
+position = 1
+must_exist = true
+within_workspace = true
+
+[tools.args.root]
+type = "path"
+required = false
+description = "Repository root under which `.taudit/baselines/` is created"
+flag = "--root"
+within_workspace = true
+
+[tools.args.captured_by]
+type = "string"
+required = false
+description = "Identity recorded in the baseline's `captured_by` field"
+flag = "--captured-by"
+
+[tools.args.platform]
+type = "enum"
+required = false
+description = "CI/CD platform; default is auto-detect"
+flag = "--platform"
+values = ["auto", "github-actions", "azure-devops", "gitlab", "bitbucket"]
+
+[tools.args.max_hops]
+type = "integer"
+required = false
+description = "Maximum propagation depth"
+flag = "--max-hops"
+
+[tools.args.invariants_dir]
+type = "path"
+required = false
+description = "Directory containing Authority Invariant YAML files"
+flag = "--invariants-dir"
+within_workspace = true
+
+[tools.output]
+mode = "json"
+max_bytes = 1048576
+expose_stderr = true
+
+[tools.policy]
+authority = "Mutate"
+read_only = false
+network = false
+writes_files = true
+approval = "on-mutation"
+timeout_seconds = 300
+
+[tools.env]
+inherit = false
+allow = ["USER", "HOSTNAME", "USERNAME", "COMPUTERNAME"]
+
+# -----------------------------------------------------------------------------
+# taudit_baseline_list — directive name; maps to `baseline review` (waiver
+# inventory across all baselines). Observe.
+# -----------------------------------------------------------------------------
+
+[[tools]]
+name = "taudit_baseline_list"
+title = "List baseline waivers"
+description = "List all waivers across every baseline under `.taudit/baselines/`, sorted by expiry."
+command = ["baseline", "review"]
+
+[tools.args.root]
+type = "path"
+required = false
+description = "Repository root under which `.taudit/baselines/` lives"
+flag = "--root"
+within_workspace = true
+
+[tools.output]
+mode = "text"
+max_bytes = 1048576
+expose_stderr = false
+
+[tools.policy]
+authority = "Observe"
+read_only = true
+network = false
+writes_files = false
+approval = "never"
+timeout_seconds = 60
+
+[tools.env]
+inherit = false
+allow = []
+
+# -----------------------------------------------------------------------------
+# taudit_baseline_promote — directive name; maps to `baseline accept`, which
+# appends a waiver to a baseline (= "promote" a finding into the accepted
+# baseline). Mutate; approval on-mutation; long reason required by CLI.
+# -----------------------------------------------------------------------------
+
+[[tools]]
+name = "taudit_baseline_promote"
+title = "Promote finding into baseline"
+description = "Append a finding to a baseline as an accepted waiver (taudit's `baseline accept`). Requires --reason >= 10 chars; critical waivers require --severity-override + --expires-at."
+command = ["baseline", "accept"]
+
+[tools.args.pipeline]
+type = "path"
+required = true
+description = "Pipeline path the finding belongs to"
+flag = "--pipeline"
+must_exist = true
+within_workspace = true
+
+[tools.args.fingerprint]
+type = "string"
+required = true
+description = "32-hex finding fingerprint to waive"
+flag = "--fingerprint"
+
+[tools.args.rule_id]
+type = "string"
+required = true
+description = "Snake-case rule id"
+flag = "--rule-id"
+
+[tools.args.severity]
+type = "enum"
+required = true
+description = "Severity at the time of acceptance"
+flag = "--severity"
+values = ["critical", "high", "medium", "low", "info"]
+
+[tools.args.reason]
+type = "string"
+required = true
+description = "Free-form justification (>=10 chars; rejects empty / 'wip' / 'todo' / 'fix later')"
+flag = "--reason"
+
+[tools.args.severity_override]
+type = "enum"
+required = false
+description = "Required for critical waivers"
+flag = "--severity-override"
+values = ["critical", "high", "medium", "low", "info"]
+
+[tools.args.expires_at]
+type = "string"
+required = false
+description = "ISO-8601 expiry; mandatory when severity-override=critical, must be <=90 days"
+flag = "--expires-at"
+
+[tools.args.root]
+type = "path"
+required = false
+description = "Repository root under which `.taudit/baselines/` lives"
+flag = "--root"
+within_workspace = true
+
+[tools.output]
+mode = "json"
+max_bytes = 524288
+expose_stderr = true
+
+[tools.policy]
+authority = "Mutate"
+read_only = false
+network = false
+writes_files = true
+approval = "on-mutation"
+timeout_seconds = 60
+
+[tools.env]
+inherit = false
+allow = []
+
+# -----------------------------------------------------------------------------
+# taudit_baseline_rollback — directive name; taudit has no CLI rollback for
+# baselines (baselines are content-addressed and idempotent). The directive
+# is satisfied by mapping to `baseline diff`, which is the authoritative
+# pre-rollback comparison surface and is Observe-only. Re-naming reflects
+# operator intent; semantics are explicit in the description.
+# -----------------------------------------------------------------------------
+
+[[tools]]
+name = "taudit_baseline_rollback"
+title = "Inspect baseline drift"
+description = "Compare pipeline findings against the stored baseline (taudit's `baseline diff`). No write occurs; the result drives any manual rollback decision."
+command = ["baseline", "diff"]
+
+[tools.args.paths]
+type = "path"
+required = true
+description = "Pipeline path(s); files or directories"
+position = 1
+must_exist = true
+within_workspace = true
+
+[tools.args.root]
+type = "path"
+required = false
+description = "Repository root under which `.taudit/baselines/` lives"
+flag = "--root"
+within_workspace = true
+
+[tools.args.platform]
+type = "enum"
+required = false
+description = "CI/CD platform; default is auto-detect"
+flag = "--platform"
+values = ["auto", "github-actions", "azure-devops", "gitlab", "bitbucket"]
+
+[tools.args.max_hops]
+type = "integer"
+required = false
+description = "Maximum propagation depth"
+flag = "--max-hops"
+
+[tools.args.invariants_dir]
+type = "path"
+required = false
+description = "Directory containing Authority Invariant YAML files"
+flag = "--invariants-dir"
+within_workspace = true
+
+[tools.output]
+mode = "text"
+max_bytes = 1048576
+expose_stderr = false
+
+[tools.policy]
+authority = "Observe"
+read_only = true
+network = false
+writes_files = false
+approval = "never"
+timeout_seconds = 300
+
+[tools.env]
+inherit = false
+allow = []
+
+# -----------------------------------------------------------------------------
+# taudit_remediate_suggest — read-only remediation discovery. Observe.
+# -----------------------------------------------------------------------------
+
+[[tools]]
+name = "taudit_remediate_suggest"
+title = "Suggest remediations"
+description = "Show candidate remediations without modifying files."
+command = ["remediate", "suggest"]
+
+[tools.args.paths]
+type = "path"
+required = true
+description = "Pipeline file(s) or directories to analyze"
+position = 1
+must_exist = true
+within_workspace = true
+
+[tools.args.format]
+type = "enum"
+required = false
+description = "Output format"
+flag = "--format"
+values = ["text", "json"]
+default = "json"
+
+[tools.output]
+mode = "json"
+max_bytes = 2097152
+expose_stderr = false
+
+[tools.policy]
+authority = "Observe"
+read_only = true
+network = false
+writes_files = false
+approval = "never"
+timeout_seconds = 300
+
+[tools.env]
+inherit = false
+allow = []
+
+# -----------------------------------------------------------------------------
+# taudit_remediate_apply — write-path remediation. Mutate. Approval=always.
+# Note: CLI also requires `--unstable` at the top level which we pass via the
+# `unstable` argument. Backups land under `.taudit/backups/`.
+# -----------------------------------------------------------------------------
+
+[[tools]]
+name = "taudit_remediate_apply"
+title = "Apply remediations"
+description = "Apply low-risk remediations with backup + validation + auto-restore. Mutates pipeline files."
+command = ["remediate", "--unstable", "apply"]
+
+[tools.args.paths]
+type = "path"
+required = true
+description = "Pipeline file(s) or directories to modify"
+position = 1
+must_exist = true
+within_workspace = true
+
+[tools.args.policy]
+type = "path"
+required = true
+description = "Policy path passed to `taudit verify` after rewrite"
+flag = "--policy"
+must_exist = true
+within_workspace = true
+
+[tools.args.format]
+type = "enum"
+required = false
+description = "Output format"
+flag = "--format"
+values = ["text", "json"]
+default = "json"
+
+[tools.args.allow_risky]
+type = "bool"
+required = false
+description = "Allow medium/high-risk transforms (off by default)"
+flag = "--allow-risky"
+
+[tools.args.min_confidence]
+type = "number"
+required = false
+description = "Minimum confidence required for any transform to run"
+flag = "--min-confidence"
+
+[tools.args.backup_root]
+type = "path"
+required = false
+description = "Override backup root"
+flag = "--backup-root"
+within_workspace = true
+
+[tools.output]
+mode = "json"
+max_bytes = 2097152
+expose_stderr = true
+
+[tools.policy]
+authority = "Mutate"
+read_only = false
+network = false
+writes_files = true
+approval = "always"
+timeout_seconds = 600
+
+[tools.env]
+inherit = false
+allow = []
+
+# -----------------------------------------------------------------------------
+# taudit_emit_spec — emit a CellOS execution-cell spec. Observe; writes only
+# to stdout (`--output` is optional and constrained to workspace).
+# -----------------------------------------------------------------------------
+
+[[tools]]
+name = "taudit_emit_spec"
+title = "Emit CellOS spec"
+description = "Emit a CellOS execution-cell spec that runs taudit scan."
+command = ["emit-spec"]
+
+[tools.args.target]
+type = "path"
+required = true
+description = "Pipeline path to scan inside the cell"
+position = 1
+must_exist = true
+within_workspace = true
+
+[tools.args.id]
+type = "string"
+required = false
+description = "Execution cell id in the generated spec"
+flag = "--id"
+
+[tools.args.ttl_seconds]
+type = "integer"
+required = false
+description = "Cell lifetime in seconds"
+flag = "--ttl-seconds"
+
+[tools.args.severity_threshold]
+type = "enum"
+required = false
+description = "Minimum severity to fail the scan in-cell"
+flag = "--severity-threshold"
+values = ["critical", "high", "medium", "low", "info"]
+
+[tools.args.quiet]
+type = "bool"
+required = false
+description = "Use summary-only scan output in-cell"
+flag = "--quiet"
+
+[tools.args.output]
+type = "path"
+required = false
+description = "Path for writing the generated spec"
+flag = "--output"
+within_workspace = true
+
+[tools.args.platform]
+type = "enum"
+required = false
+description = "CI/CD platform; default is auto-detect"
+flag = "--platform"
+values = ["auto", "github-actions", "azure-devops", "gitlab", "bitbucket"]
+
+[tools.output]
+mode = "text"
+max_bytes = 524288
+expose_stderr = false
+
+[tools.policy]
+authority = "Observe"
+read_only = true
+network = false
+writes_files = false
+approval = "never"
+timeout_seconds = 60
+
+[tools.env]
+inherit = false
+allow = []
+
+# -----------------------------------------------------------------------------
+# taudit_invariants_list — invariant inventory. Observe; read-only.
+# -----------------------------------------------------------------------------
+
+[[tools]]
+name = "taudit_invariants_list"
+title = "List invariants"
+description = "List every loaded invariant (built-in plus any custom)."
+command = ["invariants", "list"]
+
+[tools.args.invariants_dir]
+type = "path"
+required = false
+description = "Directory containing custom invariant YAML files"
+flag = "--invariants-dir"
+within_workspace = true
+
+[tools.output]
+mode = "text"
+max_bytes = 524288
+expose_stderr = false
+
+[tools.policy]
+authority = "Observe"
+read_only = true
+network = false
+writes_files = false
+approval = "never"
+timeout_seconds = 30
+
+[tools.env]
+inherit = false
+allow = ["NO_COLOR"]
+
+# -----------------------------------------------------------------------------
+# taudit_invariants_explain — alias for `taudit explain`; taudit-cli has no
+# `invariants explain` subcommand, but the directive's matrix names this
+# tool so we surface it (read-only documentation lookup against the same
+# built-in rule corpus that `taudit_explain` covers).
+# -----------------------------------------------------------------------------
+
+[[tools]]
+name = "taudit_invariants_explain"
+title = "Explain invariant"
+description = "Explain a built-in invariant by id. Alias for `taudit explain`; taudit-cli has no `invariants explain` subcommand."
+command = ["explain"]
+
+[tools.args.rule]
+type = "string"
+required = false
+description = "Invariant / rule id to explain (e.g. `unpinned_action`). Omit to list all."
+position = 1
+
+[tools.output]
+mode = "text"
+max_bytes = 524288
+expose_stderr = false
+
+[tools.policy]
+authority = "Observe"
+read_only = true
+network = false
+writes_files = false
+approval = "never"
+timeout_seconds = 60
+
+[tools.env]
+inherit = false
+allow = ["NO_COLOR"]
