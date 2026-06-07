@@ -30,7 +30,7 @@ parse  →  graph  →  invariants  →  verify  →  enforce
 
 1. **Parse** GitHub Actions, Azure DevOps, or GitLab CI YAML into the typed authority graph.
 2. **Generate** the graph as a first-class artifact (DOT, JSON, SARIF).
-3. **Apply invariants** — 61 built-in checks, plus custom rules loaded from YAML.
+3. **Apply invariants** — built-in checks, plus custom rules loaded from YAML.
 4. **Verify** — `taudit verify` (v1.0) gates PRs against an explicit invariant set instead of fuzzy severity thresholds.
 5. **Enforce** — exit codes, SARIF for code-scanning, CloudEvents for SIEM, PR-bot diffs for review.
 
@@ -54,6 +54,24 @@ structure; taudit answers **who had access to what** and whether authority
 crosses trust boundaries. Overlapping only where both happen to notice the same
 string pattern is fine; the **typed graph** is the source of truth for
 propagation questions.
+
+## Competitive posture
+
+taudit should be compared as an **authority-modeling layer**, not as a claim to
+replace every workflow scanner. The safe public posture is:
+
+- use **actionlint** for GitHub Actions syntax, expression, runner, and authoring
+  correctness;
+- use **zizmor** or **poutine** when their specific scanner, auto-fix, policy, or
+  adoption surfaces fit the evaluation better;
+- use **taudit** when the question is which credential, identity, image, or
+  artifact can reach which step, especially across CI/CD trust boundaries and
+  provider syntaxes.
+
+Do not publish "market-leading", "best in class", "fastest", or externally
+benchmarked claims without current proof artifacts. The dated competitive
+evidence pass is tracked in
+[`docs/research/2026-06-01-competitive-scorecard.md`](research/2026-06-01-competitive-scorecard.md).
 
 ## Not in scope
 

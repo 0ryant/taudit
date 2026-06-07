@@ -123,7 +123,7 @@ itself.
 
 Blessed copy-paste flows (graph → scan → verify, exit codes, stdout vs `-o`): **[`docs/golden-paths.md`](docs/golden-paths.md)**. Example workflow with pinned `taudit` + SARIF upload: **[`docs/examples/ci-gate-taudit-verify.yml`](docs/examples/ci-gate-taudit-verify.yml)**. Adoption checklist: **[`docs/adr/0003-strategic-spine-adoption-phased.md`](docs/adr/0003-strategic-spine-adoption-phased.md)**. Day 0–1 operator runbook (verify, baselines, suppressions, CI per platform): **[`docs/adoption-day0-day1.md`](docs/adoption-day0-day1.md)**. **Stable vs edge releases** (crates.io trust, GitHub velocity, semver for detection): **[`docs/release-strategy.md`](docs/release-strategy.md)**.
 
-**Research (reproducible demos):** public workflow fixtures + rule IDs — [`docs/research/case-study-live-demo.md`](docs/research/case-study-live-demo.md). CVE → rule mapping — [`docs/research/cve-to-taudit-rules.md`](docs/research/cve-to-taudit-rules.md). `pull_request_target` corpus sample (`n=80`) — [`docs/research/pull-request-target-sample-study.md`](docs/research/pull-request-target-sample-study.md).
+**Research (reproducible demos):** public workflow fixtures + rule IDs — [`docs/research/case-study-live-demo.md`](docs/research/case-study-live-demo.md). CVE → rule mapping — [`docs/research/cve-to-taudit-rules.md`](docs/research/cve-to-taudit-rules.md). `pull_request_target` corpus sample (`n=80`) — [`docs/research/pull-request-target-sample-study.md`](docs/research/pull-request-target-sample-study.md). Competitive scorecard evidence pass — [`docs/research/2026-06-01-competitive-scorecard.md`](docs/research/2026-06-01-competitive-scorecard.md).
 
 ## Outputs
 
@@ -435,6 +435,10 @@ taudit remediate --unstable rollback --backup-id <id>
 ```
 
 Backups and manifests are written under `.taudit/backups/` by default. See [docs/remediation.md](docs/remediation.md) for safety guarantees, failure modes, and rollback playbook.
+
+`suggest` may also report review-only guidance for unpinned third-party actions
+or broad workflow permissions. Those cases intentionally do not get automatic
+patches until taudit can prove the replacement SHA or reduced scope.
 
 ### Suppress known-accepted findings
 

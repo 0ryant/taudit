@@ -235,5 +235,11 @@ Residual proof gaps:
 - fresh hosted VSIX install/activation smoke should be recorded for each new
   VS Code extension release
 - Marketplace copy and repo docs need a post-publish synchronization pass
+- Azure DevOps Marketplace companion state, observed 2026-06-01: source-local
+  `Algol.taudit-azure-pipelines` is prepared as extension `0.1.10` with
+  `Taudit@1` task patch `1.0.6` and default `taudit` `1.1.5`, while the live
+  Marketplace witness still reports extension `0.1.9` and rendered quick-start
+  copy still shows `version: 1.1.4`. Do not treat the ADO task as current until
+  an operator publishes `0.1.10` and records a live smoke receipt.
 - install growth and operator hardening work now lives in
   [`2026-05-23-marketplace-install-and-hardening-subtasks.md`](2026-05-23-marketplace-install-and-hardening-subtasks.md)

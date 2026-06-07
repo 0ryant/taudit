@@ -12,11 +12,53 @@ const vsixPath = path.join(
   `algol.taudit-azure-pipelines-${packageJson.version}.vsix`,
 );
 
+function tryList(command, args) {
+  try {
+    return execFileSync(command, args, {
+      cwd: extensionRoot,
+      encoding: "utf8",
+    });
+  } catch (error) {
+    return { command, error };
+  }
+}
+
+function listWithPowerShell(executable) {
+  const script = [
+    "$archive = [System.IO.Path]::GetFullPath($args[0])",
+    "Add-Type -AssemblyName System.IO.Compression.FileSystem",
+    "$zip = [System.IO.Compression.ZipFile]::OpenRead($archive)",
+    "try { $zip.Entries | ForEach-Object { $_.FullName } } finally { $zip.Dispose() }",
+  ].join("; ");
+
+  return tryList(executable, ["-NoProfile", "-Command", script, vsixPath]);
+}
+
+function listVsixEntries() {
+  const attempts = [
+    ["unzip", ["-l", vsixPath]],
+    ["tar", ["-tf", vsixPath]],
+  ];
+
+  for (const [command, args] of attempts) {
+    const result = tryList(command, args);
+    if (typeof result === "string") {
+      return result;
+    }
+  }
+
+  for (const executable of ["pwsh", "powershell"]) {
+    const result = listWithPowerShell(executable);
+    if (typeof result === "string") {
+      return result;
+    }
+  }
+
+  assert.fail("No archive listing command available for VSIX smoke test");
+}
+
 test("packaged VSIX contains task runtime dependencies", () => {
-  const listing = execFileSync("unzip", ["-l", vsixPath], {
-    cwd: extensionRoot,
-    encoding: "utf8",
-  });
+  const listing = listVsixEntries();
 
   assert.match(listing, /Taudit\/task\.json/);
   assert.match(listing, /Taudit\/index\.js/);

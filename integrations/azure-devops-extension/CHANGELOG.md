@@ -1,5 +1,17 @@
 # Changelog
 
+## 0.1.10
+
+- Updated the default downloaded `taudit` binary from `1.1.4` to `1.1.5`
+  across the Azure DevOps task runtime, task metadata, examples, and smoke
+  pipeline.
+- Aligned package metadata with the current repository license
+  (`AGPL-3.0-or-later`); published `taudit` versions before the relicensing
+  remain governed by their own crate metadata.
+- Bumped the Azure DevOps extension package version to `0.1.10` and the
+  `Taudit@1` task patch version to `1.0.6` for a fresh Marketplace upload.
+- Refreshed the Marketplace packaging CLI to `tfx-cli` `0.23.1`.
+
 ## 0.1.9
 
 - Refreshed the Azure DevOps README and Marketplace overview to match the

@@ -27,7 +27,7 @@ steps:
     displayName: Verify pipeline policy
     inputs:
       mode: verify
-      version: 1.1.4
+      version: 1.1.5
       policy: .taudit/policy/
       paths: |
         azure-pipelines.yml

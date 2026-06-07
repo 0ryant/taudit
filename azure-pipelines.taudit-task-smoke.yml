@@ -19,7 +19,7 @@ stages:
             displayName: Scan Azure pipeline YAML
             inputs:
               mode: scan
-              version: 1.1.4
+              version: 1.1.5
               platform: azure-devops
               paths: |
                 azure-pipelines.yml
@@ -35,7 +35,7 @@ stages:
             displayName: Export authority graph
             inputs:
               mode: graph
-              version: 1.1.4
+              version: 1.1.5
               platform: azure-devops
               paths: |
                 azure-pipelines.yml
@@ -48,7 +48,7 @@ stages:
             displayName: Export exploit graph
             inputs:
               mode: graph
-              version: 1.1.4
+              version: 1.1.5
               platform: azure-devops
               paths: |
                 azure-pipelines.yml
@@ -61,7 +61,7 @@ stages:
             displayName: Verify clean fixture with example policy
             inputs:
               mode: verify
-              version: 1.1.4
+              version: 1.1.5
               platform: azure-devops
               paths: |
                 tests/fixtures/clean.yml

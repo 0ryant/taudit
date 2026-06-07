@@ -24,6 +24,11 @@ The repository smoke lane for this is:
 ## Preconditions
 
 - The Azure DevOps extension is installed into the target organization.
+- The live Marketplace extension version matches the source-local publish
+  candidate. As of 2026-06-01, source-local manifests are `0.1.10`, but the
+  public Marketplace witness still reports `0.1.9` and renders a `1.1.4`
+  quick-start example. Publish `0.1.10` before using this checklist as the
+  current release receipt.
 - The pipeline YAML points at this repository and branch.
 - The repository contains:
   - `invariants/policies/example-enterprise-ado.yml`
@@ -43,10 +48,12 @@ Recommended pinned task inputs for the first live receipt:
 Before queueing the run, confirm:
 
 1. The pipeline definition uses `azure-pipelines.taudit-task-smoke.yml`.
-2. The selected pool is available.
-3. If using `ubuntu-latest`, the organization still has hosted capacity.
-4. If using a self-hosted pool, the agent is online and not paused.
-5. The extension is installed in the same Azure DevOps organization as the
+2. The installed extension is `Algol.taudit-azure-pipelines` version `0.1.10`
+   or newer for this receipt.
+3. The selected pool is available.
+4. If using `ubuntu-latest`, the organization still has hosted capacity.
+5. If using a self-hosted pool, the agent is online and not paused.
+6. The extension is installed in the same Azure DevOps organization as the
    pipeline.
 
 If the run fails before any step starts, check these first:

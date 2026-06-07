@@ -36,6 +36,8 @@ pub struct FixSuggestion {
     pub confidence: f32,
     pub risk: RiskClass,
     pub safe_default: bool,
+    #[serde(default = "default_patch_available")]
+    pub patch_available: bool,
     pub reason_if_skipped: Option<String>,
 }
 
@@ -43,6 +45,10 @@ pub struct FixSuggestion {
 pub struct FileSuggestion {
     pub path: String,
     pub suggestions: Vec<FixSuggestion>,
+}
+
+fn default_patch_available() -> bool {
+    true
 }
 
 #[derive(Debug, Clone)]
@@ -194,28 +200,30 @@ pub fn cmd_suggest(opts: SuggestOpts) -> Result<()> {
 
 pub fn cmd_diff(opts: DiffOpts) -> Result<()> {
     let files = collect_pipeline_files(&opts.paths)?;
+    let suggestions = build_suggestions(&files)?;
+    let suggestions_without_patch = suggestions_without_patch(&suggestions);
     let plan = build_plan(&files)?;
 
     match opts.format {
         OutputFormat::Text => {
             if plan.is_empty() {
                 try_write_stdout(b"taudit remediate diff: no patches to generate\n")?;
-            } else {
-                for item in &plan {
-                    try_write_stdout(format!("diff -- {}\n", item.path.display()).as_bytes())?;
-                    try_write_stdout(
-                        format!(
-                            "{}\n",
-                            render_unified_patch(
-                                &item.path.display().to_string(),
-                                &item.before,
-                                &item.after
-                            )
-                        )
-                        .as_bytes(),
-                    )?;
-                }
             }
+            for item in &plan {
+                try_write_stdout(format!("diff -- {}\n", item.path.display()).as_bytes())?;
+                try_write_stdout(
+                    format!(
+                        "{}\n",
+                        render_unified_patch(
+                            &item.path.display().to_string(),
+                            &item.before,
+                            &item.after
+                        )
+                    )
+                    .as_bytes(),
+                )?;
+            }
+            write_non_patch_guidance(&suggestions_without_patch)?;
         }
         OutputFormat::Json => {
             let files_json: Vec<_> = plan
@@ -231,6 +239,7 @@ pub fn cmd_diff(opts: DiffOpts) -> Result<()> {
             let out = serde_json::json!({
                 "schema_version": "taudit.remediate.diff.v1",
                 "files": files_json,
+                "suggestions_without_patch": suggestions_without_patch,
             });
             try_write_stdout(format!("{}\n", serde_json::to_string_pretty(&out)?).as_bytes())?;
         }
@@ -666,7 +675,10 @@ fn build_plan(files: &[PathBuf]) -> Result<Vec<PlannedEdit>> {
     for path in files {
         let before = read_text_file_capped(path)
             .with_context(|| format!("failed to read {}", path.display()))?;
-        let suggestions = detect_suggestions(path, &before)?;
+        let suggestions: Vec<_> = detect_suggestions(path, &before)?
+            .into_iter()
+            .filter(|s| s.patch_available)
+            .collect();
         if suggestions.is_empty() {
             continue;
         }
@@ -719,11 +731,192 @@ fn detect_suggestions(path: &Path, content: &str) -> Result<Vec<FixSuggestion>> 
             confidence: 0.95,
             risk: RiskClass::Low,
             safe_default: true,
+            patch_available: true,
             reason_if_skipped: None,
         });
     }
 
+    if has_on {
+        if let Some(permissions) = mapping_get(root, "permissions") {
+            if workflow_permissions_are_broad(permissions) {
+                out.push(FixSuggestion {
+                    transform_id: "gha_review_broad_workflow_permissions".to_string(),
+                    title: "Review broad workflow-level permissions".to_string(),
+                    description: format!(
+                        "{} declares workflow-level write authority; reduce scopes only after confirming release, deploy, package, and OIDC requirements",
+                        path.display()
+                    ),
+                    confidence: 0.90,
+                    risk: RiskClass::Medium,
+                    safe_default: false,
+                    patch_available: false,
+                    reason_if_skipped: Some(
+                        "taudit does not auto-reduce permissions because required write scopes are workflow-specific".to_string(),
+                    ),
+                });
+            }
+        }
+
+        let unpinned_refs = collect_unpinned_action_refs(root);
+        if !unpinned_refs.is_empty() {
+            out.push(FixSuggestion {
+                transform_id: "gha_review_unpinned_action_refs".to_string(),
+                title: "Review mutable remote action refs".to_string(),
+                description: format!(
+                    "{} uses mutable remote action ref(s): {}; pin each reviewed action to a full commit SHA",
+                    path.display(),
+                    unpinned_refs.join(", ")
+                ),
+                confidence: 0.90,
+                risk: RiskClass::Medium,
+                safe_default: false,
+                patch_available: false,
+                reason_if_skipped: Some(
+                    "taudit does not guess replacement commit SHAs for remote actions".to_string(),
+                ),
+            });
+        }
+    }
+
     Ok(out)
+}
+
+fn suggestions_without_patch(files: &[FileSuggestion]) -> Vec<FileSuggestion> {
+    files
+        .iter()
+        .filter_map(|file| {
+            let suggestions: Vec<_> = file
+                .suggestions
+                .iter()
+                .filter(|suggestion| !suggestion.patch_available)
+                .cloned()
+                .collect();
+            (!suggestions.is_empty()).then(|| FileSuggestion {
+                path: file.path.clone(),
+                suggestions,
+            })
+        })
+        .collect()
+}
+
+fn write_non_patch_guidance(files: &[FileSuggestion]) -> Result<()> {
+    if files.is_empty() {
+        return Ok(());
+    }
+
+    try_write_stdout(b"review-only guidance (no automatic patch available):\n")?;
+    for file in files {
+        try_write_stdout(format!("{}\n", file.path).as_bytes())?;
+        for suggestion in &file.suggestions {
+            try_write_stdout(
+                format!(
+                    "  - {} [{:?}] conf={:.2}: {}\n",
+                    suggestion.transform_id,
+                    suggestion.risk,
+                    suggestion.confidence,
+                    suggestion.title
+                )
+                .as_bytes(),
+            )?;
+            if let Some(reason) = &suggestion.reason_if_skipped {
+                try_write_stdout(format!("    reason: {reason}\n").as_bytes())?;
+            }
+        }
+    }
+    Ok(())
+}
+
+fn mapping_get<'a>(mapping: &'a serde_yaml::Mapping, key: &str) -> Option<&'a serde_yaml::Value> {
+    let key = serde_yaml::Value::String(key.to_string());
+    mapping.get(&key)
+}
+
+fn workflow_permissions_are_broad(value: &serde_yaml::Value) -> bool {
+    match value {
+        serde_yaml::Value::String(s) => permissions_text_is_broad(s),
+        serde_yaml::Value::Mapping(map) => map
+            .values()
+            .any(|scope_value| workflow_permissions_are_broad(scope_value)),
+        serde_yaml::Value::Sequence(seq) => seq.iter().any(workflow_permissions_are_broad),
+        _ => false,
+    }
+}
+
+fn permissions_text_is_broad(value: &str) -> bool {
+    let normalized = value.trim().to_ascii_lowercase();
+    normalized == "write"
+        || normalized == "write-all"
+        || normalized == "admin"
+        || normalized.contains(": write")
+        || normalized.contains(" write")
+}
+
+fn collect_unpinned_action_refs(root: &serde_yaml::Mapping) -> Vec<String> {
+    let mut refs = Vec::new();
+
+    if let Some(jobs) = mapping_get(root, "jobs").and_then(serde_yaml::Value::as_mapping) {
+        for job in jobs.values() {
+            let Some(job) = job.as_mapping() else {
+                continue;
+            };
+
+            if let Some(action_ref) = mapping_get(job, "uses").and_then(serde_yaml::Value::as_str) {
+                if is_unpinned_remote_action_ref(action_ref) {
+                    refs.push(action_ref.to_string());
+                }
+            }
+
+            let Some(steps) = mapping_get(job, "steps").and_then(serde_yaml::Value::as_sequence)
+            else {
+                continue;
+            };
+
+            for step in steps {
+                let Some(step) = step.as_mapping() else {
+                    continue;
+                };
+                if let Some(action_ref) =
+                    mapping_get(step, "uses").and_then(serde_yaml::Value::as_str)
+                {
+                    if is_unpinned_remote_action_ref(action_ref) {
+                        refs.push(action_ref.to_string());
+                    }
+                }
+            }
+        }
+    }
+
+    refs.sort();
+    refs.dedup();
+    refs
+}
+
+fn is_unpinned_remote_action_ref(action_ref: &str) -> bool {
+    let value = action_ref.trim();
+    if value.is_empty()
+        || value.contains("${{")
+        || value.starts_with("./")
+        || value.starts_with(".\\")
+        || value.starts_with("../")
+        || value.starts_with("..\\")
+        || value.starts_with("docker://")
+    {
+        return false;
+    }
+
+    if !value.contains('/') {
+        return false;
+    }
+
+    let Some((_, reference)) = value.rsplit_once('@') else {
+        return true;
+    };
+
+    !is_full_sha(reference)
+}
+
+fn is_full_sha(reference: &str) -> bool {
+    reference.len() == 40 && reference.chars().all(|c| c.is_ascii_hexdigit())
 }
 
 fn apply_transform(content: &str, transform_id: &str) -> Result<String> {
@@ -1276,6 +1469,7 @@ mod tests {
             confidence: 0.95,
             risk: RiskClass::Low,
             safe_default: true,
+            patch_available: true,
             reason_if_skipped: None,
         };
         let risky = FixSuggestion {
@@ -1285,6 +1479,7 @@ mod tests {
             confidence: 0.95,
             risk: RiskClass::High,
             safe_default: false,
+            patch_available: true,
             reason_if_skipped: None,
         };
 

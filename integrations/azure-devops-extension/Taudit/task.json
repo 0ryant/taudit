@@ -10,7 +10,7 @@
   "version": {
     "Major": 1,
     "Minor": 0,
-    "Patch": 5
+    "Patch": 6
   },
   "minimumAgentVersion": "2.182.1",
   "instanceNameFormat": "taudit $(mode)",
@@ -32,7 +32,7 @@
       "name": "version",
       "type": "string",
       "label": "taudit version",
-      "defaultValue": "1.1.4",
+      "defaultValue": "1.1.5",
       "required": false,
       "helpMarkDown": "Pinned taudit version to download."
     },

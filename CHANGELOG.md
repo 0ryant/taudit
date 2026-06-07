@@ -6,7 +6,17 @@ All notable changes to this project will be documented in this file.
 
 ### Detection delta (read first)
 
-_(none yet — populate this paragraph when adding entries that change finding behaviour)_
+`taudit remediate suggest` and `taudit remediate diff` now surface
+review-only guidance for GitHub Actions workflows with broad workflow-level
+permissions or mutable third-party action refs. This does not change scan,
+verify, graph, SARIF, JSON report, or CloudEvents finding semantics.
+
+### Added
+
+- Added review-only remediation suggestions for broad GitHub Actions workflow
+  permissions and unpinned third-party action refs. These suggestions are
+  intentionally not auto-applied: permission reduction needs maintainer intent,
+  and action pinning needs a reviewed immutable upstream commit SHA.
 
 ## v1.2.0-rc.1 — 2026-05-18 (release candidate)
 

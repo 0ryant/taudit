@@ -6,6 +6,28 @@ DevOps extension.
 Live listing:
 <https://marketplace.visualstudio.com/items?itemName=Algol.taudit-azure-pipelines>
 
+## Release state
+
+Observed on 2026-06-01:
+
+| Surface | State |
+|---|---|
+| Source-local extension manifest | `integrations/azure-devops-extension/vss-extension.json` version `0.1.10` |
+| Source-local package manifest | `integrations/azure-devops-extension/package.json` version `0.1.10` |
+| Source-local task metadata | `Taudit@1` task version `1.0.6`; default downloaded `taudit` version `1.1.5` |
+| GitHub release witness | `0ryant/taudit` latest release `v1.1.5` with platform archives and `.sha256` files |
+| crates.io witness | `taudit` latest stable crate `1.1.5` |
+| Visual Studio Marketplace witness | live `Algol.taudit-azure-pipelines` extension version `0.1.9`; rendered quick start still shows `version: 1.1.4` |
+| Task runtime dependency audit | Source-local `npm audit --omit=dev` reports 2 moderate advisories through `azure-pipelines-task-lib` -> `uuid`; npm reports `fixAvailable: false` while `azure-pipelines-task-lib` is already at the latest observed `5.2.10` |
+
+The source-local `0.1.10` package is the next publish candidate. Publishing is
+blocked on an operator-owned Marketplace action: run local preflight, publish
+`dist/algol.taudit-azure-pipelines-0.1.10.vsix`, then record the Marketplace
+response and a live `Taudit@1` smoke receipt in
+[`azure-devops-live-proof-checklist.md`](azure-devops-live-proof-checklist.md).
+Treat the `uuid` advisory as an explicit residual until the upstream task
+library ships a compatible fix or a tested override is proven.
+
 This document defines the first-class Azure Pipelines task surface for taudit.
 It is the Azure DevOps pipeline-step counterpart to the GitHub Marketplace
 action and the VS Code extension.

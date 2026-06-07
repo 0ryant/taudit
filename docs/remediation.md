@@ -43,6 +43,23 @@ permissions:
 
 This reduces default token scope without changing the workflow execution graph.
 
+Read-only guidance also covers findings that are too context-sensitive to patch
+automatically:
+
+- `gha_review_broad_workflow_permissions`
+  - Condition: GitHub Actions workflow declares workflow-level write authority.
+  - Action: report guidance only. Reducing permissions can break release,
+    deploy, or package-publish jobs without maintainer intent.
+- `gha_review_unpinned_action_refs`
+  - Condition: GitHub Actions workflow uses third-party actions with mutable
+    refs such as tags or branches.
+  - Action: report guidance only. Pinning requires resolving and reviewing the
+    intended upstream commit SHA; taudit does not guess pins.
+
+`suggest` emits both patchable and review-only guidance. `diff` emits patches
+only for transforms with `patch_available: true`, then prints review-only
+guidance separately. `apply` ignores review-only guidance.
+
 ## Safety Model
 
 ### Read-only operations
@@ -153,3 +170,5 @@ taudit remediate --unstable rollback --backup-id <id>
 - Platform-specific deep refactors
 - Automatic policy authoring
 - Bulk auto-merge orchestration
+- Guessing full commit SHAs for unpinned third-party actions
+- Automatically reducing broad permissions when required scopes are ambiguous

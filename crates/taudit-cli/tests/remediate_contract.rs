@@ -32,6 +32,16 @@ fn write_fixture_workflow(base: &Path) -> PathBuf {
     wf
 }
 
+fn write_review_only_workflow(base: &Path) -> PathBuf {
+    let wf = base.join("review-only.yml");
+    std::fs::write(
+        &wf,
+        "name: review-only\non: push\npermissions: write-all\njobs:\n  test:\n    runs-on: ubuntu-latest\n    steps:\n      - uses: actions/checkout@v4\n      - uses: ./local-action\n      - uses: owner/pinned@0123456789abcdef0123456789abcdef01234567\n      - run: echo ok\n",
+    )
+    .expect("write review-only workflow");
+    wf
+}
+
 fn write_policy(base: &Path) -> PathBuf {
     let policy = base.join("policy.yml");
     std::fs::write(
@@ -121,6 +131,93 @@ fn diff_is_read_only() {
 
     let after = std::fs::read_to_string(&wf).expect("read after");
     assert_eq!(before, after, "diff must not mutate files");
+}
+
+#[test]
+fn suggest_reports_review_only_guidance_without_patch() {
+    let dir = unique_tmp_dir("suggest-review-only");
+    let wf = write_review_only_workflow(&dir);
+
+    let out = taudit_in(
+        &dir,
+        &[
+            "remediate",
+            "suggest",
+            wf.to_str().expect("path"),
+            "--format",
+            "json",
+        ],
+    );
+    assert_eq!(
+        out.status.code(),
+        Some(0),
+        "stderr: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+
+    let payload: Value = serde_json::from_slice(&out.stdout).expect("parse suggest json");
+    let suggestions = payload["files"][0]["suggestions"]
+        .as_array()
+        .expect("suggestions array");
+    let ids: Vec<_> = suggestions
+        .iter()
+        .map(|s| s["transform_id"].as_str().expect("transform id"))
+        .collect();
+
+    assert!(ids.contains(&"gha_review_broad_workflow_permissions"));
+    assert!(ids.contains(&"gha_review_unpinned_action_refs"));
+    assert!(suggestions
+        .iter()
+        .filter(|s| ids.contains(&s["transform_id"].as_str().expect("transform id")))
+        .all(|s| s["patch_available"] == false));
+}
+
+#[test]
+fn diff_surfaces_review_only_guidance_separately() {
+    let dir = unique_tmp_dir("diff-review-only");
+    let wf = write_review_only_workflow(&dir);
+
+    let out = taudit_in(&dir, &["remediate", "diff", wf.to_str().expect("path")]);
+    assert_eq!(out.status.code(), Some(0));
+
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    assert!(stdout.contains("taudit remediate diff: no patches to generate"));
+    assert!(stdout.contains("review-only guidance"));
+    assert!(stdout.contains("gha_review_broad_workflow_permissions"));
+    assert!(stdout.contains("gha_review_unpinned_action_refs"));
+    assert!(
+        !stdout.contains("--- a/"),
+        "review-only suggestions must not render a patch: {stdout}"
+    );
+}
+
+#[test]
+fn apply_ignores_review_only_guidance() {
+    let dir = unique_tmp_dir("apply-review-only");
+    let wf = write_review_only_workflow(&dir);
+    let policy = write_policy(&dir);
+    let before = std::fs::read_to_string(&wf).expect("read before");
+
+    let out = taudit_in(
+        &dir,
+        &[
+            "remediate",
+            "--unstable",
+            "apply",
+            wf.to_str().expect("path"),
+            "--policy",
+            policy.to_str().expect("path"),
+        ],
+    );
+    assert_eq!(
+        out.status.code(),
+        Some(0),
+        "stderr: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+
+    let after = std::fs::read_to_string(&wf).expect("read after");
+    assert_eq!(before, after, "review-only guidance must not mutate files");
 }
 
 #[test]

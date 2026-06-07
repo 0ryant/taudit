@@ -55,7 +55,7 @@ READMEs:
 | GitHub Actions users | [`github-marketplace-action-contract.md`](github-marketplace-action-contract.md) | Typed action contract, permissions, inputs, outputs, and exit semantics. |
 | VS Code users | [`visual-studio-marketplace-extension-operator-guide.md`](visual-studio-marketplace-extension-operator-guide.md) | Editor commands, settings, result surfaces, and operator controls. |
 | Azure DevOps users | [`azure-devops-marketplace-extension-contract.md`](azure-devops-marketplace-extension-contract.md) | Pipeline task contract and Marketplace packaging surface. |
-| Azure DevOps operators proving the task live | [`azure-devops-live-proof-checklist.md`](azure-devops-live-proof-checklist.md) | One real `Taudit@1` receipt: queue checks, outputs, artifacts, and failure branches. |
+| Azure DevOps operators proving the task live | [`azure-devops-live-proof-checklist.md`](azure-devops-live-proof-checklist.md) | One real `Taudit@1` receipt: Marketplace version check, queue checks, outputs, artifacts, and failure branches. |
 | CLI adopters | [`../golden-paths.md`](../golden-paths.md) | Copy-paste graph, scan, verify, and diagram flows on committed fixtures. |
 | Brownfield rollout | [`../adoption-day0-day1.md`](../adoption-day0-day1.md) | Baselines, suppressions, policy layout, and merge-gating CI. |
 | Dogfood/self-audit operators | [`taudit-dogfood-self-audit-patterns.md`](taudit-dogfood-self-audit-patterns.md) | Keep taudit findings visible but non-blocking with explicit baselines and suppressions. |
@@ -71,7 +71,7 @@ consumers can pin to a major and fail loudly on a break.
 | Authority graph JSON | taudit | [`schemas/authority-graph.v1.json`](../../schemas/authority-graph.v1.json) — `schema_version: "1.0.0"` today |
 | GitHub Marketplace action | taudit | [`github-marketplace-action-contract.md`](github-marketplace-action-contract.md) — implemented `dev.taudit.github-action.v1` contract for `0ryant/taudit-action` |
 | Visual Studio Marketplace extension | taudit | [`visual-studio-marketplace-extension-contract.md`](visual-studio-marketplace-extension-contract.md) — implemented `dev.taudit.vscode-extension.v1` contract for the [`algol.taudit-vscode`](https://marketplace.visualstudio.com/items?itemName=Algol.taudit-vscode) VS Code extension; [`visual-studio-marketplace-extension-operator-guide.md`](visual-studio-marketplace-extension-operator-guide.md) — operator guide, controls mapping, and install path |
-| Azure DevOps Marketplace task | taudit | [`azure-devops-marketplace-extension-contract.md`](azure-devops-marketplace-extension-contract.md) — implemented `dev.taudit.azure-pipelines-task.v1` contract for the [`algol.taudit-azure-pipelines`](https://marketplace.visualstudio.com/items?itemName=Algol.taudit-azure-pipelines) Azure DevOps extension |
+| Azure DevOps Marketplace task | taudit | [`azure-devops-marketplace-extension-contract.md`](azure-devops-marketplace-extension-contract.md) — implemented `dev.taudit.azure-pipelines-task.v1` contract for the [`algol.taudit-azure-pipelines`](https://marketplace.visualstudio.com/items?itemName=Algol.taudit-azure-pipelines) Azure DevOps extension; source-local `0.1.10` is the next publish candidate while live Marketplace state must be checked before receipts |
 | in-toto predicate `taudit.dev/attestations/authority-graph/v0.1` | tsign | [`tsign-consumer.md`](tsign-consumer.md) |
 | axiom decision JSON | axiom | [`axiom-consumer.md`](axiom-consumer.md) — `decision_schema_version: "0.1.0"` today |
 
