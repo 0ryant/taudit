@@ -1,0 +1,26 @@
+[package]
+name = "taudit-mcp"
+version = "0.1.0-pre"
+edition = "2021"
+license = "AGPL-3.0-or-later"
+description = "MCP adapter for taudit — pipeline authority-graph scan / verify / graph / map / diff / baseline / remediate / invariants surface"
+
+# mcpact 0.2.0 is published on crates.io (2026-06-07), so the mcpact-* deps
+# resolve from the registry rather than a sibling path. This lets
+# `cargo metadata` / `cargo build --workspace` and CI resolve without the
+# sibling mcpact checkout. (Earlier revisions pointed at local path deps —
+# `../../../mcpact/crates/*` — pending the registry publish.)
+[dependencies]
+async-trait = "0.1"
+schemars = { version = "0.8", features = ["derive"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+tokio = { version = "1", features = ["macros", "rt-multi-thread"] }
+toml = "0.8"
+sha2 = "0.10"
+mcpact-core = "0.2.0"
+mcpact-runtime = "0.2.0"
+mcpact-audit = "0.2.0"
+mcpact-policy = "0.2.0"
+mcpact-mcp = "0.2.0"
+mcpact-manifest = "0.2.0"
