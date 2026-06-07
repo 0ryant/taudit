@@ -5,16 +5,9 @@ edition = "2021"
 license = "AGPL-3.0-or-later"
 description = "MCP adapter for taudit — pipeline authority-graph scan / verify / graph / map / diff / baseline / remediate / invariants surface"
 
-# Local-dev fix (mirrors the aegress-mcp canonical fix):
-# the mcpact generator emits Windows-shape parent paths (`..\..\..\..`) that
-# resolve too high, and an empty `[workspace]` sub-workspace marker. Corrected
-# to forward-slash paths pointing at the sibling mcpact repo so
-# `cargo check --workspace` passes from this worktree root, and the empty
-# `[workspace]` table is removed so the crate joins the parent workspace.
-# taudit lives at prj/taudit/, so the relative path from taudit-mcp is three
-# levels up (taudit-mcp -> crates -> taudit -> prj) then mcpact/crates/<crate>.
-# (Earlier comment referenced a 6-up worktree path; corrected on cherry-pick
-# into the main taudit tree.)
+# mcpact 0.2.0 is published on crates.io (2026-06-07), so the mcpact-* deps
+# below are registry dependencies rather than sibling-repo path deps. This lets
+# fresh-checkout and CI builds resolve without a local mcpact worktree.
 [dependencies]
 async-trait = "0.1"
 schemars = { version = "0.8", features = ["derive"] }
@@ -23,9 +16,9 @@ serde_json = "1"
 tokio = { version = "1", features = ["macros", "rt-multi-thread"] }
 toml = "0.8"
 sha2 = "0.10"
-mcpact-core = { path = "../../../mcpact/crates/mcpact-core" }
-mcpact-runtime = { path = "../../../mcpact/crates/mcpact-runtime" }
-mcpact-audit = { path = "../../../mcpact/crates/mcpact-audit" }
-mcpact-policy = { path = "../../../mcpact/crates/mcpact-policy" }
-mcpact-mcp = { path = "../../../mcpact/crates/mcpact-mcp" }
-mcpact-manifest = { path = "../../../mcpact/crates/mcpact-manifest" }
+mcpact-core = "0.2.0"
+mcpact-runtime = "0.2.0"
+mcpact-audit = "0.2.0"
+mcpact-policy = "0.2.0"
+mcpact-mcp = "0.2.0"
+mcpact-manifest = "0.2.0"
