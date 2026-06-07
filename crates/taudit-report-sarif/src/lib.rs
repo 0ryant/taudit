@@ -2204,6 +2204,24 @@ impl SarifReportSink {
         items: &[(&AuthorityGraph, &[Finding])],
         custom_rules: &[CustomRule],
     ) -> Result<(), TauditError> {
+        // No caller-supplied product version: fall back to this crate's
+        // version. The CLI passes its own (product) version instead, so the
+        // SARIF `tool.driver.version` matches `taudit --version`.
+        self.emit_multi_with_custom_rules_versioned(w, items, custom_rules, env!("CARGO_PKG_VERSION"))
+    }
+
+    /// Like [`emit_multi_with_custom_rules`] but stamps the SARIF
+    /// `tool.driver.version` with the caller-supplied product version. The
+    /// `taudit` CLI passes `env!("CARGO_PKG_VERSION")` from its own crate so
+    /// the emitted evidence reports the same version users see from
+    /// `taudit --version`, rather than this report crate's independent semver.
+    pub fn emit_multi_with_custom_rules_versioned<W: std::io::Write>(
+        &self,
+        w: &mut W,
+        items: &[(&AuthorityGraph, &[Finding])],
+        custom_rules: &[CustomRule],
+        tool_version: &str,
+    ) -> Result<(), TauditError> {
         let mut rules = build_rules();
         rules.extend(build_custom_rules(custom_rules));
         let custom_ids: std::collections::HashSet<&str> =
@@ -2224,7 +2242,7 @@ impl SarifReportSink {
                 tool: SarifTool {
                     driver: SarifDriver {
                         name: TOOL_NAME,
-                        version: env!("CARGO_PKG_VERSION").to_string(),
+                        version: tool_version.to_string(),
                         information_uri: TOOL_URI,
                         rules,
                     },
@@ -2617,6 +2635,24 @@ mod tests {
                 "every rule must carry the \"security\" tag"
             );
         }
+    }
+
+    #[test]
+    fn versioned_emit_stamps_supplied_tool_version() {
+        // The CLI passes its own (product) version so SARIF evidence reports the
+        // same string as `taudit --version`, not this crate's independent semver.
+        let graph = empty_graph();
+        let mut buf = Vec::new();
+        SarifReportSink
+            .emit_multi_with_custom_rules_versioned(
+                &mut buf,
+                &[(&graph, &[])],
+                &[],
+                "9.9.9-test",
+            )
+            .unwrap();
+        let sarif: serde_json::Value = serde_json::from_slice(&buf).unwrap();
+        assert_eq!(sarif["runs"][0]["tool"]["driver"]["version"], "9.9.9-test");
     }
 
     #[test]
