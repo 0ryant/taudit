@@ -1,0 +1,10 @@
+Authority Map: docs/demo/taudit-authority-path/workflows/before.yml
+
+Step                          Zone  GITHUB_TOKEN  CLOUD_DEPLOY_TOKEN  PROD_API_KEY  RELEASE_TOKEN
+----------------------------  ----  ------------  ------------------  ------------  -------------
+Checkout source               ?          ✓                ·                ·              ·      
+Install and build             1P         ✓                ·                ·              ·      
+Upload release bundle         ?          ✓                ·                ·              ·      
+Download release bundle       ?          ✓                ·                ·              ·      
+Third-party production depl…  ?          ✓                ✓                ✓              ✓      
+

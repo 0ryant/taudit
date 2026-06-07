@@ -1,0 +1,1 @@
+{"name":"taudit-authority-path-render","private":true,"type":"module","dependencies":{"@resvg/resvg-js":"^2.6.2","@viz-js/viz":"^3.7.0"}}

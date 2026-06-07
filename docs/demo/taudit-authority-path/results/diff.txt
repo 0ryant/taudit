@@ -1,0 +1,38 @@
+taudit diff
+  before: docs/demo/taudit-authority-path/workflows/before.yml
+  after:  docs/demo/taudit-authority-path/workflows/after.yml
+
+graph: nodes 14 -> 16 (+2), edges 14 -> 14 (+0)
+findings: 22 -> 8 (-14)
+
+added findings: 7
+  + [Critical] authority_propagation: GITHUB_TOKEN (build) reaches 5 sinks via authority propagation: [actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683, actions/upload-artifact@b4b15b8c7c6ac21ea08fcf65892d2ee8f75cf882, release-bundle, Download release bundle, actions/download-artifact@fa0a91b85d4f404e444e00e005971372dc801d16]
+  + [Critical] authority_propagation: GITHUB_TOKEN (deploy) reaches 2 sinks via authority propagation: [actions/download-artifact@fa0a91b85d4f404e444e00e005971372dc801d16, vendor/deploy-action@9f3a5c1b2d7e4f60a8b9c0d1e2f3a4b5c6d7e8f9]
+  + [High] authority_propagation: CLOUD_DEPLOY_TOKEN propagated to vendor/deploy-action@9f3a5c1b2d7e4f60a8b9c0d1e2f3a4b5c6d7e8f9 across trust boundary
+  + [High] authority_propagation: PROD_API_KEY propagated to vendor/deploy-action@9f3a5c1b2d7e4f60a8b9c0d1e2f3a4b5c6d7e8f9 across trust boundary
+  + [High] authority_propagation: RELEASE_TOKEN propagated to vendor/deploy-action@9f3a5c1b2d7e4f60a8b9c0d1e2f3a4b5c6d7e8f9 across trust boundary
+  + [High] over_privileged_identity: GITHUB_TOKEN (deploy) has broad scope (permissions: '{ contents: read, id-token: write }') — likely broader than needed
+  + [Info] uplift_without_attestation: 2 step(s) use OIDC/federated identity but no provenance attestation step was detected — artifact integrity cannot be verified
+
+removed findings: 21
+  - [Critical] authority_propagation: CLOUD_DEPLOY_TOKEN propagated to vendor/deploy-action@v2 across trust boundary
+  - [Critical] authority_propagation: GITHUB_TOKEN reaches 5 sinks via authority propagation: [actions/checkout@v4, actions/upload-artifact@v4, release-bundle, actions/download-artifact@v4, vendor/deploy-action@v2]
+  - [Critical] authority_propagation: PROD_API_KEY propagated to vendor/deploy-action@v2 across trust boundary
+  - [Critical] authority_propagation: RELEASE_TOKEN propagated to vendor/deploy-action@v2 across trust boundary
+  - [Critical] untrusted_with_authority: Untrusted step 'Checkout source' has direct access to identity 'GITHUB_TOKEN'
+  - [Critical] untrusted_with_authority: Untrusted step 'Download release bundle' has direct access to identity 'GITHUB_TOKEN'
+  - [Critical] untrusted_with_authority: Untrusted step 'Third-party production deploy' has direct access to identity 'GITHUB_TOKEN'
+  - [Critical] untrusted_with_authority: Untrusted step 'Third-party production deploy' has direct access to secret 'CLOUD_DEPLOY_TOKEN'
+  - [Critical] untrusted_with_authority: Untrusted step 'Third-party production deploy' has direct access to secret 'PROD_API_KEY'
+  - [Critical] untrusted_with_authority: Untrusted step 'Third-party production deploy' has direct access to secret 'RELEASE_TOKEN'
+  - [Critical] untrusted_with_authority: Untrusted step 'Upload release bundle' has direct access to identity 'GITHUB_TOKEN'
+  - [High] over_privileged_identity: GITHUB_TOKEN has broad scope (permissions: '{ contents: write, id-token: write, packages: write }') — likely broader than needed
+  - [High] unpinned_action: vendor/deploy-action@v2 is not pinned to a SHA digest
+  - [Medium] unpinned_action: [action_major_version_pin_without_sha] actions/checkout@v4 is pinned only to a mutable major tag; pin to a full commit SHA
+  - [Medium] unpinned_action: [action_major_version_pin_without_sha] actions/download-artifact@v4 is pinned only to a mutable major tag; pin to a full commit SHA
+  - [Medium] unpinned_action: [action_major_version_pin_without_sha] actions/upload-artifact@v4 is pinned only to a mutable major tag; pin to a full commit SHA
+  - [Medium] unpinned_action: [action_major_version_pin_without_sha] vendor/deploy-action@v2 is pinned only to a mutable major tag; pin to a full commit SHA
+  - [Medium] unpinned_action: actions/checkout@v4 is not pinned to a SHA digest
+  - [Medium] unpinned_action: actions/download-artifact@v4 is not pinned to a SHA digest
+  - [Medium] unpinned_action: actions/upload-artifact@v4 is not pinned to a SHA digest
+  - [Info] uplift_without_attestation: 5 step(s) use OIDC/federated identity but no provenance attestation step was detected — artifact integrity cannot be verified

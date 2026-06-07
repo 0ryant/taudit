@@ -1,0 +1,54 @@
+name: Developer Tool Authority Path
+
+# BEFORE — synthetic vulnerable workflow.
+# Demonstrates hidden authority movement: broad workflow-level write
+# permissions plus three deploy secrets all reach an UNPINNED (mutable)
+# third-party action, vendor/deploy-action@v2. Whoever controls that tag
+# inherits contents/packages/id-token write and the three secrets.
+
+on:
+  push:
+    branches: [main]
+
+permissions:
+  contents: write
+  packages: write
+  id-token: write
+
+jobs:
+  build:
+    name: Build package
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout source
+        uses: actions/checkout@v4
+
+      - name: Install and build
+        run: |
+          npm ci
+          npm run build
+
+      - name: Upload release bundle
+        uses: actions/upload-artifact@v4
+        with:
+          name: release-bundle
+          path: dist/
+
+  deploy:
+    name: Deploy production
+    runs-on: ubuntu-latest
+    needs: build
+    environment: production
+    steps:
+      - name: Download release bundle
+        uses: actions/download-artifact@v4
+        with:
+          name: release-bundle
+
+      - name: Third-party production deploy
+        uses: vendor/deploy-action@v2
+        with:
+          release-token: ${{ secrets.RELEASE_TOKEN }}
+          prod-api-key: ${{ secrets.PROD_API_KEY }}
+        env:
+          CLOUD_DEPLOY_TOKEN: ${{ secrets.CLOUD_DEPLOY_TOKEN }}

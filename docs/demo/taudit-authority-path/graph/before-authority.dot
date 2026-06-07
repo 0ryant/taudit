@@ -1,0 +1,33 @@
+digraph taudit {
+    rankdir=LR;
+    node [fontname="Helvetica"];
+    "n0" [label="GITHUB_TOKEN" shape=diamond color=green];
+    "n1" [label="actions/checkout@v4" shape=cylinder color=red];
+    "n2" [label="Checkout source" shape=ellipse color=red];
+    "n3" [label="Install and build" shape=ellipse color=green];
+    "n4" [label="actions/upload-artifact@v4" shape=cylinder color=red];
+    "n5" [label="Upload release bundle" shape=ellipse color=red];
+    "n6" [label="release-bundle" shape=hexagon color=red];
+    "n7" [label="actions/download-artifact@v4" shape=cylinder color=red];
+    "n8" [label="Download release bundle" shape=ellipse color=red];
+    "n9" [label="vendor/deploy-action@v2" shape=cylinder color=red];
+    "n10" [label="Third-party production deploy" shape=ellipse color=red];
+    "n11" [label="CLOUD_DEPLOY_TOKEN" shape=box color=green];
+    "n12" [label="PROD_API_KEY" shape=box color=green];
+    "n13" [label="RELEASE_TOKEN" shape=box color=green];
+    "n2" -> "n1" [label="uses_image"];
+    "n2" -> "n0" [label="has_access_to"];
+    "n3" -> "n0" [label="has_access_to"];
+    "n5" -> "n4" [label="uses_image"];
+    "n5" -> "n0" [label="has_access_to"];
+    "n5" -> "n6" [label="produces"];
+    "n8" -> "n7" [label="uses_image"];
+    "n8" -> "n0" [label="has_access_to"];
+    "n6" -> "n8" [label="consumes"];
+    "n10" -> "n9" [label="uses_image"];
+    "n10" -> "n0" [label="has_access_to"];
+    "n10" -> "n11" [label="has_access_to"];
+    "n10" -> "n12" [label="has_access_to"];
+    "n10" -> "n13" [label="has_access_to"];
+}
+

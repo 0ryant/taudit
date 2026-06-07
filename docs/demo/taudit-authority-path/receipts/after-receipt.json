@@ -1,0 +1,12 @@
+{
+  "exit_code": 0,
+  "findings_total": 8,
+  "format": "terminal",
+  "kind": "taudit.scan.receipt",
+  "max_hops": 4,
+  "paths": [
+    "docs/demo/taudit-authority-path/workflows/after.yml"
+  ],
+  "suppressed_total": 0,
+  "ts_unix": 1780864008
+}

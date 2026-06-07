@@ -1,0 +1,22 @@
+Authority Map: docs/demo/taudit-authority-path/workflows/after.yml
+
+  columns 1-4 of 6
+Step                          Zone  GITHUB_TOKEN  GITHUB_TOKEN (bui…  GITHUB_TOKEN (dep…  CLOUD_DEPLOY_TOKEN
+----------------------------  ----  ------------  ------------------  ------------------  ------------------
+Checkout source               3P         ·                ✓                   ·                   ·         
+Install and build             1P         ·                ✓                   ·                   ·         
+Upload release bundle         3P         ·                ✓                   ·                   ·         
+Download release bundle       3P         ·                ·                   ✓                   ·         
+Third-party production depl…  3P         ·                ·                   ✓                   ✓         
+
+  columns 5-6 of 6
+Step                          Zone  PROD_API_KEY  RELEASE_TOKEN
+----------------------------  ----  ------------  -------------
+Checkout source               3P         ·              ·      
+Install and build             1P         ·              ·      
+Upload release bundle         3P         ·              ·      
+Download release bundle       3P         ·              ·      
+Third-party production depl…  3P         ✓              ✓      
+
+note: column names truncated to 18 chars
+
