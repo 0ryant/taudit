@@ -1,0 +1,741 @@
+{
+  "added": [
+    {
+      "authority_kinds": [
+        "job_token"
+      ],
+      "category": "authority_propagation",
+      "confidence_scope": "yaml_only",
+      "message": "GITHUB_TOKEN (build) reaches 5 sinks via authority propagation: [actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683, actions/upload-artifact@b4b15b8c7c6ac21ea08fcf65892d2ee8f75cf882, release-bundle, Download release bundle, actions/download-artifact@fa0a91b85d4f404e444e00e005971372dc801d16]",
+      "nodes_involved": [
+        1,
+        2,
+        5,
+        7,
+        10,
+        9
+      ],
+      "path": {
+        "boundary_crossing": [
+          "first_party",
+          "third_party"
+        ],
+        "crossed_boundary": true,
+        "edges": [
+          5
+        ],
+        "sink": 7,
+        "source": 1
+      },
+      "recommendation": {
+        "command": "tsafe exec --ns <scoped-namespace> -- <command>",
+        "explanation": "Scope GITHUB_TOKEN (build) to only the steps that need it",
+        "type": "tsafe_remediation"
+      },
+      "severity": "critical",
+      "source": "built-in"
+    },
+    {
+      "authority_kinds": [
+        "oidc_identity"
+      ],
+      "category": "authority_propagation",
+      "confidence_scope": "yaml_only",
+      "message": "GITHUB_TOKEN (deploy) reaches 2 sinks via authority propagation: [actions/download-artifact@fa0a91b85d4f404e444e00e005971372dc801d16, vendor/deploy-action@9f3a5c1b2d7e4f60a8b9c0d1e2f3a4b5c6d7e8f9]",
+      "nodes_involved": [
+        8,
+        9,
+        11
+      ],
+      "path": {
+        "boundary_crossing": [
+          "first_party",
+          "third_party"
+        ],
+        "crossed_boundary": true,
+        "edges": [
+          6
+        ],
+        "sink": 9,
+        "source": 8
+      },
+      "recommendation": {
+        "command": "tsafe exec --ns <scoped-namespace> -- <command>",
+        "explanation": "Scope GITHUB_TOKEN (deploy) to only the steps that need it",
+        "type": "tsafe_remediation"
+      },
+      "severity": "critical",
+      "source": "built-in"
+    },
+    {
+      "authority_kinds": [
+        "credential_named_variable"
+      ],
+      "category": "authority_propagation",
+      "confidence_scope": "yaml_only",
+      "message": "CLOUD_DEPLOY_TOKEN propagated to vendor/deploy-action@9f3a5c1b2d7e4f60a8b9c0d1e2f3a4b5c6d7e8f9 across trust boundary",
+      "nodes_involved": [
+        13,
+        11
+      ],
+      "path": {
+        "boundary_crossing": [
+          "first_party",
+          "third_party"
+        ],
+        "crossed_boundary": true,
+        "edges": [
+          9
+        ],
+        "sink": 11,
+        "source": 13
+      },
+      "recommendation": {
+        "command": "tsafe exec --ns <scoped-namespace> -- <command>",
+        "explanation": "Scope CLOUD_DEPLOY_TOKEN to only the steps that need it",
+        "type": "tsafe_remediation"
+      },
+      "severity": "high",
+      "source": "built-in"
+    },
+    {
+      "authority_kinds": [
+        "credential_named_variable"
+      ],
+      "category": "authority_propagation",
+      "confidence_scope": "yaml_only",
+      "message": "PROD_API_KEY propagated to vendor/deploy-action@9f3a5c1b2d7e4f60a8b9c0d1e2f3a4b5c6d7e8f9 across trust boundary",
+      "nodes_involved": [
+        14,
+        11
+      ],
+      "path": {
+        "boundary_crossing": [
+          "first_party",
+          "third_party"
+        ],
+        "crossed_boundary": true,
+        "edges": [
+          9
+        ],
+        "sink": 11,
+        "source": 14
+      },
+      "recommendation": {
+        "command": "tsafe exec --ns <scoped-namespace> -- <command>",
+        "explanation": "Scope PROD_API_KEY to only the steps that need it",
+        "type": "tsafe_remediation"
+      },
+      "severity": "high",
+      "source": "built-in"
+    },
+    {
+      "authority_kinds": [
+        "credential_named_variable"
+      ],
+      "category": "authority_propagation",
+      "confidence_scope": "yaml_only",
+      "message": "RELEASE_TOKEN propagated to vendor/deploy-action@9f3a5c1b2d7e4f60a8b9c0d1e2f3a4b5c6d7e8f9 across trust boundary",
+      "nodes_involved": [
+        15,
+        11
+      ],
+      "path": {
+        "boundary_crossing": [
+          "first_party",
+          "third_party"
+        ],
+        "crossed_boundary": true,
+        "edges": [
+          9
+        ],
+        "sink": 11,
+        "source": 15
+      },
+      "recommendation": {
+        "command": "tsafe exec --ns <scoped-namespace> -- <command>",
+        "explanation": "Scope RELEASE_TOKEN to only the steps that need it",
+        "type": "tsafe_remediation"
+      },
+      "severity": "high",
+      "source": "built-in"
+    },
+    {
+      "authority_kinds": [
+        "oidc_identity"
+      ],
+      "category": "over_privileged_identity",
+      "confidence_scope": "yaml_only",
+      "message": "GITHUB_TOKEN (deploy) has broad scope (permissions: '{ contents: read, id-token: write }') — likely broader than needed",
+      "nodes_involved": [
+        8,
+        10,
+        12
+      ],
+      "recommendation": {
+        "current": "{ contents: read, id-token: write }",
+        "minimum": "{ contents: read }",
+        "type": "reduce_permissions"
+      },
+      "severity": "high",
+      "source": "built-in",
+      "time_to_fix": "small"
+    },
+    {
+      "authority_kinds": [
+        "oidc_identity"
+      ],
+      "category": "uplift_without_attestation",
+      "confidence_scope": "yaml_only",
+      "message": "2 step(s) use OIDC/federated identity but no provenance attestation step was detected — artifact integrity cannot be verified",
+      "nodes_involved": [
+        10,
+        12,
+        8
+      ],
+      "recommendation": {
+        "action": "Add 'actions/attest-build-provenance' after your build step (GHA) to provide SLSA provenance. See https://docs.github.com/en/actions/security-guides/using-artifact-attestations",
+        "type": "manual"
+      },
+      "runtime_preconditions": [
+        "downstream identity provider accepts the issued OIDC token",
+        "the configured audience or cloud role grants useful authority"
+      ],
+      "severity": "info",
+      "source": "built-in"
+    }
+  ],
+  "after": {
+    "edges": 14,
+    "file": "docs/demo/taudit-authority-path/workflows/after.yml",
+    "findings": 8,
+    "nodes": 16
+  },
+  "before": {
+    "edges": 14,
+    "file": "docs/demo/taudit-authority-path/workflows/before.yml",
+    "findings": 22,
+    "nodes": 14
+  },
+  "delta": {
+    "edges": 0,
+    "findings": -14,
+    "nodes": 2
+  },
+  "removed": [
+    {
+      "authority_kinds": [
+        "credential_named_variable"
+      ],
+      "category": "authority_propagation",
+      "confidence_scope": "yaml_only",
+      "message": "CLOUD_DEPLOY_TOKEN propagated to vendor/deploy-action@v2 across trust boundary",
+      "nodes_involved": [
+        11,
+        9
+      ],
+      "path": {
+        "boundary_crossing": [
+          "first_party",
+          "untrusted"
+        ],
+        "crossed_boundary": true,
+        "edges": [
+          9
+        ],
+        "sink": 9,
+        "source": 11
+      },
+      "recommendation": {
+        "command": "tsafe exec --ns <scoped-namespace> -- <command>",
+        "explanation": "Scope CLOUD_DEPLOY_TOKEN to only the steps that need it",
+        "type": "tsafe_remediation"
+      },
+      "severity": "critical",
+      "source": "built-in"
+    },
+    {
+      "authority_kinds": [
+        "oidc_identity"
+      ],
+      "category": "authority_propagation",
+      "confidence_scope": "yaml_only",
+      "message": "GITHUB_TOKEN reaches 5 sinks via authority propagation: [actions/checkout@v4, actions/upload-artifact@v4, release-bundle, actions/download-artifact@v4, vendor/deploy-action@v2]",
+      "nodes_involved": [
+        0,
+        1,
+        4,
+        6,
+        7,
+        9
+      ],
+      "path": {
+        "boundary_crossing": [
+          "first_party",
+          "untrusted"
+        ],
+        "crossed_boundary": true,
+        "edges": [
+          0
+        ],
+        "sink": 1,
+        "source": 0
+      },
+      "recommendation": {
+        "command": "tsafe exec --ns <scoped-namespace> -- <command>",
+        "explanation": "Scope GITHUB_TOKEN to only the steps that need it",
+        "type": "tsafe_remediation"
+      },
+      "severity": "critical",
+      "source": "built-in"
+    },
+    {
+      "authority_kinds": [
+        "credential_named_variable"
+      ],
+      "category": "authority_propagation",
+      "confidence_scope": "yaml_only",
+      "message": "PROD_API_KEY propagated to vendor/deploy-action@v2 across trust boundary",
+      "nodes_involved": [
+        12,
+        9
+      ],
+      "path": {
+        "boundary_crossing": [
+          "first_party",
+          "untrusted"
+        ],
+        "crossed_boundary": true,
+        "edges": [
+          9
+        ],
+        "sink": 9,
+        "source": 12
+      },
+      "recommendation": {
+        "command": "tsafe exec --ns <scoped-namespace> -- <command>",
+        "explanation": "Scope PROD_API_KEY to only the steps that need it",
+        "type": "tsafe_remediation"
+      },
+      "severity": "critical",
+      "source": "built-in"
+    },
+    {
+      "authority_kinds": [
+        "credential_named_variable"
+      ],
+      "category": "authority_propagation",
+      "confidence_scope": "yaml_only",
+      "message": "RELEASE_TOKEN propagated to vendor/deploy-action@v2 across trust boundary",
+      "nodes_involved": [
+        13,
+        9
+      ],
+      "path": {
+        "boundary_crossing": [
+          "first_party",
+          "untrusted"
+        ],
+        "crossed_boundary": true,
+        "edges": [
+          9
+        ],
+        "sink": 9,
+        "source": 13
+      },
+      "recommendation": {
+        "command": "tsafe exec --ns <scoped-namespace> -- <command>",
+        "explanation": "Scope RELEASE_TOKEN to only the steps that need it",
+        "type": "tsafe_remediation"
+      },
+      "severity": "critical",
+      "source": "built-in"
+    },
+    {
+      "attacker_surface_kinds": [
+        "untrusted_checkout",
+        "untrusted_step"
+      ],
+      "authority_kinds": [
+        "oidc_identity"
+      ],
+      "category": "untrusted_with_authority",
+      "confidence_scope": "yaml_only",
+      "message": "Untrusted step 'Checkout source' has direct access to identity 'GITHUB_TOKEN'",
+      "nodes_involved": [
+        2,
+        0
+      ],
+      "recommendation": {
+        "current": "{ contents: write, id-token: write, packages: write }",
+        "minimum": "minimal required scope",
+        "type": "reduce_permissions"
+      },
+      "severity": "critical",
+      "source": "built-in"
+    },
+    {
+      "attacker_surface_kinds": [
+        "untrusted_step"
+      ],
+      "authority_kinds": [
+        "oidc_identity"
+      ],
+      "category": "untrusted_with_authority",
+      "confidence_scope": "yaml_only",
+      "message": "Untrusted step 'Download release bundle' has direct access to identity 'GITHUB_TOKEN'",
+      "nodes_involved": [
+        8,
+        0
+      ],
+      "recommendation": {
+        "current": "{ contents: write, id-token: write, packages: write }",
+        "minimum": "minimal required scope",
+        "type": "reduce_permissions"
+      },
+      "severity": "critical",
+      "source": "built-in"
+    },
+    {
+      "attacker_surface_kinds": [
+        "untrusted_step"
+      ],
+      "authority_kinds": [
+        "oidc_identity"
+      ],
+      "category": "untrusted_with_authority",
+      "confidence_scope": "yaml_only",
+      "message": "Untrusted step 'Third-party production deploy' has direct access to identity 'GITHUB_TOKEN'",
+      "nodes_involved": [
+        10,
+        0
+      ],
+      "recommendation": {
+        "current": "{ contents: write, id-token: write, packages: write }",
+        "minimum": "minimal required scope",
+        "type": "reduce_permissions"
+      },
+      "severity": "critical",
+      "source": "built-in"
+    },
+    {
+      "attacker_surface_kinds": [
+        "untrusted_step"
+      ],
+      "authority_kinds": [
+        "credential_named_variable"
+      ],
+      "category": "untrusted_with_authority",
+      "confidence_scope": "yaml_only",
+      "message": "Untrusted step 'Third-party production deploy' has direct access to secret 'CLOUD_DEPLOY_TOKEN'",
+      "nodes_involved": [
+        10,
+        11
+      ],
+      "recommendation": {
+        "reason": "Untrusted step 'Third-party production deploy' has direct access to secret 'CLOUD_DEPLOY_TOKEN'",
+        "spec_hint": "cellos run --network deny-all --broker env:CLOUD_DEPLOY_TOKEN",
+        "type": "cellos_remediation"
+      },
+      "severity": "critical",
+      "source": "built-in"
+    },
+    {
+      "attacker_surface_kinds": [
+        "untrusted_step"
+      ],
+      "authority_kinds": [
+        "credential_named_variable"
+      ],
+      "category": "untrusted_with_authority",
+      "confidence_scope": "yaml_only",
+      "message": "Untrusted step 'Third-party production deploy' has direct access to secret 'PROD_API_KEY'",
+      "nodes_involved": [
+        10,
+        12
+      ],
+      "recommendation": {
+        "reason": "Untrusted step 'Third-party production deploy' has direct access to secret 'PROD_API_KEY'",
+        "spec_hint": "cellos run --network deny-all --broker env:PROD_API_KEY",
+        "type": "cellos_remediation"
+      },
+      "severity": "critical",
+      "source": "built-in"
+    },
+    {
+      "attacker_surface_kinds": [
+        "untrusted_step"
+      ],
+      "authority_kinds": [
+        "credential_named_variable"
+      ],
+      "category": "untrusted_with_authority",
+      "confidence_scope": "yaml_only",
+      "message": "Untrusted step 'Third-party production deploy' has direct access to secret 'RELEASE_TOKEN'",
+      "nodes_involved": [
+        10,
+        13
+      ],
+      "recommendation": {
+        "reason": "Untrusted step 'Third-party production deploy' has direct access to secret 'RELEASE_TOKEN'",
+        "spec_hint": "cellos run --network deny-all --broker env:RELEASE_TOKEN",
+        "type": "cellos_remediation"
+      },
+      "severity": "critical",
+      "source": "built-in"
+    },
+    {
+      "attacker_surface_kinds": [
+        "untrusted_step"
+      ],
+      "authority_kinds": [
+        "oidc_identity"
+      ],
+      "category": "untrusted_with_authority",
+      "confidence_scope": "yaml_only",
+      "message": "Untrusted step 'Upload release bundle' has direct access to identity 'GITHUB_TOKEN'",
+      "nodes_involved": [
+        5,
+        0
+      ],
+      "recommendation": {
+        "current": "{ contents: write, id-token: write, packages: write }",
+        "minimum": "minimal required scope",
+        "type": "reduce_permissions"
+      },
+      "severity": "critical",
+      "source": "built-in"
+    },
+    {
+      "authority_kinds": [
+        "oidc_identity"
+      ],
+      "category": "over_privileged_identity",
+      "confidence_scope": "yaml_only",
+      "message": "GITHUB_TOKEN has broad scope (permissions: '{ contents: write, id-token: write, packages: write }') — likely broader than needed",
+      "nodes_involved": [
+        0,
+        2,
+        3,
+        5,
+        8,
+        10
+      ],
+      "recommendation": {
+        "current": "{ contents: write, id-token: write, packages: write }",
+        "minimum": "{ contents: read }",
+        "type": "reduce_permissions"
+      },
+      "severity": "high",
+      "source": "built-in",
+      "time_to_fix": "small"
+    },
+    {
+      "attacker_surface_kinds": [
+        "mutable_dependency_ref"
+      ],
+      "category": "unpinned_action",
+      "confidence_scope": "yaml_only",
+      "message": "vendor/deploy-action@v2 is not pinned to a SHA digest",
+      "nodes_involved": [
+        9
+      ],
+      "recommendation": {
+        "current": "vendor/deploy-action@v2",
+        "pinned": "vendor/deploy-action@<sha256-digest>",
+        "type": "pin_action"
+      },
+      "runtime_preconditions": [
+        "the referenced mutable branch, tag, include, or image can change independently of this repository"
+      ],
+      "severity": "high",
+      "source": "built-in",
+      "time_to_fix": "trivial"
+    },
+    {
+      "attacker_surface_kinds": [
+        "mutable_dependency_ref"
+      ],
+      "category": "unpinned_action",
+      "confidence_scope": "yaml_only",
+      "message": "[action_major_version_pin_without_sha] actions/checkout@v4 is pinned only to a mutable major tag; pin to a full commit SHA",
+      "nodes_involved": [
+        1
+      ],
+      "recommendation": {
+        "current": "actions/checkout@v4",
+        "pinned": "actions/checkout@<40-char-sha>",
+        "type": "pin_action"
+      },
+      "runtime_preconditions": [
+        "the referenced mutable branch, tag, include, or image can change independently of this repository"
+      ],
+      "severity": "medium",
+      "source": "built-in",
+      "time_to_fix": "trivial"
+    },
+    {
+      "attacker_surface_kinds": [
+        "mutable_dependency_ref"
+      ],
+      "category": "unpinned_action",
+      "confidence_scope": "yaml_only",
+      "message": "[action_major_version_pin_without_sha] actions/download-artifact@v4 is pinned only to a mutable major tag; pin to a full commit SHA",
+      "nodes_involved": [
+        7
+      ],
+      "recommendation": {
+        "current": "actions/download-artifact@v4",
+        "pinned": "actions/download-artifact@<40-char-sha>",
+        "type": "pin_action"
+      },
+      "runtime_preconditions": [
+        "the referenced mutable branch, tag, include, or image can change independently of this repository"
+      ],
+      "severity": "medium",
+      "source": "built-in",
+      "time_to_fix": "trivial"
+    },
+    {
+      "attacker_surface_kinds": [
+        "mutable_dependency_ref"
+      ],
+      "category": "unpinned_action",
+      "confidence_scope": "yaml_only",
+      "message": "[action_major_version_pin_without_sha] actions/upload-artifact@v4 is pinned only to a mutable major tag; pin to a full commit SHA",
+      "nodes_involved": [
+        4
+      ],
+      "recommendation": {
+        "current": "actions/upload-artifact@v4",
+        "pinned": "actions/upload-artifact@<40-char-sha>",
+        "type": "pin_action"
+      },
+      "runtime_preconditions": [
+        "the referenced mutable branch, tag, include, or image can change independently of this repository"
+      ],
+      "severity": "medium",
+      "source": "built-in",
+      "time_to_fix": "trivial"
+    },
+    {
+      "attacker_surface_kinds": [
+        "mutable_dependency_ref"
+      ],
+      "category": "unpinned_action",
+      "confidence_scope": "yaml_only",
+      "message": "[action_major_version_pin_without_sha] vendor/deploy-action@v2 is pinned only to a mutable major tag; pin to a full commit SHA",
+      "nodes_involved": [
+        9
+      ],
+      "recommendation": {
+        "current": "vendor/deploy-action@v2",
+        "pinned": "vendor/deploy-action@<40-char-sha>",
+        "type": "pin_action"
+      },
+      "runtime_preconditions": [
+        "the referenced mutable branch, tag, include, or image can change independently of this repository"
+      ],
+      "severity": "medium",
+      "source": "built-in",
+      "time_to_fix": "trivial"
+    },
+    {
+      "attacker_surface_kinds": [
+        "mutable_dependency_ref"
+      ],
+      "category": "unpinned_action",
+      "confidence_scope": "yaml_only",
+      "message": "actions/checkout@v4 is not pinned to a SHA digest",
+      "nodes_involved": [
+        1
+      ],
+      "recommendation": {
+        "current": "actions/checkout@v4",
+        "pinned": "actions/checkout@<sha256-digest>",
+        "type": "pin_action"
+      },
+      "runtime_preconditions": [
+        "the referenced mutable branch, tag, include, or image can change independently of this repository"
+      ],
+      "severity": "medium",
+      "source": "built-in",
+      "time_to_fix": "trivial"
+    },
+    {
+      "attacker_surface_kinds": [
+        "mutable_dependency_ref"
+      ],
+      "category": "unpinned_action",
+      "confidence_scope": "yaml_only",
+      "message": "actions/download-artifact@v4 is not pinned to a SHA digest",
+      "nodes_involved": [
+        7
+      ],
+      "recommendation": {
+        "current": "actions/download-artifact@v4",
+        "pinned": "actions/download-artifact@<sha256-digest>",
+        "type": "pin_action"
+      },
+      "runtime_preconditions": [
+        "the referenced mutable branch, tag, include, or image can change independently of this repository"
+      ],
+      "severity": "medium",
+      "source": "built-in",
+      "time_to_fix": "trivial"
+    },
+    {
+      "attacker_surface_kinds": [
+        "mutable_dependency_ref"
+      ],
+      "category": "unpinned_action",
+      "confidence_scope": "yaml_only",
+      "message": "actions/upload-artifact@v4 is not pinned to a SHA digest",
+      "nodes_involved": [
+        4
+      ],
+      "recommendation": {
+        "current": "actions/upload-artifact@v4",
+        "pinned": "actions/upload-artifact@<sha256-digest>",
+        "type": "pin_action"
+      },
+      "runtime_preconditions": [
+        "the referenced mutable branch, tag, include, or image can change independently of this repository"
+      ],
+      "severity": "medium",
+      "source": "built-in",
+      "time_to_fix": "trivial"
+    },
+    {
+      "attacker_surface_kinds": [
+        "script_sink",
+        "untrusted_checkout",
+        "untrusted_step"
+      ],
+      "authority_kinds": [
+        "oidc_identity"
+      ],
+      "category": "uplift_without_attestation",
+      "confidence_scope": "yaml_only",
+      "message": "5 step(s) use OIDC/federated identity but no provenance attestation step was detected — artifact integrity cannot be verified",
+      "nodes_involved": [
+        2,
+        3,
+        5,
+        8,
+        10,
+        0
+      ],
+      "recommendation": {
+        "action": "Add 'actions/attest-build-provenance' after your build step (GHA) to provide SLSA provenance. See https://docs.github.com/en/actions/security-guides/using-artifact-attestations",
+        "type": "manual"
+      },
+      "runtime_preconditions": [
+        "downstream identity provider accepts the issued OIDC token",
+        "the configured audience or cloud role grants useful authority"
+      ],
+      "severity": "info",
+      "source": "built-in"
+    }
+  ]
+}

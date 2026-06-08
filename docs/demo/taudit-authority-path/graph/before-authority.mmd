@@ -1,0 +1,30 @@
+flowchart LR
+    n0{"GITHUB_TOKEN"}
+    n1[("actions/checkout@v4")]
+    n2("Checkout source")
+    n3("Install and build")
+    n4[("actions/upload-artifact@v4")]
+    n5("Upload release bundle")
+    n6[["release-bundle"]]
+    n7[("actions/download-artifact@v4")]
+    n8("Download release bundle")
+    n9[("vendor/deploy-action@v2")]
+    n10("Third-party production deploy")
+    n11["CLOUD_DEPLOY_TOKEN"]
+    n12["PROD_API_KEY"]
+    n13["RELEASE_TOKEN"]
+    n2 -->|uses_image| n1
+    n2 -->|has_access_to| n0
+    n3 -->|has_access_to| n0
+    n5 -->|uses_image| n4
+    n5 -->|has_access_to| n0
+    n5 -->|produces| n6
+    n8 -->|uses_image| n7
+    n8 -->|has_access_to| n0
+    n6 -->|consumes| n8
+    n10 -->|uses_image| n9
+    n10 -->|has_access_to| n0
+    n10 -->|has_access_to| n11
+    n10 -->|has_access_to| n12
+    n10 -->|has_access_to| n13
+

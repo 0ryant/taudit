@@ -1,0 +1,35 @@
+digraph taudit {
+    rankdir=LR;
+    node [fontname="Helvetica"];
+    "n0" [label="GITHUB_TOKEN" shape=diamond color=green];
+    "n1" [label="GITHUB_TOKEN (build)" shape=diamond color=green];
+    "n2" [label="actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683" shape=cylinder color=yellow];
+    "n3" [label="Checkout source" shape=ellipse color=yellow];
+    "n4" [label="Install and build" shape=ellipse color=green];
+    "n5" [label="actions/upload-artifact@b4b15b8c7c6ac21ea08fcf65892d2ee8f75cf882" shape=cylinder color=yellow];
+    "n6" [label="Upload release bundle" shape=ellipse color=yellow];
+    "n7" [label="release-bundle" shape=hexagon color=yellow];
+    "n8" [label="GITHUB_TOKEN (deploy)" shape=diamond color=green];
+    "n9" [label="actions/download-artifact@fa0a91b85d4f404e444e00e005971372dc801d16" shape=cylinder color=yellow];
+    "n10" [label="Download release bundle" shape=ellipse color=yellow];
+    "n11" [label="vendor/deploy-action@9f3a5c1b2d7e4f60a8b9c0d1e2f3a4b5c6d7e8f9" shape=cylinder color=yellow];
+    "n12" [label="Third-party production deploy" shape=ellipse color=yellow];
+    "n13" [label="CLOUD_DEPLOY_TOKEN" shape=box color=green];
+    "n14" [label="PROD_API_KEY" shape=box color=green];
+    "n15" [label="RELEASE_TOKEN" shape=box color=green];
+    "n3" -> "n2" [label="uses_image"];
+    "n3" -> "n1" [label="has_access_to"];
+    "n4" -> "n1" [label="has_access_to"];
+    "n6" -> "n5" [label="uses_image"];
+    "n6" -> "n1" [label="has_access_to"];
+    "n6" -> "n7" [label="produces"];
+    "n10" -> "n9" [label="uses_image"];
+    "n10" -> "n8" [label="has_access_to"];
+    "n7" -> "n10" [label="consumes"];
+    "n12" -> "n11" [label="uses_image"];
+    "n12" -> "n8" [label="has_access_to"];
+    "n12" -> "n13" [label="has_access_to"];
+    "n12" -> "n14" [label="has_access_to"];
+    "n12" -> "n15" [label="has_access_to"];
+}
+

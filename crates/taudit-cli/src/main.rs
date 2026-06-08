@@ -2324,7 +2324,12 @@ fn cmd_scan(opts: ScanOpts) -> Result<()> {
             .map(|(g, f)| (g, f.as_slice()))
             .collect();
         SarifReportSink
-            .emit_multi_with_custom_rules(&mut writer, &items, &custom_rules)
+            .emit_multi_with_custom_rules_versioned(
+                &mut writer,
+                &items,
+                &custom_rules,
+                env!("CARGO_PKG_VERSION"),
+            )
             .with_context(|| "Failed to write SARIF report")?;
     }
 
@@ -2826,7 +2831,12 @@ fn run_verify_io<W: std::io::Write>(opts: &VerifyOpts, writer: &mut W) -> i32 {
                 .map(|(g, f)| (g, f.as_slice()))
                 .collect();
             SarifReportSink
-                .emit_multi_with_custom_rules(writer, &items, &custom_rules)
+                .emit_multi_with_custom_rules_versioned(
+                    writer,
+                    &items,
+                    &custom_rules,
+                    env!("CARGO_PKG_VERSION"),
+                )
                 .map_err(|e| anyhow::anyhow!("Failed to write SARIF report: {e}"))
         }
     };

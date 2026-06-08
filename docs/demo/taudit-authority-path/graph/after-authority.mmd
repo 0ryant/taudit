@@ -1,0 +1,32 @@
+flowchart LR
+    n0{"GITHUB_TOKEN"}
+    n1{"GITHUB_TOKEN (build)"}
+    n2[("actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683")]
+    n3("Checkout source")
+    n4("Install and build")
+    n5[("actions/upload-artifact@b4b15b8c7c6ac21ea08fcf65892d2ee8f75cf882")]
+    n6("Upload release bundle")
+    n7[["release-bundle"]]
+    n8{"GITHUB_TOKEN (deploy)"}
+    n9[("actions/download-artifact@fa0a91b85d4f404e444e00e005971372dc801d16")]
+    n10("Download release bundle")
+    n11[("vendor/deploy-action@9f3a5c1b2d7e4f60a8b9c0d1e2f3a4b5c6d7e8f9")]
+    n12("Third-party production deploy")
+    n13["CLOUD_DEPLOY_TOKEN"]
+    n14["PROD_API_KEY"]
+    n15["RELEASE_TOKEN"]
+    n3 -->|uses_image| n2
+    n3 -->|has_access_to| n1
+    n4 -->|has_access_to| n1
+    n6 -->|uses_image| n5
+    n6 -->|has_access_to| n1
+    n6 -->|produces| n7
+    n10 -->|uses_image| n9
+    n10 -->|has_access_to| n8
+    n7 -->|consumes| n10
+    n12 -->|uses_image| n11
+    n12 -->|has_access_to| n8
+    n12 -->|has_access_to| n13
+    n12 -->|has_access_to| n14
+    n12 -->|has_access_to| n15
+

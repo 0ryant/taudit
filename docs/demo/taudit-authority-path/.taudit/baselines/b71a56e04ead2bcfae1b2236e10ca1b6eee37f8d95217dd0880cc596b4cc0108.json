@@ -1,0 +1,68 @@
+{
+  "schema_version": "1.1.0",
+  "pipeline_path": "docs/demo/taudit-authority-path/workflows/after.yml",
+  "pipeline_content_hash": "sha256:b71a56e04ead2bcfae1b2236e10ca1b6eee37f8d95217dd0880cc596b4cc0108",
+  "pipeline_identity_material_hash": "sha256:6ffb00b8dfad399a0438311a5c4282d076a16f765d077990357d0dff5e3dc2ef",
+  "captured_at": "2026-06-07T20:27:13.172429Z",
+  "captured_by": "taudit-authority-path-demo",
+  "captured_with": {
+    "taudit_version": "1.3.0-pre",
+    "rules_version": "88-builtin"
+  },
+  "baseline_findings": [
+    {
+      "fingerprint": "2b990c5dfb662b8da1a698936322a9b5",
+      "rule_id": "authority_propagation",
+      "severity": "high",
+      "first_seen_at": "2026-06-07T20:27:13.172429Z"
+    },
+    {
+      "fingerprint": "539248e7a654a588858de4f20cd3cf23",
+      "rule_id": "authority_propagation",
+      "severity": "critical",
+      "first_seen_at": "2026-06-07T20:27:13.172429Z",
+      "reason_waived": "Accepted at baseline init — review before expiry",
+      "severity_override": "critical",
+      "expires_at": "2026-09-05T20:27:13.172429Z"
+    },
+    {
+      "fingerprint": "67a0526a1c403902cd5b1619973a4a01",
+      "rule_id": "authority_propagation",
+      "severity": "critical",
+      "first_seen_at": "2026-06-07T20:27:13.172429Z",
+      "reason_waived": "Accepted at baseline init — review before expiry",
+      "severity_override": "critical",
+      "expires_at": "2026-09-05T20:27:13.172429Z"
+    },
+    {
+      "fingerprint": "6bc5daea20d1ef4dddde0757c0571aec",
+      "rule_id": "long_lived_credential",
+      "severity": "low",
+      "first_seen_at": "2026-06-07T20:27:13.172429Z"
+    },
+    {
+      "fingerprint": "920431f81df64b4eb297b5088a9f5c4b",
+      "rule_id": "over_privileged_identity",
+      "severity": "high",
+      "first_seen_at": "2026-06-07T20:27:13.172429Z"
+    },
+    {
+      "fingerprint": "b8f5ead8f1b2669cf6fe81ff0c5dd209",
+      "rule_id": "authority_propagation",
+      "severity": "high",
+      "first_seen_at": "2026-06-07T20:27:13.172429Z"
+    },
+    {
+      "fingerprint": "cb3bb9d9aeee5fa86a57cf0a87945969",
+      "rule_id": "uplift_without_attestation",
+      "severity": "info",
+      "first_seen_at": "2026-06-07T20:27:13.172429Z"
+    },
+    {
+      "fingerprint": "fe240df8a1b8e9e85e13da8254e09ca4",
+      "rule_id": "authority_propagation",
+      "severity": "high",
+      "first_seen_at": "2026-06-07T20:27:13.172429Z"
+    }
+  ]
+}

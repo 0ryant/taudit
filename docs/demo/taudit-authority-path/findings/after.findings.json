@@ -1,0 +1,564 @@
+{
+  "schema_version": "1.0.0",
+  "schema_uri": "https://taudit.dev/schemas/taudit-report.schema.json",
+  "graph": {
+    "source": {
+      "file": "docs/demo/taudit-authority-path/workflows/after.yml"
+    },
+    "nodes": [
+      {
+        "id": 0,
+        "kind": "identity",
+        "name": "GITHUB_TOKEN",
+        "trust_zone": "first_party",
+        "metadata": {
+          "identity_scope": "constrained",
+          "permissions": "{ contents: read }"
+        }
+      },
+      {
+        "id": 1,
+        "kind": "identity",
+        "name": "GITHUB_TOKEN (build)",
+        "trust_zone": "first_party",
+        "metadata": {
+          "identity_scope": "constrained",
+          "permissions": "{ contents: read }"
+        }
+      },
+      {
+        "id": 2,
+        "kind": "image",
+        "name": "actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683",
+        "trust_zone": "third_party",
+        "metadata": {
+          "digest": "11bd71901bbe5b1630ceea73d27597364c9af683"
+        }
+      },
+      {
+        "id": 3,
+        "kind": "step",
+        "name": "Checkout source",
+        "trust_zone": "third_party",
+        "metadata": {
+          "checkout_self": "true",
+          "gha_action": "actions/checkout",
+          "gha_runs_on": "ubuntu-latest",
+          "job_name": "build"
+        }
+      },
+      {
+        "id": 4,
+        "kind": "step",
+        "name": "Install and build",
+        "trust_zone": "first_party",
+        "metadata": {
+          "gha_runs_on": "ubuntu-latest",
+          "job_name": "build",
+          "script_body": "npm ci\nnpm run build\n"
+        }
+      },
+      {
+        "id": 5,
+        "kind": "image",
+        "name": "actions/upload-artifact@b4b15b8c7c6ac21ea08fcf65892d2ee8f75cf882",
+        "trust_zone": "third_party",
+        "metadata": {
+          "digest": "b4b15b8c7c6ac21ea08fcf65892d2ee8f75cf882"
+        }
+      },
+      {
+        "id": 6,
+        "kind": "step",
+        "name": "Upload release bundle",
+        "trust_zone": "third_party",
+        "metadata": {
+          "gha_action": "actions/upload-artifact",
+          "gha_runs_on": "ubuntu-latest",
+          "gha_with_inputs": "name=release-bundle\npath=dist/",
+          "job_name": "build"
+        }
+      },
+      {
+        "id": 7,
+        "kind": "artifact",
+        "name": "release-bundle",
+        "trust_zone": "third_party",
+        "metadata": {}
+      },
+      {
+        "id": 8,
+        "kind": "identity",
+        "name": "GITHUB_TOKEN (deploy)",
+        "trust_zone": "first_party",
+        "metadata": {
+          "identity_scope": "broad",
+          "oidc": "true",
+          "permissions": "{ contents: read, id-token: write }"
+        }
+      },
+      {
+        "id": 9,
+        "kind": "image",
+        "name": "actions/download-artifact@fa0a91b85d4f404e444e00e005971372dc801d16",
+        "trust_zone": "third_party",
+        "metadata": {
+          "digest": "fa0a91b85d4f404e444e00e005971372dc801d16"
+        }
+      },
+      {
+        "id": 10,
+        "kind": "step",
+        "name": "Download release bundle",
+        "trust_zone": "third_party",
+        "metadata": {
+          "downloads_artifact": "true",
+          "gha_action": "actions/download-artifact",
+          "gha_runs_on": "ubuntu-latest",
+          "gha_with_inputs": "name=release-bundle",
+          "job_name": "deploy"
+        }
+      },
+      {
+        "id": 11,
+        "kind": "image",
+        "name": "vendor/deploy-action@9f3a5c1b2d7e4f60a8b9c0d1e2f3a4b5c6d7e8f9",
+        "trust_zone": "third_party",
+        "metadata": {
+          "digest": "9f3a5c1b2d7e4f60a8b9c0d1e2f3a4b5c6d7e8f9"
+        }
+      },
+      {
+        "id": 12,
+        "kind": "step",
+        "name": "Third-party production deploy",
+        "trust_zone": "third_party",
+        "metadata": {
+          "gha_action": "vendor/deploy-action",
+          "gha_env_assignments": "CLOUD_DEPLOY_TOKEN=${{ secrets.CLOUD_DEPLOY_TOKEN }}",
+          "gha_runs_on": "ubuntu-latest",
+          "gha_with_inputs": "prod-api-key=${{ secrets.PROD_API_KEY }}\nrelease-token=${{ secrets.RELEASE_TOKEN }}",
+          "job_name": "deploy"
+        }
+      },
+      {
+        "id": 13,
+        "kind": "secret",
+        "name": "CLOUD_DEPLOY_TOKEN",
+        "trust_zone": "first_party",
+        "metadata": {}
+      },
+      {
+        "id": 14,
+        "kind": "secret",
+        "name": "PROD_API_KEY",
+        "trust_zone": "first_party",
+        "metadata": {}
+      },
+      {
+        "id": 15,
+        "kind": "secret",
+        "name": "RELEASE_TOKEN",
+        "trust_zone": "first_party",
+        "metadata": {}
+      }
+    ],
+    "edges": [
+      {
+        "id": 0,
+        "from": 3,
+        "to": 2,
+        "kind": "uses_image"
+      },
+      {
+        "id": 1,
+        "from": 3,
+        "to": 1,
+        "kind": "has_access_to",
+        "authority_summary": {
+          "trust_zone": "first_party",
+          "identity_scope": "constrained",
+          "permissions_summary": "{ contents: read }"
+        }
+      },
+      {
+        "id": 2,
+        "from": 4,
+        "to": 1,
+        "kind": "has_access_to",
+        "authority_summary": {
+          "trust_zone": "first_party",
+          "identity_scope": "constrained",
+          "permissions_summary": "{ contents: read }"
+        }
+      },
+      {
+        "id": 3,
+        "from": 6,
+        "to": 5,
+        "kind": "uses_image"
+      },
+      {
+        "id": 4,
+        "from": 6,
+        "to": 1,
+        "kind": "has_access_to",
+        "authority_summary": {
+          "trust_zone": "first_party",
+          "identity_scope": "constrained",
+          "permissions_summary": "{ contents: read }"
+        }
+      },
+      {
+        "id": 5,
+        "from": 6,
+        "to": 7,
+        "kind": "produces"
+      },
+      {
+        "id": 6,
+        "from": 10,
+        "to": 9,
+        "kind": "uses_image"
+      },
+      {
+        "id": 7,
+        "from": 10,
+        "to": 8,
+        "kind": "has_access_to",
+        "authority_summary": {
+          "trust_zone": "first_party",
+          "identity_scope": "broad",
+          "permissions_summary": "{ contents: read, id-token: write }"
+        }
+      },
+      {
+        "id": 8,
+        "from": 7,
+        "to": 10,
+        "kind": "consumes"
+      },
+      {
+        "id": 9,
+        "from": 12,
+        "to": 11,
+        "kind": "uses_image"
+      },
+      {
+        "id": 10,
+        "from": 12,
+        "to": 8,
+        "kind": "has_access_to",
+        "authority_summary": {
+          "trust_zone": "first_party",
+          "identity_scope": "broad",
+          "permissions_summary": "{ contents: read, id-token: write }"
+        }
+      },
+      {
+        "id": 11,
+        "from": 12,
+        "to": 13,
+        "kind": "has_access_to"
+      },
+      {
+        "id": 12,
+        "from": 12,
+        "to": 14,
+        "kind": "has_access_to"
+      },
+      {
+        "id": 13,
+        "from": 12,
+        "to": 15,
+        "kind": "has_access_to"
+      }
+    ],
+    "completeness": "complete",
+    "metadata": {
+      "platform": "github-actions",
+      "trigger": "push",
+      "triggers": "push"
+    }
+  },
+  "findings": [
+    {
+      "rule_id": "authority_propagation",
+      "severity": "critical",
+      "category": "authority_propagation",
+      "path": {
+        "source": 1,
+        "sink": 7,
+        "edges": [
+          5
+        ],
+        "crossed_boundary": true,
+        "boundary_crossing": [
+          "first_party",
+          "third_party"
+        ]
+      },
+      "nodes_involved": [
+        1,
+        2,
+        5,
+        7,
+        10,
+        9
+      ],
+      "message": "GITHUB_TOKEN (build) reaches 5 sinks via authority propagation: [actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683, actions/upload-artifact@b4b15b8c7c6ac21ea08fcf65892d2ee8f75cf882, release-bundle, Download release bundle, actions/download-artifact@fa0a91b85d4f404e444e00e005971372dc801d16]",
+      "recommendation": {
+        "type": "tsafe_remediation",
+        "command": "tsafe exec --ns <scoped-namespace> -- <command>",
+        "explanation": "Scope GITHUB_TOKEN (build) to only the steps that need it"
+      },
+      "source": "built-in",
+      "finding_group_id": "6d1291c8-be68-5d03-b8de-09c5b3cd1586",
+      "confidence_scope": "yaml_only",
+      "authority_kinds": [
+        "job_token"
+      ],
+      "fingerprint": "67a0526a1c403902cd5b1619973a4a01",
+      "suppression_key": "sk1_f07ca92be0509ae44a8363a6f9453d36"
+    },
+    {
+      "rule_id": "authority_propagation",
+      "severity": "critical",
+      "category": "authority_propagation",
+      "path": {
+        "source": 8,
+        "sink": 9,
+        "edges": [
+          6
+        ],
+        "crossed_boundary": true,
+        "boundary_crossing": [
+          "first_party",
+          "third_party"
+        ]
+      },
+      "nodes_involved": [
+        8,
+        9,
+        11
+      ],
+      "message": "GITHUB_TOKEN (deploy) reaches 2 sinks via authority propagation: [actions/download-artifact@fa0a91b85d4f404e444e00e005971372dc801d16, vendor/deploy-action@9f3a5c1b2d7e4f60a8b9c0d1e2f3a4b5c6d7e8f9]",
+      "recommendation": {
+        "type": "tsafe_remediation",
+        "command": "tsafe exec --ns <scoped-namespace> -- <command>",
+        "explanation": "Scope GITHUB_TOKEN (deploy) to only the steps that need it"
+      },
+      "source": "built-in",
+      "finding_group_id": "b2822926-2647-5950-a4dd-25ae88827c41",
+      "confidence_scope": "yaml_only",
+      "authority_kinds": [
+        "oidc_identity"
+      ],
+      "fingerprint": "539248e7a654a588858de4f20cd3cf23",
+      "suppression_key": "sk1_884ecfa5f5b4f915a6ae8e44228acbe6"
+    },
+    {
+      "rule_id": "authority_propagation",
+      "severity": "high",
+      "category": "authority_propagation",
+      "path": {
+        "source": 13,
+        "sink": 11,
+        "edges": [
+          9
+        ],
+        "crossed_boundary": true,
+        "boundary_crossing": [
+          "first_party",
+          "third_party"
+        ]
+      },
+      "nodes_involved": [
+        13,
+        11
+      ],
+      "message": "CLOUD_DEPLOY_TOKEN propagated to vendor/deploy-action@9f3a5c1b2d7e4f60a8b9c0d1e2f3a4b5c6d7e8f9 across trust boundary",
+      "recommendation": {
+        "type": "tsafe_remediation",
+        "command": "tsafe exec --ns <scoped-namespace> -- <command>",
+        "explanation": "Scope CLOUD_DEPLOY_TOKEN to only the steps that need it"
+      },
+      "source": "built-in",
+      "finding_group_id": "6f74e12a-8a73-580e-bc4a-d0d750498ba9",
+      "confidence_scope": "yaml_only",
+      "authority_kinds": [
+        "credential_named_variable"
+      ],
+      "fingerprint": "2b990c5dfb662b8da1a698936322a9b5",
+      "suppression_key": "sk1_4ff8f93308e2bc53e15eb9f3dc0b7c35"
+    },
+    {
+      "rule_id": "authority_propagation",
+      "severity": "high",
+      "category": "authority_propagation",
+      "path": {
+        "source": 14,
+        "sink": 11,
+        "edges": [
+          9
+        ],
+        "crossed_boundary": true,
+        "boundary_crossing": [
+          "first_party",
+          "third_party"
+        ]
+      },
+      "nodes_involved": [
+        14,
+        11
+      ],
+      "message": "PROD_API_KEY propagated to vendor/deploy-action@9f3a5c1b2d7e4f60a8b9c0d1e2f3a4b5c6d7e8f9 across trust boundary",
+      "recommendation": {
+        "type": "tsafe_remediation",
+        "command": "tsafe exec --ns <scoped-namespace> -- <command>",
+        "explanation": "Scope PROD_API_KEY to only the steps that need it"
+      },
+      "source": "built-in",
+      "finding_group_id": "26de391b-e396-56d3-aac6-5b235a218911",
+      "confidence_scope": "yaml_only",
+      "authority_kinds": [
+        "credential_named_variable"
+      ],
+      "fingerprint": "fe240df8a1b8e9e85e13da8254e09ca4",
+      "suppression_key": "sk1_e7e8ec8e74200d15eb6ddc5096d9d65b"
+    },
+    {
+      "rule_id": "authority_propagation",
+      "severity": "high",
+      "category": "authority_propagation",
+      "path": {
+        "source": 15,
+        "sink": 11,
+        "edges": [
+          9
+        ],
+        "crossed_boundary": true,
+        "boundary_crossing": [
+          "first_party",
+          "third_party"
+        ]
+      },
+      "nodes_involved": [
+        15,
+        11
+      ],
+      "message": "RELEASE_TOKEN propagated to vendor/deploy-action@9f3a5c1b2d7e4f60a8b9c0d1e2f3a4b5c6d7e8f9 across trust boundary",
+      "recommendation": {
+        "type": "tsafe_remediation",
+        "command": "tsafe exec --ns <scoped-namespace> -- <command>",
+        "explanation": "Scope RELEASE_TOKEN to only the steps that need it"
+      },
+      "source": "built-in",
+      "finding_group_id": "575951fa-949f-5db9-a209-c32b3f2b60f3",
+      "confidence_scope": "yaml_only",
+      "authority_kinds": [
+        "credential_named_variable"
+      ],
+      "fingerprint": "b8f5ead8f1b2669cf6fe81ff0c5dd209",
+      "suppression_key": "sk1_8a7ad119f170a17f331d5a12dfb23b7d"
+    },
+    {
+      "rule_id": "over_privileged_identity",
+      "severity": "high",
+      "category": "over_privileged_identity",
+      "nodes_involved": [
+        8,
+        10,
+        12
+      ],
+      "message": "GITHUB_TOKEN (deploy) has broad scope (permissions: '{ contents: read, id-token: write }') — likely broader than needed",
+      "recommendation": {
+        "type": "reduce_permissions",
+        "current": "{ contents: read, id-token: write }",
+        "minimum": "{ contents: read }"
+      },
+      "source": "built-in",
+      "finding_group_id": "29ee7a70-d1eb-5c13-bc1e-dd689b16ff60",
+      "time_to_fix": "small",
+      "confidence_scope": "yaml_only",
+      "authority_kinds": [
+        "oidc_identity"
+      ],
+      "fingerprint": "920431f81df64b4eb297b5088a9f5c4b",
+      "suppression_key": "sk1_54e124673cbaa972e1e490576863adb7"
+    },
+    {
+      "rule_id": "long_lived_credential",
+      "severity": "low",
+      "category": "long_lived_credential",
+      "nodes_involved": [
+        14
+      ],
+      "message": "'PROD_API_KEY' looks like a long-lived static credential",
+      "recommendation": {
+        "type": "federate_identity",
+        "static_secret": "PROD_API_KEY",
+        "oidc_provider": "GitHub Actions OIDC (id-token: write)"
+      },
+      "source": "built-in",
+      "finding_group_id": "995de75b-d9f8-5063-9e6b-970a29abc2bd",
+      "time_to_fix": "large",
+      "confidence_scope": "yaml_only",
+      "authority_kinds": [
+        "credential_named_variable"
+      ],
+      "fingerprint": "6bc5daea20d1ef4dddde0757c0571aec",
+      "suppression_key": "sk1_1cd273e8d02ecb1949d8da976e91eaf0"
+    },
+    {
+      "rule_id": "uplift_without_attestation",
+      "severity": "info",
+      "category": "uplift_without_attestation",
+      "nodes_involved": [
+        10,
+        12,
+        8
+      ],
+      "message": "2 step(s) use OIDC/federated identity but no provenance attestation step was detected — artifact integrity cannot be verified",
+      "recommendation": {
+        "type": "manual",
+        "action": "Add 'actions/attest-build-provenance' after your build step (GHA) to provide SLSA provenance. See https://docs.github.com/en/actions/security-guides/using-artifact-attestations"
+      },
+      "source": "built-in",
+      "finding_group_id": "fb8d46e7-c2bc-52b3-9eaa-8ec5b8f85176",
+      "confidence_scope": "yaml_only",
+      "runtime_preconditions": [
+        "downstream identity provider accepts the issued OIDC token",
+        "the configured audience or cloud role grants useful authority"
+      ],
+      "authority_kinds": [
+        "oidc_identity"
+      ],
+      "fingerprint": "cb3bb9d9aeee5fa86a57cf0a87945969",
+      "suppression_key": "sk1_06985d6f1938942357447f95f6c6ee6b"
+    }
+  ],
+  "summary": {
+    "total_findings": 8,
+    "critical": 2,
+    "high": 4,
+    "medium": 0,
+    "low": 1,
+    "info": 1,
+    "total_nodes": 16,
+    "total_edges": 14,
+    "completeness": "complete",
+    "graph_risk_summary": {
+      "authority_roots": 6,
+      "untrusted_sinks": 0,
+      "mutable_refs": 0,
+      "publication_adjacent_sinks": 3,
+      "delegation_hops": 0,
+      "protected_resource_categories": [
+        "identity",
+        "oidc_identity",
+        "secret"
+      ]
+    }
+  }
+}
