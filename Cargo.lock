@@ -1464,6 +1464,8 @@ checksum = "112b39cec0b298b6c1999fee3e31427f74f676e4cb9879ed1a121b43661a4154"
 [[package]]
 name = "mcpact-audit"
 version = "0.2.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "f5328d443c713935dfe7e4ab4ff0d6d1c7aaf4109305339fa8bfb01e463be8c9"
 dependencies = [
  "async-trait",
  "chrono",
@@ -1480,6 +1482,8 @@ dependencies = [
 [[package]]
 name = "mcpact-core"
 version = "0.2.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "81524b69bccef40dc6ca86f7a26ef0e0e8206bf8c0fe76ddd1c8d6945974eb44"
 dependencies = [
  "schemars",
  "serde",
@@ -1490,6 +1494,8 @@ dependencies = [
 [[package]]
 name = "mcpact-manifest"
 version = "0.2.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "11e99938ab740806c785ec2f0d12cfeaa1934fa9bae74335d78b3e6413e47e5b"
 dependencies = [
  "base64",
  "camino",
@@ -1507,6 +1513,8 @@ dependencies = [
 [[package]]
 name = "mcpact-mcp"
 version = "0.2.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "73c0031964ad16d4ce6f4ef84a0c2f86f3ebb815ae5ab5c155779262e124b6a3"
 dependencies = [
  "async-trait",
  "mcpact-core",
@@ -1521,6 +1529,8 @@ dependencies = [
 [[package]]
 name = "mcpact-policy"
 version = "0.2.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "fb5a0baee7733d95c10ebade9d3b00f0abe9f97537d41f8e3cc349c06bc70e2f"
 dependencies = [
  "camino",
  "mcpact-core",
@@ -1533,6 +1543,8 @@ dependencies = [
 [[package]]
 name = "mcpact-runtime"
 version = "0.2.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "1b331a2534659048ac60725962d0f3bcd25f6d5bb285c5960bcc8dc4c1a5ebea"
 dependencies = [
  "chrono",
  "mcpact-core",
