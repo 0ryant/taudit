@@ -64,7 +64,7 @@ npm run preflight
 The packaged artifact is:
 
 ```text
-dist/algol.taudit-azure-pipelines-0.1.8.vsix
+dist/algol.taudit-azure-pipelines-0.1.10.vsix
 ```
 
 This repo also carries a dedicated smoke lane:
@@ -111,7 +111,7 @@ steps:
     displayName: Verify pipeline policy
     inputs:
       mode: verify
-      version: 1.1.4
+      version: 1.1.5
       policy: .taudit/policy/
       paths: |
         azure-pipelines.yml
@@ -190,6 +190,7 @@ steps:
 `Taudit@1` is a thin typed adapter over the `taudit` CLI.
 
 - Default mode: `verify`
+- Default taudit version: `1.1.5`
 - Default platform: `auto`
 - Default paths: `azure-pipelines.yml`
 - No raw args or shell passthrough

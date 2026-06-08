@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.1.10
+
+- Updated the default pinned `taudit` binary version to `1.1.5` across the task
+  metadata, runtime input normalization, and Marketplace-facing examples.
+- Bumped the Azure DevOps task patch metadata for the refreshed default.
+
 ## 0.1.9
 
 - Refreshed the Azure DevOps README and Marketplace overview to match the

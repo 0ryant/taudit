@@ -5,6 +5,12 @@ import { createRequire } from "node:module";
 const require = createRequire(import.meta.url);
 const { normalizeInputs } = require("../Taudit/lib/inputs");
 
+test("defaults to the current pinned taudit version", () => {
+  const input = normalizeInputs({ mode: "scan", paths: "azure-pipelines.yml" }, {});
+
+  assert.equal(input.version, "1.1.5");
+});
+
 test("verify requires policy", () => {
   assert.throws(
     () => normalizeInputs({ mode: "verify", paths: "azure-pipelines.yml" }, {}),
