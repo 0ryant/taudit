@@ -4971,8 +4971,15 @@ fn normalise_line_endings(s: String) -> String {
 }
 
 fn read_text_file_capped(path: &Path) -> Result<String> {
-    let metadata = std::fs::metadata(path)
+    // Use symlink_metadata (does NOT follow symlinks) and refuse symlinked
+    // inputs, matching remediate::read_text_file_capped. An explicitly-passed
+    // symlinked workflow path must not let a scan read outside the intended
+    // directory.
+    let metadata = std::fs::symlink_metadata(path)
         .with_context(|| format!("Failed to read metadata for {}", path.display()))?;
+    if metadata.file_type().is_symlink() {
+        anyhow::bail!("refusing to read symlink {}", path.display());
+    }
     if metadata.len() > MAX_INPUT_BYTES {
         anyhow::bail!(
             "input file {} exceeds {} byte limit ({} bytes)",

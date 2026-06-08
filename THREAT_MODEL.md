@@ -218,16 +218,70 @@ write access to the working directory and are accepted as local-privilege-parity
 
 ---
 
+## 4. Azure DevOps variable-group enrichment — outbound PAT egress
+
+### What it does
+
+When an Azure DevOps pipeline is parsed with an org, project, and Personal
+Access Token (PAT) supplied (via `--ado-org` / `--ado-project` / `--ado-pat`,
+or the `TAUDIT_ADO_PAT` environment variable), taudit issues one HTTPS GET to
+the Azure DevOps REST API:
+
+```
+{org_base}/{project}/_apis/distributedtask/variablegroups?api-version=7.1
+```
+
+The PAT is base64-encoded into an HTTP Basic `Authorization` header on that
+request. This is the only subsystem that transmits a secret. When the PAT is
+absent the request is never made and enrichment falls back to static modelling.
+
+### Trust assumptions
+
+| Component | Trusted? | Notes |
+|---|---|---|
+| Azure DevOps TLS certificate | Yes | Verified by the OS/rustls trust store |
+| `org` value (host/scheme) | No | Operator-supplied; validated before any PAT egress |
+| Network path (DNS, routers) | No | Mitigated by mandatory TLS + host allowlist |
+| Variable-group JSON response | Partially | Only group names/keys are read; never executed |
+
+### Threats and mitigations
+
+- **PAT exfiltration over plaintext (`http://`)**: a plain-HTTP `org` value
+  would send the PAT in cleartext. *Mitigation*: `resolve_ado_org_base` rejects
+  any `http://` org outright.
+- **PAT exfiltration to an unintended host**: a typo or attacker-supplied
+  `org` could direct the PAT to an arbitrary `https://` host. *Mitigation*: an
+  explicit `https://` org is accepted only if its host is `dev.azure.com` or a
+  `*.visualstudio.com` host; userinfo (`@`) and port tricks are stripped before
+  the allowlist check. A bare org defaults to `https://dev.azure.com/{org}`.
+- **Host/URL leakage in diagnostics**: transport-error strings can embed the
+  request URL. *Mitigation*: `map_ureq_error` emits a generic host-free message
+  for transport errors, so partial-graph warnings (JSON/SARIF/terminal) never
+  echo the host or URL. The PAT is never placed in the URL.
+
+### Residual risk
+
+The PAT lives in process memory for the duration of the scan. taudit does not
+write it to disk, logs, or output artefacts. Operators who pass the PAT via a
+shell flag (rather than `TAUDIT_ADO_PAT`) may expose it via process listings or
+shell history; the environment variable is the recommended channel.
+
+---
+
 ## Out of scope
 
 - Privilege escalation: taudit never requests elevated privileges.
 - Network listeners: taudit never binds a port or socket.
-- Credential storage: taudit reads no secrets and writes none. The version-check
-  call carries only the `User-Agent` header (tool name and version).
+- Credential storage: taudit never persists secrets to disk. It does, however,
+  read one credential in memory — the Azure DevOps PAT supplied via `--ado-pat`
+  or `TAUDIT_ADO_PAT` — and attaches it to the variable-group enrichment request
+  (see section 3). The version-check call carries only the `User-Agent` header
+  (tool name and version).
 - Multi-tenant use: taudit is a single-user CLI. Running it in a shared environment
   where other users control input files is outside the intended deployment model.
 
 ---
 
-*Last updated: 2026-04-26. Review when any of the following change:*
-*the HTTP client, YAML parser, write-path commands, subprocess invocations, or backup schema.*
+*Last updated: 2026-06-08. Review when any of the following change:*
+*the HTTP client, YAML parser, write-path commands, subprocess invocations, backup schema,*
+*or the Azure DevOps variable-group enrichment subsystem (PAT egress).*

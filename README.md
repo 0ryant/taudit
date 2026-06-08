@@ -560,7 +560,14 @@ The full output catalogue is in [Outputs](#outputs) above. The stable JSON repor
 - Not a secret scanner (use [gitleaks](https://github.com/gitleaks/gitleaks))
 - Not a CVE scanner (use [trivy](https://github.com/aquasecurity/trivy))
 - Not a policy engine (use [checkov](https://github.com/bridgecrewio/checkov))
-- Not a runtime monitor — taudit reads pipeline YAML, offline, always
+- Not a runtime monitor — taudit reads pipeline YAML statically (no agent in your pipeline)
+
+Network use: taudit runs offline by default. Two subsystems make outbound HTTPS
+requests, both opt-in/suppressible: the crates.io version check (disable with
+`TAUDIT_NO_UPDATE_CHECK=1` or `CI=true`) and Azure DevOps variable-group
+enrichment, which is made only when an ADO PAT is supplied and sends the PAT to
+the allowlisted Azure DevOps host over TLS. See [THREAT_MODEL.md](THREAT_MODEL.md)
+for the full egress and secret-handling boundary.
 
 taudit models a finite set of authority primitives. When every primitive is captured and every failure class has invariants, the model is complete. Unlike CVE databases, this problem has an end. See [`docs/positioning.md`](docs/positioning.md) for why this matters and how taudit fits into a wider stack.
 

@@ -545,11 +545,7 @@ fn fetch_variable_group_index(ctx: &AdoParserContext) -> Result<AdoVariableGroup
         .filter(|v| !v.is_empty())
         .ok_or_else(|| "missing PAT".to_string())?;
 
-    let org_base = if org.starts_with("http://") || org.starts_with("https://") {
-        org.trim_end_matches('/').to_string()
-    } else {
-        format!("https://dev.azure.com/{}", org.trim_matches('/'))
-    };
+    let org_base = resolve_ado_org_base(org)?;
     let project_segment = project.replace(' ', "%20");
     let url = format!(
         "{org_base}/{project_segment}/_apis/distributedtask/variablegroups?api-version=7.1"
@@ -572,10 +568,80 @@ fn fetch_variable_group_index(ctx: &AdoParserContext) -> Result<AdoVariableGroup
     parse_variable_group_index_from_json(&body)
 }
 
+/// Resolve an operator-supplied ADO `org` value into a validated, TLS-only
+/// base URL. The Azure DevOps PAT is attached as an `Authorization` header to
+/// the request built from this base, so the scheme and host MUST be validated
+/// before any credential is transmitted:
+///
+/// * a bare org (no scheme) is expanded to `https://dev.azure.com/{org}`;
+/// * an explicit `http://` URL is rejected — sending a PAT in cleartext (or to
+///   an MITM-prone plain-HTTP endpoint) is never acceptable;
+/// * an explicit `https://` URL is accepted only if its host is on the Azure
+///   DevOps allowlist (`dev.azure.com` or a `*.visualstudio.com` host), so a
+///   typo or attacker-supplied host cannot exfiltrate the PAT to an arbitrary
+///   server.
+fn resolve_ado_org_base(org: &str) -> Result<String, String> {
+    // Test-only seam: the enrichment integration tests stand up a plain-HTTP
+    // mock on a loopback address (TLS in a unit test is impractical). Allow
+    // http://127.0.0.1[:port] / http://localhost ONLY under cfg(test); the
+    // production boundary below remains strict (no plaintext, host allowlist).
+    #[cfg(test)]
+    if let Some(rest) = org.strip_prefix("http://") {
+        let host = rest
+            .split(['/', '?', '#'])
+            .next()
+            .unwrap_or("")
+            .split(':')
+            .next()
+            .unwrap_or("");
+        if host == "127.0.0.1" || host == "localhost" || host == "[::1]" {
+            return Ok(org.trim_end_matches('/').to_string());
+        }
+    }
+
+    if org.starts_with("http://") {
+        return Err(
+            "ADO org must use https — refusing to send PAT over plaintext http".to_string(),
+        );
+    }
+
+    if let Some(rest) = org.strip_prefix("https://") {
+        // Split scheme-less remainder into host and path.
+        let rest = rest.trim_start_matches('/');
+        let host = rest
+            .split(['/', '?', '#'])
+            .next()
+            .unwrap_or("")
+            .to_ascii_lowercase();
+        // Strip any userinfo / port for the allowlist check.
+        let host = host.rsplit('@').next().unwrap_or(&host);
+        let host = host.split(':').next().unwrap_or(host);
+        if !ado_host_allowed(host) {
+            return Err(format!(
+                "ADO org host '{host}' is not an allowed Azure DevOps host (expected dev.azure.com or *.visualstudio.com) — refusing to send PAT to an unrecognised host"
+            ));
+        }
+        return Ok(org.trim_end_matches('/').to_string());
+    }
+
+    // No scheme: treat as a bare org name and default to TLS dev.azure.com.
+    Ok(format!("https://dev.azure.com/{}", org.trim_matches('/')))
+}
+
+/// Allowlist of hosts that legitimately serve the Azure DevOps REST API.
+fn ado_host_allowed(host: &str) -> bool {
+    host == "dev.azure.com"
+        || host == "visualstudio.com"
+        || host.ends_with(".visualstudio.com")
+}
+
 fn map_ureq_error(err: ureq::Error) -> String {
     match err {
         ureq::Error::StatusCode(code) => format!("HTTP {code} from variablegroups API"),
-        other => other.to_string(),
+        // Transport-error Display strings can embed the full request URL/host;
+        // surface only a generic transport message so the host/URL does not
+        // leak into partial-graph warnings (JSON / SARIF / terminal output).
+        _other => "transport error contacting variablegroups API".to_string(),
     }
 }
 
@@ -2671,6 +2737,53 @@ mod tests {
             commit_sha: None,
         };
         parser.parse(yaml, &source).unwrap()
+    }
+
+    #[test]
+    fn resolve_ado_org_base_expands_bare_org_to_tls_default() {
+        assert_eq!(
+            resolve_ado_org_base("contoso").unwrap(),
+            "https://dev.azure.com/contoso"
+        );
+        assert_eq!(
+            resolve_ado_org_base("/contoso/").unwrap(),
+            "https://dev.azure.com/contoso"
+        );
+    }
+
+    #[test]
+    fn resolve_ado_org_base_rejects_plain_http() {
+        let err = resolve_ado_org_base("http://dev.azure.com/contoso").unwrap_err();
+        assert!(err.contains("https"), "unexpected error: {err}");
+        // The PAT must never be sent over plaintext, even to the real host.
+        assert!(resolve_ado_org_base("http://evil.example.com").is_err());
+    }
+
+    #[test]
+    fn resolve_ado_org_base_rejects_unknown_https_host() {
+        let err = resolve_ado_org_base("https://evil.example.com/contoso").unwrap_err();
+        assert!(err.contains("not an allowed"), "unexpected error: {err}");
+        // Userinfo / port tricks must not bypass the host allowlist.
+        assert!(resolve_ado_org_base("https://dev.azure.com@evil.example.com").is_err());
+        assert!(resolve_ado_org_base("https://evil.example.com:443/x").is_err());
+    }
+
+    #[test]
+    fn resolve_ado_org_base_accepts_allowlisted_https_hosts() {
+        assert_eq!(
+            resolve_ado_org_base("https://dev.azure.com/contoso").unwrap(),
+            "https://dev.azure.com/contoso"
+        );
+        assert_eq!(
+            resolve_ado_org_base("https://contoso.visualstudio.com/").unwrap(),
+            "https://contoso.visualstudio.com"
+        );
+    }
+
+    #[test]
+    fn map_ureq_error_reports_status_codes() {
+        let msg = map_ureq_error(ureq::Error::StatusCode(503));
+        assert!(msg.contains("503"), "unexpected message: {msg}");
     }
 
     fn parse_with_ctx(yaml: &str, ctx: &AdoParserContext) -> AuthorityGraph {

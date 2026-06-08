@@ -12,6 +12,10 @@ use std::collections::BTreeSet;
 
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 pub struct TauditRemediateApplyArgs {
+    /// One or more pipeline file paths. Multiple paths may be supplied as a
+    /// single whitespace-separated string; each token is forwarded to the CLI
+    /// as its own argv element (a space-separated list is NOT treated as one
+    /// filename). Paths containing spaces are not supported via this field.
     pub paths: String,
     pub policy: String,
     #[serde(default)]
@@ -104,7 +108,12 @@ impl McpTool for Tool {
         plan.argv.push("remediate".into());
         plan.argv.push("--unstable".into());
         plan.argv.push("apply".into());
-        plan.argv.push(args.paths.to_string());
+        // Split the whitespace-separated path list and push each token as its
+        // own argv element, so a multi-path string is not handed to the CLI as
+        // a single (non-existent) filename.
+        for path in args.paths.split_whitespace() {
+            plan.argv.push(path.to_string());
+        }
         if args.allow_risky {
             plan.argv.push("--allow-risky".into());
         }
