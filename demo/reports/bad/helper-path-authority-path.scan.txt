@@ -1,0 +1,92 @@
+taudit 3.1.0-pre — 1 file
+────────────────────────────────────────────────────────────
+Authority Graph: C:\Users\0ryant\prj\taudit\demo\workflows\helper-path-authority-path.yml
+  Steps: 4 | Secrets: 2 | Actions: 3 | Identities: 1
+
+[CRITICAL] GITHUB_TOKEN reaches 3 sinks via authority propagation: [actions/checkout@v4, actions/setup-node@v4, cloudflare/wrangler-action@v3]
+  Path: GITHUB_TOKEN (identity) → actions/checkout@v4 (action/image)
+  Recommendation: tsafe exec --ns <scoped-namespace> -- <command>
+
+[CRITICAL] CLOUDFLARE_ACCOUNT_ID propagated to cloudflare/wrangler-action@v3 across trust boundary
+  Path: CLOUDFLARE_ACCOUNT_ID (secret) → cloudflare/wrangler-action@v3 (action/image)
+  Recommendation: tsafe exec --ns <scoped-namespace> -- <command>
+
+[CRITICAL] CLOUDFLARE_PAGES_API_TOKEN propagated to cloudflare/wrangler-action@v3 across trust boundary
+  Path: CLOUDFLARE_PAGES_API_TOKEN (secret) → cloudflare/wrangler-action@v3 (action/image)
+  Recommendation: tsafe exec --ns <scoped-namespace> -- <command>
+
+[CRITICAL] Untrusted step 'Checkout source' has direct access to identity 'GITHUB_TOKEN'
+  Nodes: Checkout source (step) → GITHUB_TOKEN (identity)
+  Recommendation: Reduce permissions to minimal required scope
+
+[CRITICAL] Untrusted step 'Setup Node' has direct access to identity 'GITHUB_TOKEN'
+  Nodes: Setup Node (step) → GITHUB_TOKEN (identity)
+  Recommendation: Reduce permissions to minimal required scope
+
+[CRITICAL] Untrusted step 'Publish docs' has direct access to identity 'GITHUB_TOKEN'
+  Nodes: Publish docs (step) → GITHUB_TOKEN (identity)
+  Recommendation: Reduce permissions to minimal required scope
+
+[CRITICAL] Untrusted step 'Publish docs' has direct access to secret 'CLOUDFLARE_ACCOUNT_ID'
+  Nodes: Publish docs (step) → CLOUDFLARE_ACCOUNT_ID (secret)
+  Recommendation: cellos run --network deny-all --broker env:CLOUDFLARE_ACCOUNT_ID
+
+[CRITICAL] Untrusted step 'Publish docs' has direct access to secret 'CLOUDFLARE_PAGES_API_TOKEN'
+  Nodes: Publish docs (step) → CLOUDFLARE_PAGES_API_TOKEN (secret)
+  Recommendation: cellos run --network deny-all --broker env:CLOUDFLARE_PAGES_API_TOKEN
+
+[HIGH] GITHUB_TOKEN has broad scope (permissions: '{ contents: read, id-token: write }') — likely broader than needed
+  Nodes: GITHUB_TOKEN (identity) → Checkout source (step) → Setup Node (step) → Extend PATH before deploy (step) …(+1 more)
+  Recommendation: Reduce permissions to { contents: read }
+
+[HIGH] cloudflare/wrangler-action@v3 is not pinned to a SHA digest
+  Nodes: cloudflare/wrangler-action@v3 (action/image)
+  Recommendation: Pin to cloudflare/wrangler-action@<sha256-digest>
+
+[HIGH] Step 'Extend PATH before deploy' writes to the environment gate while holding authority (GITHUB_TOKEN) — secrets may leak into pipeline environment
+  Nodes: Extend PATH before deploy (step) → GITHUB_TOKEN (identity)
+  Recommendation: Avoid writing secrets or attacker-controlled values to $GITHUB_ENV / $GITHUB_PATH / pipeline variables. Use explicit step outputs with narrow scoping instead.
+
+[HIGH] Earlier step 'Extend PATH before deploy' mutates GITHUB_PATH before 'Publish docs' runs npx/wrangler via PATH and passes sensitive authority through stdin
+  Nodes: Extend PATH before deploy (step) → Publish docs (step) → GITHUB_TOKEN (identity) → CLOUDFLARE_ACCOUNT_ID (secret) …(+1 more)
+  Recommendation: Resolve `npx/wrangler` to a trusted absolute path before secrets are materialized, reject helpers under workspace/temp paths, or split the PATH-mutating step into a separate job.
+
+[HIGH] Earlier step 'Extend PATH before deploy' mutates GITHUB_PATH before 'Publish docs' runs npx/wrangler via PATH and passes sensitive authority through environment variables
+  Nodes: Extend PATH before deploy (step) → Publish docs (step) → GITHUB_TOKEN (identity) → CLOUDFLARE_ACCOUNT_ID (secret) …(+1 more)
+  Recommendation: Resolve `npx/wrangler` to a trusted absolute path before secrets are materialized, reject helpers under workspace/temp paths, or split the PATH-mutating step into a separate job.
+
+[HIGH] Earlier step 'Extend PATH before deploy' mutates GITHUB_PATH before later action 'Publish docs' materializes authority and resolves helper `npx/wrangler` through PATH
+  Nodes: Extend PATH before deploy (step) → Publish docs (step) → GITHUB_TOKEN (identity) → CLOUDFLARE_ACCOUNT_ID (secret) …(+1 more)
+  Recommendation: Treat this as an authority-edge lead: resolve helpers to trusted absolute paths before credentials are materialized, or split mutable PATH setup into an authority-free job.
+
+[MEDIUM] actions/checkout@v4 is not pinned to a SHA digest
+  Nodes: actions/checkout@v4 (action/image)
+  Recommendation: Pin to actions/checkout@<sha256-digest>
+
+[MEDIUM] actions/setup-node@v4 is not pinned to a SHA digest
+  Nodes: actions/setup-node@v4 (action/image)
+  Recommendation: Pin to actions/setup-node@<sha256-digest>
+
+[MEDIUM] [action_major_version_pin_without_sha] actions/checkout@v4 is pinned only to a mutable major tag; pin to a full commit SHA
+  Nodes: actions/checkout@v4 (action/image)
+  Recommendation: Pin to actions/checkout@<40-char-sha>
+
+[MEDIUM] [action_major_version_pin_without_sha] actions/setup-node@v4 is pinned only to a mutable major tag; pin to a full commit SHA
+  Nodes: actions/setup-node@v4 (action/image)
+  Recommendation: Pin to actions/setup-node@<40-char-sha>
+
+[MEDIUM] [action_major_version_pin_without_sha] cloudflare/wrangler-action@v3 is pinned only to a mutable major tag; pin to a full commit SHA
+  Nodes: cloudflare/wrangler-action@v3 (action/image)
+  Recommendation: Pin to cloudflare/wrangler-action@<40-char-sha>
+
+[MEDIUM] Earlier step 'Extend PATH before deploy' mutates GITHUB_PATH before 'Publish docs' resolves security-sensitive helper `npx/wrangler` by name
+  Nodes: Extend PATH before deploy (step) → Publish docs (step)
+  Recommendation: Pin `npx/wrangler` to an action-owned or runner-toolcache absolute path before invoking it with credentials.
+
+[INFO] 4 step(s) use OIDC/federated identity but no provenance attestation step was detected — artifact integrity cannot be verified
+  Nodes: Checkout source (step) → Setup Node (step) → Extend PATH before deploy (step) → Publish docs (step) …(+1 more)
+  Recommendation: Add 'actions/attest-build-provenance' after your build step (GHA) to provide SLSA provenance. See https://docs.github.com/en/actions/security-guides/using-artifact-attestations
+
+────────────────────────────────────────────────────────────
+Summary 8 critical  6 high  6 medium
+  Files with findings: 1 / 1

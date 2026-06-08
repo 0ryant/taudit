@@ -1,0 +1,20 @@
+Authority Map: C:\Users\0ryant\prj\taudit\demo\workflows\helper-path-authority-path.yml
+
+  columns 1-2 of 3
+Step                       Zone  GITHUB_TOKEN  CLOUDFLARE_ACCOUN…
+-------------------------  ----  ------------  ------------------
+Checkout source            ?          ✓                ·         
+Setup Node                 ?          ✓                ·         
+Extend PATH before deploy  1P         ✓                ·         
+Publish docs               ?          ✓                ✓         
+
+  columns 3-3 of 3
+Step                       Zone  CLOUDFLARE_PAGES_…
+-------------------------  ----  ------------------
+Checkout source            ?             ·         
+Setup Node                 ?             ·         
+Extend PATH before deploy  1P            ·         
+Publish docs               ?             ✓         
+
+note: column names truncated to 18 chars
+

@@ -1,0 +1,902 @@
+{
+  "schema_version": "1.0.0",
+  "schema_uri": "https://taudit.dev/schemas/taudit-report.schema.json",
+  "graph": {
+    "source": {
+      "file": "C:\\Users\\0ryant\\prj\\taudit\\demo\\workflows\\developer-tool-authority-path.yml"
+    },
+    "nodes": [
+      {
+        "id": 0,
+        "kind": "identity",
+        "name": "GITHUB_TOKEN",
+        "trust_zone": "first_party",
+        "metadata": {
+          "identity_scope": "broad",
+          "oidc": "true",
+          "permissions": "{ contents: write, id-token: write, packages: write }"
+        }
+      },
+      {
+        "id": 1,
+        "kind": "image",
+        "name": "actions/checkout@v4",
+        "trust_zone": "untrusted",
+        "metadata": {}
+      },
+      {
+        "id": 2,
+        "kind": "step",
+        "name": "Checkout source",
+        "trust_zone": "untrusted",
+        "metadata": {
+          "checkout_self": "true",
+          "gha_action": "actions/checkout",
+          "gha_runs_on": "ubuntu-latest",
+          "job_name": "build"
+        }
+      },
+      {
+        "id": 3,
+        "kind": "step",
+        "name": "Install and build",
+        "trust_zone": "first_party",
+        "metadata": {
+          "gha_runs_on": "ubuntu-latest",
+          "job_name": "build",
+          "script_body": "npm ci\nnpm run build\n"
+        }
+      },
+      {
+        "id": 4,
+        "kind": "image",
+        "name": "actions/upload-artifact@v4",
+        "trust_zone": "untrusted",
+        "metadata": {}
+      },
+      {
+        "id": 5,
+        "kind": "step",
+        "name": "Upload release bundle",
+        "trust_zone": "untrusted",
+        "metadata": {
+          "gha_action": "actions/upload-artifact",
+          "gha_runs_on": "ubuntu-latest",
+          "gha_with_inputs": "name=release-bundle\npath=dist/",
+          "job_name": "build"
+        }
+      },
+      {
+        "id": 6,
+        "kind": "artifact",
+        "name": "release-bundle",
+        "trust_zone": "untrusted",
+        "metadata": {}
+      },
+      {
+        "id": 7,
+        "kind": "image",
+        "name": "actions/download-artifact@v4",
+        "trust_zone": "untrusted",
+        "metadata": {}
+      },
+      {
+        "id": 8,
+        "kind": "step",
+        "name": "Download release bundle",
+        "trust_zone": "untrusted",
+        "metadata": {
+          "downloads_artifact": "true",
+          "gha_action": "actions/download-artifact",
+          "gha_runs_on": "ubuntu-latest",
+          "gha_with_inputs": "name=release-bundle",
+          "job_name": "deploy"
+        }
+      },
+      {
+        "id": 9,
+        "kind": "image",
+        "name": "vendor/deploy-action@v2",
+        "trust_zone": "untrusted",
+        "metadata": {}
+      },
+      {
+        "id": 10,
+        "kind": "step",
+        "name": "Third-party production deploy",
+        "trust_zone": "untrusted",
+        "metadata": {
+          "gha_action": "vendor/deploy-action",
+          "gha_env_assignments": "CLOUD_DEPLOY_TOKEN=${{ secrets.CLOUD_DEPLOY_TOKEN }}",
+          "gha_runs_on": "ubuntu-latest",
+          "gha_with_inputs": "prod-api-key=${{ secrets.PROD_API_KEY }}\nrelease-token=${{ secrets.RELEASE_TOKEN }}",
+          "job_name": "deploy"
+        }
+      },
+      {
+        "id": 11,
+        "kind": "secret",
+        "name": "CLOUD_DEPLOY_TOKEN",
+        "trust_zone": "first_party",
+        "metadata": {}
+      },
+      {
+        "id": 12,
+        "kind": "secret",
+        "name": "PROD_API_KEY",
+        "trust_zone": "first_party",
+        "metadata": {}
+      },
+      {
+        "id": 13,
+        "kind": "secret",
+        "name": "RELEASE_TOKEN",
+        "trust_zone": "first_party",
+        "metadata": {}
+      }
+    ],
+    "edges": [
+      {
+        "id": 0,
+        "from": 2,
+        "to": 1,
+        "kind": "uses_image"
+      },
+      {
+        "id": 1,
+        "from": 2,
+        "to": 0,
+        "kind": "has_access_to",
+        "authority_summary": {
+          "trust_zone": "first_party",
+          "identity_scope": "broad",
+          "permissions_summary": "{ contents: write, id-token: write, packages: write }"
+        }
+      },
+      {
+        "id": 2,
+        "from": 3,
+        "to": 0,
+        "kind": "has_access_to",
+        "authority_summary": {
+          "trust_zone": "first_party",
+          "identity_scope": "broad",
+          "permissions_summary": "{ contents: write, id-token: write, packages: write }"
+        }
+      },
+      {
+        "id": 3,
+        "from": 5,
+        "to": 4,
+        "kind": "uses_image"
+      },
+      {
+        "id": 4,
+        "from": 5,
+        "to": 0,
+        "kind": "has_access_to",
+        "authority_summary": {
+          "trust_zone": "first_party",
+          "identity_scope": "broad",
+          "permissions_summary": "{ contents: write, id-token: write, packages: write }"
+        }
+      },
+      {
+        "id": 5,
+        "from": 5,
+        "to": 6,
+        "kind": "produces"
+      },
+      {
+        "id": 6,
+        "from": 8,
+        "to": 7,
+        "kind": "uses_image"
+      },
+      {
+        "id": 7,
+        "from": 8,
+        "to": 0,
+        "kind": "has_access_to",
+        "authority_summary": {
+          "trust_zone": "first_party",
+          "identity_scope": "broad",
+          "permissions_summary": "{ contents: write, id-token: write, packages: write }"
+        }
+      },
+      {
+        "id": 8,
+        "from": 6,
+        "to": 8,
+        "kind": "consumes"
+      },
+      {
+        "id": 9,
+        "from": 10,
+        "to": 9,
+        "kind": "uses_image"
+      },
+      {
+        "id": 10,
+        "from": 10,
+        "to": 0,
+        "kind": "has_access_to",
+        "authority_summary": {
+          "trust_zone": "first_party",
+          "identity_scope": "broad",
+          "permissions_summary": "{ contents: write, id-token: write, packages: write }"
+        }
+      },
+      {
+        "id": 11,
+        "from": 10,
+        "to": 11,
+        "kind": "has_access_to"
+      },
+      {
+        "id": 12,
+        "from": 10,
+        "to": 12,
+        "kind": "has_access_to"
+      },
+      {
+        "id": 13,
+        "from": 10,
+        "to": 13,
+        "kind": "has_access_to"
+      }
+    ],
+    "completeness": "complete",
+    "metadata": {
+      "platform": "github-actions",
+      "trigger": "push",
+      "triggers": "push"
+    }
+  },
+  "findings": [
+    {
+      "rule_id": "authority_propagation",
+      "severity": "critical",
+      "category": "authority_propagation",
+      "path": {
+        "source": 0,
+        "sink": 1,
+        "edges": [
+          0
+        ],
+        "crossed_boundary": true,
+        "boundary_crossing": [
+          "first_party",
+          "untrusted"
+        ]
+      },
+      "nodes_involved": [
+        0,
+        1,
+        4,
+        6,
+        7,
+        9
+      ],
+      "message": "GITHUB_TOKEN reaches 5 sinks via authority propagation: [actions/checkout@v4, actions/upload-artifact@v4, release-bundle, actions/download-artifact@v4, vendor/deploy-action@v2]",
+      "recommendation": {
+        "type": "tsafe_remediation",
+        "command": "tsafe exec --ns <scoped-namespace> -- <command>",
+        "explanation": "Scope GITHUB_TOKEN to only the steps that need it"
+      },
+      "source": "built-in",
+      "finding_group_id": "d89d90d2-27fb-5d76-ad5a-1be56f711c79",
+      "confidence_scope": "yaml_only",
+      "authority_kinds": [
+        "oidc_identity"
+      ],
+      "fingerprint": "4fa220c999e5d65034a0c8c974258892",
+      "suppression_key": "sk1_3be3943a6040eef1ebe0ed0ada9766eb"
+    },
+    {
+      "rule_id": "authority_propagation",
+      "severity": "critical",
+      "category": "authority_propagation",
+      "path": {
+        "source": 11,
+        "sink": 9,
+        "edges": [
+          9
+        ],
+        "crossed_boundary": true,
+        "boundary_crossing": [
+          "first_party",
+          "untrusted"
+        ]
+      },
+      "nodes_involved": [
+        11,
+        9
+      ],
+      "message": "CLOUD_DEPLOY_TOKEN propagated to vendor/deploy-action@v2 across trust boundary",
+      "recommendation": {
+        "type": "tsafe_remediation",
+        "command": "tsafe exec --ns <scoped-namespace> -- <command>",
+        "explanation": "Scope CLOUD_DEPLOY_TOKEN to only the steps that need it"
+      },
+      "source": "built-in",
+      "finding_group_id": "7be73bb0-b3e4-5640-8492-fa0978f730ef",
+      "confidence_scope": "yaml_only",
+      "authority_kinds": [
+        "credential_named_variable"
+      ],
+      "fingerprint": "d2ea6f8e9d3d26f9492e094db62ae27a",
+      "suppression_key": "sk1_f4dac989e2480d42a97cbac5cc7cb89d"
+    },
+    {
+      "rule_id": "authority_propagation",
+      "severity": "critical",
+      "category": "authority_propagation",
+      "path": {
+        "source": 12,
+        "sink": 9,
+        "edges": [
+          9
+        ],
+        "crossed_boundary": true,
+        "boundary_crossing": [
+          "first_party",
+          "untrusted"
+        ]
+      },
+      "nodes_involved": [
+        12,
+        9
+      ],
+      "message": "PROD_API_KEY propagated to vendor/deploy-action@v2 across trust boundary",
+      "recommendation": {
+        "type": "tsafe_remediation",
+        "command": "tsafe exec --ns <scoped-namespace> -- <command>",
+        "explanation": "Scope PROD_API_KEY to only the steps that need it"
+      },
+      "source": "built-in",
+      "finding_group_id": "9c9694ef-b8a3-5822-9734-6b231413ef35",
+      "confidence_scope": "yaml_only",
+      "authority_kinds": [
+        "credential_named_variable"
+      ],
+      "fingerprint": "8b66b87eb614ebf05df64ee8abba6846",
+      "suppression_key": "sk1_ab91613094a8105268096c0449ebbcf7"
+    },
+    {
+      "rule_id": "authority_propagation",
+      "severity": "critical",
+      "category": "authority_propagation",
+      "path": {
+        "source": 13,
+        "sink": 9,
+        "edges": [
+          9
+        ],
+        "crossed_boundary": true,
+        "boundary_crossing": [
+          "first_party",
+          "untrusted"
+        ]
+      },
+      "nodes_involved": [
+        13,
+        9
+      ],
+      "message": "RELEASE_TOKEN propagated to vendor/deploy-action@v2 across trust boundary",
+      "recommendation": {
+        "type": "tsafe_remediation",
+        "command": "tsafe exec --ns <scoped-namespace> -- <command>",
+        "explanation": "Scope RELEASE_TOKEN to only the steps that need it"
+      },
+      "source": "built-in",
+      "finding_group_id": "8366f810-2f00-57b0-a287-70620ff8b367",
+      "confidence_scope": "yaml_only",
+      "authority_kinds": [
+        "credential_named_variable"
+      ],
+      "fingerprint": "f3ee3c8b8b7ca7d56fdff18910596f24",
+      "suppression_key": "sk1_54432dec516a2c148d7ff60c63f55c5b"
+    },
+    {
+      "rule_id": "untrusted_with_authority",
+      "severity": "critical",
+      "category": "untrusted_with_authority",
+      "nodes_involved": [
+        2,
+        0
+      ],
+      "message": "Untrusted step 'Checkout source' has direct access to identity 'GITHUB_TOKEN'",
+      "recommendation": {
+        "type": "reduce_permissions",
+        "current": "{ contents: write, id-token: write, packages: write }",
+        "minimum": "minimal required scope"
+      },
+      "source": "built-in",
+      "finding_group_id": "033de4a0-cc2e-5950-823c-cacb8ba410ef",
+      "confidence_scope": "yaml_only",
+      "authority_kinds": [
+        "oidc_identity"
+      ],
+      "attacker_surface_kinds": [
+        "untrusted_checkout",
+        "untrusted_step"
+      ],
+      "fingerprint": "0eda337ee632238b4013c77353367d2a",
+      "suppression_key": "sk1_423bc07553a690219135dfae40c2f940"
+    },
+    {
+      "rule_id": "untrusted_with_authority",
+      "severity": "critical",
+      "category": "untrusted_with_authority",
+      "nodes_involved": [
+        5,
+        0
+      ],
+      "message": "Untrusted step 'Upload release bundle' has direct access to identity 'GITHUB_TOKEN'",
+      "recommendation": {
+        "type": "reduce_permissions",
+        "current": "{ contents: write, id-token: write, packages: write }",
+        "minimum": "minimal required scope"
+      },
+      "source": "built-in",
+      "finding_group_id": "c2b3a9ae-006e-5a6a-9d74-070eedebb676",
+      "confidence_scope": "yaml_only",
+      "authority_kinds": [
+        "oidc_identity"
+      ],
+      "attacker_surface_kinds": [
+        "untrusted_step"
+      ],
+      "fingerprint": "60d60c704f748fc3d424af1943ddb27d",
+      "suppression_key": "sk1_423bc07553a690219135dfae40c2f940"
+    },
+    {
+      "rule_id": "untrusted_with_authority",
+      "severity": "critical",
+      "category": "untrusted_with_authority",
+      "nodes_involved": [
+        8,
+        0
+      ],
+      "message": "Untrusted step 'Download release bundle' has direct access to identity 'GITHUB_TOKEN'",
+      "recommendation": {
+        "type": "reduce_permissions",
+        "current": "{ contents: write, id-token: write, packages: write }",
+        "minimum": "minimal required scope"
+      },
+      "source": "built-in",
+      "finding_group_id": "537dfbee-5614-526a-9ba2-b7ccb6ce600c",
+      "confidence_scope": "yaml_only",
+      "authority_kinds": [
+        "oidc_identity"
+      ],
+      "attacker_surface_kinds": [
+        "untrusted_step"
+      ],
+      "fingerprint": "1628742a7aa64fbe1db107665eace210",
+      "suppression_key": "sk1_423bc07553a690219135dfae40c2f940"
+    },
+    {
+      "rule_id": "untrusted_with_authority",
+      "severity": "critical",
+      "category": "untrusted_with_authority",
+      "nodes_involved": [
+        10,
+        0
+      ],
+      "message": "Untrusted step 'Third-party production deploy' has direct access to identity 'GITHUB_TOKEN'",
+      "recommendation": {
+        "type": "reduce_permissions",
+        "current": "{ contents: write, id-token: write, packages: write }",
+        "minimum": "minimal required scope"
+      },
+      "source": "built-in",
+      "finding_group_id": "ad115f2b-003a-510b-a10a-028c0feb7474",
+      "confidence_scope": "yaml_only",
+      "authority_kinds": [
+        "oidc_identity"
+      ],
+      "attacker_surface_kinds": [
+        "untrusted_step"
+      ],
+      "fingerprint": "60f30ab672a3a2abb2f01614ff82adbf",
+      "suppression_key": "sk1_423bc07553a690219135dfae40c2f940"
+    },
+    {
+      "rule_id": "untrusted_with_authority",
+      "severity": "critical",
+      "category": "untrusted_with_authority",
+      "nodes_involved": [
+        10,
+        11
+      ],
+      "message": "Untrusted step 'Third-party production deploy' has direct access to secret 'CLOUD_DEPLOY_TOKEN'",
+      "recommendation": {
+        "type": "cellos_remediation",
+        "reason": "Untrusted step 'Third-party production deploy' has direct access to secret 'CLOUD_DEPLOY_TOKEN'",
+        "spec_hint": "cellos run --network deny-all --broker env:CLOUD_DEPLOY_TOKEN"
+      },
+      "source": "built-in",
+      "finding_group_id": "326aa8de-f8ce-5be2-b175-0c8fdae4ffb4",
+      "confidence_scope": "yaml_only",
+      "authority_kinds": [
+        "credential_named_variable"
+      ],
+      "attacker_surface_kinds": [
+        "untrusted_step"
+      ],
+      "fingerprint": "c4d69797174c729fe37e09e0bfcc6e03",
+      "suppression_key": "sk1_517d5e36a84c7281ca3a34c4bdb9db95"
+    },
+    {
+      "rule_id": "untrusted_with_authority",
+      "severity": "critical",
+      "category": "untrusted_with_authority",
+      "nodes_involved": [
+        10,
+        12
+      ],
+      "message": "Untrusted step 'Third-party production deploy' has direct access to secret 'PROD_API_KEY'",
+      "recommendation": {
+        "type": "cellos_remediation",
+        "reason": "Untrusted step 'Third-party production deploy' has direct access to secret 'PROD_API_KEY'",
+        "spec_hint": "cellos run --network deny-all --broker env:PROD_API_KEY"
+      },
+      "source": "built-in",
+      "finding_group_id": "8528af6b-9ff3-5677-8070-56305a7943cd",
+      "confidence_scope": "yaml_only",
+      "authority_kinds": [
+        "credential_named_variable"
+      ],
+      "attacker_surface_kinds": [
+        "untrusted_step"
+      ],
+      "fingerprint": "1c1488d632f0a0b584bdab41b042d5f6",
+      "suppression_key": "sk1_caa182df41d10ec7885f972214c347f5"
+    },
+    {
+      "rule_id": "untrusted_with_authority",
+      "severity": "critical",
+      "category": "untrusted_with_authority",
+      "nodes_involved": [
+        10,
+        13
+      ],
+      "message": "Untrusted step 'Third-party production deploy' has direct access to secret 'RELEASE_TOKEN'",
+      "recommendation": {
+        "type": "cellos_remediation",
+        "reason": "Untrusted step 'Third-party production deploy' has direct access to secret 'RELEASE_TOKEN'",
+        "spec_hint": "cellos run --network deny-all --broker env:RELEASE_TOKEN"
+      },
+      "source": "built-in",
+      "finding_group_id": "c85465c8-51d8-53ac-9374-276dc48a4cba",
+      "confidence_scope": "yaml_only",
+      "authority_kinds": [
+        "credential_named_variable"
+      ],
+      "attacker_surface_kinds": [
+        "untrusted_step"
+      ],
+      "fingerprint": "2524d5d075e61c8fff5874662eaa306f",
+      "suppression_key": "sk1_d1c92fdab7410d911aced357fd1d4c3e"
+    },
+    {
+      "rule_id": "over_privileged_identity",
+      "severity": "high",
+      "category": "over_privileged_identity",
+      "nodes_involved": [
+        0,
+        2,
+        3,
+        5,
+        8,
+        10
+      ],
+      "message": "GITHUB_TOKEN has broad scope (permissions: '{ contents: write, id-token: write, packages: write }') — likely broader than needed",
+      "recommendation": {
+        "type": "reduce_permissions",
+        "current": "{ contents: write, id-token: write, packages: write }",
+        "minimum": "{ contents: read }"
+      },
+      "source": "built-in",
+      "finding_group_id": "96cdc3eb-1784-590f-8cfc-fa4a3b41d49b",
+      "time_to_fix": "small",
+      "confidence_scope": "yaml_only",
+      "authority_kinds": [
+        "oidc_identity"
+      ],
+      "fingerprint": "ecce79fdea8a38705584f9fe081c8285",
+      "suppression_key": "sk1_7a84c2d0cde1874ae4bac31f513c2c19"
+    },
+    {
+      "rule_id": "unpinned_action",
+      "severity": "high",
+      "category": "unpinned_action",
+      "nodes_involved": [
+        9
+      ],
+      "message": "vendor/deploy-action@v2 is not pinned to a SHA digest",
+      "recommendation": {
+        "type": "pin_action",
+        "current": "vendor/deploy-action@v2",
+        "pinned": "vendor/deploy-action@<sha256-digest>"
+      },
+      "source": "built-in",
+      "finding_group_id": "e93f01f5-a9d7-5f92-847c-510b2c1e63bb",
+      "time_to_fix": "trivial",
+      "confidence_scope": "yaml_only",
+      "runtime_preconditions": [
+        "the referenced mutable branch, tag, include, or image can change independently of this repository"
+      ],
+      "attacker_surface_kinds": [
+        "mutable_dependency_ref"
+      ],
+      "fingerprint": "a78e2a19a9ccfe7b3bc297b94bfc9d41",
+      "suppression_key": "sk1_2a91697d8e50fe58dc1716907be016f5"
+    },
+    {
+      "rule_id": "unpinned_action",
+      "severity": "medium",
+      "category": "unpinned_action",
+      "nodes_involved": [
+        1
+      ],
+      "message": "actions/checkout@v4 is not pinned to a SHA digest",
+      "recommendation": {
+        "type": "pin_action",
+        "current": "actions/checkout@v4",
+        "pinned": "actions/checkout@<sha256-digest>"
+      },
+      "source": "built-in",
+      "finding_group_id": "09180630-b3af-5ef1-8c5a-1894d8bb4727",
+      "time_to_fix": "trivial",
+      "confidence_scope": "yaml_only",
+      "runtime_preconditions": [
+        "the referenced mutable branch, tag, include, or image can change independently of this repository"
+      ],
+      "attacker_surface_kinds": [
+        "mutable_dependency_ref"
+      ],
+      "fingerprint": "09cdbdf5025e12bef241b15d4bdf6831",
+      "suppression_key": "sk1_2a91697d8e50fe58dc1716907be016f5"
+    },
+    {
+      "rule_id": "unpinned_action",
+      "severity": "medium",
+      "category": "unpinned_action",
+      "nodes_involved": [
+        4
+      ],
+      "message": "actions/upload-artifact@v4 is not pinned to a SHA digest",
+      "recommendation": {
+        "type": "pin_action",
+        "current": "actions/upload-artifact@v4",
+        "pinned": "actions/upload-artifact@<sha256-digest>"
+      },
+      "source": "built-in",
+      "finding_group_id": "29ac8ebc-50ab-5260-8ce9-ed7498e4fb97",
+      "time_to_fix": "trivial",
+      "confidence_scope": "yaml_only",
+      "runtime_preconditions": [
+        "the referenced mutable branch, tag, include, or image can change independently of this repository"
+      ],
+      "attacker_surface_kinds": [
+        "mutable_dependency_ref"
+      ],
+      "fingerprint": "7d21f146da666df0e60ba962e8cb4cf0",
+      "suppression_key": "sk1_2a91697d8e50fe58dc1716907be016f5"
+    },
+    {
+      "rule_id": "unpinned_action",
+      "severity": "medium",
+      "category": "unpinned_action",
+      "nodes_involved": [
+        7
+      ],
+      "message": "actions/download-artifact@v4 is not pinned to a SHA digest",
+      "recommendation": {
+        "type": "pin_action",
+        "current": "actions/download-artifact@v4",
+        "pinned": "actions/download-artifact@<sha256-digest>"
+      },
+      "source": "built-in",
+      "finding_group_id": "bc9b2d72-c992-5e1f-9bd4-ba14864d626b",
+      "time_to_fix": "trivial",
+      "confidence_scope": "yaml_only",
+      "runtime_preconditions": [
+        "the referenced mutable branch, tag, include, or image can change independently of this repository"
+      ],
+      "attacker_surface_kinds": [
+        "mutable_dependency_ref"
+      ],
+      "fingerprint": "7284ae02ed40163c3dc5736cb7b6d446",
+      "suppression_key": "sk1_2a91697d8e50fe58dc1716907be016f5"
+    },
+    {
+      "rule_id": "action_major_version_pin_without_sha",
+      "severity": "medium",
+      "category": "unpinned_action",
+      "nodes_involved": [
+        1
+      ],
+      "message": "[action_major_version_pin_without_sha] actions/checkout@v4 is pinned only to a mutable major tag; pin to a full commit SHA",
+      "recommendation": {
+        "type": "pin_action",
+        "current": "actions/checkout@v4",
+        "pinned": "actions/checkout@<40-char-sha>"
+      },
+      "source": "built-in",
+      "finding_group_id": "53836b03-7b33-569a-80e1-6cc8ebe9476c",
+      "time_to_fix": "trivial",
+      "confidence_scope": "yaml_only",
+      "runtime_preconditions": [
+        "the referenced mutable branch, tag, include, or image can change independently of this repository"
+      ],
+      "attacker_surface_kinds": [
+        "mutable_dependency_ref"
+      ],
+      "fingerprint": "34c05372f7c5b9b69b07ebfcdf95c1b7",
+      "suppression_key": "sk1_b13aa09f5ad3f81a31c47a10ded48af2"
+    },
+    {
+      "rule_id": "action_major_version_pin_without_sha",
+      "severity": "medium",
+      "category": "unpinned_action",
+      "nodes_involved": [
+        4
+      ],
+      "message": "[action_major_version_pin_without_sha] actions/upload-artifact@v4 is pinned only to a mutable major tag; pin to a full commit SHA",
+      "recommendation": {
+        "type": "pin_action",
+        "current": "actions/upload-artifact@v4",
+        "pinned": "actions/upload-artifact@<40-char-sha>"
+      },
+      "source": "built-in",
+      "finding_group_id": "885a2017-396d-5202-b218-0069e7a48659",
+      "time_to_fix": "trivial",
+      "confidence_scope": "yaml_only",
+      "runtime_preconditions": [
+        "the referenced mutable branch, tag, include, or image can change independently of this repository"
+      ],
+      "attacker_surface_kinds": [
+        "mutable_dependency_ref"
+      ],
+      "fingerprint": "138bf82077511f01fe345aae5a0258aa",
+      "suppression_key": "sk1_b13aa09f5ad3f81a31c47a10ded48af2"
+    },
+    {
+      "rule_id": "action_major_version_pin_without_sha",
+      "severity": "medium",
+      "category": "unpinned_action",
+      "nodes_involved": [
+        7
+      ],
+      "message": "[action_major_version_pin_without_sha] actions/download-artifact@v4 is pinned only to a mutable major tag; pin to a full commit SHA",
+      "recommendation": {
+        "type": "pin_action",
+        "current": "actions/download-artifact@v4",
+        "pinned": "actions/download-artifact@<40-char-sha>"
+      },
+      "source": "built-in",
+      "finding_group_id": "9d26edf9-326b-5663-8647-911ff175d711",
+      "time_to_fix": "trivial",
+      "confidence_scope": "yaml_only",
+      "runtime_preconditions": [
+        "the referenced mutable branch, tag, include, or image can change independently of this repository"
+      ],
+      "attacker_surface_kinds": [
+        "mutable_dependency_ref"
+      ],
+      "fingerprint": "c12f3619425a78dcffd29d716cbd4291",
+      "suppression_key": "sk1_b13aa09f5ad3f81a31c47a10ded48af2"
+    },
+    {
+      "rule_id": "action_major_version_pin_without_sha",
+      "severity": "medium",
+      "category": "unpinned_action",
+      "nodes_involved": [
+        9
+      ],
+      "message": "[action_major_version_pin_without_sha] vendor/deploy-action@v2 is pinned only to a mutable major tag; pin to a full commit SHA",
+      "recommendation": {
+        "type": "pin_action",
+        "current": "vendor/deploy-action@v2",
+        "pinned": "vendor/deploy-action@<40-char-sha>"
+      },
+      "source": "built-in",
+      "finding_group_id": "7dd9ca2d-f3b4-5579-a301-88bee2a3c22b",
+      "time_to_fix": "trivial",
+      "confidence_scope": "yaml_only",
+      "runtime_preconditions": [
+        "the referenced mutable branch, tag, include, or image can change independently of this repository"
+      ],
+      "attacker_surface_kinds": [
+        "mutable_dependency_ref"
+      ],
+      "fingerprint": "6bd41820e419facc89b49c6971b053eb",
+      "suppression_key": "sk1_b13aa09f5ad3f81a31c47a10ded48af2"
+    },
+    {
+      "rule_id": "long_lived_credential",
+      "severity": "low",
+      "category": "long_lived_credential",
+      "nodes_involved": [
+        12
+      ],
+      "message": "'PROD_API_KEY' looks like a long-lived static credential",
+      "recommendation": {
+        "type": "federate_identity",
+        "static_secret": "PROD_API_KEY",
+        "oidc_provider": "GitHub Actions OIDC (id-token: write)"
+      },
+      "source": "built-in",
+      "finding_group_id": "80fe5e85-69b9-5db4-9e75-6fa8fed3cc57",
+      "time_to_fix": "large",
+      "confidence_scope": "yaml_only",
+      "authority_kinds": [
+        "credential_named_variable"
+      ],
+      "fingerprint": "88433351a7bb8d3e8a484710475af87d",
+      "suppression_key": "sk1_f743e8c7e8bbddc834aa6fe77f2c8f6c"
+    },
+    {
+      "rule_id": "uplift_without_attestation",
+      "severity": "info",
+      "category": "uplift_without_attestation",
+      "nodes_involved": [
+        2,
+        3,
+        5,
+        8,
+        10,
+        0
+      ],
+      "message": "5 step(s) use OIDC/federated identity but no provenance attestation step was detected — artifact integrity cannot be verified",
+      "recommendation": {
+        "type": "manual",
+        "action": "Add 'actions/attest-build-provenance' after your build step (GHA) to provide SLSA provenance. See https://docs.github.com/en/actions/security-guides/using-artifact-attestations"
+      },
+      "source": "built-in",
+      "finding_group_id": "9993eefe-b225-5daa-9a65-244e4148adce",
+      "confidence_scope": "yaml_only",
+      "runtime_preconditions": [
+        "downstream identity provider accepts the issued OIDC token",
+        "the configured audience or cloud role grants useful authority"
+      ],
+      "authority_kinds": [
+        "oidc_identity"
+      ],
+      "attacker_surface_kinds": [
+        "script_sink",
+        "untrusted_checkout",
+        "untrusted_step"
+      ],
+      "fingerprint": "f083a372541e83fd7be66c5afe77e107",
+      "suppression_key": "sk1_9b5c69c8d89defb0dd2be7d4b5f288a7"
+    }
+  ],
+  "summary": {
+    "total_findings": 22,
+    "critical": 11,
+    "high": 2,
+    "medium": 7,
+    "low": 1,
+    "info": 1,
+    "total_nodes": 14,
+    "total_edges": 14,
+    "completeness": "complete",
+    "graph_risk_summary": {
+      "authority_roots": 4,
+      "untrusted_sinks": 9,
+      "mutable_refs": 4,
+      "publication_adjacent_sinks": 3,
+      "delegation_hops": 0,
+      "protected_resource_categories": [
+        "identity",
+        "oidc_identity",
+        "secret"
+      ]
+    }
+  }
+}

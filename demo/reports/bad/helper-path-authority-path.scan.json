@@ -1,0 +1,825 @@
+{
+  "schema_version": "1.0.0",
+  "schema_uri": "https://taudit.dev/schemas/taudit-report.schema.json",
+  "graph": {
+    "source": {
+      "file": "C:\\Users\\0ryant\\prj\\taudit\\demo\\workflows\\helper-path-authority-path.yml"
+    },
+    "nodes": [
+      {
+        "id": 0,
+        "kind": "identity",
+        "name": "GITHUB_TOKEN",
+        "trust_zone": "first_party",
+        "metadata": {
+          "identity_scope": "broad",
+          "oidc": "true",
+          "permissions": "{ contents: read, id-token: write }"
+        }
+      },
+      {
+        "id": 1,
+        "kind": "image",
+        "name": "actions/checkout@v4",
+        "trust_zone": "untrusted",
+        "metadata": {}
+      },
+      {
+        "id": 2,
+        "kind": "step",
+        "name": "Checkout source",
+        "trust_zone": "untrusted",
+        "metadata": {
+          "checkout_self": "true",
+          "gha_action": "actions/checkout",
+          "gha_runs_on": "ubuntu-latest",
+          "job_name": "docs-deploy"
+        }
+      },
+      {
+        "id": 3,
+        "kind": "image",
+        "name": "actions/setup-node@v4",
+        "trust_zone": "untrusted",
+        "metadata": {}
+      },
+      {
+        "id": 4,
+        "kind": "step",
+        "name": "Setup Node",
+        "trust_zone": "untrusted",
+        "metadata": {
+          "gha_action": "actions/setup-node",
+          "gha_runs_on": "ubuntu-latest",
+          "gha_with_inputs": "node-version=20",
+          "job_name": "docs-deploy"
+        }
+      },
+      {
+        "id": 5,
+        "kind": "step",
+        "name": "Extend PATH before deploy",
+        "trust_zone": "first_party",
+        "metadata": {
+          "gha_runs_on": "ubuntu-latest",
+          "job_name": "docs-deploy",
+          "script_body": "echo \"$HOME/.local/bin\" >> $GITHUB_PATH",
+          "writes_env_gate": "true"
+        }
+      },
+      {
+        "id": 6,
+        "kind": "image",
+        "name": "cloudflare/wrangler-action@v3",
+        "trust_zone": "untrusted",
+        "metadata": {}
+      },
+      {
+        "id": 7,
+        "kind": "step",
+        "name": "Publish docs",
+        "trust_zone": "untrusted",
+        "metadata": {
+          "gha_action": "cloudflare/wrangler-action",
+          "gha_runs_on": "ubuntu-latest",
+          "gha_with_inputs": "accountId=${{ secrets.CLOUDFLARE_ACCOUNT_ID }}\napiToken=${{ secrets.CLOUDFLARE_PAGES_API_TOKEN }}",
+          "job_name": "docs-deploy"
+        }
+      },
+      {
+        "id": 8,
+        "kind": "secret",
+        "name": "CLOUDFLARE_ACCOUNT_ID",
+        "trust_zone": "first_party",
+        "metadata": {}
+      },
+      {
+        "id": 9,
+        "kind": "secret",
+        "name": "CLOUDFLARE_PAGES_API_TOKEN",
+        "trust_zone": "first_party",
+        "metadata": {}
+      }
+    ],
+    "edges": [
+      {
+        "id": 0,
+        "from": 2,
+        "to": 1,
+        "kind": "uses_image"
+      },
+      {
+        "id": 1,
+        "from": 2,
+        "to": 0,
+        "kind": "has_access_to",
+        "authority_summary": {
+          "trust_zone": "first_party",
+          "identity_scope": "broad",
+          "permissions_summary": "{ contents: read, id-token: write }"
+        }
+      },
+      {
+        "id": 2,
+        "from": 4,
+        "to": 3,
+        "kind": "uses_image"
+      },
+      {
+        "id": 3,
+        "from": 4,
+        "to": 0,
+        "kind": "has_access_to",
+        "authority_summary": {
+          "trust_zone": "first_party",
+          "identity_scope": "broad",
+          "permissions_summary": "{ contents: read, id-token: write }"
+        }
+      },
+      {
+        "id": 4,
+        "from": 5,
+        "to": 0,
+        "kind": "has_access_to",
+        "authority_summary": {
+          "trust_zone": "first_party",
+          "identity_scope": "broad",
+          "permissions_summary": "{ contents: read, id-token: write }"
+        }
+      },
+      {
+        "id": 5,
+        "from": 7,
+        "to": 6,
+        "kind": "uses_image"
+      },
+      {
+        "id": 6,
+        "from": 7,
+        "to": 0,
+        "kind": "has_access_to",
+        "authority_summary": {
+          "trust_zone": "first_party",
+          "identity_scope": "broad",
+          "permissions_summary": "{ contents: read, id-token: write }"
+        }
+      },
+      {
+        "id": 7,
+        "from": 7,
+        "to": 8,
+        "kind": "has_access_to"
+      },
+      {
+        "id": 8,
+        "from": 7,
+        "to": 9,
+        "kind": "has_access_to"
+      }
+    ],
+    "completeness": "complete",
+    "metadata": {
+      "platform": "github-actions",
+      "trigger": "push",
+      "triggers": "push"
+    }
+  },
+  "findings": [
+    {
+      "rule_id": "authority_propagation",
+      "severity": "critical",
+      "category": "authority_propagation",
+      "path": {
+        "source": 0,
+        "sink": 1,
+        "edges": [
+          0
+        ],
+        "crossed_boundary": true,
+        "boundary_crossing": [
+          "first_party",
+          "untrusted"
+        ]
+      },
+      "nodes_involved": [
+        0,
+        1,
+        3,
+        6
+      ],
+      "message": "GITHUB_TOKEN reaches 3 sinks via authority propagation: [actions/checkout@v4, actions/setup-node@v4, cloudflare/wrangler-action@v3]",
+      "recommendation": {
+        "type": "tsafe_remediation",
+        "command": "tsafe exec --ns <scoped-namespace> -- <command>",
+        "explanation": "Scope GITHUB_TOKEN to only the steps that need it"
+      },
+      "source": "built-in",
+      "finding_group_id": "31cf32bf-5dcd-5c8a-ba2d-2f3f4143c094",
+      "confidence_scope": "yaml_only",
+      "authority_kinds": [
+        "oidc_identity"
+      ],
+      "fingerprint": "a8238ddb5d053debc4842c8182d84021",
+      "suppression_key": "sk1_53624a7bffe02938275738d0ea9e0c8d"
+    },
+    {
+      "rule_id": "authority_propagation",
+      "severity": "critical",
+      "category": "authority_propagation",
+      "path": {
+        "source": 8,
+        "sink": 6,
+        "edges": [
+          5
+        ],
+        "crossed_boundary": true,
+        "boundary_crossing": [
+          "first_party",
+          "untrusted"
+        ]
+      },
+      "nodes_involved": [
+        8,
+        6
+      ],
+      "message": "CLOUDFLARE_ACCOUNT_ID propagated to cloudflare/wrangler-action@v3 across trust boundary",
+      "recommendation": {
+        "type": "tsafe_remediation",
+        "command": "tsafe exec --ns <scoped-namespace> -- <command>",
+        "explanation": "Scope CLOUDFLARE_ACCOUNT_ID to only the steps that need it"
+      },
+      "source": "built-in",
+      "finding_group_id": "b51004e7-798f-576d-b5a3-f6998b258b43",
+      "confidence_scope": "yaml_only",
+      "authority_kinds": [
+        "secret"
+      ],
+      "fingerprint": "36973559ebdadcab7a71cde4a1bc64e0",
+      "suppression_key": "sk1_d377f1939455b4d25b7beeeb2863d760"
+    },
+    {
+      "rule_id": "authority_propagation",
+      "severity": "critical",
+      "category": "authority_propagation",
+      "path": {
+        "source": 9,
+        "sink": 6,
+        "edges": [
+          5
+        ],
+        "crossed_boundary": true,
+        "boundary_crossing": [
+          "first_party",
+          "untrusted"
+        ]
+      },
+      "nodes_involved": [
+        9,
+        6
+      ],
+      "message": "CLOUDFLARE_PAGES_API_TOKEN propagated to cloudflare/wrangler-action@v3 across trust boundary",
+      "recommendation": {
+        "type": "tsafe_remediation",
+        "command": "tsafe exec --ns <scoped-namespace> -- <command>",
+        "explanation": "Scope CLOUDFLARE_PAGES_API_TOKEN to only the steps that need it"
+      },
+      "source": "built-in",
+      "finding_group_id": "47fd2218-27e0-5aff-9885-79fb19e65618",
+      "confidence_scope": "yaml_only",
+      "authority_kinds": [
+        "credential_named_variable"
+      ],
+      "fingerprint": "010be91bec12dd7bd8b1097e5d1513a5",
+      "suppression_key": "sk1_c749fc9ba8ff52bc9a39a9de47000238"
+    },
+    {
+      "rule_id": "untrusted_with_authority",
+      "severity": "critical",
+      "category": "untrusted_with_authority",
+      "nodes_involved": [
+        2,
+        0
+      ],
+      "message": "Untrusted step 'Checkout source' has direct access to identity 'GITHUB_TOKEN'",
+      "recommendation": {
+        "type": "reduce_permissions",
+        "current": "{ contents: read, id-token: write }",
+        "minimum": "minimal required scope"
+      },
+      "source": "built-in",
+      "finding_group_id": "ab618b42-f982-5c17-b876-187a561134d7",
+      "confidence_scope": "yaml_only",
+      "authority_kinds": [
+        "oidc_identity"
+      ],
+      "attacker_surface_kinds": [
+        "untrusted_checkout",
+        "untrusted_step"
+      ],
+      "fingerprint": "ad2bca64e84930fdc55995b6f8b1f5df",
+      "suppression_key": "sk1_a0088ff69269e4621c56a78f31b12c5a"
+    },
+    {
+      "rule_id": "untrusted_with_authority",
+      "severity": "critical",
+      "category": "untrusted_with_authority",
+      "nodes_involved": [
+        4,
+        0
+      ],
+      "message": "Untrusted step 'Setup Node' has direct access to identity 'GITHUB_TOKEN'",
+      "recommendation": {
+        "type": "reduce_permissions",
+        "current": "{ contents: read, id-token: write }",
+        "minimum": "minimal required scope"
+      },
+      "source": "built-in",
+      "finding_group_id": "78694e33-bef3-582c-a79b-3a08b864e293",
+      "confidence_scope": "yaml_only",
+      "authority_kinds": [
+        "oidc_identity"
+      ],
+      "attacker_surface_kinds": [
+        "untrusted_step"
+      ],
+      "fingerprint": "81b29fd8bfec6506f76f7fd0f8cb9513",
+      "suppression_key": "sk1_a0088ff69269e4621c56a78f31b12c5a"
+    },
+    {
+      "rule_id": "untrusted_with_authority",
+      "severity": "critical",
+      "category": "untrusted_with_authority",
+      "nodes_involved": [
+        7,
+        0
+      ],
+      "message": "Untrusted step 'Publish docs' has direct access to identity 'GITHUB_TOKEN'",
+      "recommendation": {
+        "type": "reduce_permissions",
+        "current": "{ contents: read, id-token: write }",
+        "minimum": "minimal required scope"
+      },
+      "source": "built-in",
+      "finding_group_id": "b632116c-aada-5492-9b50-2d6974fcf0e8",
+      "confidence_scope": "yaml_only",
+      "authority_kinds": [
+        "oidc_identity"
+      ],
+      "attacker_surface_kinds": [
+        "untrusted_step"
+      ],
+      "fingerprint": "e914478c21b62badaa73f80828e62127",
+      "suppression_key": "sk1_a0088ff69269e4621c56a78f31b12c5a"
+    },
+    {
+      "rule_id": "untrusted_with_authority",
+      "severity": "critical",
+      "category": "untrusted_with_authority",
+      "nodes_involved": [
+        7,
+        8
+      ],
+      "message": "Untrusted step 'Publish docs' has direct access to secret 'CLOUDFLARE_ACCOUNT_ID'",
+      "recommendation": {
+        "type": "cellos_remediation",
+        "reason": "Untrusted step 'Publish docs' has direct access to secret 'CLOUDFLARE_ACCOUNT_ID'",
+        "spec_hint": "cellos run --network deny-all --broker env:CLOUDFLARE_ACCOUNT_ID"
+      },
+      "source": "built-in",
+      "finding_group_id": "8e423f1c-7326-5302-94ce-72338d9d4fef",
+      "confidence_scope": "yaml_only",
+      "authority_kinds": [
+        "secret"
+      ],
+      "attacker_surface_kinds": [
+        "untrusted_step"
+      ],
+      "fingerprint": "ed8f8217bdd1cc2f9e7467f632cf5e0c",
+      "suppression_key": "sk1_790d5b996a192a434c2d8c4da9f5d3cb"
+    },
+    {
+      "rule_id": "untrusted_with_authority",
+      "severity": "critical",
+      "category": "untrusted_with_authority",
+      "nodes_involved": [
+        7,
+        9
+      ],
+      "message": "Untrusted step 'Publish docs' has direct access to secret 'CLOUDFLARE_PAGES_API_TOKEN'",
+      "recommendation": {
+        "type": "cellos_remediation",
+        "reason": "Untrusted step 'Publish docs' has direct access to secret 'CLOUDFLARE_PAGES_API_TOKEN'",
+        "spec_hint": "cellos run --network deny-all --broker env:CLOUDFLARE_PAGES_API_TOKEN"
+      },
+      "source": "built-in",
+      "finding_group_id": "43385645-a2e8-50ce-9a2f-cd14a31c3809",
+      "confidence_scope": "yaml_only",
+      "authority_kinds": [
+        "credential_named_variable"
+      ],
+      "attacker_surface_kinds": [
+        "untrusted_step"
+      ],
+      "fingerprint": "0e1f66ab2eed5cd01b910cee98d124e8",
+      "suppression_key": "sk1_5c6f9567e8bf7a17bb7ad6e3c2c9c679"
+    },
+    {
+      "rule_id": "over_privileged_identity",
+      "severity": "high",
+      "category": "over_privileged_identity",
+      "nodes_involved": [
+        0,
+        2,
+        4,
+        5,
+        7
+      ],
+      "message": "GITHUB_TOKEN has broad scope (permissions: '{ contents: read, id-token: write }') — likely broader than needed",
+      "recommendation": {
+        "type": "reduce_permissions",
+        "current": "{ contents: read, id-token: write }",
+        "minimum": "{ contents: read }"
+      },
+      "source": "built-in",
+      "finding_group_id": "fd2ce329-6127-5e03-b28b-606f90ae2f06",
+      "time_to_fix": "small",
+      "confidence_scope": "yaml_only",
+      "authority_kinds": [
+        "oidc_identity"
+      ],
+      "fingerprint": "aa494ec430f71a06f3f1ba3ea34bee69",
+      "suppression_key": "sk1_d09918fb358f136f49fdee5222b268f6"
+    },
+    {
+      "rule_id": "unpinned_action",
+      "severity": "high",
+      "category": "unpinned_action",
+      "nodes_involved": [
+        6
+      ],
+      "message": "cloudflare/wrangler-action@v3 is not pinned to a SHA digest",
+      "recommendation": {
+        "type": "pin_action",
+        "current": "cloudflare/wrangler-action@v3",
+        "pinned": "cloudflare/wrangler-action@<sha256-digest>"
+      },
+      "source": "built-in",
+      "finding_group_id": "6d595f32-c99a-5f44-958c-7417ff06b832",
+      "time_to_fix": "trivial",
+      "confidence_scope": "yaml_only",
+      "runtime_preconditions": [
+        "the referenced mutable branch, tag, include, or image can change independently of this repository"
+      ],
+      "attacker_surface_kinds": [
+        "mutable_dependency_ref"
+      ],
+      "fingerprint": "8183a2ebef15568c700468b489f3c2bc",
+      "suppression_key": "sk1_9dbdbbb0d1edc098a58f50ca15afe74c"
+    },
+    {
+      "rule_id": "self_mutating_pipeline",
+      "severity": "high",
+      "category": "self_mutating_pipeline",
+      "nodes_involved": [
+        5,
+        0
+      ],
+      "message": "Step 'Extend PATH before deploy' writes to the environment gate while holding authority (GITHUB_TOKEN) — secrets may leak into pipeline environment",
+      "recommendation": {
+        "type": "manual",
+        "action": "Avoid writing secrets or attacker-controlled values to $GITHUB_ENV / $GITHUB_PATH / pipeline variables. Use explicit step outputs with narrow scoping instead."
+      },
+      "source": "built-in",
+      "finding_group_id": "c006d30b-7141-5744-bede-382b1b606849",
+      "confidence_scope": "yaml_only",
+      "authority_kinds": [
+        "oidc_identity"
+      ],
+      "attacker_surface_kinds": [
+        "script_sink"
+      ],
+      "cve_relationship": "analogue_only",
+      "fingerprint": "2e6437004feecf398f2e7be3dc121bb7",
+      "suppression_key": "sk1_591dc6419a60ab9648017ee52b8530fd"
+    },
+    {
+      "rule_id": "gha_helper_path_sensitive_stdin",
+      "severity": "high",
+      "category": "gha_helper_path_sensitive_stdin",
+      "nodes_involved": [
+        5,
+        7,
+        0,
+        8,
+        9
+      ],
+      "message": "Earlier step 'Extend PATH before deploy' mutates GITHUB_PATH before 'Publish docs' runs npx/wrangler via PATH and passes sensitive authority through stdin",
+      "recommendation": {
+        "type": "manual",
+        "action": "Resolve `npx/wrangler` to a trusted absolute path before secrets are materialized, reject helpers under workspace/temp paths, or split the PATH-mutating step into a separate job."
+      },
+      "source": "built-in",
+      "finding_group_id": "f94e31ad-8bf6-582d-a345-9dedfb109d8a",
+      "confidence_scope": "yaml_only",
+      "runtime_preconditions": [
+        "an earlier same-job step can influence PATH before the later helper boundary runs",
+        "the later action or helper boundary receives authority at runtime"
+      ],
+      "authority_kinds": [
+        "credential_named_variable",
+        "oidc_identity",
+        "secret"
+      ],
+      "attacker_surface_kinds": [
+        "script_sink",
+        "untrusted_step"
+      ],
+      "fingerprint": "536138d2adaa76e2bc41fd8d6395c8f6",
+      "suppression_key": "sk1_5bff2e5718ecb6e5ecc95a7df5e829db"
+    },
+    {
+      "rule_id": "gha_helper_path_sensitive_env",
+      "severity": "high",
+      "category": "gha_helper_path_sensitive_env",
+      "nodes_involved": [
+        5,
+        7,
+        0,
+        8,
+        9
+      ],
+      "message": "Earlier step 'Extend PATH before deploy' mutates GITHUB_PATH before 'Publish docs' runs npx/wrangler via PATH and passes sensitive authority through environment variables",
+      "recommendation": {
+        "type": "manual",
+        "action": "Resolve `npx/wrangler` to a trusted absolute path before secrets are materialized, reject helpers under workspace/temp paths, or split the PATH-mutating step into a separate job."
+      },
+      "source": "built-in",
+      "finding_group_id": "b946dd35-688a-5185-9aae-9ce44d3da0f6",
+      "confidence_scope": "yaml_only",
+      "runtime_preconditions": [
+        "an earlier same-job step can influence PATH before the later helper boundary runs",
+        "the later action or helper boundary receives authority at runtime"
+      ],
+      "authority_kinds": [
+        "credential_named_variable",
+        "oidc_identity",
+        "secret"
+      ],
+      "attacker_surface_kinds": [
+        "script_sink",
+        "untrusted_step"
+      ],
+      "fingerprint": "bf1ee57c7252d6ec7e93bd803490b1a0",
+      "suppression_key": "sk1_3a0deb2c5875bc70b044fc9281a5c1d7"
+    },
+    {
+      "rule_id": "later_secret_materialized_after_path_mutation",
+      "severity": "high",
+      "category": "later_secret_materialized_after_path_mutation",
+      "nodes_involved": [
+        5,
+        7,
+        0,
+        8,
+        9
+      ],
+      "message": "Earlier step 'Extend PATH before deploy' mutates GITHUB_PATH before later action 'Publish docs' materializes authority and resolves helper `npx/wrangler` through PATH",
+      "recommendation": {
+        "type": "manual",
+        "action": "Treat this as an authority-edge lead: resolve helpers to trusted absolute paths before credentials are materialized, or split mutable PATH setup into an authority-free job."
+      },
+      "source": "built-in",
+      "finding_group_id": "d4314c84-3ce2-5fed-8f35-ac3161d93530",
+      "confidence_scope": "yaml_only",
+      "runtime_preconditions": [
+        "an earlier same-job step can influence PATH before the later helper boundary runs",
+        "the later action or helper boundary receives authority at runtime"
+      ],
+      "authority_kinds": [
+        "credential_named_variable",
+        "oidc_identity",
+        "secret"
+      ],
+      "attacker_surface_kinds": [
+        "script_sink",
+        "untrusted_step"
+      ],
+      "fingerprint": "aaed64e19404ba85b39f5ed0bdc0aeb7",
+      "suppression_key": "sk1_458c1fc2c62a9b6fdcf88f653f19d81e"
+    },
+    {
+      "rule_id": "unpinned_action",
+      "severity": "medium",
+      "category": "unpinned_action",
+      "nodes_involved": [
+        1
+      ],
+      "message": "actions/checkout@v4 is not pinned to a SHA digest",
+      "recommendation": {
+        "type": "pin_action",
+        "current": "actions/checkout@v4",
+        "pinned": "actions/checkout@<sha256-digest>"
+      },
+      "source": "built-in",
+      "finding_group_id": "af2a3dc4-a837-55ed-9173-0fad5ae5e55e",
+      "time_to_fix": "trivial",
+      "confidence_scope": "yaml_only",
+      "runtime_preconditions": [
+        "the referenced mutable branch, tag, include, or image can change independently of this repository"
+      ],
+      "attacker_surface_kinds": [
+        "mutable_dependency_ref"
+      ],
+      "fingerprint": "fa0acf8e0ae00090e9d91ba2ac730c1b",
+      "suppression_key": "sk1_9dbdbbb0d1edc098a58f50ca15afe74c"
+    },
+    {
+      "rule_id": "unpinned_action",
+      "severity": "medium",
+      "category": "unpinned_action",
+      "nodes_involved": [
+        3
+      ],
+      "message": "actions/setup-node@v4 is not pinned to a SHA digest",
+      "recommendation": {
+        "type": "pin_action",
+        "current": "actions/setup-node@v4",
+        "pinned": "actions/setup-node@<sha256-digest>"
+      },
+      "source": "built-in",
+      "finding_group_id": "29f6e5be-6a1d-558c-9235-08aa05d3d731",
+      "time_to_fix": "trivial",
+      "confidence_scope": "yaml_only",
+      "runtime_preconditions": [
+        "the referenced mutable branch, tag, include, or image can change independently of this repository"
+      ],
+      "attacker_surface_kinds": [
+        "mutable_dependency_ref"
+      ],
+      "fingerprint": "85670e4d25aa89ffb00d7478da4388df",
+      "suppression_key": "sk1_9dbdbbb0d1edc098a58f50ca15afe74c"
+    },
+    {
+      "rule_id": "action_major_version_pin_without_sha",
+      "severity": "medium",
+      "category": "unpinned_action",
+      "nodes_involved": [
+        1
+      ],
+      "message": "[action_major_version_pin_without_sha] actions/checkout@v4 is pinned only to a mutable major tag; pin to a full commit SHA",
+      "recommendation": {
+        "type": "pin_action",
+        "current": "actions/checkout@v4",
+        "pinned": "actions/checkout@<40-char-sha>"
+      },
+      "source": "built-in",
+      "finding_group_id": "8fee0f16-9a7f-502d-96d7-2746dea1af3f",
+      "time_to_fix": "trivial",
+      "confidence_scope": "yaml_only",
+      "runtime_preconditions": [
+        "the referenced mutable branch, tag, include, or image can change independently of this repository"
+      ],
+      "attacker_surface_kinds": [
+        "mutable_dependency_ref"
+      ],
+      "fingerprint": "523a953d45f645144b5cf284875d0a6b",
+      "suppression_key": "sk1_72c3c043157b767d099803bd6d48b4d2"
+    },
+    {
+      "rule_id": "action_major_version_pin_without_sha",
+      "severity": "medium",
+      "category": "unpinned_action",
+      "nodes_involved": [
+        3
+      ],
+      "message": "[action_major_version_pin_without_sha] actions/setup-node@v4 is pinned only to a mutable major tag; pin to a full commit SHA",
+      "recommendation": {
+        "type": "pin_action",
+        "current": "actions/setup-node@v4",
+        "pinned": "actions/setup-node@<40-char-sha>"
+      },
+      "source": "built-in",
+      "finding_group_id": "ae4c2f21-f25c-5c6e-aaa2-27d8473b67f2",
+      "time_to_fix": "trivial",
+      "confidence_scope": "yaml_only",
+      "runtime_preconditions": [
+        "the referenced mutable branch, tag, include, or image can change independently of this repository"
+      ],
+      "attacker_surface_kinds": [
+        "mutable_dependency_ref"
+      ],
+      "fingerprint": "dc19adfe9614a87219006fce98a3a255",
+      "suppression_key": "sk1_72c3c043157b767d099803bd6d48b4d2"
+    },
+    {
+      "rule_id": "action_major_version_pin_without_sha",
+      "severity": "medium",
+      "category": "unpinned_action",
+      "nodes_involved": [
+        6
+      ],
+      "message": "[action_major_version_pin_without_sha] cloudflare/wrangler-action@v3 is pinned only to a mutable major tag; pin to a full commit SHA",
+      "recommendation": {
+        "type": "pin_action",
+        "current": "cloudflare/wrangler-action@v3",
+        "pinned": "cloudflare/wrangler-action@<40-char-sha>"
+      },
+      "source": "built-in",
+      "finding_group_id": "c2b315a3-d576-5dd2-a5b0-5be3e94a6e2e",
+      "time_to_fix": "trivial",
+      "confidence_scope": "yaml_only",
+      "runtime_preconditions": [
+        "the referenced mutable branch, tag, include, or image can change independently of this repository"
+      ],
+      "attacker_surface_kinds": [
+        "mutable_dependency_ref"
+      ],
+      "fingerprint": "579fee0bb0334206f75e5d3daec537b8",
+      "suppression_key": "sk1_72c3c043157b767d099803bd6d48b4d2"
+    },
+    {
+      "rule_id": "gha_helper_untrusted_path_resolution",
+      "severity": "medium",
+      "category": "gha_helper_untrusted_path_resolution",
+      "nodes_involved": [
+        5,
+        7
+      ],
+      "message": "Earlier step 'Extend PATH before deploy' mutates GITHUB_PATH before 'Publish docs' resolves security-sensitive helper `npx/wrangler` by name",
+      "recommendation": {
+        "type": "manual",
+        "action": "Pin `npx/wrangler` to an action-owned or runner-toolcache absolute path before invoking it with credentials."
+      },
+      "source": "built-in",
+      "finding_group_id": "e397bbe0-b915-5cce-a666-cb94f529b29d",
+      "confidence_scope": "yaml_only",
+      "runtime_preconditions": [
+        "an earlier same-job step can influence PATH before the later helper boundary runs",
+        "the later action or helper boundary receives authority at runtime"
+      ],
+      "attacker_surface_kinds": [
+        "script_sink",
+        "untrusted_step"
+      ],
+      "fingerprint": "98c81c134176623b6d5698d0ade5a0ee",
+      "suppression_key": "sk1_cfe562038eaefca5052b2aa88f6e3d96"
+    },
+    {
+      "rule_id": "uplift_without_attestation",
+      "severity": "info",
+      "category": "uplift_without_attestation",
+      "nodes_involved": [
+        2,
+        4,
+        5,
+        7,
+        0
+      ],
+      "message": "4 step(s) use OIDC/federated identity but no provenance attestation step was detected — artifact integrity cannot be verified",
+      "recommendation": {
+        "type": "manual",
+        "action": "Add 'actions/attest-build-provenance' after your build step (GHA) to provide SLSA provenance. See https://docs.github.com/en/actions/security-guides/using-artifact-attestations"
+      },
+      "source": "built-in",
+      "finding_group_id": "b2d39880-61ce-5d43-ae33-ac965a68e5b6",
+      "confidence_scope": "yaml_only",
+      "runtime_preconditions": [
+        "downstream identity provider accepts the issued OIDC token",
+        "the configured audience or cloud role grants useful authority"
+      ],
+      "authority_kinds": [
+        "oidc_identity"
+      ],
+      "attacker_surface_kinds": [
+        "script_sink",
+        "untrusted_checkout",
+        "untrusted_step"
+      ],
+      "fingerprint": "32cc148db25a989142ee709fb0aad626",
+      "suppression_key": "sk1_9974b21f7a6302e8de987cb336e7d9e4"
+    }
+  ],
+  "summary": {
+    "total_findings": 21,
+    "critical": 8,
+    "high": 6,
+    "medium": 6,
+    "low": 0,
+    "info": 1,
+    "total_nodes": 10,
+    "total_edges": 9,
+    "completeness": "complete",
+    "graph_risk_summary": {
+      "authority_roots": 3,
+      "untrusted_sinks": 6,
+      "mutable_refs": 3,
+      "publication_adjacent_sinks": 2,
+      "delegation_hops": 0,
+      "protected_resource_categories": [
+        "identity",
+        "oidc_identity",
+        "secret"
+      ]
+    }
+  }
+}

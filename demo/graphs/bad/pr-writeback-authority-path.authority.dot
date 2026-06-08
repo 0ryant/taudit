@@ -1,0 +1,20 @@
+digraph taudit {
+    rankdir=LR;
+    node [fontname="Helvetica"];
+    "n0" [label="GITHUB_TOKEN\nzone: FirstParty\nscope: broad\nperm: { contents: write, id-token: write, packages: write, pull-requests: write }" shape=diamond color=green];
+    "n1" [label="actions/checkout@v4\nzone: Untrusted" shape=cylinder color=red];
+    "n2" [label="Checkout PR head\nzone: Untrusted" shape=ellipse color=red];
+    "n3" [label="Install dependencies\nzone: Untrusted" shape=ellipse color=red];
+    "n4" [label="vendor/preview-release@v2\nzone: Untrusted" shape=cylinder color=red];
+    "n5" [label="Publish preview\nzone: Untrusted" shape=ellipse color=red];
+    "n6" [label="COMMENT_TOKEN\nzone: FirstParty" shape=box color=green];
+    "n7" [label="PREVIEW_TOKEN\nzone: FirstParty" shape=box color=green];
+    "n2" -> "n1" [label="uses_image"];
+    "n2" -> "n0" [label="has_access_to"];
+    "n3" -> "n0" [label="has_access_to"];
+    "n5" -> "n4" [label="uses_image"];
+    "n5" -> "n0" [label="has_access_to"];
+    "n5" -> "n6" [label="has_access_to"];
+    "n5" -> "n7" [label="has_access_to"];
+}
+

@@ -1,0 +1,11 @@
+{
+  "name": "taudit-demo-assets",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "render-dot": "node render-dot.mjs"
+  },
+  "dependencies": {
+    "@viz-js/viz": "3.27.0"
+  }
+}

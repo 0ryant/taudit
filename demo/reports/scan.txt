@@ -1,0 +1,96 @@
+taudit 3.1.0-pre — 1 file
+────────────────────────────────────────────────────────────
+Authority Graph: C:\Users\0ryant\prj\taudit\demo\workflows\developer-tool-authority-path.yml
+  Steps: 5 | Secrets: 3 | Actions: 4 | Identities: 1
+
+[CRITICAL] GITHUB_TOKEN reaches 5 sinks via authority propagation: [actions/checkout@v4, actions/upload-artifact@v4, release-bundle, actions/download-artifact@v4, vendor/deploy-action@v2]
+  Path: GITHUB_TOKEN (identity) → actions/checkout@v4 (action/image)
+  Recommendation: tsafe exec --ns <scoped-namespace> -- <command>
+
+[CRITICAL] CLOUD_DEPLOY_TOKEN propagated to vendor/deploy-action@v2 across trust boundary
+  Path: CLOUD_DEPLOY_TOKEN (secret) → vendor/deploy-action@v2 (action/image)
+  Recommendation: tsafe exec --ns <scoped-namespace> -- <command>
+
+[CRITICAL] PROD_API_KEY propagated to vendor/deploy-action@v2 across trust boundary
+  Path: PROD_API_KEY (secret) → vendor/deploy-action@v2 (action/image)
+  Recommendation: tsafe exec --ns <scoped-namespace> -- <command>
+
+[CRITICAL] RELEASE_TOKEN propagated to vendor/deploy-action@v2 across trust boundary
+  Path: RELEASE_TOKEN (secret) → vendor/deploy-action@v2 (action/image)
+  Recommendation: tsafe exec --ns <scoped-namespace> -- <command>
+
+[CRITICAL] Untrusted step 'Checkout source' has direct access to identity 'GITHUB_TOKEN'
+  Nodes: Checkout source (step) → GITHUB_TOKEN (identity)
+  Recommendation: Reduce permissions to minimal required scope
+
+[CRITICAL] Untrusted step 'Upload release bundle' has direct access to identity 'GITHUB_TOKEN'
+  Nodes: Upload release bundle (step) → GITHUB_TOKEN (identity)
+  Recommendation: Reduce permissions to minimal required scope
+
+[CRITICAL] Untrusted step 'Download release bundle' has direct access to identity 'GITHUB_TOKEN'
+  Nodes: Download release bundle (step) → GITHUB_TOKEN (identity)
+  Recommendation: Reduce permissions to minimal required scope
+
+[CRITICAL] Untrusted step 'Third-party production deploy' has direct access to identity 'GITHUB_TOKEN'
+  Nodes: Third-party production deploy (step) → GITHUB_TOKEN (identity)
+  Recommendation: Reduce permissions to minimal required scope
+
+[CRITICAL] Untrusted step 'Third-party production deploy' has direct access to secret 'CLOUD_DEPLOY_TOKEN'
+  Nodes: Third-party production deploy (step) → CLOUD_DEPLOY_TOKEN (secret)
+  Recommendation: cellos run --network deny-all --broker env:CLOUD_DEPLOY_TOKEN
+
+[CRITICAL] Untrusted step 'Third-party production deploy' has direct access to secret 'PROD_API_KEY'
+  Nodes: Third-party production deploy (step) → PROD_API_KEY (secret)
+  Recommendation: cellos run --network deny-all --broker env:PROD_API_KEY
+
+[CRITICAL] Untrusted step 'Third-party production deploy' has direct access to secret 'RELEASE_TOKEN'
+  Nodes: Third-party production deploy (step) → RELEASE_TOKEN (secret)
+  Recommendation: cellos run --network deny-all --broker env:RELEASE_TOKEN
+
+[HIGH] GITHUB_TOKEN has broad scope (permissions: '{ contents: write, id-token: write, packages: write }') — likely broader than needed
+  Nodes: GITHUB_TOKEN (identity) → Checkout source (step) → Install and build (step) → Upload release bundle (step) …(+2 more)
+  Recommendation: Reduce permissions to { contents: read }
+
+[HIGH] vendor/deploy-action@v2 is not pinned to a SHA digest
+  Nodes: vendor/deploy-action@v2 (action/image)
+  Recommendation: Pin to vendor/deploy-action@<sha256-digest>
+
+[MEDIUM] actions/checkout@v4 is not pinned to a SHA digest
+  Nodes: actions/checkout@v4 (action/image)
+  Recommendation: Pin to actions/checkout@<sha256-digest>
+
+[MEDIUM] actions/upload-artifact@v4 is not pinned to a SHA digest
+  Nodes: actions/upload-artifact@v4 (action/image)
+  Recommendation: Pin to actions/upload-artifact@<sha256-digest>
+
+[MEDIUM] actions/download-artifact@v4 is not pinned to a SHA digest
+  Nodes: actions/download-artifact@v4 (action/image)
+  Recommendation: Pin to actions/download-artifact@<sha256-digest>
+
+[MEDIUM] [action_major_version_pin_without_sha] actions/checkout@v4 is pinned only to a mutable major tag; pin to a full commit SHA
+  Nodes: actions/checkout@v4 (action/image)
+  Recommendation: Pin to actions/checkout@<40-char-sha>
+
+[MEDIUM] [action_major_version_pin_without_sha] actions/upload-artifact@v4 is pinned only to a mutable major tag; pin to a full commit SHA
+  Nodes: actions/upload-artifact@v4 (action/image)
+  Recommendation: Pin to actions/upload-artifact@<40-char-sha>
+
+[MEDIUM] [action_major_version_pin_without_sha] actions/download-artifact@v4 is pinned only to a mutable major tag; pin to a full commit SHA
+  Nodes: actions/download-artifact@v4 (action/image)
+  Recommendation: Pin to actions/download-artifact@<40-char-sha>
+
+[MEDIUM] [action_major_version_pin_without_sha] vendor/deploy-action@v2 is pinned only to a mutable major tag; pin to a full commit SHA
+  Nodes: vendor/deploy-action@v2 (action/image)
+  Recommendation: Pin to vendor/deploy-action@<40-char-sha>
+
+[LOW] 'PROD_API_KEY' looks like a long-lived static credential
+  Nodes: PROD_API_KEY (secret)
+  Recommendation: Replace with GitHub Actions OIDC (id-token: write) OIDC
+
+[INFO] 5 step(s) use OIDC/federated identity but no provenance attestation step was detected — artifact integrity cannot be verified
+  Nodes: Checkout source (step) → Install and build (step) → Upload release bundle (step) → Download release bundle (step) …(+2 more)
+  Recommendation: Add 'actions/attest-build-provenance' after your build step (GHA) to provide SLSA provenance. See https://docs.github.com/en/actions/security-guides/using-artifact-attestations
+
+────────────────────────────────────────────────────────────
+Summary 11 critical  2 high  7 medium  1 low
+  Files with findings: 1 / 1

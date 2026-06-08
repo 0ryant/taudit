@@ -1,0 +1,31 @@
+name: PR Writeback Authority Path
+
+on:
+  pull_request_target:
+    types: [opened, synchronize, reopened]
+
+permissions:
+  contents: write
+  packages: write
+  pull-requests: write
+  id-token: write
+
+jobs:
+  preview:
+    name: Build PR preview with writeback authority
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout PR head
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Publish preview
+        uses: vendor/preview-release@v2
+        with:
+          preview-token: ${{ secrets.PREVIEW_TOKEN }}
+        env:
+          COMMENT_TOKEN: ${{ secrets.COMMENT_TOKEN }}

@@ -1,0 +1,20 @@
+Authority Map: C:\Users\0ryant\prj\taudit\demo\workflows\developer-tool-authority-path.yml
+
+  columns 1-2 of 4
+Step                          Zone  GITHUB_TOKEN  CLOUD_DEPLOY_TOKEN
+----------------------------  ----  ------------  ------------------
+Checkout source               ?          ✓                ·         
+Install and build             1P         ✓                ·         
+Upload release bundle         ?          ✓                ·         
+Download release bundle       ?          ✓                ·         
+Third-party production depl…  ?          ✓                ✓         
+
+  columns 3-4 of 4
+Step                          Zone  PROD_API_KEY  RELEASE_TOKEN
+----------------------------  ----  ------------  -------------
+Checkout source               ?          ·              ·      
+Install and build             1P         ·              ·      
+Upload release bundle         ?          ·              ·      
+Download release bundle       ?          ·              ·      
+Third-party production depl…  ?          ✓              ✓      
+

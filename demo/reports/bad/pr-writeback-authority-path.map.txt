@@ -1,0 +1,8 @@
+Authority Map: C:\Users\0ryant\prj\taudit\demo\workflows\pr-writeback-authority-path.yml
+
+Step                  Zone  GITHUB_TOKEN  COMMENT_TOKEN  PREVIEW_TOKEN
+--------------------  ----  ------------  -------------  -------------
+Checkout PR head      ?          ✓              ·              ·      
+Install dependencies  ?          ✓              ·              ·      
+Publish preview       ?          ✓              ✓              ✓      
+
