@@ -1,34 +1,46 @@
 # taudit — Workflow Authority Review (authority-path demo)
 
-A complete, reproducible evidence pack for a single synthetic CI workflow. It
-shows the loop taudit runs on a pipeline:
+A complete, reproducible evidence pack for two synthetic CI workflows. It shows
+the loop taudit runs on a pipeline:
 
 > **hidden authority → visible authority → reduced authority → baselined authority → reusable evidence**
 
-Everything in this directory was produced by `taudit 1.3.0-pre` from the two
-workflow files in [`workflows/`](workflows). No outputs are hand-edited. The
-target is **fully synthetic** — `vendor/deploy-action` does not exist, and the
-secret names (`PROD_API_KEY`, `RELEASE_TOKEN`, `CLOUD_DEPLOY_TOKEN`) are
-placeholders. Nothing here references any real organisation, repository, or
-credential.
+Everything in this directory was produced by `taudit 1.3.0-pre` from the
+workflow files in [`workflows/`](workflows). No outputs are hand-edited. Both
+targets are **fully synthetic** — `vendor/deploy-action` does not exist; the
+Cloudflare action is real and public but its account/token names are
+placeholders; secret names (`PROD_API_KEY`, `RELEASE_TOKEN`,
+`CLOUD_DEPLOY_TOKEN`, `CLOUDFLARE_*`) are placeholders. Nothing here references
+any real organisation, repository, or credential.
+
+Two complementary scenarios:
+
+- **Scenario A — authority propagation** (`before.yml` / `after.yml`): a
+  third-party deploy action quietly inherits broad authority. Best seen in the
+  **authority** graph view.
+- **Scenario B — exploit path** (`exploit-before.yml` / `exploit-after.yml`): a
+  concrete multi-hop kill-chain via PATH poisoning. Best seen in the **exploit**
+  graph view.
 
 ---
 
 ## TL;DR
 
-| | Before | After |
+| | Scenario A before → after | Scenario B before → after |
 |---|---|---|
-| Total findings | **22** | **8** |
-| Critical | **11** | **2** (structural `GITHUB_TOKEN` floor) |
-| Exploitable chain (`untrusted_with_authority`) | **7** | **0** |
-| Unpinned actions | **4** | **0** |
+| Total findings | **22 → 8** | **21 → 3** |
+| Critical | **11 → 2** (structural floor) | **8 → 0** |
+| Exploitable chain (`untrusted_with_authority`) | **7 → 0** | **4 → 0** |
+| `taudit graph --view exploit` paths | n/a (authority-view risk) | **1 → 0** |
+| Unpinned actions | **4 → 0** | **3 → 0** |
 
-The exploitable chain — an **unpinned, mutable** third-party action with direct
-access to three deploy secrets and a write-scoped token — is removed. What
-remains is the structural floor, which we **baseline** so future changes are
-gated against *new* authority movement.
+In both, the exploitable chain is removed. Scenario A's residual is the
+structural `GITHUB_TOKEN` floor (which we **baseline**); Scenario B goes to
+zero critical and zero exploit paths.
 
 ---
+
+# Scenario A — authority propagation (developer-tool path)
 
 ## 1. What happened
 
@@ -134,6 +146,53 @@ unpins an action shows up as **NEW** authority movement and fails the gate —
 while the known, accepted floor stays quiet. (Captured in
 [`baseline/baseline-diff.txt`](baseline/baseline-diff.txt).)
 
+# Scenario B — exploit path (PATH-helper hijack)
+
+Scenario A is *authority propagation* — broad authority reaching an untrusted
+sink. Scenario B is sharper: a concrete, multi-hop **exploit path** that
+`taudit graph --view exploit` traces end to end.
+
+`workflows/exploit-before.yml` extends `$GITHUB_PATH` with a writable directory
+*before* a deploy action runs:
+
+```yaml
+      - name: Extend PATH before deploy
+        run: echo "$HOME/.local/bin" >> $GITHUB_PATH
+
+      - name: Publish docs
+        uses: cloudflare/wrangler-action@v3      # resolves npx/wrangler via PATH
+        with:
+          accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          apiToken:  ${{ secrets.CLOUDFLARE_PAGES_API_TOKEN }}
+```
+
+taudit traces the kill-chain: the PATH mutation poisons the helper the deploy
+action resolves, and that helper runs while the Cloudflare deploy authority is
+in scope:
+
+![Exploit before — kill-chain](graph/exploit-before-killchain.png)
+
+> PATH mutation → PATH-selected helper → deploy action → authority artifact
+> (deploy secret payload) → `CLOUDFLARE_API_TOKEN` / `SECRET_ALPHA` exposed.
+
+`workflows/exploit-after.yml` removes the chain by **deleting the PATH mutation**
+(so helper resolution can't be redirected), pinning every action to a SHA, and
+dropping the unused `id-token: write`. The result
+([`results/exploit-diff.txt`](results/exploit-diff.txt)):
+
+| | exploit-before | exploit-after |
+|---|---:|---:|
+| Total findings | 21 | **3** |
+| Critical | 8 | **0** |
+| `--view exploit` paths | 1 | **0** |
+
+The 3 residuals are high (Cloudflare secrets reaching the now-pinned
+third-party action) and one medium (structural `GITHUB_TOKEN`) — no criticals,
+no exploit path. Artifacts carry the `exploit-` prefix (workflows, findings,
+graphs, map, receipts, diff).
+
+---
+
 ## 6. Reusable evidence — *what's in this pack*
 
 ```
@@ -141,27 +200,33 @@ taudit-authority-path/
 ├── README.md                     ← this walkthrough
 ├── workflows/
 │   ├── before.yml                ← synthetic vulnerable workflow
-│   └── after.yml                 ← remediated workflow (SHA-pinned, least-privilege)
+│   ├── after.yml                 ← Scenario A remediated (SHA-pinned, least-privilege)
+│   ├── exploit-before.yml        ← Scenario B vulnerable (PATH poisoning)
+│   └── exploit-after.yml         ← Scenario B remediated (PATH mutation removed, pinned)
 ├── findings/
-│   ├── before.findings.json      ← taudit scan --format json   (22 findings)
-│   ├── before.sarif              ← taudit scan --format sarif   (SARIF 2.1.0)
-│   ├── after.findings.json       ← 8 findings
-│   └── after.sarif
+│   ├── before.findings.json / before.sarif        ← Scenario A (22 findings)
+│   ├── after.findings.json  / after.sarif         ← Scenario A (8 findings)
+│   ├── exploit-before.findings.json / .sarif      ← Scenario B (21 findings)
+│   └── exploit-after.findings.json  / .sarif      ← Scenario B (3 findings)
 ├── graph/
-│   ├── before-authority.{png,svg,dot,mmd}   ← authority graph (the headline image)
-│   └── after-authority.{png,svg,dot,mmd}
+│   ├── before-authority.{png,svg,dot,mmd}         ← A: authority graph (headline)
+│   ├── after-authority.{png,svg,dot,mmd}
+│   ├── exploit-before-killchain.{png,svg,dot}     ← B: exploit-view kill-chain (headline)
+│   ├── exploit-before-authority.{png,svg,dot,mmd} / exploit-after-authority.*
+│   └── exploit-after-killchain.dot                ← empty (path_count 0 — proof of removal)
 ├── authority-matrix/
-│   ├── before.map.txt            ← taudit map: which step reaches which secret/identity
-│   └── after.map.txt
+│   ├── before.map.txt / after.map.txt             ← A: which step reaches which secret/identity
+│   └── exploit-before.map.txt / exploit-after.map.txt   ← B
 ├── baseline/
 │   └── baseline-diff.txt         ← taudit baseline diff output (0 NEW)
 ├── .taudit/baselines/<hash>.json ← the committed baseline (accepted floor)
 ├── receipts/
-│   ├── before-receipt.json       ← taudit scan receipt (findings_total, exit_code, ts)
-│   └── after-receipt.json
+│   ├── before-receipt.json / after-receipt.json                ← A scan receipts
+│   └── exploit-before-receipt.json / exploit-after-receipt.json ← B scan receipts
 ├── results/
-│   ├── diff.json / diff.txt       ← taudit diff before→after
-│   └── summary.md                 ← findings table, before vs after, by rule
+│   ├── diff.json / diff.txt          ← Scenario A taudit diff before→after
+│   ├── exploit-diff.json / .txt      ← Scenario B taudit diff before→after
+│   └── summary.md                    ← Scenario A findings table, by rule
 └── tools/
     ├── render-dot.mjs             ← DOT → SVG (no system graphviz needed)
     └── svg2png.mjs                ← SVG → PNG
@@ -205,7 +270,15 @@ taudit scan  $P/workflows/after.yml  --receipt-dir $P/receipts
 # Baseline the remediated state, then prove the gate is clean
 taudit baseline init $P/workflows/after.yml --root $P --captured-by taudit-authority-path-demo
 taudit baseline diff $P/workflows/after.yml --root $P
+
+# Scenario B — exploit view (the kill-chain). path_count 1 → 0.
+taudit graph $P/workflows/exploit-before.yml --view exploit --format dot > $P/graph/exploit-before-killchain.dot
+node $P/tools/render-dot.mjs $P/graph/exploit-before-killchain.dot $P/graph/exploit-before-killchain.svg
+node $P/tools/svg2png.mjs   $P/graph/exploit-before-killchain.svg $P/graph/exploit-before-killchain.png
+taudit diff  $P/workflows/exploit-before.yml $P/workflows/exploit-after.yml --format terminal > $P/results/exploit-diff.txt
 ```
+
+`reproduce.ps1` regenerates **both** scenarios end to end.
 
 ---
 
