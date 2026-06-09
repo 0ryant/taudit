@@ -13,9 +13,9 @@
 #   - unknown-git = "deny"       — every dep must come from crates.io
 #   - unknown-registry = "deny"  — no alternate registries
 #   - yanked = "deny"            — never depend on a yanked crate
-#   - SPDX allow-list is closed  — anything outside MIT / Apache /
-#                                  ISC / BSD / Zlib / MPL / Unicode-3.0
-#                                  is rejected at build time
+#   - SPDX allow-list is closed  — anything outside the project license
+#                                  plus MIT / Apache / ISC / BSD / Zlib /
+#                                  MPL / Unicode-3.0 is rejected at build time
 
 [graph]
 targets = []
@@ -51,6 +51,7 @@ version = 2
 # fails the build. Add new entries here only after confirming the
 # license is compatible with downstream redistribution.
 allow = [
+    "AGPL-3.0-or-later",
     "Apache-2.0",
     "Apache-2.0 WITH LLVM-exception",
     "BSD-2-Clause",
