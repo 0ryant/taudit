@@ -630,9 +630,7 @@ fn resolve_ado_org_base(org: &str) -> Result<String, String> {
 
 /// Allowlist of hosts that legitimately serve the Azure DevOps REST API.
 fn ado_host_allowed(host: &str) -> bool {
-    host == "dev.azure.com"
-        || host == "visualstudio.com"
-        || host.ends_with(".visualstudio.com")
+    host == "dev.azure.com" || host == "visualstudio.com" || host.ends_with(".visualstudio.com")
 }
 
 fn map_ureq_error(err: ureq::Error) -> String {

@@ -2207,7 +2207,12 @@ impl SarifReportSink {
         // No caller-supplied product version: fall back to this crate's
         // version. The CLI passes its own (product) version instead, so the
         // SARIF `tool.driver.version` matches `taudit --version`.
-        self.emit_multi_with_custom_rules_versioned(w, items, custom_rules, env!("CARGO_PKG_VERSION"))
+        self.emit_multi_with_custom_rules_versioned(
+            w,
+            items,
+            custom_rules,
+            env!("CARGO_PKG_VERSION"),
+        )
     }
 
     /// Like [`emit_multi_with_custom_rules`] but stamps the SARIF
@@ -2644,12 +2649,7 @@ mod tests {
         let graph = empty_graph();
         let mut buf = Vec::new();
         SarifReportSink
-            .emit_multi_with_custom_rules_versioned(
-                &mut buf,
-                &[(&graph, &[])],
-                &[],
-                "9.9.9-test",
-            )
+            .emit_multi_with_custom_rules_versioned(&mut buf, &[(&graph, &[])], &[], "9.9.9-test")
             .unwrap();
         let sarif: serde_json::Value = serde_json::from_slice(&buf).unwrap();
         assert_eq!(sarif["runs"][0]["tool"]["driver"]["version"], "9.9.9-test");
