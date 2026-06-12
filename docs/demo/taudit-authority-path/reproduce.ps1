@@ -54,4 +54,25 @@ Write-Host "==> baseline" -ForegroundColor Cyan
 & $Taudit baseline init "$P/workflows/after.yml" --root "$P" --captured-by "taudit-authority-path-demo"
 & $Taudit baseline diff "$P/workflows/after.yml" --root "$P" | Out-File -Encoding utf8 "$P/baseline/baseline-diff.txt"
 
+# 6. Design-system drift pin: the vendored _assets/site.css must byte-match the
+#    algol.cc source. Same discipline as the engineering-doctrine primer pin.
+#    Pinned sha256 (algol.cc/css/site.css as of 2026-06-12):
+$PinnedSiteCssSha = "2728b214e6e59e926dbaac02a3c7fb08f531c3099074d921d2b818bf4d887182"
+Write-Host "==> design-system drift pin (_assets/site.css)" -ForegroundColor Cyan
+$VendoredCss = Join-Path $RepoRoot "$P/_assets/site.css"
+$AlgolCssSrc = "C:/Users/0ryant/prj/algol.cc/css/site.css"
+$VendoredSha = (Get-FileHash -Algorithm SHA256 $VendoredCss).Hash.ToLower()
+if ($VendoredSha -ne $PinnedSiteCssSha) {
+  throw "site.css drift: vendored _assets/site.css sha256 $VendoredSha != pinned $PinnedSiteCssSha. Re-vendor from algol.cc and update the pin."
+}
+if (Test-Path $AlgolCssSrc) {
+  $SrcSha = (Get-FileHash -Algorithm SHA256 $AlgolCssSrc).Hash.ToLower()
+  if ($SrcSha -ne $PinnedSiteCssSha) {
+    throw "site.css drift: algol.cc source sha256 $SrcSha != pinned $PinnedSiteCssSha. The design system moved; re-vendor and update index.html + the pin."
+  }
+  Write-Host "    site.css pinned + matches algol.cc source ($PinnedSiteCssSha)" -ForegroundColor Green
+} else {
+  Write-Host "    algol.cc source not present locally; vendored copy matches pin ($PinnedSiteCssSha)" -ForegroundColor Yellow
+}
+
 Write-Host "==> done. Evidence pack regenerated under $P" -ForegroundColor Green
