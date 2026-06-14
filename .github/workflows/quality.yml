@@ -53,6 +53,40 @@ jobs:
       - name: test
         run: cargo test --workspace
 
+  # Per-rule firing benchmark over the committed public-shape corpus. Unlike the
+  # corpus smoke (scan exits 0 + valid JSON), this asserts every benchmarked rule
+  # FIRES on a known-positive, stays SILENT on the hardened clean fixture, and
+  # that the corpus collectively meets a pinned distinct-rule coverage floor —
+  # fail-closed. Named separately so the coverage gate is a visible check and
+  # cannot be silently dropped by a workspace-test skip.
+  rule-firing-benchmark:
+    name: rule-firing-benchmark
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+
+      - name: Rust toolchain
+        uses: dtolnay/rust-toolchain@98e1b82157cd469e843cb7f524c1313b4ad9492c # 1.88
+
+      - uses: Swatinem/rust-cache@c19371144df3bb44fab255c43d04cbc2ab54d1c4 # v2.9.1
+        with:
+          key: rule-firing-benchmark
+
+      - name: per-rule firing benchmark (fail-closed coverage gate)
+        env:
+          TAUDIT_BENCH_REPORT: rule-firing-benchmark.json
+        run: cargo test -p taudit --test rule_firing_benchmark -- --nocapture
+
+      - name: Upload benchmark report
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: rule-firing-benchmark
+          path: rule-firing-benchmark.json
+          if-no-files-found: warn
+          retention-days: 30
+
   quality:
     runs-on: ubuntu-latest
     # Whole-job ceiling so a hung step cannot occupy runners indefinitely (see mutants step timeout).
