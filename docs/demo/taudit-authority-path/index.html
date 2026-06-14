@@ -1,0 +1,314 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>taudit — Workflow Authority Review (authority-path demo) · Algol</title>
+  <meta name="description" content="A reproducible evidence pack for two synthetic CI workflows: hidden authority made visible, reduced, baselined, and turned into reusable evidence. Everything produced by taudit 1.3.0-pre; no outputs hand-edited; all fixtures synthetic." />
+  <meta name="theme-color" content="#0c0c0c" />
+  <meta name="robots" content="noindex" />
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Bebas+Neue&amp;family=DM+Mono:ital,wght@0,300;0,400;0,500&amp;family=Inter:wght@300;400;500;600&amp;display=swap" rel="stylesheet" />
+  <!-- Pinned vendored copy of algol.cc/css/site.css.
+       Source sha256: 2728b214e6e59e926dbaac02a3c7fb08f531c3099074d921d2b818bf4d887182
+       Drift is asserted in reproduce.ps1 (compares _assets/site.css to the algol.cc source). -->
+  <link rel="stylesheet" href="_assets/site.css" />
+</head>
+<body>
+
+<!-- ── NAV ── -->
+<header>
+  <div class="logo-wrap">
+    <a href="README.md" class="privacy-back">
+      <span class="logo-name">ALGOL</span>
+      <span class="logo-sub">taudit · Pipeline Authority Intelligence · evidence pack</span>
+    </a>
+  </div>
+  <nav aria-label="Primary">
+    <a href="#tldr">TL;DR</a>
+    <a href="#scenario-a">Scenario A</a>
+    <a href="#scenario-b">Scenario B</a>
+    <a href="#reproduce">Reproduce</a>
+    <a href="README.md" class="nav-cta">Read the README</a>
+  </nav>
+</header>
+
+<!-- ── HERO ── -->
+<section class="hero">
+  <div class="hero-eyebrow">taudit 1.3.0-pre · authority-path demo</div>
+  <h1>Workflow authority,<br>made <span>visible</span>.</h1>
+  <p class="hero-sub">A complete, reproducible evidence pack for two synthetic CI workflows. It shows the loop taudit runs on a pipeline: hidden authority &rarr; visible authority &rarr; reduced authority &rarr; baselined authority &rarr; reusable evidence. Everything here was produced by <span class="code-inline">taudit 1.3.0-pre</span> from the files in <span class="code-inline">workflows/</span>. No outputs are hand-edited.</p>
+  <div class="hero-actions">
+    <a class="btn-primary" href="#tldr">See the numbers</a>
+    <a class="btn-ghost" href="#reproduce">Reproduce it</a>
+  </div>
+  <div class="proof-stat-row">
+    <div class="proof-stat">
+      <div class="number" style="color:var(--green)">7 &rarr; 0</div>
+      <div class="label">Scenario A · exploitable chain removed</div>
+    </div>
+    <div class="proof-stat">
+      <div class="number" style="color:var(--green)">8 &rarr; 0</div>
+      <div class="label">Scenario B · criticals removed</div>
+    </div>
+    <div class="proof-stat">
+      <div class="number">0 NEW</div>
+      <div class="label">baseline gate · 8 accepted floor</div>
+    </div>
+  </div>
+</section>
+
+<!-- ── SYNTHETIC DISCLAIMER BAND ── -->
+<div class="cta-band">
+  <div class="cta-band-inner">
+    <p class="cta-band-headline" style="font-size:clamp(1rem,1.8vw,1.3rem)">Fully synthetic — no real org, repo, or credential. <span class="code-inline">vendor/deploy-action</span> does not exist; all secret names are placeholders.</p>
+    <a class="btn-ghost cta-band-btn" href="README.md">Full walkthrough &rarr;</a>
+  </div>
+</div>
+
+<!-- ── TL;DR ── -->
+<section id="tldr">
+  <div class="section-label">The loop, in numbers</div>
+  <h2 class="section-title">TL;DR</h2>
+  <p class="section-body">In both scenarios the exploitable chain is removed. Scenario A's residual is the structural <span class="code-inline">GITHUB_TOKEN</span> floor (which we <strong>baseline</strong>); Scenario B goes to zero critical and zero exploit paths. Verdict colours below map to real taudit findings counts — <span style="color:var(--red)">red</span> before, <span style="color:var(--green)">green</span> after.</p>
+
+  <div class="stride-details" open>
+    <div class="stride-scroll">
+      <table class="stride-table">
+        <thead>
+          <tr>
+            <th>Metric</th>
+            <th>Scenario A &nbsp;before &rarr; after</th>
+            <th>Scenario B &nbsp;before &rarr; after</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td class="stride-cat">Total findings</td>
+            <td><span style="color:var(--red)">22</span> &rarr; <span style="color:var(--amber)">8</span></td>
+            <td><span style="color:var(--red)">21</span> &rarr; <span style="color:var(--amber)">3</span></td>
+          </tr>
+          <tr>
+            <td class="stride-cat">Critical</td>
+            <td><span style="color:var(--red)">11</span> &rarr; <span style="color:var(--amber)">2</span> &nbsp;(structural floor)</td>
+            <td><span style="color:var(--red)">8</span> &rarr; <span style="color:var(--green)">0</span></td>
+          </tr>
+          <tr>
+            <td class="stride-cat">Exploitable chain (<span class="code-inline">untrusted_with_authority</span>)</td>
+            <td><span style="color:var(--red)">7</span> &rarr; <span style="color:var(--green)">0</span></td>
+            <td><span style="color:var(--red)">4</span> &rarr; <span style="color:var(--green)">0</span></td>
+          </tr>
+          <tr>
+            <td class="stride-cat"><span class="code-inline">graph --view exploit</span> paths</td>
+            <td><span style="color:var(--muted)">n/a</span> &nbsp;(authority-view risk)</td>
+            <td><span style="color:var(--red)">1</span> &rarr; <span style="color:var(--green)">0</span></td>
+          </tr>
+          <tr>
+            <td class="stride-cat">Unpinned actions</td>
+            <td><span style="color:var(--red)">4</span> &rarr; <span style="color:var(--green)">0</span></td>
+            <td><span style="color:var(--red)">3</span> &rarr; <span style="color:var(--green)">0</span></td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+  </div>
+
+  <div class="proof-stat-row">
+    <div class="proof-stat">
+      <div class="number" style="color:var(--red)">22 / 21</div>
+      <div class="label">total findings before · A / B</div>
+    </div>
+    <div class="proof-stat">
+      <div class="number" style="color:var(--green)">11 &rarr; 0</div>
+      <div class="label">exploitable chains removed (7 + 4)</div>
+    </div>
+    <div class="proof-stat">
+      <div class="number" style="color:var(--amber)">2</div>
+      <div class="label">A residual criticals · GITHUB_TOKEN floor</div>
+    </div>
+  </div>
+</section>
+
+<!-- ── SCENARIO A ── -->
+<section id="scenario-a">
+  <div class="section-label">Scenario A · authority propagation (developer-tool path)</div>
+  <h2 class="section-title">Hidden authority, drawn.</h2>
+  <p class="section-body"><span class="code-inline">workflows/before.yml</span> is an ordinary two-job pipeline: a <span class="code-inline">build</span> job produces an artifact, a <span class="code-inline">deploy</span> job ships it through a third-party action. Two things make it dangerous and neither is visible reading the YAML top-to-bottom: authority is granted <strong>workflow-wide</strong> (<span class="code-inline">contents/packages/id-token: write</span> applies to every step), and the executable is <strong>mutable</strong> (<span class="code-inline">vendor/deploy-action@v2</span> is a moving tag). Whoever moves that tag inherits write authority, an OIDC identity, and three production secrets.</p>
+
+  <div class="terminals-grid" style="margin-top:2.5rem">
+    <div class="term-card">
+      <div class="term-header"><span class="dot dot-r"></span><span class="dot dot-y"></span><span class="dot dot-g"></span><span class="term-title">before.yml · hidden authority</span></div>
+      <div class="term-body"><pre><span class="t-cmd"># taudit graph --view authority before.yml</span>
+<span class="t-label">step:</span> Third-party production deploy <span class="t-deny">[untrusted]</span>
+  <span class="t-deny">has_access_to →</span> CLOUD_DEPLOY_TOKEN
+  <span class="t-deny">has_access_to →</span> PROD_API_KEY
+  <span class="t-deny">has_access_to →</span> RELEASE_TOKEN
+  <span class="t-deny">has_access_to →</span> GITHUB_TOKEN
+  <span class="t-deny">uses_image    →</span> vendor/deploy-action@v2 <span class="t-deny">[unpinned]</span>
+
+<span class="t-cmd"># taudit scan before.yml</span>
+<span class="t-deny">22 findings · 11 critical</span>
+<span class="t-deny">7 untrusted_with_authority (exploitable core)</span></pre></div>
+    </div>
+
+    <div class="term-card">
+      <div class="term-header"><span class="dot dot-r"></span><span class="dot dot-y"></span><span class="dot dot-g"></span><span class="term-title">after.yml · reduced authority</span></div>
+      <div class="term-body"><pre><span class="t-cmd"># least privilege · SHA-pinned · scoped secrets</span>
+<span class="t-warn">step:</span> Third-party production deploy <span class="t-warn">[pinned]</span>
+  <span class="t-ok">default permissions: contents: read</span>
+  <span class="t-ok">action pinned → full commit SHA</span>
+  <span class="t-ok">secrets ← protected production env</span>
+  GITHUB_TOKEN <span class="t-warn">split → (build) / (deploy)</span>
+
+<span class="t-cmd"># taudit diff before.yml after.yml</span>
+<span class="t-ok">findings 22 → 8 (−14)</span>
+<span class="t-ok">7 untrusted_with_authority → 0</span>
+<span class="t-ok">4 unpinned actions → 0 · workflow-wide write removed</span></pre></div>
+    </div>
+  </div>
+
+  <div class="proof-caption">
+    <p><strong>What changed:</strong> <span class="code-inline">after.yml</span> applies the standard remediation with no new tooling — default <span class="code-inline">permissions: contents: read</span> with per-job opt-in, every action pinned to a full-length commit SHA, and deploy secrets scoped to the protected <span class="code-inline">production</span> environment. <span class="code-inline">taudit diff</span> (<a class="code-inline" href="results/diff.txt">results/diff.txt</a>) states it precisely: <strong>22 &rarr; 8</strong>, all 7 <span class="code-inline">untrusted_with_authority</span> criticals and all 4 unpinned-action findings removed. Graphs: <a class="code-inline" href="graph/before-authority.png">before-authority.png</a> &middot; <a class="code-inline" href="graph/after-authority.png">after-authority.png</a>.</p>
+  </div>
+
+  <!-- HONEST RESIDUAL -->
+  <div class="boundary-box">
+    <h3>What remains · honest residual (after.yml is not zero, by design)</h3>
+    <p><strong>2 critical</strong> — <span class="code-inline">GITHUB_TOKEN</span> propagation. Actions injects this token into every job; its reach is structural. This is the floor, not a regression.</p>
+    <p><strong>3 high</strong> — the three secrets still reach a <em>third-party</em> action. It is now pinned and reviewed, so this is residual third-party trust, not an open exploit. Removing it means moving to OIDC or a first-party deploy path.</p>
+    <p><strong>1 high</strong> — <span class="code-inline">id-token: write</span> on deploy could be scoped tighter still.</p>
+    <p><strong>1 low / 1 info</strong> — <span class="code-inline">PROD_API_KEY</span> is a static credential (use OIDC), plus an OIDC-without-attestation note.</p>
+  </div>
+
+  <!-- THE GATE -->
+  <div class="proof-caption" style="border-left-color:var(--green)">
+    <p><strong>Baselined authority — the gate.</strong> <span class="code-inline">taudit baseline init after.yml</span> records those 8 residual findings as the accepted floor (<a class="code-inline" href=".taudit/baselines">.taudit/baselines/</a>). From then on:</p>
+    <p><span class="t-cmd">$ taudit baseline diff after.yml</span><br><span class="t-gold">after.yml: 0 NEW, 0 FIXED, 8 PRE-EXISTING</span></p>
+    <p><span style="color:var(--fg)"><span class="code-inline">0 NEW</span> is the point.</span> A future PR that re-broadens a permission or unpins an action shows up as <strong>NEW</strong> authority movement and fails the gate — while the known floor stays quiet. Captured in <a class="code-inline" href="baseline/baseline-diff.txt">baseline/baseline-diff.txt</a>.</p>
+  </div>
+</section>
+
+<!-- ── SCENARIO B ── -->
+<section id="scenario-b">
+  <div class="section-label">Scenario B · exploit path (PATH-helper hijack)</div>
+  <h2 class="section-title">A multi-hop kill-chain, traced end to end.</h2>
+  <p class="section-body">Scenario A is authority <em>propagation</em> — broad authority reaching an untrusted sink. Scenario B is sharper: a concrete, multi-hop <strong>exploit path</strong> that <span class="code-inline">taudit graph --view exploit</span> traces end to end. <span class="code-inline">exploit-before.yml</span> extends <span class="code-inline">$GITHUB_PATH</span> with a writable directory <em>before</em> a deploy action runs, poisoning the helper the action resolves while the Cloudflare deploy authority is in scope.</p>
+
+  <div class="term-card" style="max-width:820px;margin-top:2.5rem">
+    <div class="term-header"><span class="dot dot-r"></span><span class="dot dot-y"></span><span class="dot dot-g"></span><span class="term-title">exploit-before-killchain · taudit graph --view exploit</span></div>
+    <div class="term-body"><pre><span class="t-deny">PATH mutation</span>            echo "$HOME/.local/bin" &gt;&gt; $GITHUB_PATH
+   <span class="t-deny">↳</span> <span class="t-warn">PATH-selected helper</span>   npx / wrangler resolved via poisoned PATH
+   <span class="t-deny">↳</span> <span class="t-warn">deploy action</span>          cloudflare/wrangler-action@v3 <span class="t-deny">[unpinned]</span>
+   <span class="t-deny">↳</span> <span class="t-deny">authority artifact</span>     deploy secret payload
+        <span class="t-deny">CLOUDFLARE_API_TOKEN / SECRET_ALPHA exposed</span>
+
+<span class="t-cmd"># taudit graph --view exploit · path_count</span>
+<span class="t-deny">exploit-before: 1 path</span>   <span class="t-ok">exploit-after: 0 paths</span></pre></div>
+  </div>
+
+  <div class="proof-stat-row">
+    <div class="proof-stat">
+      <div class="number"><span style="color:var(--red)">21</span> &rarr; <span style="color:var(--amber)">3</span></div>
+      <div class="label">total findings · before &rarr; after</div>
+    </div>
+    <div class="proof-stat">
+      <div class="number"><span style="color:var(--red)">8</span> &rarr; <span style="color:var(--green)">0</span></div>
+      <div class="label">critical · before &rarr; after</div>
+    </div>
+    <div class="proof-stat">
+      <div class="number"><span style="color:var(--red)">1</span> &rarr; <span style="color:var(--green)">0</span></div>
+      <div class="label">--view exploit paths</div>
+    </div>
+  </div>
+
+  <div class="proof-caption">
+    <p><span class="code-inline">exploit-after.yml</span> removes the chain by <strong>deleting the PATH mutation</strong> (so helper resolution can't be redirected), pinning every action to a SHA, and dropping the unused <span class="code-inline">id-token: write</span>. The 3 residuals are <span style="color:var(--amber)">high</span> (Cloudflare secrets reaching the now-pinned third-party action) and one medium (structural <span class="code-inline">GITHUB_TOKEN</span>) — <strong>no criticals, no exploit path</strong>. <span class="code-inline">exploit-after-killchain.dot</span> is empty (<span class="code-inline">path_count 0</span> — proof of removal). Diff: <a class="code-inline" href="results/exploit-diff.txt">results/exploit-diff.txt</a> &middot; graph: <a class="code-inline" href="graph/exploit-before-killchain.png">exploit-before-killchain.png</a>.</p>
+  </div>
+</section>
+
+<!-- ── REPRODUCE ── -->
+<section id="reproduce">
+  <div class="section-label">Reproduce it</div>
+  <h2 class="section-title">No hand-edited outputs.</h2>
+  <p class="section-body">Requires the <span class="code-inline">taudit</span> binary (<span class="code-inline">cargo build -p taudit --release</span>) and Node 18+ for image rendering. <a class="code-inline" href="reproduce.ps1">reproduce.ps1</a> regenerates <strong>both</strong> scenarios end to end — and asserts the vendored <span class="code-inline">_assets/site.css</span> still matches the algol.cc source by sha256.</p>
+
+  <div class="steps">
+    <div class="step">
+      <div class="step-num">1</div>
+      <div class="step-cmd">taudit scan</div>
+      <div class="step-desc">JSON + SARIF findings for before/after of both scenarios &rarr; <span class="code-inline">findings/</span>. 22, 8, 21, 3.</div>
+    </div>
+    <div class="step">
+      <div class="step-num">2</div>
+      <div class="step-cmd">taudit map &middot; graph</div>
+      <div class="step-desc">Authority matrix per step &rarr; <span class="code-inline">authority-matrix/</span>; DOT/Mermaid &rarr; SVG &rarr; PNG into <span class="code-inline">graph/</span> (no system graphviz needed).</div>
+    </div>
+    <div class="step">
+      <div class="step-num">3</div>
+      <div class="step-cmd">taudit diff</div>
+      <div class="step-desc">before &rarr; after diff, terminal + JSON &rarr; <span class="code-inline">results/</span>. Plus scan receipts &rarr; <span class="code-inline">receipts/</span>.</div>
+    </div>
+    <div class="step">
+      <div class="step-num">4</div>
+      <div class="step-cmd">taudit baseline</div>
+      <div class="step-desc"><span class="code-inline">baseline init</span> records the 8-finding floor; <span class="code-inline">baseline diff</span> proves <span class="t-gold">0 NEW</span> &rarr; <span class="code-inline">baseline/</span>.</div>
+    </div>
+  </div>
+
+  <div class="term-card" style="margin-top:2.5rem;max-width:820px">
+    <div class="term-header"><span class="dot dot-r"></span><span class="dot dot-y"></span><span class="dot dot-g"></span><span class="term-title">reproduce.ps1 (excerpt)</span></div>
+    <div class="term-body"><pre><span class="t-cmd">P=docs/demo/taudit-authority-path</span>
+
+<span class="t-label">taudit scan</span>  $P/workflows/before.yml --format json  -o $P/findings/before.findings.json
+<span class="t-label">taudit map</span>   $P/workflows/before.yml --format text &gt; $P/authority-matrix/before.map.txt
+<span class="t-label">taudit graph</span> $P/workflows/before.yml --view authority --format dot &gt; $P/graph/before-authority.dot
+<span class="t-label">taudit diff</span>  $P/workflows/before.yml $P/workflows/after.yml --format terminal &gt; $P/results/diff.txt
+<span class="t-label">taudit baseline init</span> $P/workflows/after.yml --root $P --captured-by taudit-authority-path-demo
+<span class="t-label">taudit baseline diff</span> $P/workflows/after.yml --root $P
+<span class="t-ok">→ after.yml: 0 NEW, 0 FIXED, 8 PRE-EXISTING</span>
+
+<span class="t-cmd"># Scenario B — exploit view (kill-chain). path_count 1 → 0.</span>
+<span class="t-label">taudit graph</span> $P/workflows/exploit-before.yml --view exploit --format dot &gt; $P/graph/exploit-before-killchain.dot</pre></div>
+  </div>
+</section>
+
+<!-- ── EVIDENCE / WHAT'S IN THIS PACK ── -->
+<section id="evidence">
+  <div class="section-label">Reusable evidence</div>
+  <h2 class="section-title">What's in this pack.</h2>
+  <p class="section-body">Every artefact below is regenerated by <span class="code-inline">reproduce.ps1</span> — the graphs, findings, diffs, receipts, and the committed baseline are machine output, not hand-edited. This page renders that evidence; the <a class="code-inline" href="README.md">README</a> is the full prose walkthrough.</p>
+
+  <div class="term-card" style="margin-top:2.5rem;max-width:880px">
+    <div class="term-header"><span class="dot dot-r"></span><span class="dot dot-y"></span><span class="dot dot-g"></span><span class="term-title">taudit-authority-path/</span></div>
+    <div class="term-body"><pre><span class="t-gold">taudit-authority-path/</span>
+├── <a class="code-inline" href="README.md">README.md</a>                     <span class="t-cmd">← prose walkthrough</span>
+├── <a class="code-inline" href="index.html">index.html</a>                    <span class="t-cmd">← this page (algol.cc design system)</span>
+├── _assets/site.css              <span class="t-cmd">← pinned vendored algol.cc/css/site.css</span>
+├── <a class="code-inline" href="workflows">workflows/</a>                    <span class="t-cmd">← before / after · exploit-before / -after</span>
+├── <a class="code-inline" href="findings">findings/</a>                     <span class="t-cmd">← *.findings.json + *.sarif (22 / 8 / 21 / 3)</span>
+├── <a class="code-inline" href="graph">graph/</a>                        <span class="t-cmd">← authority + exploit graphs (png/svg/dot/mmd)</span>
+├── <a class="code-inline" href="authority-matrix">authority-matrix/</a>             <span class="t-cmd">← which step reaches which secret/identity</span>
+├── <a class="code-inline" href="baseline">baseline/</a>                     <span class="t-cmd">← baseline-diff.txt (0 NEW)</span>
+├── .taudit/baselines/<hash>.json <span class="t-cmd">← committed accepted floor</span>
+├── <a class="code-inline" href="receipts">receipts/</a>                     <span class="t-cmd">← scan receipts (both scenarios)</span>
+├── <a class="code-inline" href="results">results/</a>                      <span class="t-cmd">← diff(.json/.txt), exploit-diff, summary.md</span>
+└── tools/                        <span class="t-cmd">← render-dot.mjs · svg2png.mjs</span></pre></div>
+  </div>
+</section>
+
+<!-- ── FOOTER ── -->
+<footer>
+  <div class="footer-logo">ALGOL</div>
+  <div class="footer-text">
+    Generated with <strong>taudit 1.3.0-pre</strong>. Workflows and credentials are synthetic — no real organisation, repository, or credential is referenced.<br>
+    Design system pinned to algol.cc/css/site.css · sha256 2728b214…d887182
+  </div>
+  <div class="footer-links">
+    <a href="README.md">README</a>
+    <a href="reproduce.ps1">reproduce.ps1</a>
+  </div>
+</footer>
+
+</body>
+</html>
