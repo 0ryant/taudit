@@ -1469,8 +1469,8 @@ checksum = "f5328d443c713935dfe7e4ab4ff0d6d1c7aaf4109305339fa8bfb01e463be8c9"
 dependencies = [
  "async-trait",
  "chrono",
- "mcpact-core",
- "mcpact-runtime",
+ "mcpact-core 0.2.0",
+ "mcpact-runtime 0.2.0",
  "reqwest 0.12.28",
  "serde",
  "serde_json",
@@ -1492,6 +1492,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "mcpact-core"
+version = "0.4.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "c2fe73c62ab28f4f516c09068711f57351b4491bce74df4219b3a1d55b82965a"
+dependencies = [
+ "schemars 0.8.22",
+ "serde",
+ "serde_json",
+ "thiserror 1.0.69",
+]
+
+[[package]]
 name = "mcpact-manifest"
 version = "0.2.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1501,7 +1513,26 @@ dependencies = [
  "camino",
  "ed25519-dalek",
  "indexmap",
- "mcpact-core",
+ "mcpact-core 0.2.0",
+ "schemars 0.8.22",
+ "serde",
+ "serde_json",
+ "sha2 0.10.9",
+ "thiserror 1.0.69",
+ "toml 0.8.23",
+]
+
+[[package]]
+name = "mcpact-manifest"
+version = "0.4.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "8b429bf44fdb44afae65c289203e2392bee28827b06437861e9c4b57b6c4a417"
+dependencies = [
+ "base64",
+ "camino",
+ "ed25519-dalek",
+ "indexmap",
+ "mcpact-core 0.4.0",
  "schemars 0.8.22",
  "serde",
  "serde_json",
@@ -1517,7 +1548,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "73c0031964ad16d4ce6f4ef84a0c2f86f3ebb815ae5ab5c155779262e124b6a3"
 dependencies = [
  "async-trait",
- "mcpact-core",
+ "mcpact-core 0.2.0",
  "schemars 0.8.22",
  "serde",
  "serde_json",
@@ -1528,13 +1559,14 @@ dependencies = [
 
 [[package]]
 name = "mcpact-policy"
-version = "0.2.0"
+version = "0.4.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "fb5a0baee7733d95c10ebade9d3b00f0abe9f97537d41f8e3cc349c06bc70e2f"
+checksum = "d2e278d524eb7678d1c155394321a9996a65c3570acf9f2ab660b848e25ac589"
 dependencies = [
  "camino",
- "mcpact-core",
- "mcpact-manifest",
+ "mcpact-core 0.4.0",
+ "mcpact-manifest 0.4.0",
+ "mcpact-runtime 0.4.0",
  "serde",
  "serde_json",
  "thiserror 1.0.69",
@@ -1547,7 +1579,22 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "1b331a2534659048ac60725962d0f3bcd25f6d5bb285c5960bcc8dc4c1a5ebea"
 dependencies = [
  "chrono",
- "mcpact-core",
+ "mcpact-core 0.2.0",
+ "serde",
+ "serde_json",
+ "thiserror 1.0.69",
+ "tokio",
+ "tracing",
+]
+
+[[package]]
+name = "mcpact-runtime"
+version = "0.4.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "81b4102360f853c0096e2143406fb452399f72283cc8350064d4a56a8e405413"
+dependencies = [
+ "chrono",
+ "mcpact-core 0.4.0",
  "serde",
  "serde_json",
  "thiserror 1.0.69",
@@ -2670,11 +2717,11 @@ version = "0.1.0-pre"
 dependencies = [
  "async-trait",
  "mcpact-audit",
- "mcpact-core",
- "mcpact-manifest",
+ "mcpact-core 0.2.0",
+ "mcpact-manifest 0.2.0",
  "mcpact-mcp",
  "mcpact-policy",
- "mcpact-runtime",
+ "mcpact-runtime 0.2.0",
  "schemars 1.2.1",
  "serde",
  "serde_json",
