@@ -51,6 +51,7 @@
 //! See ADR 0001 (graph as product) and the v1.1.0 release notes for the
 //! full rationale behind this split.
 
+pub mod axiom_conformance;
 pub mod baselines;
 pub mod custom_rules;
 pub mod error;

@@ -1,5 +1,6 @@
 ---
 source: crates/taudit-cli/tests/snapshot_ado.rs
+assertion_line: 113
 expression: results
 ---
 - level: error
@@ -11,20 +12,20 @@ expression: results
   message:
     text: "PR-triggered pipeline checks out the repository at step 'pipeline\\[0\\]' — attacker-controlled code from the fork lands on the runner and is readable by all subsequent steps"
   partialFingerprints:
-    primaryLocationLineHash: 481eb03db2f3c50620aead82178810b4
-    taudit/v1: 481eb03db2f3c50620aead82178810b4
+    primaryLocationLineHash: ad8ae6e7d526ab0a8d0f1fc42ff98482
+    taudit/v1: ad8ae6e7d526ab0a8d0f1fc42ff98482
   properties:
     attackerSurfaceKinds:
       - untrusted_checkout
     confidenceScope: yaml_only
     cveRelationship: same_authority_shape
-    findingGroupId: 07f2e7cf-9646-51fd-acf3-0bebfad3ad2e
+    findingGroupId: 4b7c47d1-799d-59a4-ad46-97f73a76e56a
     portalControlDependency: true
     runtimePreconditions:
       - the authority shown in the graph is available to that run
       - untrusted PR or fork-controlled input can reach this workflow at runtime
     security-severity: "7.5"
-    suppressionKey: sk1_b7d6e3c9f9f8da1519afc2d9667a9364
+    suppressionKey: sk1_3024d77eb2e833245b03354d44494068
     taudit-source: built-in
     timeToFix: medium
   ruleId: checkout_self_pr_exposure
@@ -37,16 +38,16 @@ expression: results
   message:
     text: "System.AccessToken has broad scope \\(permissions: ''\\) — likely broader than needed"
   partialFingerprints:
-    primaryLocationLineHash: fd6a9adae7376318838370392ea657ca
-    taudit/v1: fd6a9adae7376318838370392ea657ca
+    primaryLocationLineHash: 0bfff79c851da187e03136c1b6bc72c7
+    taudit/v1: 0bfff79c851da187e03136c1b6bc72c7
   properties:
     authorityKinds:
       - job_token
     confidenceScope: yaml_only
-    findingGroupId: 5f27c90f-6130-57b7-931c-7e756722e388
+    findingGroupId: 75a04e30-65e3-5ce5-af8a-985a6ebef0ce
     portalControlDependency: true
     security-severity: "7.5"
-    suppressionKey: sk1_f5713fcbea60d40cf198a961d114d083
+    suppressionKey: sk1_da56761dca6960360598b21cd3aabbee
     taudit-source: built-in
     timeToFix: small
   ruleId: over_privileged_identity
@@ -59,21 +60,21 @@ expression: results
   message:
     text: "PR-triggered pipeline uses self-hosted agent pool with checkout:self — enables git hook injection persisting across pipeline runs on the shared runner"
   partialFingerprints:
-    primaryLocationLineHash: 0647fb972a184c014fd376364580225d
-    taudit/v1: 0647fb972a184c014fd376364580225d
+    primaryLocationLineHash: 7deb148f0e54c74a7ccd60213c6df01a
+    taudit/v1: 7deb148f0e54c74a7ccd60213c6df01a
   properties:
     attackerSurfaceKinds:
       - self_hosted_runner
       - untrusted_checkout
     confidenceScope: yaml_only
     cveRelationship: same_authority_shape
-    findingGroupId: 0953b31e-364f-5f21-89a6-a7ae6a1310bb
+    findingGroupId: 473e21fb-6a19-5ed4-91ef-fce7de4e152c
     portalControlDependency: true
     runtimePreconditions:
       - the authority shown in the graph is available to that run
       - untrusted PR or fork-controlled input can reach this workflow at runtime
     security-severity: "9.0"
-    suppressionKey: sk1_3eeee794ecfc8dcb9f8a3ac419097560
+    suppressionKey: sk1_dcb608ec42e3eed6aadfaa7b21f4998b
     taudit-source: built-in
   ruleId: self_hosted_pool_pr_hijack
 - level: error
@@ -85,16 +86,16 @@ expression: results
   message:
     text: "Self-hosted pool 'SharedBuildAgents' has no workspace isolation \\(workspace: {clean: all/true} not set\\); a previous pipeline run can pollute the workspace for the next — including privileged deployment jobs"
   partialFingerprints:
-    primaryLocationLineHash: 4873e5775b5e271f363374e5b504aca1
-    taudit/v1: 4873e5775b5e271f363374e5b504aca1
+    primaryLocationLineHash: 811fb6aeb233128a8ceb32b9f0816720
+    taudit/v1: 811fb6aeb233128a8ceb32b9f0816720
   properties:
     attackerSurfaceKinds:
       - self_hosted_runner
     confidenceScope: yaml_only
-    findingGroupId: 82f6a179-d521-5cd9-bdaa-09de04bfcb42
+    findingGroupId: d82956fa-9218-5473-9f5f-9b33c8cc8344
     portalControlDependency: true
     security-severity: "7.5"
-    suppressionKey: sk1_fc2b27975841ee1de181c539eb3555e2
+    suppressionKey: sk1_4de8d982051e9d538dcb81ccb78ee105
     taudit-source: built-in
   ruleId: shared_self_hosted_pool_no_isolation
 - level: error
@@ -106,8 +107,8 @@ expression: results
   message:
     text: "Workflow triggered by pr with secret/identity access — 2 step\\(s\\) hold authority that attacker-controlled code could reach"
   partialFingerprints:
-    primaryLocationLineHash: b6c2dbaccfb85fcc54955524d5539caa
-    taudit/v1: b6c2dbaccfb85fcc54955524d5539caa
+    primaryLocationLineHash: b447cd6841141b5f8bbb3cb69113dc7c
+    taudit/v1: b447cd6841141b5f8bbb3cb69113dc7c
   properties:
     attackerSurfaceKinds:
       - script_sink
@@ -118,12 +119,12 @@ expression: results
       - secret
     confidenceScope: yaml_only
     cveRelationship: same_authority_shape
-    findingGroupId: 113dc5b4-ddf6-5be7-aca2-4eddf0a8f032
+    findingGroupId: 44a3e7d1-30b7-5e9e-9601-314e679f66f9
     portalControlDependency: true
     runtimePreconditions:
       - the authority shown in the graph is available to that run
       - untrusted PR or fork-controlled input can reach this workflow at runtime
     security-severity: "7.5"
-    suppressionKey: sk1_39f6c552923530e285bb75ad38b1342e
+    suppressionKey: sk1_22e8470f2b9f712f81238bb6cf5df4ab
     taudit-source: built-in
   ruleId: trigger_context_mismatch

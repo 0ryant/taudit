@@ -85,7 +85,8 @@ pub struct CloudEventV1 {
     /// `graph.metadata["pipeline_content_hash"]` /
     /// `graph.metadata["pipeline_identity_material_hash"]` when present,
     /// otherwise fall back to deterministic derivation from authority-graph
-    /// identity material. Shape: `urn:taudit:pipeline:sha256:<64-hex>`.
+    /// identity material. Shape: `urn:taudit:pipeline:blake3:<64-hex>` (ADR-0003;
+    /// legacy `sha256:<64-hex>` URNs are still accepted by the published schema).
     pub tauditpipelineid: String,
     /// Per-invocation scan-run identifier shared by all findings emitted in a
     /// single `emit` call. Distinct from `correlationid`, which is the
@@ -108,10 +109,13 @@ const PROVENANCE_REPO: &str = "taudit";
 const PROVENANCE_PRODUCER: &str = "taudit-sink-cloudevents";
 const PROVENANCE_KIND: &str = "finding";
 
-fn is_sha256_prefixed_digest(value: &str) -> bool {
-    value
-        .strip_prefix("sha256:")
-        .map(|hex| hex.len() == 64 && hex.chars().all(|c| c.is_ascii_hexdigit()))
+/// True for a content-address digest carrying a recognised algorithm tag:
+/// `blake3:<64-hex>` (ADR-0003, current) or legacy `sha256:<64-hex>`.
+fn is_prefixed_digest(value: &str) -> bool {
+    let hex = value
+        .strip_prefix("blake3:")
+        .or_else(|| value.strip_prefix("sha256:"));
+    hex.map(|h| h.len() == 64 && h.chars().all(|c| c.is_ascii_hexdigit()))
         .unwrap_or(false)
 }
 
@@ -122,7 +126,7 @@ fn derive_pipeline_id(graph: &AuthorityGraph) -> String {
     let hash = ["pipeline_content_hash", "pipeline_identity_material_hash"]
         .iter()
         .filter_map(|key| graph.metadata.get(*key))
-        .find(|value| is_sha256_prefixed_digest(value))
+        .find(|value| is_prefixed_digest(value))
         .cloned()
         .unwrap_or_else(|| compute_pipeline_identity_material_hash(graph));
 

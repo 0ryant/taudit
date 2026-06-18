@@ -7,11 +7,28 @@ pub static RESOLVED_BINARY: OnceLock<PathBuf> = OnceLock::new();
 
 const SOURCE_MANIFEST: &str = include_str!(concat!("../.mcpact/source.mcpact.toml"));
 
-fn lock_source_manifest_sha256(lock: &str) -> Option<String> {
+/// Which digest algorithm the embedded mcpact lockfile records the source
+/// manifest under. mcpact's lockfile format is owned by mcpact: the
+/// `mcpact.lock.v1` schema records it as `source_manifest_sha256` (SHA-256);
+/// the doctrine-migrated `mcpact.lock.v2` schema records it as
+/// `source_manifest_blake3` (BLAKE3, ADR-0003). The pack verifier accepts
+/// whichever the lockfile carries so it stays correct across an mcpact version
+/// bump without forcing a regenerate.
+enum ManifestDigest {
+    Sha256(String),
+    Blake3(String),
+}
+
+fn lock_source_manifest_digest(lock: &str) -> Option<ManifestDigest> {
     lock.lines().find_map(|line| {
-        line.strip_prefix("source_manifest_sha256 = \"")
-            .and_then(|rest| rest.strip_suffix('"'))
-            .map(str::to_string)
+        if let Some(rest) = line.strip_prefix("source_manifest_blake3 = \"") {
+            rest.strip_suffix('"')
+                .map(|h| ManifestDigest::Blake3(h.to_string()))
+        } else {
+            line.strip_prefix("source_manifest_sha256 = \"")
+                .and_then(|rest| rest.strip_suffix('"'))
+                .map(|h| ManifestDigest::Sha256(h.to_string()))
+        }
     })
 }
 
@@ -21,6 +38,10 @@ fn sha256_hex(bytes: &[u8]) -> String {
         .iter()
         .map(|byte| format!("{byte:02x}"))
         .collect()
+}
+
+fn blake3_hex(bytes: &[u8]) -> String {
+    axiom_hash::blake3_hex(bytes)
 }
 
 /// Verify signed/verified trust and lockfile before serving.
@@ -36,7 +57,12 @@ pub fn verify_pack_integrity() -> Result<(), String> {
             .map_err(|err| format!("serve-time signature verification failed: {err}"))?;
     }
     let embedded_lock = include_str!(concat!("../.mcpact/mcpact.lock"));
-    if !embedded_lock.contains("schema_version = \"mcpact.lock.v1\"") {
+    // Accept both the legacy v1 lockfile and the doctrine-migrated v2 lockfile
+    // (mcpact.lock.v2, BLAKE3 digests). The format is owned by mcpact; taudit
+    // verifies whichever schema the embedded lock declares.
+    if !(embedded_lock.contains("schema_version = \"mcpact.lock.v1\"")
+        || embedded_lock.contains("schema_version = \"mcpact.lock.v2\""))
+    {
         return Err("invalid embedded lockfile".into());
     }
     let on_disk = std::fs::read_to_string(".mcpact/mcpact.lock")
@@ -44,8 +70,11 @@ pub fn verify_pack_integrity() -> Result<(), String> {
     if embedded_lock != on_disk {
         return Err("embedded lockfile does not match on-disk copy (tree tampered)".into());
     }
-    if let Some(expected) = lock_source_manifest_sha256(embedded_lock) {
-        let actual = sha256_hex(SOURCE_MANIFEST.as_bytes());
+    if let Some(expected) = lock_source_manifest_digest(embedded_lock) {
+        let (actual, expected) = match expected {
+            ManifestDigest::Blake3(h) => (blake3_hex(SOURCE_MANIFEST.as_bytes()), h),
+            ManifestDigest::Sha256(h) => (sha256_hex(SOURCE_MANIFEST.as_bytes()), h),
+        };
         if actual != expected {
             return Err("embedded manifest hash does not match lockfile".into());
         }

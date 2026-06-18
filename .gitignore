@@ -79,6 +79,11 @@ cobertura.xml
 # sub-directories are excluded.
 .taudit/backups/
 .taudit/baselines/
+# Doctrine custody substrate (pattern 07 + 09): the BLAKE3-chained audit trail
+# and signed receipts are machine-generated runtime state, not source.
+.taudit/receipts/
+audit-trail.jsonl
+audit-trail.jsonl.lock
 
 # Ephemeral CellOS smoke spec (scripts/cellos_smoke_docker.sh)
 .cellos-spec.*.json

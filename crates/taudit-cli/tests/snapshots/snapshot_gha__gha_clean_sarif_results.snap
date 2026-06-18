@@ -1,5 +1,6 @@
 ---
 source: crates/taudit-cli/tests/snapshot_gha.rs
+assertion_line: 146
 expression: results
 ---
 - level: warning
@@ -11,14 +12,14 @@ expression: results
   message:
     text: GITHUB_TOKEN propagated to actions/checkout@a5ac7e51b41094c92402da3b24376905380afc29 across trust boundary
   partialFingerprints:
-    primaryLocationLineHash: 2c001aeeb933afb192cc1af87babdff9
-    taudit/v1: 2c001aeeb933afb192cc1af87babdff9
+    primaryLocationLineHash: 8886f49a913cabcd4c4a96856247ec35
+    taudit/v1: 8886f49a913cabcd4c4a96856247ec35
   properties:
     authorityKinds:
       - job_token
     confidenceScope: yaml_only
-    findingGroupId: 58af3d8a-8e02-5d29-8a35-013ac5b8ddc2
+    findingGroupId: c809b2b3-8d1a-5920-9c46-fe83a145af30
     security-severity: "5.0"
-    suppressionKey: sk1_c6ce89eaa9383364fa8ef0605c66be0a
+    suppressionKey: sk1_33915b7ba286d7f88c0d210a9772364c
     taudit-source: built-in
   ruleId: authority_propagation

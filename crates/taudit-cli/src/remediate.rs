@@ -5,7 +5,6 @@ use crate::error_hints::{
 use crate::stdio_epipe::try_write_stdout;
 use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
-use sha2::{Digest, Sha256};
 use std::collections::HashSet;
 use std::env;
 use std::fs;
@@ -323,8 +322,8 @@ pub fn cmd_apply(opts: ApplyOpts) -> Result<()> {
 
         records.push(FileBackupRecord {
             path: item.path.display().to_string(),
-            pre_apply_hash: sha256_hex(&item.before),
-            post_apply_hash: sha256_hex(&item.after),
+            pre_apply_hash: blake3_hex(&item.before),
+            post_apply_hash: blake3_hex(&item.after),
             original_snapshot: relative_from(&backup_root, &original_snapshot_path),
             rewritten_snapshot: relative_from(&backup_root, &rewritten_snapshot_path),
             forward_patch: relative_from(&backup_root, &forward_patch_path),
@@ -411,7 +410,7 @@ pub fn cmd_apply(opts: ApplyOpts) -> Result<()> {
 /// Restore files from a previous `apply` operation in two passes.
 ///
 /// **Pass 1** reads every file referenced by the manifest and verifies
-/// its SHA-256 matches `post_apply_hash`. ALL hashes are checked before
+/// its BLAKE3 matches `post_apply_hash`. ALL hashes are checked before
 /// any write happens, and ALL mismatches are reported together; the
 /// rollback aborts before touching any file unless `--force` is set.
 ///
@@ -488,8 +487,8 @@ pub fn cmd_rollback(opts: RollbackOpts) -> Result<()> {
         let current = read_text_file_capped(&target)
             .with_context(|| format!("failed to read current file {}", target.display()))?;
 
-        let current_hash = sha256_hex(&current);
-        let original_hash = sha256_hex(&original);
+        let current_hash = blake3_hex(&current);
+        let original_hash = blake3_hex(&original);
 
         if current_hash != record.post_apply_hash {
             mismatches.push(format!(
@@ -1140,14 +1139,12 @@ fn lock_index(index_path: &Path) -> Result<IndexLock> {
     Ok(IndexLock { path: lock_path })
 }
 
-fn sha256_hex(s: &str) -> String {
-    let mut hasher = Sha256::new();
-    hasher.update(s.as_bytes());
-    hasher
-        .finalize()
-        .iter()
-        .map(|byte| format!("{byte:02x}"))
-        .collect()
+/// BLAKE3 content digest (lowercase hex) of a patch's before/after text. Per
+/// ADR-0003 the content-address hasher is BLAKE3 (migrated off SHA-256); these
+/// digests gate the rollback integrity check, so the algorithm change is a
+/// one-time re-key of any stored backup index.
+fn blake3_hex(s: &str) -> String {
+    axiom_hash::blake3_hex(s.as_bytes())
 }
 
 fn safe_patch_name(path: &Path) -> String {
@@ -1330,7 +1327,7 @@ mod tests {
 
     #[test]
     fn hash_mismatch_detection_works() {
-        assert_ne!(sha256_hex("one"), sha256_hex("two"));
+        assert_ne!(blake3_hex("one"), blake3_hex("two"));
     }
 
     #[test]

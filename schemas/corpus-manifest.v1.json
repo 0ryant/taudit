@@ -102,7 +102,7 @@
         },
         "digest": {
           "type": "string",
-          "pattern": "^sha256:[0-9a-f]{64}$",
+          "pattern": "^(blake3|sha256):[0-9a-f]{64}$",
           "description": "Immutable artifact digest when commit pinning is not the source anchor."
         },
         "path": {
@@ -214,7 +214,7 @@
         },
         "digest": {
           "type": "string",
-          "pattern": "^sha256:[0-9a-f]{64}$"
+          "pattern": "^(blake3|sha256):[0-9a-f]{64}$"
         },
         "notes": {
           "type": "string"

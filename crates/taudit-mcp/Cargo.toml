@@ -17,6 +17,7 @@ serde_json = "1"
 tokio = { version = "1", features = ["macros", "rt-multi-thread"] }
 toml = "1.1"
 sha2 = "0.10"
+axiom-hash = { workspace = true }
 mcpact-core = "0.2.0"
 mcpact-runtime = "0.2.0"
 mcpact-audit = "0.2.0"

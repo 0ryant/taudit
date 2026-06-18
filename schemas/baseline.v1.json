@@ -27,12 +27,12 @@
     },
     "pipeline_content_hash": {
       "type": "string",
-      "pattern": "^sha256:[0-9a-f]{64}$",
+      "pattern": "^(blake3|sha256):[0-9a-f]{64}$",
       "description": "SHA-256 of the pipeline file's bytes at `init` time, prefixed with `sha256:`. Renaming the pipeline file preserves the baseline because the hash key is stable."
     },
     "pipeline_identity_material_hash": {
       "type": "string",
-      "pattern": "^sha256:[0-9a-f]{64}$",
+      "pattern": "^(blake3|sha256):[0-9a-f]{64}$",
       "description": "Optional additive hash of parser-emitted dependency-like material (include/template/repository declarations and delegation signals). Missing on legacy baselines; when present and mismatched at verify time, suppression is skipped and baseline should be recaptured."
     },
     "captured_at": {

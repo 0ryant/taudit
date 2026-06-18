@@ -1,5 +1,6 @@
 ---
 source: crates/taudit-cli/tests/snapshot_gitlab.rs
+assertion_line: 66
 expression: results
 ---
 - level: error
@@ -11,15 +12,15 @@ expression: results
   message:
     text: "API_SECRET_KEY propagated to alpine:latest across trust boundary"
   partialFingerprints:
-    primaryLocationLineHash: d180931e883fe7d08a9ac19952c50b9d
-    taudit/v1: d180931e883fe7d08a9ac19952c50b9d
+    primaryLocationLineHash: f0cf41ccd8eb8b9f4f7053b605ce3f47
+    taudit/v1: f0cf41ccd8eb8b9f4f7053b605ce3f47
   properties:
     authorityKinds:
       - credential_named_variable
     confidenceScope: yaml_only
-    findingGroupId: 3e1ce5ac-d8de-5111-85c0-c961f1bfea37
+    findingGroupId: b6ff4be4-fc54-5e4f-bd34-138b76ef0f6c
     security-severity: "9.0"
-    suppressionKey: sk1_70c40fe30f8ddead6c17854663935232
+    suppressionKey: sk1_4d8868f47599b75e825c7f2b9905f87d
     taudit-source: built-in
   ruleId: authority_propagation
 - level: error
@@ -31,15 +32,15 @@ expression: results
   message:
     text: "CI_JOB_TOKEN propagated to alpine:latest across trust boundary"
   partialFingerprints:
-    primaryLocationLineHash: f310333c07ac5116f7733626d44cb753
-    taudit/v1: f310333c07ac5116f7733626d44cb753
+    primaryLocationLineHash: d1f514384289c0c3a150b864d24bb997
+    taudit/v1: d1f514384289c0c3a150b864d24bb997
   properties:
     authorityKinds:
       - job_token
     confidenceScope: yaml_only
-    findingGroupId: 661d0527-036b-5986-a564-a1d93afd8748
+    findingGroupId: 9afae362-cbcb-5b29-8880-b1c56657fd23
     security-severity: "9.0"
-    suppressionKey: sk1_58b5e871222f76b7f18caf7cf9492c41
+    suppressionKey: sk1_57cd7e2f559ffc67b8242372ad2b83d1
     taudit-source: built-in
   ruleId: authority_propagation
 - level: error
@@ -51,15 +52,15 @@ expression: results
   message:
     text: "DATABASE_PASSWORD propagated to alpine:latest across trust boundary"
   partialFingerprints:
-    primaryLocationLineHash: a8e0befc7144da9fb4e5ef763fcc1fc5
-    taudit/v1: a8e0befc7144da9fb4e5ef763fcc1fc5
+    primaryLocationLineHash: c8d0c0741c3c4e78905b81951718ce98
+    taudit/v1: c8d0c0741c3c4e78905b81951718ce98
   properties:
     authorityKinds:
       - credential_named_variable
     confidenceScope: yaml_only
-    findingGroupId: 0e309759-d91b-5d41-b2d7-b7ffeec7377c
+    findingGroupId: a0e0ea31-24b4-50fc-82ac-3aa44ceed3f9
     security-severity: "9.0"
-    suppressionKey: sk1_67de0ac7eee70ed68ba6674715c9f23b
+    suppressionKey: sk1_d381777f15c4efe9a00d339a8f6b1c0c
     taudit-source: built-in
   ruleId: authority_propagation
 - level: error
@@ -71,15 +72,15 @@ expression: results
   message:
     text: "DEPLOY_TOKEN propagated to alpine:latest across trust boundary"
   partialFingerprints:
-    primaryLocationLineHash: 1464f3114a20b17016c1f4a4fac39c16
-    taudit/v1: 1464f3114a20b17016c1f4a4fac39c16
+    primaryLocationLineHash: 5323c1317a722e0f46a15a1233871ec8
+    taudit/v1: 5323c1317a722e0f46a15a1233871ec8
   properties:
     authorityKinds:
       - credential_named_variable
     confidenceScope: yaml_only
-    findingGroupId: f529a601-9f35-545c-8e7e-74c2442a6908
+    findingGroupId: e91b2b44-fec3-5998-8470-2cfadd3a9491
     security-severity: "9.0"
-    suppressionKey: sk1_d184a429f3cb532c0079169a4c23b0cb
+    suppressionKey: sk1_3d07ac50f64ecfb274ba7f01046f55db
     taudit-source: built-in
   ruleId: authority_propagation
 - level: note
@@ -91,15 +92,15 @@ expression: results
   message:
     text: "'API_SECRET_KEY' looks like a long-lived static credential"
   partialFingerprints:
-    primaryLocationLineHash: d2405dfb12dabdf464262a499c87ba54
-    taudit/v1: d2405dfb12dabdf464262a499c87ba54
+    primaryLocationLineHash: ae8731d1d284f409814e6f2b1d2a3d1f
+    taudit/v1: ae8731d1d284f409814e6f2b1d2a3d1f
   properties:
     authorityKinds:
       - credential_named_variable
     confidenceScope: yaml_only
-    findingGroupId: c494fbb4-778f-5822-8dad-6f8e82c5921b
+    findingGroupId: 8fa9f6b0-b9f5-50e7-a4b6-b99e1a4007ac
     security-severity: "2.0"
-    suppressionKey: sk1_4824afc6b1445429c370477881a20d34
+    suppressionKey: sk1_059c2e384986421c4fd59a5b15be12e3
     taudit-source: built-in
     timeToFix: large
   ruleId: long_lived_credential
@@ -112,15 +113,15 @@ expression: results
   message:
     text: "'DATABASE_PASSWORD' looks like a long-lived static credential"
   partialFingerprints:
-    primaryLocationLineHash: a04b0fa8ff833821d59f9caa45266717
-    taudit/v1: a04b0fa8ff833821d59f9caa45266717
+    primaryLocationLineHash: c28546ec048a13ba81281e634423288e
+    taudit/v1: c28546ec048a13ba81281e634423288e
   properties:
     authorityKinds:
       - credential_named_variable
     confidenceScope: yaml_only
-    findingGroupId: 6fdceba6-6f33-58fe-95bf-927f469b15ec
+    findingGroupId: b3d99875-8149-504c-b266-5ae29a1ae24b
     security-severity: "2.0"
-    suppressionKey: sk1_c09cadb17eb8f76176fd49e4782ed17f
+    suppressionKey: sk1_89c38b2582eb31cfba3a89dbd0cf1538
     taudit-source: built-in
     timeToFix: large
   ruleId: long_lived_credential
@@ -133,15 +134,15 @@ expression: results
   message:
     text: "CI_JOB_TOKEN has broad scope \\(permissions: ''\\) — likely broader than needed"
   partialFingerprints:
-    primaryLocationLineHash: 1ff9918fc8f89331c28c5c87af76f8ff
-    taudit/v1: 1ff9918fc8f89331c28c5c87af76f8ff
+    primaryLocationLineHash: 07093ef97866a5c453f2a170855cdd88
+    taudit/v1: 07093ef97866a5c453f2a170855cdd88
   properties:
     authorityKinds:
       - job_token
     confidenceScope: yaml_only
-    findingGroupId: 00262520-9062-589a-8cfd-399be5d1a0b9
+    findingGroupId: 67cdfaab-2132-55de-91a5-aed998e1d215
     security-severity: "7.5"
-    suppressionKey: sk1_a0fd76b4b1140560e30334b3222ae956
+    suppressionKey: sk1_d923ac3a51439fa1e7b0dbab0c1f67d3
     taudit-source: built-in
     timeToFix: small
   ruleId: over_privileged_identity
@@ -154,17 +155,17 @@ expression: results
   message:
     text: "alpine:latest is not pinned to a SHA digest"
   partialFingerprints:
-    primaryLocationLineHash: 73aefa946595cc3323a3711d1b09f744
-    taudit/v1: 73aefa946595cc3323a3711d1b09f744
+    primaryLocationLineHash: a7ed3f67da501a83e4ee5dccc89ca588
+    taudit/v1: a7ed3f67da501a83e4ee5dccc89ca588
   properties:
     attackerSurfaceKinds:
       - mutable_dependency_ref
     confidenceScope: yaml_only
-    findingGroupId: e9073e12-4672-5c3b-a881-79b1abc87da9
+    findingGroupId: e8c9538b-c5ee-5998-a374-feb774948c44
     runtimePreconditions:
       - "the referenced mutable branch, tag, include, or image can change independently of this repository"
     security-severity: "7.5"
-    suppressionKey: sk1_45b02e73ff078b41d60e3b6a02b5c976
+    suppressionKey: sk1_aedababcea5a6a84a5ce6d92ba8e5908
     taudit-source: built-in
     timeToFix: trivial
   ruleId: unpinned_action

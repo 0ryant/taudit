@@ -19,12 +19,19 @@ chrono = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
 serde_yaml = { workspace = true }
-sha2 = { workspace = true }
 sha1 = { workspace = true }
+blake3 = { workspace = true }
 thiserror = { workspace = true }
+axiom-hash = { workspace = true }
+axiom-canonical = { workspace = true }
+axiom-exit = { workspace = true }
+axiom-audit = { workspace = true }
+axiom-receipt = { workspace = true }
+hex = "0.4"
 
 [dev-dependencies]
 criterion = "0.8"
+tempfile = { workspace = true }
 
 [[bench]]
 name = "bench_propagation"

@@ -640,6 +640,34 @@ enum Cli {
         #[command(subcommand)]
         action: RemediateAction,
     },
+
+    /// Inspect and verify the doctrine audit trail (`audit-trail.jsonl`).
+    ///
+    /// taudit appends an append-only, BLAKE3-chained `axiom.audit.v1` row to
+    /// `<repo>/audit-trail.jsonl` on each `scan` / `verify` / `remediate apply`
+    /// operation (pattern 09). `taudit audit verify` walks that chain and
+    /// re-derives every `row_hash`; it exits 1 (ASSERTION_FAILED) on any chain
+    /// mismatch, 0 when intact.
+    Audit {
+        #[command(subcommand)]
+        action: AuditAction,
+    },
+}
+
+/// `taudit audit ...` actions.
+#[derive(clap::Subcommand)]
+enum AuditAction {
+    /// Verify the BLAKE3-chained `audit-trail.jsonl` (pattern 09).
+    ///
+    /// Re-walks the chain: schema tag, monotonic `seq`, genesis-anchored links,
+    /// and that every `row_hash` recomputes from the row's RFC-8785 (JCS)
+    /// canonical bytes. Exits 0 if intact, 1 (ASSERTION_FAILED) on any mismatch,
+    /// 3 (FAILED_PREFLIGHT) if the trail cannot be read.
+    Verify {
+        /// Repo root holding `audit-trail.jsonl` (default: current directory).
+        #[arg(long, default_value = ".")]
+        repo: PathBuf,
+    },
 }
 
 #[derive(clap::Subcommand)]
@@ -1656,6 +1684,9 @@ fn run() -> Result<()> {
                 format: format.to_module(),
             }),
         },
+        Cli::Audit { action } => match action {
+            AuditAction::Verify { repo } => cmd_audit_verify(&repo),
+        },
     };
 
     // After the command finishes, collect the background version check and
@@ -2400,6 +2431,15 @@ fn cmd_scan(opts: ScanOpts) -> Result<()> {
         eprintln!("warning: failed to write runtime artifacts: {err}");
     }
 
+    // Doctrine custody substrate (pattern 07 + 09): append a BLAKE3-chained
+    // audit row + signed axiom.receipt.v1 for this scan. Repo root = current
+    // dir, matching where `taudit audit verify` reads the trail.
+    if let Some(receipt) =
+        emit_conformance_artifacts(Path::new("."), "scan", exit_code, &resolved_paths)
+    {
+        eprintln!("audit: appended audit-trail.jsonl + receipt {}", receipt.display());
+    }
+
     use std::io::Write;
     let _ = writer.flush();
     drop(writer);
@@ -2497,12 +2537,25 @@ fn cmd_verify(opts: VerifyOpts) -> Result<()> {
     let _ = writer.flush();
     drop(writer);
 
+    // Doctrine custody substrate (pattern 07 + 09): record the verify verdict
+    // as a BLAKE3-chained audit row + signed receipt. Skipped for usage errors
+    // (exit 2) since no real verify ran. Exit 1 (policy violation) is the
+    // pattern-11 ASSERTION_FAILED verdict and is recorded as outcome=failed.
+    if exit_code != 2 {
+        if let Some(receipt) =
+            emit_conformance_artifacts(Path::new("."), "verify", exit_code, &opts.paths)
+        {
+            eprintln!("audit: appended audit-trail.jsonl + receipt {}", receipt.display());
+        }
+    }
+
     std::process::exit(exit_code);
 }
 
 /// Run `verify` against `opts`, writing the report into `writer`. Returns the
-/// process exit code (0 / 1 / 2). Never panics — every error path is mapped
-/// to exit 2 with a stderr line. This is the testable entrypoint.
+/// process exit code: 0 (clean), 1 (ASSERTION_FAILED — policy violation),
+/// 2 (USAGE_ERROR). Never panics — every error path is mapped to exit 2 with a
+/// stderr line. This is the testable entrypoint.
 fn run_verify_io<W: std::io::Write>(opts: &VerifyOpts, writer: &mut W) -> i32 {
     // Step 1: load custom rules. Bad path / parse error => exit 2 (usage).
     // BUG-5: if --include-builtin is set and the policy path simply doesn't
@@ -3162,6 +3215,149 @@ struct ScanStats<'a> {
     findings_total: usize,
     suppressed_total: usize,
     exit_code: i32,
+}
+
+/// `taudit audit verify`: walk the `audit-trail.jsonl` BLAKE3 chain (pattern 09)
+/// and exit with the pattern-11 state-machine code. Never returns — it
+/// `process::exit`s so the verdict drives the process exit byte directly.
+///
+/// Exit map (axiom-exit):
+/// * 0 (`Ok`) — the chain is intact;
+/// * 1 (`AssertionFailed`) — the chain is broken (verify-mismatch);
+/// * 3 (`Preflight`) — the trail could not be read / re-hashed.
+fn cmd_audit_verify(repo: &Path) -> ! {
+    use taudit_core::axiom_conformance::{verify_trail, ChainVerdict, Exit, TRAIL_FILENAME};
+
+    let code = match verify_trail(repo) {
+        Ok(ChainVerdict::Valid { rows, head_hash }) => {
+            if rows == 0 {
+                println!("DECISION: ok (audit-trail empty, no rows to verify)");
+            } else {
+                println!(
+                    "DECISION: ok (audit-chain intact: {rows} row{} verified, head={head_hash})",
+                    if rows == 1 { "" } else { "s" }
+                );
+            }
+            Exit::Ok
+        }
+        Ok(ChainVerdict::Broken(why)) => {
+            eprintln!(
+                "DECISION: assertion_failed (audit-chain BROKEN at {}/{TRAIL_FILENAME}: {why})",
+                repo.display()
+            );
+            Exit::AssertionFailed
+        }
+        Err(err) => {
+            eprintln!(
+                "DECISION: preflight (could not read audit-trail at {}/{TRAIL_FILENAME}: {err})",
+                repo.display()
+            );
+            Exit::Preflight
+        }
+    };
+    std::process::exit(code.as_i32());
+}
+
+/// Emit the doctrine audit + receipt substrate for a completed operation
+/// (pattern 07 + 09): append one `axiom.audit.v1` row to
+/// `<repo>/audit-trail.jsonl`, then write a signed `axiom.receipt.v1` linking
+/// back to that row. Best-effort and non-fatal: a custody-write failure is
+/// logged but never changes the operation's own exit code (the audit substrate
+/// is additive to the scan/verify verdict, not a gate on it).
+///
+/// `outcome` is the pattern-07 vocabulary (`"ok" | "failed" | "degraded"`),
+/// derived from the operation's pattern-11 `exit_code`. Returns the receipt
+/// path written, if any, so callers can surface it.
+fn emit_conformance_artifacts(
+    repo: &Path,
+    operation: &str,
+    exit_code: i32,
+    inputs: &[PathBuf],
+) -> Option<PathBuf> {
+    use taudit_core::axiom_conformance::{
+        append_audit, Artifact, AuditLink, Receipt, ReceiptBody, ReceiptLink, TrailLock,
+        TRAIL_FILENAME,
+    };
+
+    let outcome = match exit_code {
+        0 => "ok",
+        4 => "degraded",
+        _ => "failed",
+    };
+    let timestamp = chrono::Utc::now().to_rfc3339();
+
+    // Serialize tip-read → append → receipt-write behind the cross-process lock
+    // so concurrent taudit runs never interleave into a malformed JSONL line.
+    let _lock = match TrailLock::acquire(repo) {
+        Ok(l) => l,
+        Err(err) => {
+            eprintln!("warning: could not acquire audit-trail lock: {err}");
+            return None;
+        }
+    };
+
+    // Content-address the operation inputs (BLAKE3) for the receipt body.
+    let input_artifacts: Vec<Artifact> = inputs
+        .iter()
+        .filter_map(|p| {
+            Artifact::of_file("pipeline", &p.display().to_string(), p)
+                .map_err(|e| eprintln!("warning: could not hash {}: {e}", p.display()))
+                .ok()
+        })
+        .collect();
+
+    // 1) Append the chained audit row (receipt linked once written below).
+    let row = match append_audit(
+        repo,
+        operation,
+        outcome,
+        exit_code,
+        &timestamp,
+        ReceiptLink::None,
+    ) {
+        Ok(row) => row,
+        Err(err) => {
+            eprintln!("warning: could not append audit row: {err}");
+            return None;
+        }
+    };
+
+    // 2) Build and sign the receipt, linking it to the row just appended.
+    let mut body = ReceiptBody::new(operation, outcome, exit_code, &timestamp);
+    body.inputs = input_artifacts;
+    body.audit_chain = Some(AuditLink {
+        trail_path: TRAIL_FILENAME.to_string(),
+        seq: row.seq,
+        row_hash: row.row_hash.clone(),
+    });
+    let receipt = match Receipt::sign(body) {
+        Ok(r) => r,
+        Err(err) => {
+            eprintln!("warning: could not sign receipt: {err}");
+            return None;
+        }
+    };
+
+    // 3) Write the signed receipt next to the trail.
+    let receipts_dir = repo.join(".taudit").join("receipts");
+    if let Err(err) = std::fs::create_dir_all(&receipts_dir) {
+        eprintln!("warning: could not create receipts dir: {err}");
+        return None;
+    }
+    let receipt_path = receipts_dir.join(format!("{operation}-{}.json", row.seq));
+    match receipt.to_json() {
+        Ok(json) => {
+            if let Err(err) = std::fs::write(&receipt_path, json) {
+                eprintln!("warning: could not write receipt: {err}");
+                return None;
+            }
+        }
+        Err(err) => {
+            eprintln!("warning: could not serialize receipt: {err}");
+            return None;
+        }
+    }
+    Some(receipt_path)
 }
 
 fn write_runtime_artifacts(

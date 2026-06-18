@@ -118,6 +118,18 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "7f202df86484c868dbad7eaa557ef785d5c66295e41b460ef922eca0723b842c"
 
 [[package]]
+name = "arrayref"
+version = "0.3.9"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "76a2e8124351fda1ef8aaaa3bbd7ebbcb486bbcd4225aca0aa0d84bb2db8fecb"
+
+[[package]]
+name = "arrayvec"
+version = "0.7.6"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "7c02d123df017efcdfbd739ef81735b36c5ba83ec3c59c80a9d7ecc718f92e50"
+
+[[package]]
 name = "async-trait"
 version = "0.1.89"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -163,6 +175,56 @@ dependencies = [
 ]
 
 [[package]]
+name = "axiom-audit"
+version = "0.1.0"
+source = "git+https://github.com/0ryant/axiom-doctrine-rs.git?rev=3f09282#3f09282d0e0db2fc9277f6d742eaf4bf3fe59786"
+dependencies = [
+ "axiom-canonical",
+ "axiom-hash",
+ "serde",
+ "serde_json",
+ "thiserror 2.0.18",
+]
+
+[[package]]
+name = "axiom-canonical"
+version = "0.1.0"
+source = "git+https://github.com/0ryant/axiom-doctrine-rs.git?rev=3f09282#3f09282d0e0db2fc9277f6d742eaf4bf3fe59786"
+dependencies = [
+ "serde",
+ "serde_json",
+ "serde_json_canonicalizer",
+ "thiserror 2.0.18",
+]
+
+[[package]]
+name = "axiom-exit"
+version = "0.1.0"
+source = "git+https://github.com/0ryant/axiom-doctrine-rs.git?rev=3f09282#3f09282d0e0db2fc9277f6d742eaf4bf3fe59786"
+
+[[package]]
+name = "axiom-hash"
+version = "0.1.0"
+source = "git+https://github.com/0ryant/axiom-doctrine-rs.git?rev=3f09282#3f09282d0e0db2fc9277f6d742eaf4bf3fe59786"
+dependencies = [
+ "blake3",
+ "thiserror 2.0.18",
+]
+
+[[package]]
+name = "axiom-receipt"
+version = "0.1.0"
+source = "git+https://github.com/0ryant/axiom-doctrine-rs.git?rev=3f09282#3f09282d0e0db2fc9277f6d742eaf4bf3fe59786"
+dependencies = [
+ "axiom-canonical",
+ "ed25519-dalek",
+ "hex",
+ "serde",
+ "serde_json",
+ "thiserror 2.0.18",
+]
+
+[[package]]
 name = "base64"
 version = "0.22.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -194,6 +256,20 @@ name = "bitflags"
 version = "2.11.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "c4512299f36f043ab09a583e57bceb5a5aab7a73db1805848e8fef3c9e8c78b3"
+
+[[package]]
+name = "blake3"
+version = "1.8.5"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "0aa83c34e62843d924f905e0f5c866eb1dd6545fc4d719e803d9ba6030371fce"
+dependencies = [
+ "arrayref",
+ "arrayvec",
+ "cc",
+ "cfg-if",
+ "constant_time_eq",
+ "cpufeatures 0.3.0",
+]
 
 [[package]]
 name = "block-buffer"
@@ -422,6 +498,12 @@ name = "const-oid"
 version = "0.10.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "a6ef517f0926dd24a1582492c791b6a4818a4d94e789a334894aa15b0d12f55c"
+
+[[package]]
+name = "constant_time_eq"
+version = "0.4.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "3d52eff69cd5e647efe296129160853a42795992097e8af39800e1060caeea9b"
 
 [[package]]
 name = "cookie"
@@ -705,7 +787,7 @@ dependencies = [
  "ed25519",
  "rand_core 0.6.4",
  "serde",
- "sha2 0.10.9",
+ "sha2",
  "subtle",
  "zeroize",
 ]
@@ -1000,6 +1082,12 @@ name = "heck"
 version = "0.5.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "2304e00983f87ffb38b55b444b5e3b60a884b5d30c0fca7d82fe33449bbe55ea"
+
+[[package]]
+name = "hex"
+version = "0.4.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "7f24254aa9a54b5c858eaee2f5bccdb46aaf0e486a595ed5fd8f86ba55232a70"
 
 [[package]]
 name = "http"
@@ -1505,7 +1593,7 @@ dependencies = [
  "schemars 0.8.22",
  "serde",
  "serde_json",
- "sha2 0.10.9",
+ "sha2",
  "thiserror 1.0.69",
  "toml 0.8.23",
 ]
@@ -2247,6 +2335,12 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "9774ba4a74de5f7b1c1451ed6cd5285a32eddb5cccb8cc655a4e50009e06477f"
 
 [[package]]
+name = "ryu-js"
+version = "1.0.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "dd29631678d6fb0903b69223673e122c32e9ae559d0960a38d574695ebc0ea15"
+
+[[package]]
 name = "same-file"
 version = "1.0.6"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2404,6 +2498,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "serde_json_canonicalizer"
+version = "0.3.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "fe52319a927259afbfa5180c5157cd8167edfd3e8c254f9558c7fef44c5649f2"
+dependencies = [
+ "ryu-js",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
 name = "serde_spanned"
 version = "0.6.9"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2466,17 +2571,6 @@ dependencies = [
  "cfg-if",
  "cpufeatures 0.2.17",
  "digest 0.10.7",
-]
-
-[[package]]
-name = "sha2"
-version = "0.11.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "446ba717509524cb3f22f17ecc096f10f4822d76ab5c0b9822c5f9c284e825f4"
-dependencies = [
- "cfg-if",
- "cpufeatures 0.3.0",
- "digest 0.11.3",
 ]
 
 [[package]]
@@ -2618,6 +2712,10 @@ name = "taudit"
 version = "1.3.1-pre"
 dependencies = [
  "anyhow",
+ "axiom-audit",
+ "axiom-exit",
+ "axiom-hash",
+ "blake3",
  "chrono",
  "clap",
  "clap_complete",
@@ -2628,7 +2726,6 @@ dependencies = [
  "serde",
  "serde_json",
  "serde_yaml",
- "sha2 0.11.0",
  "taudit-core",
  "taudit-parse-ado",
  "taudit-parse-bitbucket",
@@ -2653,14 +2750,21 @@ dependencies = [
 name = "taudit-core"
 version = "3.1.0-pre"
 dependencies = [
+ "axiom-audit",
+ "axiom-canonical",
+ "axiom-exit",
+ "axiom-hash",
+ "axiom-receipt",
+ "blake3",
  "chrono",
  "criterion",
+ "hex",
  "serde",
  "serde_json",
  "serde_yaml",
  "sha1",
- "sha2 0.11.0",
  "taudit-api",
+ "tempfile",
  "thiserror 2.0.18",
 ]
 
@@ -2669,6 +2773,7 @@ name = "taudit-mcp"
 version = "0.1.0-pre"
 dependencies = [
  "async-trait",
+ "axiom-hash",
  "mcpact-audit",
  "mcpact-core",
  "mcpact-manifest",
@@ -2678,7 +2783,7 @@ dependencies = [
  "schemars 1.2.1",
  "serde",
  "serde_json",
- "sha2 0.10.9",
+ "sha2",
  "tokio",
  "toml 1.1.2+spec-1.1.0",
 ]

@@ -1,5 +1,6 @@
 ---
 source: crates/taudit-cli/tests/snapshot_ado.rs
+assertion_line: 66
 expression: results
 ---
 - level: error
@@ -11,16 +12,16 @@ expression: results
   message:
     text: "System.AccessToken has broad scope \\(permissions: ''\\) — likely broader than needed"
   partialFingerprints:
-    primaryLocationLineHash: 3f548f2bfdbb2270ced9c06d4ac73cea
-    taudit/v1: 3f548f2bfdbb2270ced9c06d4ac73cea
+    primaryLocationLineHash: d022605254e8be36af8b0f32a7b4fb33
+    taudit/v1: d022605254e8be36af8b0f32a7b4fb33
   properties:
     authorityKinds:
       - job_token
     confidenceScope: yaml_only
-    findingGroupId: 7aba0f67-2e57-5ce8-ae96-ebb114102c7d
+    findingGroupId: 20b85bf3-15f0-51f9-8fe0-b72433ef5fe0
     portalControlDependency: true
     security-severity: "7.5"
-    suppressionKey: sk1_f5713fcbea60d40cf198a961d114d083
+    suppressionKey: sk1_da56761dca6960360598b21cd3aabbee
     taudit-source: built-in
     timeToFix: small
   ruleId: over_privileged_identity
@@ -33,8 +34,8 @@ expression: results
   message:
     text: "Step 'Expose secrets as plain variables' writes to the environment gate while holding authority \\(System.AccessToken, API_KEY_SECRET\\) — secrets may leak into pipeline environment"
   partialFingerprints:
-    primaryLocationLineHash: 4464ed1f70695745708b1d6a25d0af30
-    taudit/v1: 4464ed1f70695745708b1d6a25d0af30
+    primaryLocationLineHash: bb6e21bf84d118f154727f401f6ee7c5
+    taudit/v1: bb6e21bf84d118f154727f401f6ee7c5
   properties:
     attackerSurfaceKinds:
       - script_sink
@@ -43,10 +44,10 @@ expression: results
       - job_token
     confidenceScope: yaml_only
     cveRelationship: analogue_only
-    findingGroupId: a01ab427-afa1-5688-b2be-efa8eca2df6c
+    findingGroupId: 609edbe5-466c-580d-b55d-662e698ebaa7
     portalControlDependency: true
     security-severity: "7.5"
-    suppressionKey: sk1_9147a3903bbf8195bc27ee188d19629b
+    suppressionKey: sk1_0f21eacc2bf17aecc6aa99328b2e4989
     taudit-source: built-in
   ruleId: self_mutating_pipeline
 - level: error
@@ -58,16 +59,16 @@ expression: results
   message:
     text: "ADO setvariable with sensitive name 'API_KEY' uses issecret=false or omits issecret flag, value printed in plaintext logs"
   partialFingerprints:
-    primaryLocationLineHash: 791dec6711c3ef285ab5fd8aa3cf3b65
-    taudit/v1: 791dec6711c3ef285ab5fd8aa3cf3b65
+    primaryLocationLineHash: 9b80dc3b961177994e47c5a111f2f391
+    taudit/v1: 9b80dc3b961177994e47c5a111f2f391
   properties:
     attackerSurfaceKinds:
       - script_sink
     confidenceScope: yaml_only
-    findingGroupId: 89d948f5-12e9-5a29-b5c4-8dfded86a74a
+    findingGroupId: 57686768-3929-5fed-9f6f-68683c7b5263
     portalControlDependency: true
     security-severity: "7.5"
-    suppressionKey: sk1_6bb31ef6361583ba27c481ea21451e08
+    suppressionKey: sk1_fe01d68461d853df61ff1b574ec13907
     taudit-source: built-in
   ruleId: setvariable_issecret_false
 - level: error
@@ -79,15 +80,15 @@ expression: results
   message:
     text: "ADO setvariable with sensitive name 'MY_TOKEN' uses issecret=false or omits issecret flag, value printed in plaintext logs"
   partialFingerprints:
-    primaryLocationLineHash: 791dec6711c3ef285ab5fd8aa3cf3b65
-    taudit/v1: 791dec6711c3ef285ab5fd8aa3cf3b65
+    primaryLocationLineHash: 9b80dc3b961177994e47c5a111f2f391
+    taudit/v1: 9b80dc3b961177994e47c5a111f2f391
   properties:
     attackerSurfaceKinds:
       - script_sink
     confidenceScope: yaml_only
-    findingGroupId: 89d948f5-12e9-5a29-b5c4-8dfded86a74a
+    findingGroupId: 57686768-3929-5fed-9f6f-68683c7b5263
     portalControlDependency: true
     security-severity: "7.5"
-    suppressionKey: sk1_6bb31ef6361583ba27c481ea21451e08
+    suppressionKey: sk1_fe01d68461d853df61ff1b574ec13907
     taudit-source: built-in
   ruleId: setvariable_issecret_false

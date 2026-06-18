@@ -1,5 +1,6 @@
 ---
 source: crates/taudit-cli/tests/snapshot_gha.rs
+assertion_line: 87
 expression: results
 ---
 - level: error
@@ -11,15 +12,15 @@ expression: results
   message:
     text: DEPLOY_TOKEN propagated to some-org/deploy-action@main across trust boundary
   partialFingerprints:
-    primaryLocationLineHash: 9d041f143c8a77486348a9574b8a4298
-    taudit/v1: 9d041f143c8a77486348a9574b8a4298
+    primaryLocationLineHash: 8982ef1f08319dea2cc94c72746bc2a8
+    taudit/v1: 8982ef1f08319dea2cc94c72746bc2a8
   properties:
     authorityKinds:
       - credential_named_variable
     confidenceScope: yaml_only
-    findingGroupId: 19ee4c2e-a538-5bdb-adc2-8f789fcb6206
+    findingGroupId: e1b26939-1c86-5d34-8a48-7c19adebcbc2
     security-severity: "9.0"
-    suppressionKey: sk1_ffca7725a9ee77feb900702a0114767a
+    suppressionKey: sk1_709842a227413843b8ee7a9689a6b315
     taudit-source: built-in
   ruleId: authority_propagation
 - level: error
@@ -31,15 +32,15 @@ expression: results
   message:
     text: "GITHUB_TOKEN reaches 2 sinks via authority propagation: \\[actions/checkout@v4, some-org/deploy-action@main\\]"
   partialFingerprints:
-    primaryLocationLineHash: 34dfeec1b30291318a55b11421fbac7b
-    taudit/v1: 34dfeec1b30291318a55b11421fbac7b
+    primaryLocationLineHash: 093538587019283a08207dd2666f7e84
+    taudit/v1: 093538587019283a08207dd2666f7e84
   properties:
     authorityKinds:
       - oidc_identity
     confidenceScope: yaml_only
-    findingGroupId: be66107e-37fd-5dbf-9330-11b1a3a4fd7b
+    findingGroupId: 68b05707-8001-5513-8da8-9f0a0e31f0a0
     security-severity: "9.0"
-    suppressionKey: sk1_c6ce89eaa9383364fa8ef0605c66be0a
+    suppressionKey: sk1_33915b7ba286d7f88c0d210a9772364c
     taudit-source: built-in
   ruleId: authority_propagation
 - level: note
@@ -51,15 +52,15 @@ expression: results
   message:
     text: "'AWS_ACCESS_KEY_ID' looks like a long-lived static credential"
   partialFingerprints:
-    primaryLocationLineHash: 778504a98a278328ffbfc4ba18a0c14e
-    taudit/v1: 778504a98a278328ffbfc4ba18a0c14e
+    primaryLocationLineHash: 6e02caafd8e3e5920be6edd38b601c9e
+    taudit/v1: 6e02caafd8e3e5920be6edd38b601c9e
   properties:
     authorityKinds:
       - credential_named_variable
     confidenceScope: yaml_only
-    findingGroupId: 51fcc990-5084-59e3-a731-9c560c54d0ba
+    findingGroupId: b38f6f22-8123-56cb-a14d-d8f9a0907a89
     security-severity: "2.0"
-    suppressionKey: sk1_dd874a8288dad0ca657bed7f5599404e
+    suppressionKey: sk1_678e84a8274b53cf8df714ea3dfd2303
     taudit-source: built-in
     timeToFix: large
   ruleId: long_lived_credential
@@ -72,15 +73,15 @@ expression: results
   message:
     text: "'AWS_SECRET_ACCESS_KEY' looks like a long-lived static credential"
   partialFingerprints:
-    primaryLocationLineHash: 8d56a5877d83d06dfd8503de6a61fe94
-    taudit/v1: 8d56a5877d83d06dfd8503de6a61fe94
+    primaryLocationLineHash: 4f7a18be67c540147d47a174e8953a35
+    taudit/v1: 4f7a18be67c540147d47a174e8953a35
   properties:
     authorityKinds:
       - credential_named_variable
     confidenceScope: yaml_only
-    findingGroupId: 07e0de9b-04b5-5411-9c3b-bbf91d12002a
+    findingGroupId: aa4c77b2-958e-5b4c-8c59-7933d5c6d794
     security-severity: "2.0"
-    suppressionKey: sk1_d1462d4c8f0c1f317b64764c873b7b89
+    suppressionKey: sk1_95211c10617b8ad3c183ca3af1b5e281
     taudit-source: built-in
     timeToFix: large
   ruleId: long_lived_credential
@@ -93,15 +94,15 @@ expression: results
   message:
     text: "GITHUB_TOKEN has broad scope \\(permissions: 'write-all'\\) — likely broader than needed"
   partialFingerprints:
-    primaryLocationLineHash: 1fbb9cf89e16b2623ad236fcace90316
-    taudit/v1: 1fbb9cf89e16b2623ad236fcace90316
+    primaryLocationLineHash: 967602939878a8a7823e01dc6e868a00
+    taudit/v1: 967602939878a8a7823e01dc6e868a00
   properties:
     authorityKinds:
       - oidc_identity
     confidenceScope: yaml_only
-    findingGroupId: 61e587be-3ab9-585f-a534-4308d9267ffa
+    findingGroupId: 9fbe552a-541a-5d6f-b36b-86e14f3505bc
     security-severity: "7.5"
-    suppressionKey: sk1_a6d56516e97292ec38383e3ea014a466
+    suppressionKey: sk1_68ee7c48dc7a20cde2018e700c80ec17
     taudit-source: built-in
     timeToFix: small
   ruleId: over_privileged_identity
@@ -114,17 +115,17 @@ expression: results
   message:
     text: "\\[action_major_version_pin_without_sha\\] actions/checkout@v4 is pinned only to a mutable major tag; pin to a full commit SHA"
   partialFingerprints:
-    primaryLocationLineHash: b3870c65b8f599cfdfca0db051b934b9
-    taudit/v1: b3870c65b8f599cfdfca0db051b934b9
+    primaryLocationLineHash: 36a0480a455c5fe5228795fa2ae92b02
+    taudit/v1: 36a0480a455c5fe5228795fa2ae92b02
   properties:
     attackerSurfaceKinds:
       - mutable_dependency_ref
     confidenceScope: yaml_only
-    findingGroupId: 9badf00f-185f-5503-87f6-b0f950472b76
+    findingGroupId: 99d80a61-b552-56b1-9bf1-6f4bf189ac8a
     runtimePreconditions:
       - "the referenced mutable branch, tag, include, or image can change independently of this repository"
     security-severity: "5.0"
-    suppressionKey: sk1_b479a59c8affd98b2fc6720a7854ae76
+    suppressionKey: sk1_71e20864a547f607bba591e88fa9f5e0
     taudit-source: built-in
     timeToFix: trivial
   ruleId: action_major_version_pin_without_sha
@@ -137,17 +138,17 @@ expression: results
   message:
     text: actions/checkout@v4 is not pinned to a SHA digest
   partialFingerprints:
-    primaryLocationLineHash: 31ceeca3145a97625dfd847a040bbc26
-    taudit/v1: 31ceeca3145a97625dfd847a040bbc26
+    primaryLocationLineHash: d1da0ec2fc0490df5c4a59d5362a5cb2
+    taudit/v1: d1da0ec2fc0490df5c4a59d5362a5cb2
   properties:
     attackerSurfaceKinds:
       - mutable_dependency_ref
     confidenceScope: yaml_only
-    findingGroupId: f4ab4e0a-cd93-56c6-a534-12aec7befcff
+    findingGroupId: a8e46996-bf0a-59ea-bb40-83940d0452ea
     runtimePreconditions:
       - "the referenced mutable branch, tag, include, or image can change independently of this repository"
     security-severity: "5.0"
-    suppressionKey: sk1_033d10c3704d4e5312e22f9d01465025
+    suppressionKey: sk1_c0aef7663c9bc2678abfaeef405f493c
     taudit-source: built-in
     timeToFix: trivial
   ruleId: unpinned_action
@@ -160,17 +161,17 @@ expression: results
   message:
     text: some-org/deploy-action@main is not pinned to a SHA digest
   partialFingerprints:
-    primaryLocationLineHash: 15293f46f1061fc8b1d4c710dca0aa52
-    taudit/v1: 15293f46f1061fc8b1d4c710dca0aa52
+    primaryLocationLineHash: c81cc48345c71eb80fdb815e24695860
+    taudit/v1: c81cc48345c71eb80fdb815e24695860
   properties:
     attackerSurfaceKinds:
       - mutable_dependency_ref
     confidenceScope: yaml_only
-    findingGroupId: aaddbe52-28d1-5412-8441-5d9ae95ecf85
+    findingGroupId: e168ed9c-3c34-51c3-bd59-aa7efd57209d
     runtimePreconditions:
       - "the referenced mutable branch, tag, include, or image can change independently of this repository"
     security-severity: "7.5"
-    suppressionKey: sk1_033d10c3704d4e5312e22f9d01465025
+    suppressionKey: sk1_c0aef7663c9bc2678abfaeef405f493c
     taudit-source: built-in
     timeToFix: trivial
   ruleId: unpinned_action
@@ -183,8 +184,8 @@ expression: results
   message:
     text: "Untrusted step 'build\\[0\\]' has direct access to identity 'GITHUB_TOKEN'"
   partialFingerprints:
-    primaryLocationLineHash: 4cc63211c9299f9f5965da1d71e83023
-    taudit/v1: 4cc63211c9299f9f5965da1d71e83023
+    primaryLocationLineHash: fc4759e3365aef3aa9f81df672399480
+    taudit/v1: fc4759e3365aef3aa9f81df672399480
   properties:
     attackerSurfaceKinds:
       - untrusted_checkout
@@ -192,9 +193,9 @@ expression: results
     authorityKinds:
       - oidc_identity
     confidenceScope: yaml_only
-    findingGroupId: 8134004c-cfe9-54e3-8ac4-1099db4b20dc
+    findingGroupId: 9b8fb9bc-946e-5615-a878-b385dd79c432
     security-severity: "9.0"
-    suppressionKey: sk1_e9a7bf38c217d147ef733253dff5e1c9
+    suppressionKey: sk1_fd1debe40c5f2b15d171be6768a1c3fe
     taudit-source: built-in
   ruleId: untrusted_with_authority
 - level: error
@@ -206,17 +207,17 @@ expression: results
   message:
     text: "Untrusted step 'deploy\\[0\\]' has direct access to identity 'GITHUB_TOKEN'"
   partialFingerprints:
-    primaryLocationLineHash: b3aac2a7d760a06fdde4c9231697db3d
-    taudit/v1: b3aac2a7d760a06fdde4c9231697db3d
+    primaryLocationLineHash: 7207ed51574a2465cb87b97e9adfd760
+    taudit/v1: 7207ed51574a2465cb87b97e9adfd760
   properties:
     attackerSurfaceKinds:
       - untrusted_step
     authorityKinds:
       - oidc_identity
     confidenceScope: yaml_only
-    findingGroupId: 26a1ad7d-a283-5a77-9c6c-f33833a25f7c
+    findingGroupId: cf243cf4-fbb9-58ed-bac2-03aa778f9fc3
     security-severity: "9.0"
-    suppressionKey: sk1_e9a7bf38c217d147ef733253dff5e1c9
+    suppressionKey: sk1_fd1debe40c5f2b15d171be6768a1c3fe
     taudit-source: built-in
   ruleId: untrusted_with_authority
 - level: error
@@ -228,17 +229,17 @@ expression: results
   message:
     text: "Untrusted step 'deploy\\[0\\]' has direct access to secret 'DEPLOY_TOKEN'"
   partialFingerprints:
-    primaryLocationLineHash: ccaf29551b139fb5d5c271a9c47d62de
-    taudit/v1: ccaf29551b139fb5d5c271a9c47d62de
+    primaryLocationLineHash: 97e2add3d8739c81709c6538de118c78
+    taudit/v1: 97e2add3d8739c81709c6538de118c78
   properties:
     attackerSurfaceKinds:
       - untrusted_step
     authorityKinds:
       - credential_named_variable
     confidenceScope: yaml_only
-    findingGroupId: 5bb4e538-2f11-5dc2-949f-da1d8b6a37e2
+    findingGroupId: 7deb5f6c-a797-5951-a204-02d318528d2c
     security-severity: "9.0"
-    suppressionKey: sk1_3352102973b563d6ed7a19169e0b691c
+    suppressionKey: sk1_81e9a590e462cde9738e7a63fc85306d
     taudit-source: built-in
   ruleId: untrusted_with_authority
 - level: note
@@ -250,8 +251,8 @@ expression: results
   message:
     text: "3 step\\(s\\) use OIDC/federated identity but no provenance attestation step was detected — artifact integrity cannot be verified"
   partialFingerprints:
-    primaryLocationLineHash: 72c99cb062f0e9061b7bd3063a3387ca
-    taudit/v1: 72c99cb062f0e9061b7bd3063a3387ca
+    primaryLocationLineHash: 3798b9c9dc0714bf5f20671e260b527b
+    taudit/v1: 3798b9c9dc0714bf5f20671e260b527b
   properties:
     attackerSurfaceKinds:
       - script_sink
@@ -260,11 +261,11 @@ expression: results
     authorityKinds:
       - oidc_identity
     confidenceScope: yaml_only
-    findingGroupId: bb6d77e7-d049-593d-8e10-f5d12d9b7b20
+    findingGroupId: 87c21135-19bd-5309-855f-db8dc461e4c6
     runtimePreconditions:
       - downstream identity provider accepts the issued OIDC token
       - the configured audience or cloud role grants useful authority
     security-severity: "0.1"
-    suppressionKey: sk1_167c4fc0683f62a0319743f558b31030
+    suppressionKey: sk1_553d7f856eaaf976db631804d106814e
     taudit-source: built-in
   ruleId: uplift_without_attestation

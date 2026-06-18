@@ -6,7 +6,43 @@ All notable changes to this project will be documented in this file.
 
 ### Detection delta (read first)
 
-_(none yet — populate this paragraph when adding entries that change finding behaviour)_
+**BREAKING — BLAKE3 content-address re-key (ADR-0003 / engineering-doctrine
+ADR-0022).** Every taudit content address migrates from SHA-256 to BLAKE3. This
+changes the *value* of finding `fingerprint`s, `suppression_key`s (`sk1_…`),
+`finding_group_id`s (UUIDv5 over the new fingerprint), the SARIF
+`partialFingerprints` (`primaryLocationLineHash` / `taudit/v1`), the baseline
+`pipeline_content_hash` (now `blake3:<64-hex>`, was `sha256:`), and the
+CloudEvents `tauditpipelineid` URN (`urn:taudit:pipeline:blake3:<64-hex>`).
+**A one-time re-baseline is required**: existing `.taudit/baselines/*.json` and
+`.taudit-suppressions.yml` waivers keyed on the old SHA-256 fingerprints/keys no
+longer match and must be regenerated (`taudit baseline init`, then re-issue
+waivers). The published output schemas accept BOTH `blake3:` and legacy
+`sha256:` prefixes for backward-compatible ingestion; remediation backup-index
+integrity hashes are also BLAKE3 (re-key any stored backups).
+
+### Doctrine conformance (pattern 07 / 09 / 11)
+
+- **Audit chain (pattern 09):** taudit now appends an append-only,
+  BLAKE3-chained `axiom.audit.v1` row to `<repo>/audit-trail.jsonl` on each
+  `scan` / `verify` operation (`seq` / `prev_hash` / `row_hash = BLAKE3(JCS(row))`
+  / genesis). New `taudit audit verify` verb re-walks the chain and exits
+  `1` (ASSERTION_FAILED) on any mismatch.
+- **Receipt (pattern 07):** each `scan` / `verify` writes a signed
+  `axiom.receipt.v1` to `.taudit/receipts/<op>-<seq>.json` (schema / tool /
+  operation / outcome / exit_code / BLAKE3-digested inputs/outputs /
+  `audit_chain` linkage), signed under a pinned dev Ed25519 key. This replaces
+  the unsigned `taudit.scan.receipt` telemetry blob as the load-bearing receipt
+  (the telemetry blob is retained for back-compat).
+- **Exit codes (pattern 11):** adopt the shared `axiom-exit` taxonomy — `1`
+  reserved for assertion/chain mismatch, `2` for usage errors (unchanged), with
+  `3` (FAILED_PREFLIGHT) and `4` (DEGRADED) available; `taudit audit verify`
+  maps verdicts to `0` / `1` / `3`.
+- Built on the shared `axiom-hash` / `axiom-canonical` / `axiom-exit` /
+  `axiom-audit` / `axiom-receipt` crates so the on-disk audit/receipt bytes are
+  byte-identical across the Algol/AXIOM cohort.
+- **mcpact lockfile interop:** `taudit-mcp` pack-integrity verification now
+  accepts both the legacy `mcpact.lock.v1` (`source_manifest_sha256`) and the
+  doctrine-migrated `mcpact.lock.v2` (`source_manifest_blake3`) lockfile schemas.
 
 ## v1.2.0-rc.1 — 2026-05-18 (release candidate)
 

@@ -32,7 +32,6 @@ use crate::graph::{
 };
 use chrono::{DateTime, Duration, Utc};
 use serde::{Deserialize, Serialize};
-use sha2::{Digest, Sha256};
 use std::collections::BTreeMap;
 use std::io::Write;
 use std::path::{Path, PathBuf};
@@ -499,9 +498,10 @@ pub fn diff(
     }
 }
 
-/// SHA-256 of `content` formatted as `sha256:<64-hex>`. The `sha256:`
-/// prefix mirrors OCI / git object naming so logs and dashboards can
-/// strip the algorithm tag uniformly.
+/// BLAKE3 of `content` formatted as `blake3:<64-hex>`. The algorithm-tag
+/// prefix mirrors OCI / git object naming so logs and dashboards can strip it
+/// uniformly. Per ADR-0003 the content-address hasher is BLAKE3 (migrated off
+/// SHA-256; this is a one-time baseline re-key — see CHANGELOG).
 ///
 /// CRLF is normalised to LF before hashing so that a pipeline file produces
 /// the same hash regardless of whether git's `core.autocrlf` converted its
@@ -512,12 +512,11 @@ pub fn compute_pipeline_hash(content: &str) -> String {
     } else {
         content.into()
     };
-    let digest = Sha256::digest(normalised.as_bytes());
-    format_digest(digest)
+    format_digest(blake3::hash(normalised.as_bytes()).as_bytes())
 }
 
-/// SHA-256 over dependency-like parser material (include/template/repository
-/// declarations and delegation edges), formatted as `sha256:<64-hex>`.
+/// BLAKE3 over dependency-like parser material (include/template/repository
+/// declarations and delegation edges), formatted as `blake3:<64-hex>`.
 ///
 /// This is intentionally additive to `pipeline_content_hash`: content hash
 /// still keys baseline files for backward compatibility, while this material
@@ -573,8 +572,7 @@ pub fn compute_pipeline_identity_material_hash(graph: &AuthorityGraph) -> String
     });
 
     let bytes = serde_json::to_vec(&canonical).expect("identity material must serialize");
-    let digest = Sha256::digest(bytes);
-    format_digest(digest)
+    format_digest(blake3::hash(&bytes).as_bytes())
 }
 
 fn format_digest(digest: impl AsRef<[u8]>) -> String {
@@ -583,7 +581,7 @@ fn format_digest(digest: impl AsRef<[u8]>) -> String {
         use std::fmt::Write;
         let _ = write!(&mut hex, "{byte:02x}");
     }
-    format!("sha256:{hex}")
+    format!("blake3:{hex}")
 }
 
 fn atomic_write(path: &Path, bytes: &[u8]) -> std::io::Result<()> {
@@ -634,11 +632,13 @@ pub fn baselines_dir(root: &Path) -> PathBuf {
     root.join(".taudit").join("baselines")
 }
 
-/// Filename for one pipeline's baseline. The `sha256:` prefix is stripped
-/// so the file is portable on filesystems that disallow `:` (Windows NTFS).
+/// Filename for one pipeline's baseline. The algorithm-tag prefix
+/// (`blake3:`, or legacy `sha256:`) is stripped so the file is portable on
+/// filesystems that disallow `:` (Windows NTFS).
 pub fn baseline_filename_for(pipeline_content_hash: &str) -> String {
     let hex = pipeline_content_hash
-        .strip_prefix("sha256:")
+        .strip_prefix("blake3:")
+        .or_else(|| pipeline_content_hash.strip_prefix("sha256:"))
         .unwrap_or(pipeline_content_hash);
     format!("{hex}.json")
 }
@@ -731,7 +731,7 @@ mod tests {
     #[test]
     fn pipeline_hash_is_deterministic_and_prefixed() {
         let h = compute_pipeline_hash("on: push\njobs:\n  build:\n    runs-on: ubuntu-latest\n");
-        assert!(h.starts_with("sha256:"));
+        assert!(h.starts_with("blake3:"));
         assert_eq!(h.len(), 7 + 64);
         let h2 = compute_pipeline_hash("on: push\njobs:\n  build:\n    runs-on: ubuntu-latest\n");
         assert_eq!(h, h2, "same content -> same hash");

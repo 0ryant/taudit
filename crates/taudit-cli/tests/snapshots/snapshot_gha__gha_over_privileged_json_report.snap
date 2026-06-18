@@ -1,5 +1,6 @@
 ---
 source: crates/taudit-cli/tests/snapshot_gha.rs
+assertion_line: 73
 expression: json
 ---
 findings:
@@ -7,8 +8,8 @@ findings:
       - credential_named_variable
     category: authority_propagation
     confidence_scope: yaml_only
-    finding_group_id: 19ee4c2e-a538-5bdb-adc2-8f789fcb6206
-    fingerprint: 9d041f143c8a77486348a9574b8a4298
+    finding_group_id: e1b26939-1c86-5d34-8a48-7c19adebcbc2
+    fingerprint: 8982ef1f08319dea2cc94c72746bc2a8
     message: DEPLOY_TOKEN propagated to some-org/deploy-action@main across trust boundary
     nodes_involved:
       - 9
@@ -29,13 +30,13 @@ findings:
     rule_id: authority_propagation
     severity: critical
     source: built-in
-    suppression_key: sk1_ffca7725a9ee77feb900702a0114767a
+    suppression_key: sk1_709842a227413843b8ee7a9689a6b315
   - authority_kinds:
       - oidc_identity
     category: authority_propagation
     confidence_scope: yaml_only
-    finding_group_id: be66107e-37fd-5dbf-9330-11b1a3a4fd7b
-    fingerprint: 34dfeec1b30291318a55b11421fbac7b
+    finding_group_id: 68b05707-8001-5513-8da8-9f0a0e31f0a0
+    fingerprint: 093538587019283a08207dd2666f7e84
     message: "GITHUB_TOKEN reaches 2 sinks via authority propagation: [actions/checkout@v4, some-org/deploy-action@main]"
     nodes_involved:
       - 0
@@ -57,13 +58,13 @@ findings:
     rule_id: authority_propagation
     severity: critical
     source: built-in
-    suppression_key: sk1_c6ce89eaa9383364fa8ef0605c66be0a
+    suppression_key: sk1_33915b7ba286d7f88c0d210a9772364c
   - authority_kinds:
       - credential_named_variable
     category: long_lived_credential
     confidence_scope: yaml_only
-    finding_group_id: 51fcc990-5084-59e3-a731-9c560c54d0ba
-    fingerprint: 778504a98a278328ffbfc4ba18a0c14e
+    finding_group_id: b38f6f22-8123-56cb-a14d-d8f9a0907a89
+    fingerprint: 6e02caafd8e3e5920be6edd38b601c9e
     message: "'AWS_ACCESS_KEY_ID' looks like a long-lived static credential"
     nodes_involved:
       - 4
@@ -74,14 +75,14 @@ findings:
     rule_id: long_lived_credential
     severity: low
     source: built-in
-    suppression_key: sk1_dd874a8288dad0ca657bed7f5599404e
+    suppression_key: sk1_678e84a8274b53cf8df714ea3dfd2303
     time_to_fix: large
   - authority_kinds:
       - credential_named_variable
     category: long_lived_credential
     confidence_scope: yaml_only
-    finding_group_id: 07e0de9b-04b5-5411-9c3b-bbf91d12002a
-    fingerprint: 8d56a5877d83d06dfd8503de6a61fe94
+    finding_group_id: aa4c77b2-958e-5b4c-8c59-7933d5c6d794
+    fingerprint: 4f7a18be67c540147d47a174e8953a35
     message: "'AWS_SECRET_ACCESS_KEY' looks like a long-lived static credential"
     nodes_involved:
       - 5
@@ -92,14 +93,14 @@ findings:
     rule_id: long_lived_credential
     severity: low
     source: built-in
-    suppression_key: sk1_d1462d4c8f0c1f317b64764c873b7b89
+    suppression_key: sk1_95211c10617b8ad3c183ca3af1b5e281
     time_to_fix: large
   - authority_kinds:
       - oidc_identity
     category: over_privileged_identity
     confidence_scope: yaml_only
-    finding_group_id: 61e587be-3ab9-585f-a534-4308d9267ffa
-    fingerprint: 1fbb9cf89e16b2623ad236fcace90316
+    finding_group_id: 9fbe552a-541a-5d6f-b36b-86e14f3505bc
+    fingerprint: 967602939878a8a7823e01dc6e868a00
     message: "GITHUB_TOKEN has broad scope (permissions: 'write-all') — likely broader than needed"
     nodes_involved:
       - 0
@@ -113,14 +114,14 @@ findings:
     rule_id: over_privileged_identity
     severity: high
     source: built-in
-    suppression_key: sk1_a6d56516e97292ec38383e3ea014a466
+    suppression_key: sk1_68ee7c48dc7a20cde2018e700c80ec17
     time_to_fix: small
   - attacker_surface_kinds:
       - mutable_dependency_ref
     category: unpinned_action
     confidence_scope: yaml_only
-    finding_group_id: 9badf00f-185f-5503-87f6-b0f950472b76
-    fingerprint: b3870c65b8f599cfdfca0db051b934b9
+    finding_group_id: 99d80a61-b552-56b1-9bf1-6f4bf189ac8a
+    fingerprint: 36a0480a455c5fe5228795fa2ae92b02
     message: "[action_major_version_pin_without_sha] actions/checkout@v4 is pinned only to a mutable major tag; pin to a full commit SHA"
     nodes_involved:
       - 1
@@ -133,14 +134,14 @@ findings:
       - "the referenced mutable branch, tag, include, or image can change independently of this repository"
     severity: medium
     source: built-in
-    suppression_key: sk1_b479a59c8affd98b2fc6720a7854ae76
+    suppression_key: sk1_71e20864a547f607bba591e88fa9f5e0
     time_to_fix: trivial
   - attacker_surface_kinds:
       - mutable_dependency_ref
     category: unpinned_action
     confidence_scope: yaml_only
-    finding_group_id: f4ab4e0a-cd93-56c6-a534-12aec7befcff
-    fingerprint: 31ceeca3145a97625dfd847a040bbc26
+    finding_group_id: a8e46996-bf0a-59ea-bb40-83940d0452ea
+    fingerprint: d1da0ec2fc0490df5c4a59d5362a5cb2
     message: actions/checkout@v4 is not pinned to a SHA digest
     nodes_involved:
       - 1
@@ -153,14 +154,14 @@ findings:
       - "the referenced mutable branch, tag, include, or image can change independently of this repository"
     severity: medium
     source: built-in
-    suppression_key: sk1_033d10c3704d4e5312e22f9d01465025
+    suppression_key: sk1_c0aef7663c9bc2678abfaeef405f493c
     time_to_fix: trivial
   - attacker_surface_kinds:
       - mutable_dependency_ref
     category: unpinned_action
     confidence_scope: yaml_only
-    finding_group_id: aaddbe52-28d1-5412-8441-5d9ae95ecf85
-    fingerprint: 15293f46f1061fc8b1d4c710dca0aa52
+    finding_group_id: e168ed9c-3c34-51c3-bd59-aa7efd57209d
+    fingerprint: c81cc48345c71eb80fdb815e24695860
     message: some-org/deploy-action@main is not pinned to a SHA digest
     nodes_involved:
       - 7
@@ -173,7 +174,7 @@ findings:
       - "the referenced mutable branch, tag, include, or image can change independently of this repository"
     severity: high
     source: built-in
-    suppression_key: sk1_033d10c3704d4e5312e22f9d01465025
+    suppression_key: sk1_c0aef7663c9bc2678abfaeef405f493c
     time_to_fix: trivial
   - attacker_surface_kinds:
       - untrusted_checkout
@@ -182,8 +183,8 @@ findings:
       - oidc_identity
     category: untrusted_with_authority
     confidence_scope: yaml_only
-    finding_group_id: 8134004c-cfe9-54e3-8ac4-1099db4b20dc
-    fingerprint: 4cc63211c9299f9f5965da1d71e83023
+    finding_group_id: 9b8fb9bc-946e-5615-a878-b385dd79c432
+    fingerprint: fc4759e3365aef3aa9f81df672399480
     message: "Untrusted step 'build[0]' has direct access to identity 'GITHUB_TOKEN'"
     nodes_involved:
       - 2
@@ -195,15 +196,15 @@ findings:
     rule_id: untrusted_with_authority
     severity: critical
     source: built-in
-    suppression_key: sk1_e9a7bf38c217d147ef733253dff5e1c9
+    suppression_key: sk1_fd1debe40c5f2b15d171be6768a1c3fe
   - attacker_surface_kinds:
       - untrusted_step
     authority_kinds:
       - oidc_identity
     category: untrusted_with_authority
     confidence_scope: yaml_only
-    finding_group_id: 26a1ad7d-a283-5a77-9c6c-f33833a25f7c
-    fingerprint: b3aac2a7d760a06fdde4c9231697db3d
+    finding_group_id: cf243cf4-fbb9-58ed-bac2-03aa778f9fc3
+    fingerprint: 7207ed51574a2465cb87b97e9adfd760
     message: "Untrusted step 'deploy[0]' has direct access to identity 'GITHUB_TOKEN'"
     nodes_involved:
       - 8
@@ -215,15 +216,15 @@ findings:
     rule_id: untrusted_with_authority
     severity: critical
     source: built-in
-    suppression_key: sk1_e9a7bf38c217d147ef733253dff5e1c9
+    suppression_key: sk1_fd1debe40c5f2b15d171be6768a1c3fe
   - attacker_surface_kinds:
       - untrusted_step
     authority_kinds:
       - credential_named_variable
     category: untrusted_with_authority
     confidence_scope: yaml_only
-    finding_group_id: 5bb4e538-2f11-5dc2-949f-da1d8b6a37e2
-    fingerprint: ccaf29551b139fb5d5c271a9c47d62de
+    finding_group_id: 7deb5f6c-a797-5951-a204-02d318528d2c
+    fingerprint: 97e2add3d8739c81709c6538de118c78
     message: "Untrusted step 'deploy[0]' has direct access to secret 'DEPLOY_TOKEN'"
     nodes_involved:
       - 8
@@ -235,7 +236,7 @@ findings:
     rule_id: untrusted_with_authority
     severity: critical
     source: built-in
-    suppression_key: sk1_3352102973b563d6ed7a19169e0b691c
+    suppression_key: sk1_81e9a590e462cde9738e7a63fc85306d
   - attacker_surface_kinds:
       - script_sink
       - untrusted_checkout
@@ -244,8 +245,8 @@ findings:
       - oidc_identity
     category: uplift_without_attestation
     confidence_scope: yaml_only
-    finding_group_id: bb6d77e7-d049-593d-8e10-f5d12d9b7b20
-    fingerprint: 72c99cb062f0e9061b7bd3063a3387ca
+    finding_group_id: 87c21135-19bd-5309-855f-db8dc461e4c6
+    fingerprint: 3798b9c9dc0714bf5f20671e260b527b
     message: 3 step(s) use OIDC/federated identity but no provenance attestation step was detected — artifact integrity cannot be verified
     nodes_involved:
       - 2
@@ -261,7 +262,7 @@ findings:
       - the configured audience or cloud role grants useful authority
     severity: info
     source: built-in
-    suppression_key: sk1_167c4fc0683f62a0319743f558b31030
+    suppression_key: sk1_553d7f856eaaf976db631804d106814e
 graph:
   completeness: complete
   edges:

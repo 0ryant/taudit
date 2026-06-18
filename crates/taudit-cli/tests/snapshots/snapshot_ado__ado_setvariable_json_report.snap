@@ -1,5 +1,6 @@
 ---
 source: crates/taudit-cli/tests/snapshot_ado.rs
+assertion_line: 52
 expression: json
 ---
 findings:
@@ -7,8 +8,8 @@ findings:
       - job_token
     category: over_privileged_identity
     confidence_scope: yaml_only
-    finding_group_id: 7aba0f67-2e57-5ce8-ae96-ebb114102c7d
-    fingerprint: 3f548f2bfdbb2270ced9c06d4ac73cea
+    finding_group_id: 20b85bf3-15f0-51f9-8fe0-b72433ef5fe0
+    fingerprint: d022605254e8be36af8b0f32a7b4fb33
     message: "System.AccessToken has broad scope (permissions: '') — likely broader than needed"
     nodes_involved:
       - 0
@@ -22,7 +23,7 @@ findings:
     rule_id: over_privileged_identity
     severity: high
     source: built-in
-    suppression_key: sk1_f5713fcbea60d40cf198a961d114d083
+    suppression_key: sk1_da56761dca6960360598b21cd3aabbee
     time_to_fix: small
   - attacker_surface_kinds:
       - script_sink
@@ -32,8 +33,8 @@ findings:
     category: self_mutating_pipeline
     confidence_scope: yaml_only
     cve_relationship: analogue_only
-    finding_group_id: a01ab427-afa1-5688-b2be-efa8eca2df6c
-    fingerprint: 4464ed1f70695745708b1d6a25d0af30
+    finding_group_id: 609edbe5-466c-580d-b55d-662e698ebaa7
+    fingerprint: bb6e21bf84d118f154727f401f6ee7c5
     message: "Step 'Expose secrets as plain variables' writes to the environment gate while holding authority (System.AccessToken, API_KEY_SECRET) — secrets may leak into pipeline environment"
     nodes_involved:
       - 2
@@ -46,13 +47,13 @@ findings:
     rule_id: self_mutating_pipeline
     severity: high
     source: built-in
-    suppression_key: sk1_9147a3903bbf8195bc27ee188d19629b
+    suppression_key: sk1_0f21eacc2bf17aecc6aa99328b2e4989
   - attacker_surface_kinds:
       - script_sink
     category: setvariable_issecret_false
     confidence_scope: yaml_only
-    finding_group_id: 89d948f5-12e9-5a29-b5c4-8dfded86a74a
-    fingerprint: 791dec6711c3ef285ab5fd8aa3cf3b65
+    finding_group_id: 57686768-3929-5fed-9f6f-68683c7b5263
+    fingerprint: 9b80dc3b961177994e47c5a111f2f391
     message: "ADO setvariable with sensitive name 'API_KEY' uses issecret=false or omits issecret flag, value printed in plaintext logs"
     nodes_involved:
       - 2
@@ -63,13 +64,13 @@ findings:
     rule_id: setvariable_issecret_false
     severity: high
     source: built-in
-    suppression_key: sk1_6bb31ef6361583ba27c481ea21451e08
+    suppression_key: sk1_fe01d68461d853df61ff1b574ec13907
   - attacker_surface_kinds:
       - script_sink
     category: setvariable_issecret_false
     confidence_scope: yaml_only
-    finding_group_id: 89d948f5-12e9-5a29-b5c4-8dfded86a74a
-    fingerprint: 791dec6711c3ef285ab5fd8aa3cf3b65
+    finding_group_id: 57686768-3929-5fed-9f6f-68683c7b5263
+    fingerprint: 9b80dc3b961177994e47c5a111f2f391
     message: "ADO setvariable with sensitive name 'MY_TOKEN' uses issecret=false or omits issecret flag, value printed in plaintext logs"
     nodes_involved:
       - 2
@@ -80,7 +81,7 @@ findings:
     rule_id: setvariable_issecret_false
     severity: high
     source: built-in
-    suppression_key: sk1_6bb31ef6361583ba27c481ea21451e08
+    suppression_key: sk1_fe01d68461d853df61ff1b574ec13907
 graph:
   completeness: complete
   edges:

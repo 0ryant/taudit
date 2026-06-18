@@ -23,7 +23,6 @@
 //! `crates/taudit-core/src/lib.rs` for the API stability docstring.
 
 use crate::graph::{AuthorityGraph, NodeKind};
-use sha2::{Digest, Sha256};
 
 // ── Re-exports of wire types (now owned by taudit-api) ─────────────────
 
@@ -462,10 +461,16 @@ fn finding_identity_parts(
     (rule_id, category, file_normalised, root_authority)
 }
 
-fn sha256_128_hex(canonical: &str) -> String {
-    let digest = Sha256::digest(canonical.as_bytes());
+/// BLAKE3 of `canonical`, truncated to the first 16 bytes (32 hex chars /
+/// 128 bits). Per ADR-0003 / engineering-doctrine ADR-0022 the content-address
+/// hasher is BLAKE3; the 128-bit truncation (well past collision-attack
+/// feasibility, still glanceable in a SIEM table) is unchanged from the v3
+/// algorithm. The hash function change is a one-time fingerprint/suppression
+/// re-key — see [`compute_fingerprint`].
+fn blake3_128_hex(canonical: &str) -> String {
+    let digest = blake3::hash(canonical.as_bytes());
     let mut out = String::with_capacity(32);
-    for byte in &digest[..16] {
+    for byte in &digest.as_bytes()[..16] {
         use std::fmt::Write;
         let _ = write!(&mut out, "{byte:02x}");
     }
@@ -534,9 +539,11 @@ fn sha256_128_hex(canonical: &str) -> String {
 /// re-baselining is required when upgrading from any v0.x or v1.0 release.
 /// CHANGELOG and `docs/finding-fingerprint.md` flag the break explicitly.
 ///
-/// Output: SHA-256 of the canonical input string, truncated to the first
+/// Output: BLAKE3 of the canonical input string, truncated to the first
 /// 32 hex characters (128 bits — far past collision-attack feasibility,
-/// still short enough to be glanceable in a SIEM table).
+/// still short enough to be glanceable in a SIEM table). Per ADR-0003 the
+/// content-address hasher is BLAKE3; migrating off SHA-256 is a one-time
+/// fingerprint/suppression-key re-key (see CHANGELOG).
 ///
 /// **API stability:** marked `#[doc(hidden)]` because `taudit-core` is a
 /// workspace-internal library — see `crates/taudit-core/src/lib.rs`.
@@ -580,7 +587,7 @@ pub fn compute_fingerprint(finding: &Finding, graph: &AuthorityGraph) -> String 
     );
 
     // 16 bytes -> 32 hex chars (128-bit truncation)
-    sha256_128_hex(&canonical)
+    blake3_128_hex(&canonical)
 }
 
 /// Compute the operator-stable suppression key for a finding.
@@ -607,7 +614,7 @@ pub fn compute_suppression_key(finding: &Finding, graph: &AuthorityGraph) -> Str
     let canonical = format!(
         "sk1\x1frule={rule_id}\x1ffile={file_normalised}\x1fcategory={category}\x1froot={root_authority}\x1fanchor={anchor}"
     );
-    format!("sk1_{}", sha256_128_hex(&canonical))
+    format!("sk1_{}", blake3_128_hex(&canonical))
 }
 
 #[cfg(test)]
@@ -1334,11 +1341,13 @@ mod fingerprint_tests {
 
     // ── Golden fingerprints (pin the v3 algorithm contract) ─────────────
     //
-    // Hand-computed v3 fingerprints for three (FindingCategory, graph
-    // fixture) combinations. Any change to the algorithm — input set,
-    // tag prefixes, separator, version label, truncation length — flips
+    // v3 fingerprints for three (FindingCategory, graph fixture)
+    // combinations. Any change to the algorithm — input set, tag prefixes,
+    // separator, version label, truncation length, or hash function — flips
     // these literals and forces a deliberate update + a CHANGELOG entry.
-    // Do NOT update these literals casually.
+    // These values reflect the ADR-0003 BLAKE3 re-key (was SHA-256 ≤ the
+    // pre-conformance line); the one-time re-baseline is documented in the
+    // CHANGELOG. Do NOT update these literals casually.
 
     #[test]
     fn golden_authority_propagation_fingerprint() {
@@ -1352,7 +1361,7 @@ mod fingerprint_tests {
         );
         let fp = compute_fingerprint(&f, &graph);
         assert_eq!(
-            fp, "19cfd717b43ce7d3de5d6292eed1f635",
+            fp, "9439c1951e229160fd1468461b2b9bef",
             "v3 golden authority_propagation fingerprint changed — update CHANGELOG and re-baseline downstream consumers before changing this literal"
         );
     }
@@ -1364,7 +1373,7 @@ mod fingerprint_tests {
         let f = make_finding(FindingCategory::FloatingImage, "msg-a", vec![img]);
         let fp = compute_fingerprint(&f, &g);
         assert_eq!(
-            fp, "ceacd10b83991a7b4d607643f68d5131",
+            fp, "4a6b0e82deb5d7b5d0e0652df9366e97",
             "v3 golden floating_image fingerprint changed — update CHANGELOG \
              and re-baseline downstream consumers before changing this literal"
         );
@@ -1383,7 +1392,7 @@ mod fingerprint_tests {
         f.extras.fingerprint_anchor = Some("platform".to_string());
         let fp = compute_fingerprint(&f, &graph);
         assert_eq!(
-            fp, "7ef16fae1dd4aff3986fe61b9903a186",
+            fp, "55c167ac12718a284e4c8cd92a584d09",
             "v3 golden template_extends_unpinned_branch fingerprint changed \
              — update CHANGELOG and re-baseline before changing this literal"
         );

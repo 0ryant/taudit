@@ -34,10 +34,13 @@ anyhow = { workspace = true }
 serde_yaml = { workspace = true }
 serde_json = { workspace = true }
 serde = { workspace = true }
-sha2 = { workspace = true }
+blake3 = { workspace = true }
 colored = { workspace = true }
 ureq = { workspace = true }
 semver = { workspace = true }
+axiom-exit = { workspace = true }
+axiom-hash = { workspace = true }
+axiom-audit = { workspace = true }
 
 [dev-dependencies]
 serde_json = { workspace = true }

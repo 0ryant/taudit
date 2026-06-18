@@ -1,5 +1,6 @@
 ---
 source: crates/taudit-cli/tests/snapshot_gitlab.rs
+assertion_line: 52
 expression: json
 ---
 findings:
@@ -7,8 +8,8 @@ findings:
       - credential_named_variable
     category: authority_propagation
     confidence_scope: yaml_only
-    finding_group_id: 3e1ce5ac-d8de-5111-85c0-c961f1bfea37
-    fingerprint: d180931e883fe7d08a9ac19952c50b9d
+    finding_group_id: b6ff4be4-fc54-5e4f-bd34-138b76ef0f6c
+    fingerprint: f0cf41ccd8eb8b9f4f7053b605ce3f47
     message: "API_SECRET_KEY propagated to alpine:latest across trust boundary"
     nodes_involved:
       - 1
@@ -29,13 +30,13 @@ findings:
     rule_id: authority_propagation
     severity: critical
     source: built-in
-    suppression_key: sk1_70c40fe30f8ddead6c17854663935232
+    suppression_key: sk1_4d8868f47599b75e825c7f2b9905f87d
   - authority_kinds:
       - job_token
     category: authority_propagation
     confidence_scope: yaml_only
-    finding_group_id: 661d0527-036b-5986-a564-a1d93afd8748
-    fingerprint: f310333c07ac5116f7733626d44cb753
+    finding_group_id: 9afae362-cbcb-5b29-8880-b1c56657fd23
+    fingerprint: d1f514384289c0c3a150b864d24bb997
     message: "CI_JOB_TOKEN propagated to alpine:latest across trust boundary"
     nodes_involved:
       - 0
@@ -56,13 +57,13 @@ findings:
     rule_id: authority_propagation
     severity: critical
     source: built-in
-    suppression_key: sk1_58b5e871222f76b7f18caf7cf9492c41
+    suppression_key: sk1_57cd7e2f559ffc67b8242372ad2b83d1
   - authority_kinds:
       - credential_named_variable
     category: authority_propagation
     confidence_scope: yaml_only
-    finding_group_id: 0e309759-d91b-5d41-b2d7-b7ffeec7377c
-    fingerprint: a8e0befc7144da9fb4e5ef763fcc1fc5
+    finding_group_id: a0e0ea31-24b4-50fc-82ac-3aa44ceed3f9
+    fingerprint: c8d0c0741c3c4e78905b81951718ce98
     message: "DATABASE_PASSWORD propagated to alpine:latest across trust boundary"
     nodes_involved:
       - 2
@@ -83,13 +84,13 @@ findings:
     rule_id: authority_propagation
     severity: critical
     source: built-in
-    suppression_key: sk1_67de0ac7eee70ed68ba6674715c9f23b
+    suppression_key: sk1_d381777f15c4efe9a00d339a8f6b1c0c
   - authority_kinds:
       - credential_named_variable
     category: authority_propagation
     confidence_scope: yaml_only
-    finding_group_id: f529a601-9f35-545c-8e7e-74c2442a6908
-    fingerprint: 1464f3114a20b17016c1f4a4fac39c16
+    finding_group_id: e91b2b44-fec3-5998-8470-2cfadd3a9491
+    fingerprint: 5323c1317a722e0f46a15a1233871ec8
     message: "DEPLOY_TOKEN propagated to alpine:latest across trust boundary"
     nodes_involved:
       - 3
@@ -110,13 +111,13 @@ findings:
     rule_id: authority_propagation
     severity: critical
     source: built-in
-    suppression_key: sk1_d184a429f3cb532c0079169a4c23b0cb
+    suppression_key: sk1_3d07ac50f64ecfb274ba7f01046f55db
   - authority_kinds:
       - credential_named_variable
     category: long_lived_credential
     confidence_scope: yaml_only
-    finding_group_id: c494fbb4-778f-5822-8dad-6f8e82c5921b
-    fingerprint: d2405dfb12dabdf464262a499c87ba54
+    finding_group_id: 8fa9f6b0-b9f5-50e7-a4b6-b99e1a4007ac
+    fingerprint: ae8731d1d284f409814e6f2b1d2a3d1f
     message: "'API_SECRET_KEY' looks like a long-lived static credential"
     nodes_involved:
       - 1
@@ -127,14 +128,14 @@ findings:
     rule_id: long_lived_credential
     severity: low
     source: built-in
-    suppression_key: sk1_4824afc6b1445429c370477881a20d34
+    suppression_key: sk1_059c2e384986421c4fd59a5b15be12e3
     time_to_fix: large
   - authority_kinds:
       - credential_named_variable
     category: long_lived_credential
     confidence_scope: yaml_only
-    finding_group_id: 6fdceba6-6f33-58fe-95bf-927f469b15ec
-    fingerprint: a04b0fa8ff833821d59f9caa45266717
+    finding_group_id: b3d99875-8149-504c-b266-5ae29a1ae24b
+    fingerprint: c28546ec048a13ba81281e634423288e
     message: "'DATABASE_PASSWORD' looks like a long-lived static credential"
     nodes_involved:
       - 2
@@ -145,14 +146,14 @@ findings:
     rule_id: long_lived_credential
     severity: low
     source: built-in
-    suppression_key: sk1_c09cadb17eb8f76176fd49e4782ed17f
+    suppression_key: sk1_89c38b2582eb31cfba3a89dbd0cf1538
     time_to_fix: large
   - authority_kinds:
       - job_token
     category: over_privileged_identity
     confidence_scope: yaml_only
-    finding_group_id: 00262520-9062-589a-8cfd-399be5d1a0b9
-    fingerprint: 1ff9918fc8f89331c28c5c87af76f8ff
+    finding_group_id: 67cdfaab-2132-55de-91a5-aed998e1d215
+    fingerprint: 07093ef97866a5c453f2a170855cdd88
     message: "CI_JOB_TOKEN has broad scope (permissions: '') — likely broader than needed"
     nodes_involved:
       - 0
@@ -164,14 +165,14 @@ findings:
     rule_id: over_privileged_identity
     severity: high
     source: built-in
-    suppression_key: sk1_a0fd76b4b1140560e30334b3222ae956
+    suppression_key: sk1_d923ac3a51439fa1e7b0dbab0c1f67d3
     time_to_fix: small
   - attacker_surface_kinds:
       - mutable_dependency_ref
     category: unpinned_action
     confidence_scope: yaml_only
-    finding_group_id: e9073e12-4672-5c3b-a881-79b1abc87da9
-    fingerprint: 73aefa946595cc3323a3711d1b09f744
+    finding_group_id: e8c9538b-c5ee-5998-a374-feb774948c44
+    fingerprint: a7ed3f67da501a83e4ee5dccc89ca588
     message: "alpine:latest is not pinned to a SHA digest"
     nodes_involved:
       - 4
@@ -184,7 +185,7 @@ findings:
       - "the referenced mutable branch, tag, include, or image can change independently of this repository"
     severity: high
     source: built-in
-    suppression_key: sk1_45b02e73ff078b41d60e3b6a02b5c976
+    suppression_key: sk1_aedababcea5a6a84a5ce6d92ba8e5908
     time_to_fix: trivial
 graph:
   completeness: complete

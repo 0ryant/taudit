@@ -1,5 +1,6 @@
 ---
 source: crates/taudit-cli/tests/snapshot_ado.rs
+assertion_line: 99
 expression: json
 ---
 findings:
@@ -8,8 +9,8 @@ findings:
     category: checkout_self_pr_exposure
     confidence_scope: yaml_only
     cve_relationship: same_authority_shape
-    finding_group_id: 07f2e7cf-9646-51fd-acf3-0bebfad3ad2e
-    fingerprint: 481eb03db2f3c50620aead82178810b4
+    finding_group_id: 4b7c47d1-799d-59a4-ad46-97f73a76e56a
+    fingerprint: ad8ae6e7d526ab0a8d0f1fc42ff98482
     message: "PR-triggered pipeline checks out the repository at step 'pipeline[0]' — attacker-controlled code from the fork lands on the runner and is readable by all subsequent steps"
     nodes_involved:
       - 2
@@ -23,14 +24,14 @@ findings:
       - untrusted PR or fork-controlled input can reach this workflow at runtime
     severity: high
     source: built-in
-    suppression_key: sk1_b7d6e3c9f9f8da1519afc2d9667a9364
+    suppression_key: sk1_3024d77eb2e833245b03354d44494068
     time_to_fix: medium
   - authority_kinds:
       - job_token
     category: over_privileged_identity
     confidence_scope: yaml_only
-    finding_group_id: 5f27c90f-6130-57b7-931c-7e756722e388
-    fingerprint: fd6a9adae7376318838370392ea657ca
+    finding_group_id: 75a04e30-65e3-5ce5-af8a-985a6ebef0ce
+    fingerprint: 0bfff79c851da187e03136c1b6bc72c7
     message: "System.AccessToken has broad scope (permissions: '') — likely broader than needed"
     nodes_involved:
       - 0
@@ -44,7 +45,7 @@ findings:
     rule_id: over_privileged_identity
     severity: high
     source: built-in
-    suppression_key: sk1_f5713fcbea60d40cf198a961d114d083
+    suppression_key: sk1_da56761dca6960360598b21cd3aabbee
     time_to_fix: small
   - attacker_surface_kinds:
       - self_hosted_runner
@@ -52,8 +53,8 @@ findings:
     category: self_hosted_pool_pr_hijack
     confidence_scope: yaml_only
     cve_relationship: same_authority_shape
-    finding_group_id: 0953b31e-364f-5f21-89a6-a7ae6a1310bb
-    fingerprint: 0647fb972a184c014fd376364580225d
+    finding_group_id: 473e21fb-6a19-5ed4-91ef-fce7de4e152c
+    fingerprint: 7deb148f0e54c74a7ccd60213c6df01a
     message: "PR-triggered pipeline uses self-hosted agent pool with checkout:self — enables git hook injection persisting across pipeline runs on the shared runner"
     nodes_involved:
       - 1
@@ -68,13 +69,13 @@ findings:
       - untrusted PR or fork-controlled input can reach this workflow at runtime
     severity: critical
     source: built-in
-    suppression_key: sk1_3eeee794ecfc8dcb9f8a3ac419097560
+    suppression_key: sk1_dcb608ec42e3eed6aadfaa7b21f4998b
   - attacker_surface_kinds:
       - self_hosted_runner
     category: shared_self_hosted_pool_no_isolation
     confidence_scope: yaml_only
-    finding_group_id: 82f6a179-d521-5cd9-bdaa-09de04bfcb42
-    fingerprint: 4873e5775b5e271f363374e5b504aca1
+    finding_group_id: d82956fa-9218-5473-9f5f-9b33c8cc8344
+    fingerprint: 811fb6aeb233128a8ceb32b9f0816720
     message: "Self-hosted pool 'SharedBuildAgents' has no workspace isolation (workspace: {clean: all/true} not set); a previous pipeline run can pollute the workspace for the next — including privileged deployment jobs"
     nodes_involved:
       - 1
@@ -85,7 +86,7 @@ findings:
     rule_id: shared_self_hosted_pool_no_isolation
     severity: high
     source: built-in
-    suppression_key: sk1_fc2b27975841ee1de181c539eb3555e2
+    suppression_key: sk1_4de8d982051e9d538dcb81ccb78ee105
   - attacker_surface_kinds:
       - script_sink
       - untrusted_checkout
@@ -96,8 +97,8 @@ findings:
     category: trigger_context_mismatch
     confidence_scope: yaml_only
     cve_relationship: same_authority_shape
-    finding_group_id: 113dc5b4-ddf6-5be7-aca2-4eddf0a8f032
-    fingerprint: b6c2dbaccfb85fcc54955524d5539caa
+    finding_group_id: 44a3e7d1-30b7-5e9e-9601-314e679f66f9
+    fingerprint: b447cd6841141b5f8bbb3cb69113dc7c
     message: Workflow triggered by pr with secret/identity access — 2 step(s) hold authority that attacker-controlled code could reach
     nodes_involved:
       - 2
@@ -116,7 +117,7 @@ findings:
       - untrusted PR or fork-controlled input can reach this workflow at runtime
     severity: high
     source: built-in
-    suppression_key: sk1_39f6c552923530e285bb75ad38b1342e
+    suppression_key: sk1_22e8470f2b9f712f81238bb6cf5df4ab
 graph:
   completeness: complete
   edges:

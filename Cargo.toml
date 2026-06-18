@@ -43,6 +43,17 @@ ureq = { version = "3", features = ["json"] }
 sha2 = "0.11"
 sha1 = "0.11"
 semver = "1"
+blake3 = "1"
+tempfile = "3"
+
+# Shared Algol/AXIOM doctrine crates (pattern 07/09/11 + ADR-0003 BLAKE3),
+# pinned to the keystone rev so the on-disk audit/receipt bytes are identical
+# across the cohort.
+axiom-hash = { git = "https://github.com/0ryant/axiom-doctrine-rs.git", rev = "3f09282" }
+axiom-canonical = { git = "https://github.com/0ryant/axiom-doctrine-rs.git", rev = "3f09282" }
+axiom-exit = { git = "https://github.com/0ryant/axiom-doctrine-rs.git", rev = "3f09282" }
+axiom-audit = { git = "https://github.com/0ryant/axiom-doctrine-rs.git", rev = "3f09282" }
+axiom-receipt = { git = "https://github.com/0ryant/axiom-doctrine-rs.git", rev = "3f09282" }
 
 [profile.release]
 lto = true
