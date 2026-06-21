@@ -1,7 +1,7 @@
 [package]
 name = "taudit-api"
-version = "0.5.0-pre"
-description = "Stable wire types for taudit JSON / SARIF / CloudEvents output. Public contract for downstream consumers (tsign, axiom, custom integrations). 0.x: contract is not frozen — review on every minor bump until 1.0."
+version = "3.1.0-pre"
+description = "Stable wire types for taudit JSON / SARIF / CloudEvents output. Public contract for downstream consumers (tsign, axiom, custom integrations). Versioned in lockstep with the taudit workspace."
 readme = "README.md"
 edition.workspace = true
 rust-version.workspace = true
