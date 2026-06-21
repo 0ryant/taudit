@@ -21,6 +21,6 @@ axiom-hash = { workspace = true }
 mcpact-core = "0.2.0"
 mcpact-runtime = "0.2.0"
 mcpact-audit = "0.2.0"
-mcpact-policy = "0.2.0"
+mcpact-policy = "0.4.0"
 mcpact-mcp = "0.2.0"
 mcpact-manifest = "0.2.0"
