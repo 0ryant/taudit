@@ -22,12 +22,19 @@
 //! the receipt was produced by a taudit build, not as an organizational
 //! attestation. The signed bytes are byte-identical to the reference tools by
 //! construction (shared [`axiom_canonical`] JCS + [`axiom_receipt`] signer).
+//!
+//! For origin-grade use a deployment supplies its own private Ed25519 key by
+//! environment (`TAUDIT_SIGNING_SEED_HEX` / `_SIGNING_KEY_ID` /
+//! `_VERIFY_PUBKEY_HEX`) — no code change, no rebuild. The resolution logic
+//! lives once in [`axiom_receipt::Keyring`]; this module constructs taudit's
+//! keyring and surfaces the [`KeyClass`] so each receipt self-labels
+//! dev-vs-deployment inside its signed body.
 
 use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
 
 use axiom_audit::AuditEntry;
-use axiom_receipt::{Ed25519Signer, Jcs};
+use axiom_receipt::{DeploymentKeyEnv, Ed25519Signer, Jcs, KeyClass, Keyring};
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
@@ -54,6 +61,11 @@ const PINNED_SEED: [u8; 32] = [
     0x44, 0x49, 0xc5, 0x69, 0x7b, 0x32, 0x69, 0x19, 0x70, 0x3b, 0xac, 0x03, 0x1c, 0xae, 0x7f, 0x60,
 ];
 
+/// Default `key_id` stamped on receipts when a deployment key is active
+/// (i.e. when `TAUDIT_SIGNING_SEED_HEX` is set but `TAUDIT_SIGNING_KEY_ID` is
+/// not). The pinned dev key keeps [`PINNED_KEY_ID`].
+pub const DEPLOYMENT_KEY_ID_DEFAULT: &str = "taudit-deployment-ed25519-v1";
+
 /// Errors from the audit-trail / receipt path.
 #[derive(Debug, Error)]
 pub enum ConformanceError {
@@ -77,10 +89,42 @@ pub enum ConformanceError {
 /// Convenience result alias.
 pub type Result<T> = std::result::Result<T, ConformanceError>;
 
-/// The pinned in-process signer.
+/// taudit's keyring: pinned dev key fallback + `TAUDIT_*` deployment env path.
+///
+/// The pinned key is "mechanism, not origin": it proves a receipt was bound
+/// under a *known* key, not a *secret* one. A deployment crosses the origin
+/// gate by supplying its own private key through `TAUDIT_SIGNING_SEED_HEX`
+/// (with optional `TAUDIT_SIGNING_KEY_ID` / `TAUDIT_VERIFY_PUBKEY_HEX`). When
+/// none is supplied, the pinned dev key is the explicit, documented fallback,
+/// so default behaviour — and every test — is unchanged.
+fn keyring() -> Keyring {
+    Keyring::new(
+        DeploymentKeyEnv::from_prefix("TAUDIT"),
+        PINNED_SEED,
+        PINNED_KEY_ID,
+        DEPLOYMENT_KEY_ID_DEFAULT,
+    )
+}
+
+/// The active signer: a deployment key from `TAUDIT_SIGNING_SEED_HEX` if
+/// configured and valid, otherwise the pinned dev key.
 #[must_use]
-fn signer() -> Ed25519Signer {
-    Ed25519Signer::from_seed(PINNED_SEED, PINNED_KEY_ID)
+fn active_signer() -> Ed25519Signer {
+    keyring().active_signer().0
+}
+
+/// The `key_id` the active signer stamps on receipt bodies.
+#[must_use]
+pub fn active_key_id() -> String {
+    keyring().active_key_id().0
+}
+
+/// The [`KeyClass`] of the active signer — `dev` for the pinned key,
+/// `deployment` when a deployment seed is configured. Stamped into the receipt
+/// body so a receipt declares whether it is origin-grade.
+#[must_use]
+pub fn active_key_class() -> KeyClass {
+    keyring().active_key_id().1
 }
 
 /// A cross-process advisory lock guarding read-then-append on a single
@@ -169,7 +213,7 @@ fn audit_io(e: std::io::Error) -> ConformanceError {
 /// against.
 #[must_use]
 pub fn pinned_public_key_hex() -> String {
-    hex::encode(signer().verifying_key_bytes())
+    keyring().pinned_public_key_hex()
 }
 
 /// Append one `axiom.audit.v1` row to `<repo>/audit-trail.jsonl`, computing
@@ -293,12 +337,19 @@ pub struct ReceiptBody {
     pub doctrine_citations: Vec<String>,
     /// RFC-3339 creation timestamp.
     pub created_at: String,
-    /// Identifier of the pinned key the signature is under.
+    /// Identifier of the key the signature is under.
     pub key_id: String,
+    /// Whether the signing key is a built-in `dev` key (mechanism, not origin)
+    /// or a held `deployment` key (origin-grade). Inside the signed body, so it
+    /// cannot be relabelled without breaking the signature.
+    pub key_class: KeyClass,
 }
 
 impl ReceiptBody {
-    /// Build a body with the fixed identity fields filled in.
+    /// Build a body with the fixed identity fields filled in. The `key_id` and
+    /// `key_class` are stamped from the active keyring, so a receipt emitted on
+    /// the default (no-env) path self-labels `dev`, and one signed under a
+    /// `TAUDIT_SIGNING_SEED_HEX` deployment key self-labels `deployment`.
     #[must_use]
     pub fn new(operation: &str, outcome: &str, exit_code: i32, created_at: &str) -> Self {
         Self {
@@ -313,7 +364,8 @@ impl ReceiptBody {
             audit_chain: None,
             doctrine_citations: default_citations(),
             created_at: created_at.to_string(),
-            key_id: PINNED_KEY_ID.to_string(),
+            key_id: active_key_id(),
+            key_class: active_key_class(),
         }
     }
 }
@@ -346,7 +398,7 @@ impl Receipt {
     /// # Errors
     /// [`ConformanceError::Receipt`] if the body cannot be canonicalized/signed.
     pub fn sign(body: ReceiptBody) -> Result<Self> {
-        let (sig, _key_id) = axiom_receipt::sign_bytes(&Jcs(&body), &signer())?;
+        let (sig, _key_id) = axiom_receipt::sign_bytes(&Jcs(&body), &active_signer())?;
         Ok(Self {
             body,
             signature: hex::encode(sig),
@@ -397,7 +449,11 @@ pub fn verify_receipt(receipt: &Receipt) -> Result<ReceiptVerdict> {
             receipt.body.schema
         )));
     }
-    if receipt.body.key_id != PINNED_KEY_ID {
+    // Precedence: an explicit `TAUDIT_VERIFY_PUBKEY_HEX` wins (a verifying host
+    // holds only the public half); else the active signer's key (deployment
+    // seed or pinned dev key).
+    let (verifier, expected_key_id, _class) = keyring().active_verifier()?;
+    if receipt.body.key_id != expected_key_id {
         return Ok(ReceiptVerdict::Invalid(format!(
             "unknown key_id: {}",
             receipt.body.key_id
@@ -407,7 +463,6 @@ pub fn verify_receipt(receipt: &Receipt) -> Result<ReceiptVerdict> {
         Ok(sig) => sig,
         Err(why) => return Ok(ReceiptVerdict::Invalid(why)),
     };
-    let verifier = axiom_receipt::Ed25519Verifier::from_pubkey(signer().verifying_key_bytes())?;
     match axiom_receipt::verify_bytes(&Jcs(&receipt.body), &sig, &verifier) {
         Ok(()) => Ok(ReceiptVerdict::Valid),
         Err(e) => Ok(ReceiptVerdict::Invalid(e.to_string())),
@@ -502,8 +557,11 @@ mod tests {
     #[test]
     fn receipt_signs_and_verifies() {
         let mut body = ReceiptBody::new("scan", "ok", 0, "2026-06-16T00:00:00Z");
-        body.inputs
-            .push(Artifact::of_bytes("pipeline", ".github/workflows/ci.yml", b"on: push"));
+        body.inputs.push(Artifact::of_bytes(
+            "pipeline",
+            ".github/workflows/ci.yml",
+            b"on: push",
+        ));
         body.audit_chain = Some(AuditLink {
             trail_path: TRAIL_FILENAME.to_string(),
             seq: 0,
@@ -528,6 +586,51 @@ mod tests {
             verify_receipt(&receipt).unwrap(),
             ReceiptVerdict::Invalid(_)
         ));
+    }
+
+    #[test]
+    fn no_env_falls_back_to_pinned_dev_key() {
+        // With no deployment env set, the active key is the pinned dev key and
+        // its class is `dev` — keeps default behaviour and every test unchanged.
+        // (The deployment-seed resolver itself is unit-tested in axiom-receipt.)
+        assert_eq!(active_key_id(), PINNED_KEY_ID);
+        assert_eq!(active_key_class(), KeyClass::Dev);
+    }
+
+    #[test]
+    fn default_receipt_self_labels_dev_class() {
+        // A receipt emitted on the default (no-env) path declares `dev` inside
+        // its signed body, so it can never be waved through as origin-grade.
+        let receipt =
+            Receipt::sign(ReceiptBody::new("scan", "ok", 0, "2026-06-16T00:00:00Z")).unwrap();
+        assert_eq!(receipt.body.key_class, KeyClass::Dev);
+        assert_eq!(verify_receipt(&receipt).unwrap(), ReceiptVerdict::Valid);
+
+        // The class is inside the signed bytes: flipping it to `deployment`
+        // after signing breaks the signature.
+        let mut forged = receipt.clone();
+        forged.body.key_class = KeyClass::Deployment;
+        assert!(matches!(
+            verify_receipt(&forged).unwrap(),
+            ReceiptVerdict::Invalid(_)
+        ));
+    }
+
+    #[test]
+    fn deployment_signer_produces_verifiable_receipt_under_its_own_pubkey() {
+        // Mirror the active deployment path without touching process env: sign
+        // under a deployment seed and verify against that seed's public key.
+        // The body self-labels `deployment`, tamper-bound by the signature.
+        let signer = Ed25519Signer::from_seed([0x44u8; 32], DEPLOYMENT_KEY_ID_DEFAULT);
+        let mut body = ReceiptBody::new("scan", "ok", 0, "2026-06-16T00:00:00Z");
+        body.key_id = DEPLOYMENT_KEY_ID_DEFAULT.to_string();
+        body.key_class = KeyClass::Deployment;
+        let (sig, _key_id) = axiom_receipt::sign_bytes(&Jcs(&body), &signer).unwrap();
+        let verifier =
+            axiom_receipt::Ed25519Verifier::from_pubkey(signer.verifying_key_bytes()).unwrap();
+        assert!(axiom_receipt::verify_bytes(&Jcs(&body), &sig, &verifier).is_ok());
+        // A bad signature must NOT verify under this key.
+        assert!(axiom_receipt::verify_bytes(&Jcs(&body), &[0u8; 64], &verifier).is_err());
     }
 
     #[test]
@@ -570,7 +673,11 @@ mod tests {
         }
         let trail = repo.join(TRAIL_FILENAME);
         let rows = axiom_audit::read_rows(&trail).unwrap();
-        assert_eq!(rows.len(), THREADS, "every locked append must be its own row");
+        assert_eq!(
+            rows.len(),
+            THREADS,
+            "every locked append must be its own row"
+        );
         match verify_trail(&repo).unwrap() {
             ChainVerdict::Valid { rows: n, .. } => assert_eq!(n, THREADS),
             other => panic!("expected Valid chain, got {other:?}"),

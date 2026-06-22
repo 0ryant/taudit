@@ -668,6 +668,18 @@ enum AuditAction {
         #[arg(long, default_value = ".")]
         repo: PathBuf,
     },
+    /// Offline-verify a signed `axiom.receipt.v1` receipt.
+    ///
+    /// Checks the schema, the `key_id` against the active keyring, and the
+    /// Ed25519 signature over the receipt's RFC-8785 (JCS) canonical body. On a
+    /// valid receipt it reports the key class — `dev (mechanism, not origin)`
+    /// for the built-in pinned key, or `deployment (origin-grade)` when a
+    /// `TAUDIT_SIGNING_SEED_HEX` deployment key signed it. Exits 0 if valid,
+    /// 1 (ASSERTION_FAILED) if not.
+    VerifyReceipt {
+        /// Path to the signed `axiom.receipt.v1` JSON receipt.
+        receipt: PathBuf,
+    },
 }
 
 #[derive(clap::Subcommand)]
@@ -1686,6 +1698,7 @@ fn run() -> Result<()> {
         },
         Cli::Audit { action } => match action {
             AuditAction::Verify { repo } => cmd_audit_verify(&repo),
+            AuditAction::VerifyReceipt { receipt } => cmd_verify_receipt(&receipt),
         },
     };
 
@@ -2437,7 +2450,10 @@ fn cmd_scan(opts: ScanOpts) -> Result<()> {
     if let Some(receipt) =
         emit_conformance_artifacts(Path::new("."), "scan", exit_code, &resolved_paths)
     {
-        eprintln!("audit: appended audit-trail.jsonl + receipt {}", receipt.display());
+        eprintln!(
+            "audit: appended audit-trail.jsonl + receipt {}",
+            receipt.display()
+        );
     }
 
     use std::io::Write;
@@ -2545,7 +2561,10 @@ fn cmd_verify(opts: VerifyOpts) -> Result<()> {
         if let Some(receipt) =
             emit_conformance_artifacts(Path::new("."), "verify", exit_code, &opts.paths)
         {
-            eprintln!("audit: appended audit-trail.jsonl + receipt {}", receipt.display());
+            eprintln!(
+                "audit: appended audit-trail.jsonl + receipt {}",
+                receipt.display()
+            );
         }
     }
 
@@ -3252,6 +3271,65 @@ fn cmd_audit_verify(repo: &Path) -> ! {
                 "DECISION: preflight (could not read audit-trail at {}/{TRAIL_FILENAME}: {err})",
                 repo.display()
             );
+            Exit::Preflight
+        }
+    };
+    std::process::exit(code.as_i32());
+}
+
+/// `taudit audit verify-receipt <path>`: offline-verify a signed
+/// `axiom.receipt.v1` receipt and report its key class. Never returns — it
+/// `process::exit`s so the verdict drives the process exit byte directly.
+///
+/// Exit map (axiom-exit):
+/// * 0 (`Ok`) — schema, key, and Ed25519 signature all hold;
+/// * 1 (`AssertionFailed`) — the receipt is invalid (tampered / wrong key);
+/// * 3 (`Preflight`) — the receipt file could not be read or parsed.
+fn cmd_verify_receipt(path: &Path) -> ! {
+    use taudit_core::axiom_conformance::{verify_receipt, Exit, Receipt, ReceiptVerdict};
+
+    let json = match std::fs::read_to_string(path) {
+        Ok(json) => json,
+        Err(err) => {
+            eprintln!(
+                "DECISION: preflight (could not read receipt at {}: {err})",
+                path.display()
+            );
+            std::process::exit(Exit::Preflight.as_i32());
+        }
+    };
+    let receipt = match Receipt::from_json(&json) {
+        Ok(receipt) => receipt,
+        Err(err) => {
+            eprintln!(
+                "DECISION: preflight (could not parse receipt at {}: {err})",
+                path.display()
+            );
+            std::process::exit(Exit::Preflight.as_i32());
+        }
+    };
+
+    let code = match verify_receipt(&receipt) {
+        Ok(ReceiptVerdict::Valid) => {
+            // The key class is inside the signed body, so this phrase is bound
+            // to the signature: a `dev` receipt cannot be displayed as origin.
+            let class_phrase = if receipt.body.key_class.is_deployment() {
+                "deployment (origin-grade)"
+            } else {
+                "dev (mechanism, not origin)"
+            };
+            println!(
+                "DECISION: ok (receipt VALID: {} {} key={} class={class_phrase})",
+                receipt.body.tool, receipt.body.operation, receipt.body.key_id
+            );
+            Exit::Ok
+        }
+        Ok(ReceiptVerdict::Invalid(why)) => {
+            eprintln!("DECISION: assertion_failed (receipt INVALID: {why})");
+            Exit::AssertionFailed
+        }
+        Err(err) => {
+            eprintln!("DECISION: preflight (could not verify receipt: {err})");
             Exit::Preflight
         }
     };

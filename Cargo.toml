@@ -49,11 +49,11 @@ tempfile = "3"
 # Shared Algol/AXIOM doctrine crates (pattern 07/09/11 + ADR-0003 BLAKE3),
 # pinned to the keystone rev so the on-disk audit/receipt bytes are identical
 # across the cohort.
-axiom-hash = { git = "https://github.com/0ryant/axiom-doctrine-rs.git", rev = "3f09282" }
-axiom-canonical = { git = "https://github.com/0ryant/axiom-doctrine-rs.git", rev = "3f09282" }
-axiom-exit = { git = "https://github.com/0ryant/axiom-doctrine-rs.git", rev = "3f09282" }
-axiom-audit = { git = "https://github.com/0ryant/axiom-doctrine-rs.git", rev = "3f09282" }
-axiom-receipt = { git = "https://github.com/0ryant/axiom-doctrine-rs.git", rev = "3f09282" }
+axiom-hash = { git = "https://github.com/0ryant/axiom-doctrine-rs.git", rev = "bc8fc58" }
+axiom-canonical = { git = "https://github.com/0ryant/axiom-doctrine-rs.git", rev = "bc8fc58" }
+axiom-exit = { git = "https://github.com/0ryant/axiom-doctrine-rs.git", rev = "bc8fc58" }
+axiom-audit = { git = "https://github.com/0ryant/axiom-doctrine-rs.git", rev = "bc8fc58" }
+axiom-receipt = { git = "https://github.com/0ryant/axiom-doctrine-rs.git", rev = "bc8fc58" }
 
 [profile.release]
 lto = true
