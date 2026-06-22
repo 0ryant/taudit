@@ -3,7 +3,17 @@ use clap::{CommandFactory, Parser};
 use std::collections::HashSet;
 use std::io::Read;
 use std::path::{Path, PathBuf};
-use std::time::{SystemTime, UNIX_EPOCH};
+use std::sync::OnceLock;
+use std::time::{Instant, SystemTime, UNIX_EPOCH};
+
+/// Process-start clock for `axiom.usage.v1` `wall_ms`. taudit is a one-shot CLI,
+/// so wall time to receipt-emission is a faithful operation wall_ms. Initialized
+/// at the top of `main`; idempotent if read before init.
+static PROCESS_START: OnceLock<Instant> = OnceLock::new();
+
+fn process_start() -> Instant {
+    *PROCESS_START.get_or_init(Instant::now)
+}
 
 use taudit_core::finding::{FindingExtras, Severity};
 use taudit_core::graph::{AuthorityCompleteness, GapKind, PipelineSource};
@@ -1343,6 +1353,8 @@ struct RuntimeArtifactPaths {
 }
 
 fn main() {
+    // Stamp the operation start for usage telemetry before any work runs.
+    process_start();
     let result = run();
     match result {
         Ok(()) => {}
@@ -3400,7 +3412,7 @@ fn emit_conformance_artifacts(
         }
     };
 
-    // 2) Build and sign the receipt, linking it to the row just appended.
+    // 2) Build the receipt body, linking it to the row just appended.
     let mut body = ReceiptBody::new(operation, outcome, exit_code, &timestamp);
     body.inputs = input_artifacts;
     body.audit_chain = Some(AuditLink {
@@ -3408,6 +3420,45 @@ fn emit_conformance_artifacts(
         seq: row.seq,
         row_hash: row.row_hash.clone(),
     });
+
+    let receipts_dir = repo.join(".taudit").join("receipts");
+    if let Err(err) = std::fs::create_dir_all(&receipts_dir) {
+        eprintln!("warning: could not create receipts dir: {err}");
+        return None;
+    }
+
+    // 2a) Emit the axiom.usage.v1 sidecar BEFORE signing, then hash-bind it into
+    //     the signed body via outputs[] (ADR 0011 signed-body rule): the cost
+    //     numbers stay OUT of the signed body, but the receipt commits to the
+    //     exact sidecar content by BLAKE3. taudit is offline → cost_usd = 0.00,
+    //     no llm block.
+    let usage_path = receipts_dir.join(format!("{operation}-{}.usage.json", row.seq));
+    let wall_ms: u64 = process_start().elapsed().as_millis().min(u128::from(u64::MAX)) as u64;
+    let usage = serde_json::json!({
+        "schema": "axiom.usage.v1",
+        "tool": body.tool.clone(),
+        "tool_version": body.tool_version.clone(),
+        "operation": operation,
+        "wall_ms": wall_ms,
+        "cost_usd": 0.0,
+        "estimated": false,
+        "note": "taudit is an offline static analyzer: no LLM, no paid network. cost_usd is the 0.00 floor."
+    });
+    match serde_json::to_string_pretty(&usage) {
+        Ok(json) => {
+            if let Err(err) = std::fs::write(&usage_path, format!("{json}\n")) {
+                eprintln!("warning: could not write usage sidecar: {err}");
+            } else if let Ok(art) =
+                Artifact::of_file("usage", &usage_path.display().to_string(), &usage_path)
+            {
+                // Bind the sidecar into the signed receipt by hash.
+                body.outputs.push(art);
+            }
+        }
+        Err(err) => eprintln!("warning: could not serialize usage sidecar: {err}"),
+    }
+
+    // 3) Sign the body (now committing to the usage sidecar's hash) and write it.
     let receipt = match Receipt::sign(body) {
         Ok(r) => r,
         Err(err) => {
@@ -3415,13 +3466,6 @@ fn emit_conformance_artifacts(
             return None;
         }
     };
-
-    // 3) Write the signed receipt next to the trail.
-    let receipts_dir = repo.join(".taudit").join("receipts");
-    if let Err(err) = std::fs::create_dir_all(&receipts_dir) {
-        eprintln!("warning: could not create receipts dir: {err}");
-        return None;
-    }
     let receipt_path = receipts_dir.join(format!("{operation}-{}.json", row.seq));
     match receipt.to_json() {
         Ok(json) => {
