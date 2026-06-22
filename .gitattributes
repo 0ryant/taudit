@@ -1,1 +1,15 @@
-*.rs text eol=lf
+# Line endings are byte-significant for mcpact governed-server packs.
+#
+# `mcpact.lock` records the SHA-256 of every generated file, and taudit-mcp
+# embeds `.mcpact/source.mcpact.toml` + `.mcpact/mcpact.lock` via include_str!
+# and re-checks those digests at serve time
+# (crates/taudit-mcp/src/server_config.rs::verify_pack_integrity). A CRLF
+# checkout changes the embedded bytes, so the recomputed digest no longer
+# matches the lock that was generated over the committed LF content and the MCP
+# server refuses to start. Pin every file class an mcpact pack can cover to LF
+# on all platforms — Windows core.autocrlf must not reintroduce CRLF.
+*.rs    text eol=lf
+*.toml  text eol=lf
+*.json  text eol=lf
+*.md    text eol=lf
+*.lock  text eol=lf
