@@ -1558,8 +1558,8 @@ checksum = "f5328d443c713935dfe7e4ab4ff0d6d1c7aaf4109305339fa8bfb01e463be8c9"
 dependencies = [
  "async-trait",
  "chrono",
- "mcpact-core",
- "mcpact-runtime",
+ "mcpact-core 0.2.0",
+ "mcpact-runtime 0.2.0",
  "reqwest 0.12.28",
  "serde",
  "serde_json",
@@ -1581,6 +1581,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "mcpact-core"
+version = "0.4.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "c2fe73c62ab28f4f516c09068711f57351b4491bce74df4219b3a1d55b82965a"
+dependencies = [
+ "schemars 0.8.22",
+ "serde",
+ "serde_json",
+ "thiserror 1.0.69",
+]
+
+[[package]]
 name = "mcpact-manifest"
 version = "0.2.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1590,7 +1602,7 @@ dependencies = [
  "camino",
  "ed25519-dalek",
  "indexmap",
- "mcpact-core",
+ "mcpact-core 0.2.0",
  "schemars 0.8.22",
  "serde",
  "serde_json",
@@ -1606,7 +1618,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "73c0031964ad16d4ce6f4ef84a0c2f86f3ebb815ae5ab5c155779262e124b6a3"
 dependencies = [
  "async-trait",
- "mcpact-core",
+ "mcpact-core 0.2.0",
  "schemars 0.8.22",
  "serde",
  "serde_json",
@@ -1622,7 +1634,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "fb5a0baee7733d95c10ebade9d3b00f0abe9f97537d41f8e3cc349c06bc70e2f"
 dependencies = [
  "camino",
- "mcpact-core",
+ "mcpact-core 0.2.0",
  "mcpact-manifest",
  "serde",
  "serde_json",
@@ -1636,7 +1648,22 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "1b331a2534659048ac60725962d0f3bcd25f6d5bb285c5960bcc8dc4c1a5ebea"
 dependencies = [
  "chrono",
- "mcpact-core",
+ "mcpact-core 0.2.0",
+ "serde",
+ "serde_json",
+ "thiserror 1.0.69",
+ "tokio",
+ "tracing",
+]
+
+[[package]]
+name = "mcpact-runtime"
+version = "0.4.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "81b4102360f853c0096e2143406fb452399f72283cc8350064d4a56a8e405413"
+dependencies = [
+ "chrono",
+ "mcpact-core 0.4.0",
  "serde",
  "serde_json",
  "thiserror 1.0.69",
@@ -2776,11 +2803,11 @@ dependencies = [
  "async-trait",
  "axiom-hash",
  "mcpact-audit",
- "mcpact-core",
+ "mcpact-core 0.2.0",
  "mcpact-manifest",
  "mcpact-mcp",
  "mcpact-policy",
- "mcpact-runtime",
+ "mcpact-runtime 0.4.0",
  "schemars 1.2.1",
  "serde",
  "serde_json",
