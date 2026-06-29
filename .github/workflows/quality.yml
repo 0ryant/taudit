@@ -115,7 +115,7 @@ jobs:
       # Authority invariant YAML: JSON Schema is generated from FindingCategory in
       # Rust — --check catches drift; validation ensures starter library matches schema.
       - name: Set up Python (invariant schema tooling)
-        uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405 # v6.2.0
+        uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6.3.0
         with:
           python-version: "3.12"
 
