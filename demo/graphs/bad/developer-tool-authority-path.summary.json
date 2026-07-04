@@ -1,0 +1,80 @@
+{
+  "schema_version": "1.1.0",
+  "schema_uri": "https://taudit.dev/schemas/authority-propagation-summary.v1.json",
+  "source_file": "C:\\Users\\0ryant\\prj\\taudit\\demo\\workflows\\developer-tool-authority-path.yml",
+  "graph_completeness": "complete",
+  "max_hops": 4,
+  "method": "bfs_lower_trust_zone_sinks",
+  "totals": {
+    "boundary_path_count": 8,
+    "distinct_authority_sources": 4,
+    "distinct_sinks": 5
+  },
+  "top_sinks_by_path_count": [
+    {
+      "node_id": 9,
+      "kind": "image",
+      "name": "vendor/deploy-action@v2",
+      "trust_zone": "untrusted",
+      "path_count": 4
+    },
+    {
+      "node_id": 1,
+      "kind": "image",
+      "name": "actions/checkout@v4",
+      "trust_zone": "untrusted",
+      "path_count": 1
+    },
+    {
+      "node_id": 4,
+      "kind": "image",
+      "name": "actions/upload-artifact@v4",
+      "trust_zone": "untrusted",
+      "path_count": 1
+    },
+    {
+      "node_id": 6,
+      "kind": "artifact",
+      "name": "release-bundle",
+      "trust_zone": "untrusted",
+      "path_count": 1
+    },
+    {
+      "node_id": 7,
+      "kind": "image",
+      "name": "actions/download-artifact@v4",
+      "trust_zone": "untrusted",
+      "path_count": 1
+    }
+  ],
+  "top_sources_by_path_count": [
+    {
+      "node_id": 0,
+      "kind": "identity",
+      "name": "GITHUB_TOKEN",
+      "trust_zone": "first_party",
+      "path_count": 5
+    },
+    {
+      "node_id": 11,
+      "kind": "secret",
+      "name": "CLOUD_DEPLOY_TOKEN",
+      "trust_zone": "first_party",
+      "path_count": 1
+    },
+    {
+      "node_id": 12,
+      "kind": "secret",
+      "name": "PROD_API_KEY",
+      "trust_zone": "first_party",
+      "path_count": 1
+    },
+    {
+      "node_id": 13,
+      "kind": "secret",
+      "name": "RELEASE_TOKEN",
+      "trust_zone": "first_party",
+      "path_count": 1
+    }
+  ]
+}

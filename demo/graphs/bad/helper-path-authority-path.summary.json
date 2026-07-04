@@ -1,0 +1,59 @@
+{
+  "schema_version": "1.1.0",
+  "schema_uri": "https://taudit.dev/schemas/authority-propagation-summary.v1.json",
+  "source_file": "C:\\Users\\0ryant\\prj\\taudit\\demo\\workflows\\helper-path-authority-path.yml",
+  "graph_completeness": "complete",
+  "max_hops": 4,
+  "method": "bfs_lower_trust_zone_sinks",
+  "totals": {
+    "boundary_path_count": 5,
+    "distinct_authority_sources": 3,
+    "distinct_sinks": 3
+  },
+  "top_sinks_by_path_count": [
+    {
+      "node_id": 6,
+      "kind": "image",
+      "name": "cloudflare/wrangler-action@v3",
+      "trust_zone": "untrusted",
+      "path_count": 3
+    },
+    {
+      "node_id": 1,
+      "kind": "image",
+      "name": "actions/checkout@v4",
+      "trust_zone": "untrusted",
+      "path_count": 1
+    },
+    {
+      "node_id": 3,
+      "kind": "image",
+      "name": "actions/setup-node@v4",
+      "trust_zone": "untrusted",
+      "path_count": 1
+    }
+  ],
+  "top_sources_by_path_count": [
+    {
+      "node_id": 0,
+      "kind": "identity",
+      "name": "GITHUB_TOKEN",
+      "trust_zone": "first_party",
+      "path_count": 3
+    },
+    {
+      "node_id": 8,
+      "kind": "secret",
+      "name": "CLOUDFLARE_ACCOUNT_ID",
+      "trust_zone": "first_party",
+      "path_count": 1
+    },
+    {
+      "node_id": 9,
+      "kind": "secret",
+      "name": "CLOUDFLARE_PAGES_API_TOKEN",
+      "trust_zone": "first_party",
+      "path_count": 1
+    }
+  ]
+}

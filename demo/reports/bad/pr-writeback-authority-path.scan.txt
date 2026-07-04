@@ -1,0 +1,88 @@
+taudit 3.1.0-pre — 1 file
+────────────────────────────────────────────────────────────
+Authority Graph: C:\Users\0ryant\prj\taudit\demo\workflows\pr-writeback-authority-path.yml
+  Steps: 3 | Secrets: 2 | Actions: 2 | Identities: 1
+
+[CRITICAL] GITHUB_TOKEN reaches 2 sinks via authority propagation: [actions/checkout@v4, vendor/preview-release@v2]
+  Path: GITHUB_TOKEN (identity) → actions/checkout@v4 (action/image)
+  Recommendation: tsafe exec --ns <scoped-namespace> -- <command>
+
+[CRITICAL] COMMENT_TOKEN propagated to vendor/preview-release@v2 across trust boundary
+  Path: COMMENT_TOKEN (secret) → vendor/preview-release@v2 (action/image)
+  Recommendation: tsafe exec --ns <scoped-namespace> -- <command>
+
+[CRITICAL] PREVIEW_TOKEN propagated to vendor/preview-release@v2 across trust boundary
+  Path: PREVIEW_TOKEN (secret) → vendor/preview-release@v2 (action/image)
+  Recommendation: tsafe exec --ns <scoped-namespace> -- <command>
+
+[CRITICAL] Untrusted step 'Checkout PR head' has direct access to identity 'GITHUB_TOKEN'
+  Nodes: Checkout PR head (step) → GITHUB_TOKEN (identity)
+  Recommendation: Reduce permissions to minimal required scope
+
+[CRITICAL] Untrusted step 'Install dependencies' has direct access to identity 'GITHUB_TOKEN'
+  Nodes: Install dependencies (step) → GITHUB_TOKEN (identity)
+  Recommendation: Reduce permissions to minimal required scope
+
+[CRITICAL] Untrusted step 'Publish preview' has direct access to identity 'GITHUB_TOKEN'
+  Nodes: Publish preview (step) → GITHUB_TOKEN (identity)
+  Recommendation: Reduce permissions to minimal required scope
+
+[CRITICAL] Untrusted step 'Publish preview' has direct access to secret 'COMMENT_TOKEN'
+  Nodes: Publish preview (step) → COMMENT_TOKEN (secret)
+  Recommendation: cellos run --network deny-all --broker env:COMMENT_TOKEN
+
+[CRITICAL] Untrusted step 'Publish preview' has direct access to secret 'PREVIEW_TOKEN'
+  Nodes: Publish preview (step) → PREVIEW_TOKEN (secret)
+  Recommendation: cellos run --network deny-all --broker env:PREVIEW_TOKEN
+
+[CRITICAL] Workflow triggered by pull_request_target with secret/identity access — 3 step(s) hold authority that attacker-controlled code could reach
+  Nodes: Checkout PR head (step) → Install dependencies (step) → Publish preview (step) → GITHUB_TOKEN (identity) …(+2 more)
+  Recommendation: Use a separate workflow triggered by workflow_run (not pull_request_target) for privileged operations, or ensure no checkout of the PR head ref occurs before secret use
+
+[CRITICAL] Workflow trigger 'pull_request_target' runs in privileged base-repo context and step uses unpinned action 'actions/checkout@v4' — anyone who can push to that action's branch executes arbitrary code with full repo write token
+  Nodes: actions/checkout@v4 (action/image)
+  Recommendation: Pin to actions/checkout@<sha256-digest>
+
+[CRITICAL] Workflow trigger 'pull_request_target' runs in privileged base-repo context and step uses unpinned action 'vendor/preview-release@v2' — anyone who can push to that action's branch executes arbitrary code with full repo write token
+  Nodes: vendor/preview-release@v2 (action/image)
+  Recommendation: Pin to vendor/preview-release@<sha256-digest>
+
+[HIGH] GITHUB_TOKEN has broad scope (permissions: '{ contents: write, id-token: write, packages: write, pull-requests: write }') — likely broader than needed
+  Nodes: GITHUB_TOKEN (identity) → Checkout PR head (step) → Install dependencies (step) → Publish preview (step)
+  Recommendation: Reduce permissions to { contents: read }
+
+[HIGH] [oidc_identity_in_untrusted_context] OIDC identity 'GITHUB_TOKEN' is reachable from untrusted trigger steps [Checkout PR head, Install dependencies, Publish preview]
+  Nodes: GITHUB_TOKEN (identity) → Checkout PR head (step) → Install dependencies (step) → Publish preview (step)
+  Recommendation: Move OIDC credential minting to a trusted-ref workflow or protect it with environment approvals and provider-side subject/audience conditions that exclude fork pull requests and untrusted merge requests.
+
+[HIGH] vendor/preview-release@v2 is not pinned to a SHA digest
+  Nodes: vendor/preview-release@v2 (action/image)
+  Recommendation: Pin to vendor/preview-release@<sha256-digest>
+
+[HIGH] PR-triggered pipeline checks out the repository at step 'Checkout PR head' — attacker-controlled code from the fork lands on the runner and is readable by all subsequent steps
+  Nodes: Checkout PR head (step)
+  Recommendation: Use `persist-credentials: false` (GitHub Actions) or `persistCredentials: false` (Azure DevOps) to stop writing the repo token to disk, and avoid reading workspace files in subsequent privileged steps. Consider `checkout: none` or omitting checkout for jobs that only need pipeline config, not source code.
+
+[HIGH] PR-reachable step 'Install dependencies' runs npm-family lifecycle command 'npm ci' while authority is present in the job
+  Nodes: Install dependencies (step)
+  Recommendation: Run npm/pnpm/yarn installs with `--ignore-scripts` in PR-reachable jobs that hold secrets, OIDC, registry/cloud credentials, or write tokens; move lifecycle execution to an authority-free job or a protected-ref rebuild.
+
+[MEDIUM] actions/checkout@v4 is not pinned to a SHA digest
+  Nodes: actions/checkout@v4 (action/image)
+  Recommendation: Pin to actions/checkout@<sha256-digest>
+
+[MEDIUM] [action_major_version_pin_without_sha] actions/checkout@v4 is pinned only to a mutable major tag; pin to a full commit SHA
+  Nodes: actions/checkout@v4 (action/image)
+  Recommendation: Pin to actions/checkout@<40-char-sha>
+
+[MEDIUM] [action_major_version_pin_without_sha] vendor/preview-release@v2 is pinned only to a mutable major tag; pin to a full commit SHA
+  Nodes: vendor/preview-release@v2 (action/image)
+  Recommendation: Pin to vendor/preview-release@<40-char-sha>
+
+[INFO] 3 step(s) use OIDC/federated identity but no provenance attestation step was detected — artifact integrity cannot be verified
+  Nodes: Checkout PR head (step) → Install dependencies (step) → Publish preview (step) → GITHUB_TOKEN (identity)
+  Recommendation: Add 'actions/attest-build-provenance' after your build step (GHA) to provide SLSA provenance. See https://docs.github.com/en/actions/security-guides/using-artifact-attestations
+
+────────────────────────────────────────────────────────────
+Summary 11 critical  5 high  3 medium
+  Files with findings: 1 / 1

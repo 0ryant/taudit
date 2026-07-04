@@ -1,0 +1,893 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>taudit authority problem deck</title>
+    <style>
+      :root {
+        --bg: #090807;
+        --bg-soft: #13110f;
+        --panel: rgba(19, 17, 15, 0.9);
+        --panel-strong: rgba(14, 12, 10, 0.96);
+        --line: rgba(201, 160, 70, 0.34);
+        --gold: #c8a04c;
+        --gold-strong: #e3b358;
+        --ink: #f1e7d2;
+        --muted: #c7b89a;
+        --muted-deep: #8f826d;
+        --danger: #f07757;
+        --ok: #95b17e;
+        --shadow: 0 24px 80px rgba(0, 0, 0, 0.48);
+      }
+
+      * {
+        box-sizing: border-box;
+      }
+
+      html,
+      body {
+        height: 100%;
+        margin: 0;
+      }
+
+      body {
+        background:
+          radial-gradient(circle at top left, rgba(200, 160, 76, 0.12), transparent 28%),
+          radial-gradient(circle at bottom right, rgba(90, 70, 24, 0.16), transparent 30%),
+          linear-gradient(180deg, #0a0908 0%, #080706 100%);
+        color: var(--ink);
+        font-family: "IBM Plex Mono", "Cascadia Mono", Consolas, monospace;
+        overflow: hidden;
+      }
+
+      body::before {
+        content: "";
+        position: fixed;
+        inset: 0;
+        background-image:
+          linear-gradient(rgba(255, 255, 255, 0.03) 1px, transparent 1px),
+          linear-gradient(90deg, rgba(255, 255, 255, 0.03) 1px, transparent 1px);
+        background-size: 44px 44px;
+        mask-image: linear-gradient(180deg, rgba(0, 0, 0, 0.75), transparent 88%);
+        pointer-events: none;
+      }
+
+      .deck {
+        position: relative;
+        height: 100%;
+      }
+
+      .slide {
+        display: none;
+        height: 100%;
+        padding: 1.7rem 2.2rem 1.4rem;
+        grid-template-columns: minmax(0, 1.12fr) minmax(320px, 0.88fr);
+        gap: 1.2rem;
+        align-items: start;
+        align-content: start;
+      }
+
+      .slide.is-active {
+        display: grid;
+      }
+
+      .slide.full {
+        grid-template-columns: 1fr;
+      }
+
+      .slide.graph-slide {
+        grid-template-columns: minmax(240px, 0.46fr) minmax(0, 1.54fr);
+        gap: 1.1rem;
+      }
+
+      .chrome {
+        grid-column: 1 / -1;
+        display: flex;
+        justify-content: space-between;
+        align-items: flex-start;
+        gap: 1rem;
+      }
+
+      .brand {
+        display: grid;
+        gap: 0.2rem;
+      }
+
+      .brand-mark {
+        color: var(--gold);
+        font-family: "League Gothic", "Arial Narrow", "Franklin Gothic Medium", sans-serif;
+        font-size: 1.75rem;
+        letter-spacing: 0.12em;
+        text-transform: uppercase;
+      }
+
+      .brand-sub {
+        color: var(--muted-deep);
+        font-size: 0.7rem;
+        letter-spacing: 0.28em;
+        text-transform: uppercase;
+      }
+
+      .install-rail {
+        border: 1px solid var(--line);
+        background: rgba(24, 20, 17, 0.74);
+        padding: 0.75rem 0.85rem;
+        min-width: 230px;
+        box-shadow: var(--shadow);
+      }
+
+      .install-label,
+      .eyebrow,
+      .micro-label {
+        color: var(--gold);
+        letter-spacing: 0.24em;
+        text-transform: uppercase;
+      }
+
+      .install-label,
+      .eyebrow {
+        font-size: 0.68rem;
+      }
+
+      .install-command {
+        margin-top: 0.4rem;
+        border: 1px solid rgba(255, 255, 255, 0.08);
+        background: rgba(7, 6, 5, 0.9);
+        padding: 0.72rem 0.85rem;
+        color: var(--ink);
+        font-size: 0.86rem;
+      }
+
+      .hero-copy,
+      .content-stack {
+        display: grid;
+        gap: 0.78rem;
+        align-content: start;
+      }
+
+      .hero-kicker {
+        color: var(--gold);
+        font-size: 0.72rem;
+        letter-spacing: 0.34em;
+        text-transform: uppercase;
+      }
+
+      h1,
+      h2,
+      h3 {
+        margin: 0;
+        font-family: "League Gothic", "Arial Narrow", "Franklin Gothic Medium", sans-serif;
+        line-height: 0.92;
+        text-transform: uppercase;
+      }
+
+      h1 {
+        font-size: clamp(2.6rem, 5.8vh, 4.7rem);
+        letter-spacing: 0.015em;
+        max-width: 9ch;
+      }
+
+      h2 {
+        font-size: clamp(1.75rem, 4vh, 2.9rem);
+        max-width: 9ch;
+      }
+
+      h3 {
+        font-size: 1.1rem;
+        letter-spacing: 0.06em;
+      }
+
+      .headline-accent {
+        color: var(--gold-strong);
+      }
+
+      p {
+        margin: 0;
+        color: var(--muted);
+        font-size: 0.94rem;
+        line-height: 1.42;
+        max-width: 62ch;
+      }
+
+      .lead {
+        font-size: 1rem;
+      }
+
+      .signal-line {
+        color: var(--ink);
+        font-size: 1rem;
+      }
+
+      .signal-line strong,
+      .metric-value,
+      .artifact-card strong,
+      .bullet-list strong {
+        color: var(--ink);
+      }
+
+      .panel,
+      .quote-panel,
+      .graph-panel,
+      .artifact-card,
+      .metric,
+      .workflow-card {
+        border: 1px solid var(--line);
+        background: var(--panel);
+        box-shadow: var(--shadow);
+      }
+
+      .quote-panel,
+      .panel,
+      .graph-panel {
+        padding: 1rem;
+      }
+
+      .metric-grid,
+      .artifact-grid,
+      .workflow-grid,
+      .split-list {
+        display: grid;
+        gap: 0.75rem;
+      }
+
+      .metric-grid {
+        grid-template-columns: repeat(3, minmax(0, 1fr));
+      }
+
+      .artifact-grid,
+      .workflow-grid {
+        grid-template-columns: repeat(3, minmax(0, 1fr));
+      }
+
+      .metric,
+      .artifact-card,
+      .workflow-card {
+        padding: 0.82rem;
+      }
+
+      .metric-label,
+      .artifact-card span,
+      .workflow-card span {
+        display: block;
+        color: var(--gold);
+        font-size: 0.6rem;
+        letter-spacing: 0.22em;
+        text-transform: uppercase;
+        margin-bottom: 0.35rem;
+      }
+
+      .metric-value {
+        font-size: 1.35rem;
+      }
+
+      .bullet-list {
+        display: grid;
+        gap: 0.55rem;
+      }
+
+      .bullet-item {
+        display: grid;
+        grid-template-columns: auto 1fr;
+        gap: 0.45rem;
+        align-items: start;
+      }
+
+      .bullet-item::before {
+        content: ">";
+        color: var(--gold);
+      }
+
+      .graph-panel {
+        display: grid;
+        gap: 0.9rem;
+        align-content: start;
+        background: var(--panel-strong);
+        margin: 0;
+      }
+
+      .slide.graph-slide .content-stack {
+        gap: 0.72rem;
+      }
+
+      .slide.graph-slide h2 {
+        font-size: clamp(1.65rem, 2.5vw, 2.55rem);
+        max-width: 9ch;
+      }
+
+      .slide.graph-slide .metric {
+        padding: 0.65rem 0.72rem;
+      }
+
+      .slide.graph-slide .metric-value {
+        font-size: 1.35rem;
+      }
+
+      .slide.graph-slide .metric-label {
+        font-size: 0.62rem;
+        margin-bottom: 0.35rem;
+      }
+
+      .slide.graph-slide p {
+        font-size: 0.95rem;
+        line-height: 1.4;
+      }
+
+      .slide.graph-slide .lead {
+        font-size: 1rem;
+      }
+
+      .slide.graph-slide .bullet-list {
+        gap: 0.5rem;
+      }
+
+      .slide.graph-slide .bullet-item {
+        gap: 0.45rem;
+      }
+
+      .slide.graph-slide .bullet-item > div {
+        font-size: 0.95rem;
+        line-height: 1.36;
+      }
+
+      .slide.graph-slide .graph-panel {
+        height: auto;
+        padding: 1rem;
+        gap: 0.7rem;
+        align-content: start;
+        align-self: start;
+        overflow: hidden;
+      }
+
+      .graph-panel img {
+        width: 100%;
+        min-height: 260px;
+        max-height: 56vh;
+        object-fit: contain;
+        background: rgba(255, 255, 255, 0.02);
+        border: 1px solid rgba(255, 255, 255, 0.08);
+      }
+
+      .slide.graph-slide .graph-panel img {
+        width: 106%;
+        height: auto;
+        min-height: 0;
+        max-height: none;
+        margin-left: -3%;
+        display: block;
+      }
+
+      .slide[data-slide="03"] {
+        grid-template-columns: minmax(250px, 0.37fr) minmax(0, 1.63fr);
+        gap: 0.95rem;
+      }
+
+      .slide[data-slide="03"] .graph-panel {
+        gap: 0.5rem;
+        padding: 0.85rem;
+      }
+
+      .slide[data-slide="03"] .graph-panel img {
+        width: 100%;
+        height: auto;
+        max-height: 58vh;
+        margin: 0;
+      }
+
+      .slide[data-slide="04"] {
+        grid-template-columns: minmax(330px, 0.62fr) minmax(0, 1.38fr);
+        gap: 0.95rem;
+      }
+
+      .slide[data-slide="04"] h2 {
+        font-size: clamp(1.55rem, 2.3vw, 2.25rem);
+        max-width: 9.8ch;
+      }
+
+      .slide[data-slide="04"] .content-stack {
+        gap: 0.68rem;
+      }
+
+      .slide[data-slide="04"] .split-list {
+        gap: 0.55rem;
+      }
+
+      .slide[data-slide="04"] .artifact-card {
+        padding: 0.72rem;
+      }
+
+      .slide[data-slide="04"] .artifact-card h3 {
+        font-size: 0.96rem;
+        margin-bottom: 0.5rem;
+      }
+
+      .slide[data-slide="04"] .artifact-card p {
+        font-size: 0.84rem;
+        line-height: 1.32;
+      }
+
+      .slide[data-slide="04"] .mono-pill {
+        padding: 0.32rem 0.45rem;
+        font-size: 0.78rem;
+      }
+
+      .slide[data-slide="04"] .graph-panel img {
+        width: 92%;
+        max-height: 45vh;
+        margin: 0 auto;
+      }
+
+      .slide.graph-slide .graph-caption {
+        font-size: 0.82rem;
+      }
+
+      .graph-caption,
+      .artifact-hint {
+        color: var(--muted-deep);
+        font-size: 0.9rem;
+        line-height: 1.5;
+      }
+
+      .workflow-card h3,
+      .artifact-card h3 {
+        margin-bottom: 0.75rem;
+      }
+
+      .workflow-path,
+      .mono-pill {
+        display: inline-block;
+        border: 1px solid rgba(255, 255, 255, 0.1);
+        background: rgba(255, 255, 255, 0.03);
+        color: var(--ink);
+        padding: 0.45rem 0.6rem;
+        font-size: 0.9rem;
+      }
+
+      .split-list {
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+      }
+
+      .quote-panel {
+        display: grid;
+        gap: 0.9rem;
+      }
+
+      .quote-panel blockquote {
+        margin: 0;
+        color: var(--ink);
+        font-size: 1rem;
+        line-height: 1.42;
+      }
+
+      .quote-panel footer {
+        color: var(--gold);
+        letter-spacing: 0.18em;
+        text-transform: uppercase;
+        font-size: 0.68rem;
+      }
+
+      .danger {
+        color: var(--danger);
+      }
+
+      .ok {
+        color: var(--ok);
+      }
+
+      .nav {
+        position: fixed;
+        right: 1.6rem;
+        bottom: 0.8rem;
+        display: flex;
+        align-items: center;
+        gap: 0.8rem;
+        z-index: 5;
+      }
+
+      .nav button {
+        border: 1px solid var(--line);
+        background: rgba(14, 12, 10, 0.94);
+        color: var(--ink);
+        padding: 0.58rem 0.74rem;
+        font: inherit;
+        font-size: 0.86rem;
+        cursor: pointer;
+      }
+
+      .nav button:hover,
+      .nav button:focus-visible {
+        outline: none;
+        border-color: var(--gold);
+        color: var(--gold);
+      }
+
+      .nav-counter {
+        min-width: 4.5rem;
+        text-align: center;
+        color: var(--muted);
+      }
+
+      .slide-index {
+        color: var(--gold);
+        font-size: 0.82rem;
+        letter-spacing: 0.3em;
+        text-transform: uppercase;
+      }
+
+      @media (max-width: 980px) {
+        .slide,
+        .slide.full,
+        .slide.graph-slide {
+          padding: 1.35rem 1.15rem 5.5rem;
+          grid-template-columns: 1fr;
+          overflow-y: auto;
+        }
+
+        .metric-grid,
+        .artifact-grid,
+        .workflow-grid,
+        .split-list {
+          grid-template-columns: 1fr;
+        }
+
+        .install-rail {
+          min-width: 0;
+          width: 100%;
+        }
+
+        .chrome {
+          flex-direction: column;
+        }
+
+        .graph-panel img {
+          min-height: 220px;
+          max-height: 40vh;
+        }
+
+        .slide.graph-slide .graph-panel img {
+          width: 100%;
+          height: auto;
+          min-height: 0;
+          margin-left: 0;
+        }
+
+        .nav {
+          left: 1rem;
+          right: 1rem;
+          justify-content: space-between;
+        }
+      }
+    </style>
+  </head>
+  <body>
+    <main class="deck">
+      <section class="slide is-active" data-slide="01">
+        <header class="chrome">
+          <div class="brand">
+            <div class="brand-mark">Algol</div>
+            <div class="brand-sub">Pipeline authority  London  algol.cc</div>
+          </div>
+          <div class="install-rail">
+            <div class="install-label">Install</div>
+            <div class="install-command">cargo install taudit --locked</div>
+          </div>
+        </header>
+        <div class="hero-copy">
+          <div class="hero-kicker">taudit  pipeline authority proof</div>
+          <h1>
+            You do not have a secrets problem.
+            <span class="headline-accent">You have an authority problem.</span>
+          </h1>
+          <p class="lead">Most pipelines pass review. That is not where the risk is.</p>
+          <p class="signal-line"><strong>Reviewed != executed.</strong> taudit shows how authority actually moves through CI/CD before it becomes runtime risk.</p>
+          <div class="metric-grid">
+            <div class="metric">
+              <span class="metric-label">Demo pack</span>
+              <div class="metric-value">3 bad workflows</div>
+            </div>
+            <div class="metric">
+              <span class="metric-label">Artifacts</span>
+              <div class="metric-value">DOT + SVG + JSON</div>
+            </div>
+            <div class="metric">
+              <span class="metric-label">Surface</span>
+              <div class="metric-value">taudit graph</div>
+            </div>
+          </div>
+        </div>
+        <div class="quote-panel">
+          <div class="slide-index">01 cover</div>
+          <blockquote>
+            Most tools scan files. taudit models how authority moves through
+            GitHub Actions, Azure DevOps, and GitLab CI as one inspectable graph.
+          </blockquote>
+          <p>The visuals are generated from real workflow shapes and rendered as inspectable authority graphs.</p>
+        </div>
+      </section>
+
+      <section class="slide full" data-slide="02">
+        <header class="chrome">
+          <div class="brand">
+            <div class="brand-mark">taudit</div>
+            <div class="brand-sub">Small tool  sharp boundary</div>
+          </div>
+          <div class="install-rail">
+            <div class="install-label">Use case set</div>
+            <div class="install-command">Deploy path  helper path  PR writeback</div>
+          </div>
+        </header>
+        <div class="content-stack">
+          <div class="eyebrow">What the demo generates</div>
+          <h2>Same graph. Same output. Three different bad paths.</h2>
+          <div class="workflow-grid">
+            <article class="workflow-card">
+              <span>Bad workflow 01</span>
+              <h3>Mutable third-party deploy</h3>
+              <p>Broad token scope, production secrets, artifact handoff, and a mutable external deploy action in the same path.</p>
+              <p class="workflow-path">Production authority delegated to mutable external code.</p>
+            </article>
+            <article class="workflow-card">
+              <span>Bad workflow 02</span>
+              <h3>Helper path confusion</h3>
+              <p>A PATH mutation lands before a credential-bearing deploy action resolves helpers, so mutable runner state joins the deploy path.</p>
+              <p class="workflow-path">Mutable runner state joins a credential-bearing helper boundary.</p>
+            </article>
+            <article class="workflow-card">
+              <span>Bad workflow 03</span>
+              <h3>PR writeback authority</h3>
+              <p><span class="danger">pull_request_target</span> checks out PR code, runs package install, and keeps write, package, and OIDC authority in scope.</p>
+              <p class="workflow-path">Trusted metadata, untrusted code, and writeback authority in one path.</p>
+            </article>
+          </div>
+          <div class="artifact-grid">
+            <article class="artifact-card">
+              <span>Terminal</span>
+              <h3>Findings operators can read</h3>
+              <p>Operator-friendly findings for each workflow.</p>
+            </article>
+            <article class="artifact-card">
+              <span>Graphviz</span>
+              <h3>Authority graphs for slides and review</h3>
+              <p>Inspectable DOT plus rendered SVG for docs and slides.</p>
+            </article>
+            <article class="artifact-card">
+              <span>Summary</span>
+              <h3>Executive rollup</h3>
+              <p>Machine-readable rollup for boundary path counts and top sinks.</p>
+            </article>
+          </div>
+        </div>
+      </section>
+
+      <section class="slide graph-slide" data-slide="03">
+        <header class="chrome">
+          <div class="brand">
+            <div class="brand-mark">Proof</div>
+            <div class="brand-sub">Where authority moves</div>
+          </div>
+          <div class="install-rail">
+            <div class="install-label">Path type</div>
+            <div class="install-command">Mutable third-party deploy path</div>
+          </div>
+        </header>
+        <div class="content-stack">
+          <div class="eyebrow">Bad workflow 01</div>
+          <h2>Third-party deploy inherits production authority.</h2>
+          <p class="lead">A mutable deploy action gets a broad GitHub token, production secrets, artifact access, and deploy context in one place.</p>
+          <div class="metric-grid">
+            <div class="metric">
+              <span class="metric-label">Distinct sources</span>
+              <div class="metric-value">4</div>
+            </div>
+            <div class="metric">
+              <span class="metric-label">Distinct sinks</span>
+              <div class="metric-value">5</div>
+            </div>
+            <div class="metric">
+              <span class="metric-label">Boundary paths</span>
+              <div class="metric-value">8</div>
+            </div>
+          </div>
+          <div class="bullet-list">
+            <div class="bullet-item"><div><strong>Critical path:</strong> GitHub token plus deploy secrets all reach a mutable third-party deploy action.</div></div>
+            <div class="bullet-item"><div><strong>Sharp point:</strong> this is not only an unpinned action problem; it is production authority delegated to external code.</div></div>
+          </div>
+        </div>
+        <figure class="graph-panel">
+          <div class="slide-index">03 authority graph</div>
+          <img src="../graphs/bad/developer-tool-authority-path.authority.svg" alt="Authority graph for mutable third-party deploy workflow">
+          <figcaption class="graph-caption">Same graph exported for terminal findings, Mermaid, DOT, SVG, and executive summary without changing the underlying model.</figcaption>
+        </figure>
+      </section>
+
+      <section class="slide graph-slide" data-slide="04">
+        <header class="chrome">
+          <div class="brand">
+            <div class="brand-mark">Proof</div>
+            <div class="brand-sub">Mutable state before authority</div>
+          </div>
+          <div class="install-rail">
+            <div class="install-label">Path type</div>
+            <div class="install-command">Helper resolution after PATH mutation</div>
+          </div>
+        </header>
+        <div class="content-stack">
+          <div class="eyebrow">Bad workflow 02</div>
+          <h2>PATH mutation lands before a credential-bearing deploy action.</h2>
+          <p class="lead">The question is not whether PATH is mutable. GitHub Actions makes it mutable by design. The question is what authority arrives after that mutation and which helper resolution path becomes part of the blast radius.</p>
+          <div class="split-list">
+            <article class="artifact-card">
+              <span>Known</span>
+              <h3>First-party setup step</h3>
+              <p>A local run step extends <span class="mono-pill">GITHUB_PATH</span> before deploy authority is materialized.</p>
+            </article>
+            <article class="artifact-card">
+              <span>Unexpected</span>
+              <h3>Credential-bearing sink</h3>
+              <p><span class="danger">cloudflare/wrangler-action@v3</span> receives Cloudflare deploy authority after mutable runner state is already in play.</p>
+            </article>
+          </div>
+          <div class="bullet-list">
+            <div class="bullet-item"><div><strong>Review target:</strong> helper resolution becomes part of the deploy boundary, not just the action reference.</div></div>
+            <div class="bullet-item"><div><strong>Signal:</strong> taudit can surface the graph shape before runtime proof or canary work exists.</div></div>
+          </div>
+        </div>
+        <figure class="graph-panel">
+          <div class="slide-index">04 authority graph</div>
+          <img src="../graphs/bad/helper-path-authority-path.authority.svg" alt="Authority graph for helper path workflow">
+          <figcaption class="graph-caption">Mutable runner state enters the deploy path before Cloudflare authority is resolved.</figcaption>
+        </figure>
+      </section>
+
+      <section class="slide graph-slide" data-slide="05">
+        <header class="chrome">
+          <div class="brand">
+            <div class="brand-mark">Proof</div>
+            <div class="brand-sub">PR context is still authority</div>
+          </div>
+          <div class="install-rail">
+            <div class="install-label">Path type</div>
+            <div class="install-command">PR-triggered writeback path</div>
+          </div>
+        </header>
+        <div class="content-stack">
+          <div class="eyebrow">Bad workflow 03</div>
+          <h2>PR review looks safe. Authority still executes.</h2>
+          <p class="lead"><span class="danger">pull_request_target</span> is dangerous because privileged base-repo context and PR-controlled code still meet. The path here is simple: checkout PR head, install dependencies, then publish with writeback authority live.</p>
+          <div class="bullet-list">
+            <div class="bullet-item"><div><strong>Trigger mismatch:</strong> the trigger is trusted context, but the checked-out code and install surface are not.</div></div>
+            <div class="bullet-item"><div><strong>Authority concentration:</strong> contents write, packages write, pull-requests write, OIDC, and preview secrets share one execution path.</div></div>
+          </div>
+        </div>
+        <figure class="graph-panel">
+          <div class="slide-index">05 authority graph</div>
+          <img src="../graphs/bad/pr-writeback-authority-path.authority.svg" alt="Authority graph for PR writeback workflow">
+          <figcaption class="graph-caption">Trusted metadata, untrusted code, and writeback authority converge in one execution path.</figcaption>
+        </figure>
+      </section>
+
+      <section class="slide full" data-slide="06">
+        <header class="chrome">
+          <div class="brand">
+            <div class="brand-mark">taudit</div>
+            <div class="brand-sub">Inspectable output, not dashboard trust</div>
+          </div>
+          <div class="install-rail">
+            <div class="install-label">What engineers get</div>
+            <div class="install-command">scan  map  graph  verify</div>
+          </div>
+        </header>
+        <div class="content-stack">
+          <div class="eyebrow">What the graph buys you</div>
+          <h2>One graph, four usable surfaces.</h2>
+          <div class="artifact-grid">
+            <article class="artifact-card">
+              <span>Terminal</span>
+              <h3>Operator reading</h3>
+              <p>Findings grouped by severity and evidence path for shells and CI logs.</p>
+            </article>
+            <article class="artifact-card">
+              <span>DOT + SVG</span>
+              <h3>Slides and incident review</h3>
+              <p>Inspectable graph source plus rendered Graphviz output ready for docs, talks, and reports.</p>
+            </article>
+            <article class="artifact-card">
+              <span>Summary JSON</span>
+              <h3>Executive rollup</h3>
+              <p>Boundary path count, top sinks, and top sources without forcing a screenshot-heavy workflow.</p>
+            </article>
+          </div>
+          <div class="quote-panel">
+            <div class="micro-label">Decision rule</div>
+            <blockquote>Mutable executable + trust-boundary crossing + inherited authority = review now.</blockquote>
+            <footer>Same graph. Same output. Different provider.</footer>
+          </div>
+        </div>
+      </section>
+
+      <section class="slide full" data-slide="07">
+        <header class="chrome">
+          <div class="brand">
+            <div class="brand-mark">Design partner</div>
+            <div class="brand-sub">Run taudit. Send us the output.</div>
+          </div>
+          <div class="install-rail">
+            <div class="install-label">Fast path</div>
+            <div class="install-command">taudit scan your-workflow.yml</div>
+          </div>
+        </header>
+        <div class="content-stack">
+          <div class="eyebrow">Close</div>
+          <h2>Map one real workflow path and make the rotation set obvious.</h2>
+          <p class="lead">Start with one real workflow, map the authority path, and make the rotation set obvious before incident response begins.</p>
+          <div class="split-list">
+            <article class="artifact-card">
+              <span>Ask</span>
+              <h3>Bring one real pipeline</h3>
+              <p>No signup. No platform account. One workflow file is enough.</p>
+            </article>
+            <article class="artifact-card">
+              <span>Outcome</span>
+              <h3>Inspectable authority path</h3>
+              <p>Show what it can reach, what evidence exists, and what has to rotate if it goes bad.</p>
+            </article>
+          </div>
+          <p class="artifact-hint">One workflow file is enough to produce an inspectable authority path with evidence, reachable sinks, and rotation scope.</p>
+        </div>
+      </section>
+    </main>
+
+    <div class="nav" aria-label="Slide controls">
+      <button type="button" id="prev">Prev</button>
+      <div class="nav-counter" id="counter">1 / 7</div>
+      <button type="button" id="next">Next</button>
+    </div>
+
+    <script>
+      const slides = Array.from(document.querySelectorAll('.slide'));
+      const counter = document.getElementById('counter');
+      const prevButton = document.getElementById('prev');
+      const nextButton = document.getElementById('next');
+      let currentIndex = 0;
+
+      function showSlide(index) {
+        currentIndex = (index + slides.length) % slides.length;
+        slides.forEach((slide, slideIndex) => {
+          slide.classList.toggle('is-active', slideIndex === currentIndex);
+        });
+        counter.textContent = `${currentIndex + 1} / ${slides.length}`;
+      }
+
+      function step(delta) {
+        showSlide(currentIndex + delta);
+      }
+
+      prevButton.addEventListener('click', () => step(-1));
+      nextButton.addEventListener('click', () => step(1));
+
+      document.addEventListener('keydown', (event) => {
+        if (event.key === 'ArrowRight' || event.key === 'PageDown' || event.key === ' ') {
+          event.preventDefault();
+          step(1);
+        }
+
+        if (event.key === 'ArrowLeft' || event.key === 'PageUp') {
+          event.preventDefault();
+          step(-1);
+        }
+
+        if (event.key === 'Home') {
+          event.preventDefault();
+          showSlide(0);
+        }
+
+        if (event.key === 'End') {
+          event.preventDefault();
+          showSlide(slides.length - 1);
+        }
+      });
+
+      showSlide(0);
+    </script>
+  </body>
+</html>

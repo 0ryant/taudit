@@ -1,0 +1,17 @@
+flowchart LR
+    n0{"GITHUB_TOKEN &#124; zone: FirstParty &#124; scope: broad &#124; perm: · contents: write, id-token: write, packages: write, pull-requests: write ·"}
+    n1[("actions/checkout@v4 &#124; zone: Untrusted")]
+    n2("Checkout PR head &#124; zone: Untrusted")
+    n3("Install dependencies &#124; zone: Untrusted")
+    n4[("vendor/preview-release@v2 &#124; zone: Untrusted")]
+    n5("Publish preview &#124; zone: Untrusted")
+    n6["COMMENT_TOKEN &#124; zone: FirstParty"]
+    n7["PREVIEW_TOKEN &#124; zone: FirstParty"]
+    n2 -->|uses_image| n1
+    n2 -->|has_access_to| n0
+    n3 -->|has_access_to| n0
+    n5 -->|uses_image| n4
+    n5 -->|has_access_to| n0
+    n5 -->|has_access_to| n6
+    n5 -->|has_access_to| n7
+

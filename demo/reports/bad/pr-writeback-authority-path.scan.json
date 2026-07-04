@@ -1,0 +1,751 @@
+{
+  "schema_version": "1.0.0",
+  "schema_uri": "https://taudit.dev/schemas/taudit-report.schema.json",
+  "graph": {
+    "source": {
+      "file": "C:\\Users\\0ryant\\prj\\taudit\\demo\\workflows\\pr-writeback-authority-path.yml"
+    },
+    "nodes": [
+      {
+        "id": 0,
+        "kind": "identity",
+        "name": "GITHUB_TOKEN",
+        "trust_zone": "first_party",
+        "metadata": {
+          "identity_scope": "broad",
+          "oidc": "true",
+          "permissions": "{ contents: write, id-token: write, packages: write, pull-requests: write }"
+        }
+      },
+      {
+        "id": 1,
+        "kind": "image",
+        "name": "actions/checkout@v4",
+        "trust_zone": "untrusted",
+        "metadata": {}
+      },
+      {
+        "id": 2,
+        "kind": "step",
+        "name": "Checkout PR head",
+        "trust_zone": "untrusted",
+        "metadata": {
+          "checkout_ref": "${{ github.event.pull_request.head.sha }}",
+          "checkout_self": "true",
+          "gha_action": "actions/checkout",
+          "gha_runs_on": "ubuntu-latest",
+          "gha_with_inputs": "ref=${{ github.event.pull_request.head.sha }}",
+          "job_name": "preview"
+        }
+      },
+      {
+        "id": 3,
+        "kind": "step",
+        "name": "Install dependencies",
+        "trust_zone": "untrusted",
+        "metadata": {
+          "gha_runs_on": "ubuntu-latest",
+          "job_name": "preview",
+          "script_body": "npm ci"
+        }
+      },
+      {
+        "id": 4,
+        "kind": "image",
+        "name": "vendor/preview-release@v2",
+        "trust_zone": "untrusted",
+        "metadata": {}
+      },
+      {
+        "id": 5,
+        "kind": "step",
+        "name": "Publish preview",
+        "trust_zone": "untrusted",
+        "metadata": {
+          "gha_action": "vendor/preview-release",
+          "gha_env_assignments": "COMMENT_TOKEN=${{ secrets.COMMENT_TOKEN }}",
+          "gha_runs_on": "ubuntu-latest",
+          "gha_with_inputs": "preview-token=${{ secrets.PREVIEW_TOKEN }}",
+          "job_name": "preview"
+        }
+      },
+      {
+        "id": 6,
+        "kind": "secret",
+        "name": "COMMENT_TOKEN",
+        "trust_zone": "first_party",
+        "metadata": {}
+      },
+      {
+        "id": 7,
+        "kind": "secret",
+        "name": "PREVIEW_TOKEN",
+        "trust_zone": "first_party",
+        "metadata": {}
+      }
+    ],
+    "edges": [
+      {
+        "id": 0,
+        "from": 2,
+        "to": 1,
+        "kind": "uses_image"
+      },
+      {
+        "id": 1,
+        "from": 2,
+        "to": 0,
+        "kind": "has_access_to",
+        "authority_summary": {
+          "trust_zone": "first_party",
+          "identity_scope": "broad",
+          "permissions_summary": "{ contents: write, id-token: write, packages: write, pull-requests: write }"
+        }
+      },
+      {
+        "id": 2,
+        "from": 3,
+        "to": 0,
+        "kind": "has_access_to",
+        "authority_summary": {
+          "trust_zone": "first_party",
+          "identity_scope": "broad",
+          "permissions_summary": "{ contents: write, id-token: write, packages: write, pull-requests: write }"
+        }
+      },
+      {
+        "id": 3,
+        "from": 5,
+        "to": 4,
+        "kind": "uses_image"
+      },
+      {
+        "id": 4,
+        "from": 5,
+        "to": 0,
+        "kind": "has_access_to",
+        "authority_summary": {
+          "trust_zone": "first_party",
+          "identity_scope": "broad",
+          "permissions_summary": "{ contents: write, id-token: write, packages: write, pull-requests: write }"
+        }
+      },
+      {
+        "id": 5,
+        "from": 5,
+        "to": 6,
+        "kind": "has_access_to"
+      },
+      {
+        "id": 6,
+        "from": 5,
+        "to": 7,
+        "kind": "has_access_to"
+      }
+    ],
+    "completeness": "complete",
+    "metadata": {
+      "platform": "github-actions",
+      "trigger": "pull_request_target",
+      "triggers": "pull_request_target"
+    }
+  },
+  "findings": [
+    {
+      "rule_id": "authority_propagation",
+      "severity": "critical",
+      "category": "authority_propagation",
+      "path": {
+        "source": 0,
+        "sink": 1,
+        "edges": [
+          0
+        ],
+        "crossed_boundary": true,
+        "boundary_crossing": [
+          "first_party",
+          "untrusted"
+        ]
+      },
+      "nodes_involved": [
+        0,
+        1,
+        4
+      ],
+      "message": "GITHUB_TOKEN reaches 2 sinks via authority propagation: [actions/checkout@v4, vendor/preview-release@v2]",
+      "recommendation": {
+        "type": "tsafe_remediation",
+        "command": "tsafe exec --ns <scoped-namespace> -- <command>",
+        "explanation": "Scope GITHUB_TOKEN to only the steps that need it"
+      },
+      "source": "built-in",
+      "finding_group_id": "4c8fea52-7f4d-5ca0-bb4b-47e6f90ab07e",
+      "confidence_scope": "yaml_only",
+      "authority_kinds": [
+        "oidc_identity"
+      ],
+      "fingerprint": "fcf8666a5a8045b6a87e6729b7c0a4ea",
+      "suppression_key": "sk1_7c8d461ebe2822adc0d5de150b316497"
+    },
+    {
+      "rule_id": "authority_propagation",
+      "severity": "critical",
+      "category": "authority_propagation",
+      "path": {
+        "source": 6,
+        "sink": 4,
+        "edges": [
+          3
+        ],
+        "crossed_boundary": true,
+        "boundary_crossing": [
+          "first_party",
+          "untrusted"
+        ]
+      },
+      "nodes_involved": [
+        6,
+        4
+      ],
+      "message": "COMMENT_TOKEN propagated to vendor/preview-release@v2 across trust boundary",
+      "recommendation": {
+        "type": "tsafe_remediation",
+        "command": "tsafe exec --ns <scoped-namespace> -- <command>",
+        "explanation": "Scope COMMENT_TOKEN to only the steps that need it"
+      },
+      "source": "built-in",
+      "finding_group_id": "ca68b281-9b51-5934-b17b-fe7b5af57337",
+      "confidence_scope": "yaml_only",
+      "authority_kinds": [
+        "credential_named_variable"
+      ],
+      "fingerprint": "b457c93e8a1c8403d9ab452885a3a4af",
+      "suppression_key": "sk1_71bd9f8c890e419bf7cad0167b06b992"
+    },
+    {
+      "rule_id": "authority_propagation",
+      "severity": "critical",
+      "category": "authority_propagation",
+      "path": {
+        "source": 7,
+        "sink": 4,
+        "edges": [
+          3
+        ],
+        "crossed_boundary": true,
+        "boundary_crossing": [
+          "first_party",
+          "untrusted"
+        ]
+      },
+      "nodes_involved": [
+        7,
+        4
+      ],
+      "message": "PREVIEW_TOKEN propagated to vendor/preview-release@v2 across trust boundary",
+      "recommendation": {
+        "type": "tsafe_remediation",
+        "command": "tsafe exec --ns <scoped-namespace> -- <command>",
+        "explanation": "Scope PREVIEW_TOKEN to only the steps that need it"
+      },
+      "source": "built-in",
+      "finding_group_id": "a297f5d8-b78c-5f28-9d33-0d817d4e74c4",
+      "confidence_scope": "yaml_only",
+      "authority_kinds": [
+        "credential_named_variable"
+      ],
+      "fingerprint": "d19208f1f0ae33fd99e35f7910d7e840",
+      "suppression_key": "sk1_19030afd8a403d24126496cd13d1fa9b"
+    },
+    {
+      "rule_id": "untrusted_with_authority",
+      "severity": "critical",
+      "category": "untrusted_with_authority",
+      "nodes_involved": [
+        2,
+        0
+      ],
+      "message": "Untrusted step 'Checkout PR head' has direct access to identity 'GITHUB_TOKEN'",
+      "recommendation": {
+        "type": "reduce_permissions",
+        "current": "{ contents: write, id-token: write, packages: write, pull-requests: write }",
+        "minimum": "minimal required scope"
+      },
+      "source": "built-in",
+      "finding_group_id": "747767f9-93a3-5e5f-b822-1787c829047a",
+      "confidence_scope": "yaml_only",
+      "authority_kinds": [
+        "oidc_identity"
+      ],
+      "attacker_surface_kinds": [
+        "untrusted_checkout",
+        "untrusted_step"
+      ],
+      "fingerprint": "b35c40d5e4e1a011b49ae94d1599d822",
+      "suppression_key": "sk1_a296501c3bfb6576cedb8834e93966f4"
+    },
+    {
+      "rule_id": "untrusted_with_authority",
+      "severity": "critical",
+      "category": "untrusted_with_authority",
+      "nodes_involved": [
+        3,
+        0
+      ],
+      "message": "Untrusted step 'Install dependencies' has direct access to identity 'GITHUB_TOKEN'",
+      "recommendation": {
+        "type": "reduce_permissions",
+        "current": "{ contents: write, id-token: write, packages: write, pull-requests: write }",
+        "minimum": "minimal required scope"
+      },
+      "source": "built-in",
+      "finding_group_id": "01c9beee-5724-5985-b304-c52d9667fbbb",
+      "confidence_scope": "yaml_only",
+      "authority_kinds": [
+        "oidc_identity"
+      ],
+      "attacker_surface_kinds": [
+        "script_sink",
+        "untrusted_step"
+      ],
+      "fingerprint": "2759cd623d40a609ce75cc8b667c9da1",
+      "suppression_key": "sk1_a296501c3bfb6576cedb8834e93966f4"
+    },
+    {
+      "rule_id": "untrusted_with_authority",
+      "severity": "critical",
+      "category": "untrusted_with_authority",
+      "nodes_involved": [
+        5,
+        0
+      ],
+      "message": "Untrusted step 'Publish preview' has direct access to identity 'GITHUB_TOKEN'",
+      "recommendation": {
+        "type": "reduce_permissions",
+        "current": "{ contents: write, id-token: write, packages: write, pull-requests: write }",
+        "minimum": "minimal required scope"
+      },
+      "source": "built-in",
+      "finding_group_id": "6362ceab-ea5b-5232-b392-8b9ae3527e7a",
+      "confidence_scope": "yaml_only",
+      "authority_kinds": [
+        "oidc_identity"
+      ],
+      "attacker_surface_kinds": [
+        "untrusted_step"
+      ],
+      "fingerprint": "ab6f509be0dac3661b981d08ea1a31c8",
+      "suppression_key": "sk1_a296501c3bfb6576cedb8834e93966f4"
+    },
+    {
+      "rule_id": "untrusted_with_authority",
+      "severity": "critical",
+      "category": "untrusted_with_authority",
+      "nodes_involved": [
+        5,
+        6
+      ],
+      "message": "Untrusted step 'Publish preview' has direct access to secret 'COMMENT_TOKEN'",
+      "recommendation": {
+        "type": "cellos_remediation",
+        "reason": "Untrusted step 'Publish preview' has direct access to secret 'COMMENT_TOKEN'",
+        "spec_hint": "cellos run --network deny-all --broker env:COMMENT_TOKEN"
+      },
+      "source": "built-in",
+      "finding_group_id": "ba0c7f2f-e939-598b-83f2-54161f6aa8d7",
+      "confidence_scope": "yaml_only",
+      "authority_kinds": [
+        "credential_named_variable"
+      ],
+      "attacker_surface_kinds": [
+        "untrusted_step"
+      ],
+      "fingerprint": "31588181fa8823dd2fbd86c8cd7e01e3",
+      "suppression_key": "sk1_726781d5a119ea8b0b7ff924acac9d5b"
+    },
+    {
+      "rule_id": "untrusted_with_authority",
+      "severity": "critical",
+      "category": "untrusted_with_authority",
+      "nodes_involved": [
+        5,
+        7
+      ],
+      "message": "Untrusted step 'Publish preview' has direct access to secret 'PREVIEW_TOKEN'",
+      "recommendation": {
+        "type": "cellos_remediation",
+        "reason": "Untrusted step 'Publish preview' has direct access to secret 'PREVIEW_TOKEN'",
+        "spec_hint": "cellos run --network deny-all --broker env:PREVIEW_TOKEN"
+      },
+      "source": "built-in",
+      "finding_group_id": "b578e9f6-fc53-56fe-b27b-42211f7762eb",
+      "confidence_scope": "yaml_only",
+      "authority_kinds": [
+        "credential_named_variable"
+      ],
+      "attacker_surface_kinds": [
+        "untrusted_step"
+      ],
+      "fingerprint": "e735f8274fe07b6f5119514de8de6a08",
+      "suppression_key": "sk1_787e30952950db0f2cd5ee8a9b1ba4a1"
+    },
+    {
+      "rule_id": "trigger_context_mismatch",
+      "severity": "critical",
+      "category": "trigger_context_mismatch",
+      "nodes_involved": [
+        2,
+        3,
+        5,
+        0,
+        6,
+        7
+      ],
+      "message": "Workflow triggered by pull_request_target with secret/identity access — 3 step(s) hold authority that attacker-controlled code could reach",
+      "recommendation": {
+        "type": "manual",
+        "action": "Use a separate workflow triggered by workflow_run (not pull_request_target) for privileged operations, or ensure no checkout of the PR head ref occurs before secret use"
+      },
+      "source": "built-in",
+      "finding_group_id": "bbaff6c3-19cb-5ead-bccf-314b4db15a98",
+      "confidence_scope": "yaml_only",
+      "runtime_preconditions": [
+        "the authority shown in the graph is available to that run",
+        "untrusted PR or fork-controlled input can reach this workflow at runtime"
+      ],
+      "authority_kinds": [
+        "credential_named_variable",
+        "oidc_identity"
+      ],
+      "attacker_surface_kinds": [
+        "script_sink",
+        "untrusted_checkout",
+        "untrusted_step"
+      ],
+      "cve_relationship": "same_authority_shape",
+      "fingerprint": "b9eacd833e47d9edbf6c34fd20053f82",
+      "suppression_key": "sk1_92f6b1a78ddb3a9ee2f6b3f8f315e639"
+    },
+    {
+      "rule_id": "pr_trigger_with_floating_action_ref",
+      "severity": "critical",
+      "category": "pr_trigger_with_floating_action_ref",
+      "nodes_involved": [
+        1
+      ],
+      "message": "Workflow trigger 'pull_request_target' runs in privileged base-repo context and step uses unpinned action 'actions/checkout@v4' — anyone who can push to that action's branch executes arbitrary code with full repo write token",
+      "recommendation": {
+        "type": "pin_action",
+        "current": "actions/checkout@v4",
+        "pinned": "actions/checkout@<sha256-digest>"
+      },
+      "source": "built-in",
+      "finding_group_id": "35f3cc9e-e733-5538-a182-f6a365b68eaf",
+      "confidence_scope": "yaml_only",
+      "runtime_preconditions": [
+        "the referenced mutable branch, tag, include, or image can change independently of this repository"
+      ],
+      "attacker_surface_kinds": [
+        "mutable_dependency_ref"
+      ],
+      "fingerprint": "9b83edfb69779ded0d2f192973101a70",
+      "suppression_key": "sk1_d758d0130388e42d98ff0e31454e99e0"
+    },
+    {
+      "rule_id": "pr_trigger_with_floating_action_ref",
+      "severity": "critical",
+      "category": "pr_trigger_with_floating_action_ref",
+      "nodes_involved": [
+        4
+      ],
+      "message": "Workflow trigger 'pull_request_target' runs in privileged base-repo context and step uses unpinned action 'vendor/preview-release@v2' — anyone who can push to that action's branch executes arbitrary code with full repo write token",
+      "recommendation": {
+        "type": "pin_action",
+        "current": "vendor/preview-release@v2",
+        "pinned": "vendor/preview-release@<sha256-digest>"
+      },
+      "source": "built-in",
+      "finding_group_id": "e32630fc-f5cc-55e2-b7cb-2b1b0274cda0",
+      "confidence_scope": "yaml_only",
+      "runtime_preconditions": [
+        "the referenced mutable branch, tag, include, or image can change independently of this repository"
+      ],
+      "attacker_surface_kinds": [
+        "mutable_dependency_ref"
+      ],
+      "fingerprint": "d747ca5e46a6fa655bf5493502165530",
+      "suppression_key": "sk1_d758d0130388e42d98ff0e31454e99e0"
+    },
+    {
+      "rule_id": "over_privileged_identity",
+      "severity": "high",
+      "category": "over_privileged_identity",
+      "nodes_involved": [
+        0,
+        2,
+        3,
+        5
+      ],
+      "message": "GITHUB_TOKEN has broad scope (permissions: '{ contents: write, id-token: write, packages: write, pull-requests: write }') — likely broader than needed",
+      "recommendation": {
+        "type": "reduce_permissions",
+        "current": "{ contents: write, id-token: write, packages: write, pull-requests: write }",
+        "minimum": "{ contents: read }"
+      },
+      "source": "built-in",
+      "finding_group_id": "c02ec572-d1cf-5dad-b06d-b36b0fa04b19",
+      "time_to_fix": "small",
+      "confidence_scope": "yaml_only",
+      "authority_kinds": [
+        "oidc_identity"
+      ],
+      "fingerprint": "53a77daaad84b95af54d721e755c8569",
+      "suppression_key": "sk1_8ff00ce64d54aac169f193fe752da341"
+    },
+    {
+      "rule_id": "oidc_identity_in_untrusted_context",
+      "severity": "high",
+      "category": "over_privileged_identity",
+      "nodes_involved": [
+        0,
+        2,
+        3,
+        5
+      ],
+      "message": "[oidc_identity_in_untrusted_context] OIDC identity 'GITHUB_TOKEN' is reachable from untrusted trigger steps [Checkout PR head, Install dependencies, Publish preview]",
+      "recommendation": {
+        "type": "manual",
+        "action": "Move OIDC credential minting to a trusted-ref workflow or protect it with environment approvals and provider-side subject/audience conditions that exclude fork pull requests and untrusted merge requests."
+      },
+      "source": "built-in",
+      "finding_group_id": "d36be26c-ac48-5626-a0e4-3cf062304006",
+      "fingerprint_anchor": "identity=GITHUB_TOKEN",
+      "confidence_scope": "yaml_only",
+      "runtime_preconditions": [
+        "downstream identity provider accepts the issued OIDC token",
+        "the configured audience or cloud role grants useful authority"
+      ],
+      "authority_kinds": [
+        "oidc_identity"
+      ],
+      "fingerprint": "2f17fadb384550dc283ec849b5026d38",
+      "suppression_key": "sk1_dc7f1f058b686c1650e154bd67b5ac8a"
+    },
+    {
+      "rule_id": "unpinned_action",
+      "severity": "high",
+      "category": "unpinned_action",
+      "nodes_involved": [
+        4
+      ],
+      "message": "vendor/preview-release@v2 is not pinned to a SHA digest",
+      "recommendation": {
+        "type": "pin_action",
+        "current": "vendor/preview-release@v2",
+        "pinned": "vendor/preview-release@<sha256-digest>"
+      },
+      "source": "built-in",
+      "finding_group_id": "0f7578de-7d12-5d7c-a871-9eb7ea011f2b",
+      "time_to_fix": "trivial",
+      "confidence_scope": "yaml_only",
+      "runtime_preconditions": [
+        "the referenced mutable branch, tag, include, or image can change independently of this repository"
+      ],
+      "attacker_surface_kinds": [
+        "mutable_dependency_ref"
+      ],
+      "fingerprint": "5bc0b6b44a7fedeb3979f09eb4a3bef4",
+      "suppression_key": "sk1_b3c9b21dc26b64986d8282ea77a9b358"
+    },
+    {
+      "rule_id": "checkout_self_pr_exposure",
+      "severity": "high",
+      "category": "checkout_self_pr_exposure",
+      "nodes_involved": [
+        2
+      ],
+      "message": "PR-triggered pipeline checks out the repository at step 'Checkout PR head' — attacker-controlled code from the fork lands on the runner and is readable by all subsequent steps",
+      "recommendation": {
+        "type": "manual",
+        "action": "Use `persist-credentials: false` (GitHub Actions) or `persistCredentials: false` (Azure DevOps) to stop writing the repo token to disk, and avoid reading workspace files in subsequent privileged steps. Consider `checkout: none` or omitting checkout for jobs that only need pipeline config, not source code."
+      },
+      "source": "built-in",
+      "finding_group_id": "400b687c-1973-5c90-af0a-edde9188da6c",
+      "time_to_fix": "medium",
+      "confidence_scope": "yaml_only",
+      "runtime_preconditions": [
+        "the authority shown in the graph is available to that run",
+        "untrusted PR or fork-controlled input can reach this workflow at runtime"
+      ],
+      "attacker_surface_kinds": [
+        "untrusted_checkout",
+        "untrusted_step"
+      ],
+      "cve_relationship": "same_authority_shape",
+      "fingerprint": "05fffdd714950c8c2c8b451b36b714ce",
+      "suppression_key": "sk1_e2430395710529d4b361b780fc3e0163"
+    },
+    {
+      "rule_id": "gha_manifest_npm_lifecycle_hook_pr_trigger_with_token",
+      "severity": "high",
+      "category": "gha_manifest_npm_lifecycle_hook_pr_trigger_with_token",
+      "nodes_involved": [
+        3
+      ],
+      "message": "PR-reachable step 'Install dependencies' runs npm-family lifecycle command 'npm ci' while authority is present in the job",
+      "recommendation": {
+        "type": "manual",
+        "action": "Run npm/pnpm/yarn installs with `--ignore-scripts` in PR-reachable jobs that hold secrets, OIDC, registry/cloud credentials, or write tokens; move lifecycle execution to an authority-free job or a protected-ref rebuild."
+      },
+      "source": "built-in",
+      "finding_group_id": "6558df29-e485-5fc3-849b-a64ee4c13346",
+      "confidence_scope": "yaml_only",
+      "runtime_preconditions": [
+        "npm-family lifecycle scripts execute during the observed install command",
+        "the package manifest or lockfile is controlled by the PR/workspace source"
+      ],
+      "attacker_surface_kinds": [
+        "manifest_as_code",
+        "pr_workspace",
+        "script_sink",
+        "untrusted_step"
+      ],
+      "fingerprint": "4ada57183c53c185c6ca0acc1e291084",
+      "suppression_key": "sk1_4453ea6b57804414d0140c3b0a67bf4c"
+    },
+    {
+      "rule_id": "unpinned_action",
+      "severity": "medium",
+      "category": "unpinned_action",
+      "nodes_involved": [
+        1
+      ],
+      "message": "actions/checkout@v4 is not pinned to a SHA digest",
+      "recommendation": {
+        "type": "pin_action",
+        "current": "actions/checkout@v4",
+        "pinned": "actions/checkout@<sha256-digest>"
+      },
+      "source": "built-in",
+      "finding_group_id": "a43e9718-4e6a-554a-9366-887c9040fe2b",
+      "time_to_fix": "trivial",
+      "confidence_scope": "yaml_only",
+      "runtime_preconditions": [
+        "the referenced mutable branch, tag, include, or image can change independently of this repository"
+      ],
+      "attacker_surface_kinds": [
+        "mutable_dependency_ref"
+      ],
+      "fingerprint": "57fbeaf61194ce868efa1843caca7e80",
+      "suppression_key": "sk1_b3c9b21dc26b64986d8282ea77a9b358"
+    },
+    {
+      "rule_id": "action_major_version_pin_without_sha",
+      "severity": "medium",
+      "category": "unpinned_action",
+      "nodes_involved": [
+        1
+      ],
+      "message": "[action_major_version_pin_without_sha] actions/checkout@v4 is pinned only to a mutable major tag; pin to a full commit SHA",
+      "recommendation": {
+        "type": "pin_action",
+        "current": "actions/checkout@v4",
+        "pinned": "actions/checkout@<40-char-sha>"
+      },
+      "source": "built-in",
+      "finding_group_id": "f7fa1d7f-6f39-5d5a-a0a0-db8c738153a1",
+      "time_to_fix": "trivial",
+      "confidence_scope": "yaml_only",
+      "runtime_preconditions": [
+        "the referenced mutable branch, tag, include, or image can change independently of this repository"
+      ],
+      "attacker_surface_kinds": [
+        "mutable_dependency_ref"
+      ],
+      "fingerprint": "0b4bd58b057084548c9e450e82205209",
+      "suppression_key": "sk1_9802171927785fb21e9c922842eec740"
+    },
+    {
+      "rule_id": "action_major_version_pin_without_sha",
+      "severity": "medium",
+      "category": "unpinned_action",
+      "nodes_involved": [
+        4
+      ],
+      "message": "[action_major_version_pin_without_sha] vendor/preview-release@v2 is pinned only to a mutable major tag; pin to a full commit SHA",
+      "recommendation": {
+        "type": "pin_action",
+        "current": "vendor/preview-release@v2",
+        "pinned": "vendor/preview-release@<40-char-sha>"
+      },
+      "source": "built-in",
+      "finding_group_id": "5d7ef860-6b6e-5130-b88c-f5722c633141",
+      "time_to_fix": "trivial",
+      "confidence_scope": "yaml_only",
+      "runtime_preconditions": [
+        "the referenced mutable branch, tag, include, or image can change independently of this repository"
+      ],
+      "attacker_surface_kinds": [
+        "mutable_dependency_ref"
+      ],
+      "fingerprint": "6702c085610c241fa3ba946b073154ea",
+      "suppression_key": "sk1_9802171927785fb21e9c922842eec740"
+    },
+    {
+      "rule_id": "uplift_without_attestation",
+      "severity": "info",
+      "category": "uplift_without_attestation",
+      "nodes_involved": [
+        2,
+        3,
+        5,
+        0
+      ],
+      "message": "3 step(s) use OIDC/federated identity but no provenance attestation step was detected — artifact integrity cannot be verified",
+      "recommendation": {
+        "type": "manual",
+        "action": "Add 'actions/attest-build-provenance' after your build step (GHA) to provide SLSA provenance. See https://docs.github.com/en/actions/security-guides/using-artifact-attestations"
+      },
+      "source": "built-in",
+      "finding_group_id": "712bf014-a203-5676-a160-52ab75cf262e",
+      "confidence_scope": "yaml_only",
+      "runtime_preconditions": [
+        "downstream identity provider accepts the issued OIDC token",
+        "the configured audience or cloud role grants useful authority"
+      ],
+      "authority_kinds": [
+        "oidc_identity"
+      ],
+      "attacker_surface_kinds": [
+        "script_sink",
+        "untrusted_checkout",
+        "untrusted_step"
+      ],
+      "fingerprint": "c61351c14517fe39e402076b2d75d8b7",
+      "suppression_key": "sk1_e5825f34e009bbc9f6164567a2d566b4"
+    }
+  ],
+  "summary": {
+    "total_findings": 20,
+    "critical": 11,
+    "high": 5,
+    "medium": 3,
+    "low": 0,
+    "info": 1,
+    "total_nodes": 8,
+    "total_edges": 7,
+    "completeness": "complete",
+    "graph_risk_summary": {
+      "authority_roots": 3,
+      "untrusted_sinks": 5,
+      "mutable_refs": 2,
+      "publication_adjacent_sinks": 1,
+      "delegation_hops": 0,
+      "protected_resource_categories": [
+        "identity",
+        "oidc_identity",
+        "secret"
+      ]
+    }
+  }
+}
