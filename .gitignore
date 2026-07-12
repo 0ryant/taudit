@@ -85,6 +85,15 @@ cobertura.xml
 audit-trail.jsonl
 audit-trail.jsonl.lock
 
+# The CLI writes its .taudit/ state relative to its own cwd (e.g. when run
+# from crates/taudit-cli/), so the root-anchored patterns above miss those
+# copies. Ignore the generated sub-dirs at ANY depth (source configs like
+# .taudit-suppressions.yml are not under these sub-dirs and stay tracked).
+**/.taudit/receipts/
+**/.taudit/backups/
+**/.taudit/baselines/
+**/audit-trail.jsonl
+
 # Ephemeral CellOS smoke spec (scripts/cellos_smoke_docker.sh)
 .cellos-spec.*.json
 
