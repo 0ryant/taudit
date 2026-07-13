@@ -1,6 +1,5 @@
 ---
 source: crates/taudit-cli/tests/snapshot_gitlab.rs
-assertion_line: 52
 expression: json
 ---
 findings:
@@ -25,7 +24,7 @@ findings:
       source: 1
     recommendation:
       command: tsafe exec --ns <scoped-namespace> -- <command>
-      explanation: Scope API_SECRET_KEY to only the steps that need it
+      explanation: "Scope API_SECRET_KEY to only the step that needs it — bind it via the step's `env:` block or a scoped secret runtime instead of exposing it to every downstream step."
       type: tsafe_remediation
     rule_id: authority_propagation
     severity: critical
@@ -51,9 +50,8 @@ findings:
       sink: 4
       source: 0
     recommendation:
-      command: tsafe exec --ns <scoped-namespace> -- <command>
-      explanation: Scope CI_JOB_TOKEN to only the steps that need it
-      type: tsafe_remediation
+      action: "Narrow the provider-native scope of CI_JOB_TOKEN so it no longer reaches the flagged sink: restrict the job token's reach via the CI/CD job token allowlist (Settings > CI/CD > Job token permissions) and pin any untrusted sink image or include to a digest. CI_JOB_TOKEN is an ephemeral platform token, so an external secret runtime cannot scope it."
+      type: manual
     rule_id: authority_propagation
     severity: critical
     source: built-in
@@ -79,7 +77,7 @@ findings:
       source: 2
     recommendation:
       command: tsafe exec --ns <scoped-namespace> -- <command>
-      explanation: Scope DATABASE_PASSWORD to only the steps that need it
+      explanation: "Scope DATABASE_PASSWORD to only the step that needs it — bind it via the step's `env:` block or a scoped secret runtime instead of exposing it to every downstream step."
       type: tsafe_remediation
     rule_id: authority_propagation
     severity: critical
@@ -106,7 +104,7 @@ findings:
       source: 3
     recommendation:
       command: tsafe exec --ns <scoped-namespace> -- <command>
-      explanation: Scope DEPLOY_TOKEN to only the steps that need it
+      explanation: "Scope DEPLOY_TOKEN to only the step that needs it — bind it via the step's `env:` block or a scoped secret runtime instead of exposing it to every downstream step."
       type: tsafe_remediation
     rule_id: authority_propagation
     severity: critical

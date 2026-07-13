@@ -19,9 +19,8 @@ nodes_involved:
   - 7
 message: "GITHUB_TOKEN reaches 2 sinks via authority propagation: [actions/checkout@v4, some-org/deploy-action@main]"
 recommendation:
-  type: tsafe_remediation
-  command: tsafe exec --ns <scoped-namespace> -- <command>
-  explanation: Scope GITHUB_TOKEN to only the steps that need it
+  type: manual
+  action: "Narrow the provider-native scope of GITHUB_TOKEN so it no longer reaches the flagged sink: tighten the job/workflow `permissions:` block and SHA-pin any untrusted sink action. GITHUB_TOKEN is an ephemeral platform token, so an external secret runtime cannot scope it."
 source: built-in
 confidence_scope: yaml_only
 authority_kinds:

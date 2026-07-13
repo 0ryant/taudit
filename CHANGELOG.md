@@ -44,6 +44,37 @@ integrity hashes are also BLAKE3 (re-key any stored backups).
   accepts both the legacy `mcpact.lock.v1` (`source_manifest_sha256`) and the
   doctrine-migrated `mcpact.lock.v2` (`source_manifest_blake3`) lockfile schemas.
 
+### Changed
+
+- **`authority_propagation` remediations are now platform-native.** Identity
+  sources (`GITHUB_TOKEN`, `System.AccessToken`, `CI_JOB_TOKEN`,
+  `BITBUCKET_STEP_OIDC_TOKEN`, OIDC job tokens) no longer recommend
+  `tsafe exec` — an external secret runtime cannot scope a CI-provider-minted
+  token. The recommendation is now `Manual`, routed by the graph's
+  `META_PLATFORM`: GHA `permissions:` block, ADO job authorization scope,
+  GitLab job token allowlist, Bitbucket OIDC trust policy, with
+  platform-neutral wording when no platform metadata is present. Secret
+  sources keep the scoped-runtime (`TsafeRemediation`) advice. The ADO
+  inline-script secret-export finding similarly switches to a `Manual`
+  recommendation carrying the `env:`-block guidance its explanation already
+  described. Finding fingerprints, suppression keys, and group ids are
+  unaffected (the recommendation is not a fingerprint input); JSON output for
+  these findings changes shape from `tsafe_remediation` to the pre-existing
+  `manual` variant.
+
+### Fixed
+
+- **`taudit --version` restored to the product 1.x line (`1.3.1-pre`).** Two
+  reconciliation commits had flattened the CLI onto the library crates'
+  independent 3.x semver line (`3.1.0-pre`) on the mistaken theory that
+  `1.3.0-pre` was a digit transposition of `3.1.0-pre`. The product line
+  (git tags `v1.1.x`, this changelog's `v1.2.0-rc.1`) never released a 2.x
+  or 3.x; a 3.x local stamp also breaks `taudit update`, which compares
+  against the published crates.io 1.x line and would report "up to date"
+  forever. Library crates (`taudit-core` et al.) intentionally remain on
+  their own 3.x line; signed-receipt `tool_version` stamps come from
+  `taudit-core` and are unchanged.
+
 ## v1.2.0-rc.1 — 2026-05-18 (release candidate)
 
 > **Release candidate.** Starts the v1.2 Authority Evidence Platform RC line.

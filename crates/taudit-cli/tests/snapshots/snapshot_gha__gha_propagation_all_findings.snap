@@ -22,9 +22,8 @@ expression: findings
     - 10
   message: "GITHUB_TOKEN reaches 5 sinks via authority propagation: [actions/checkout@a5ac7e51b41094c92402da3b24376905380afc29, actions/upload-artifact@v4, release-bundle, actions/download-artifact@v4, untrusted-org/publish-action@main]"
   recommendation:
-    type: tsafe_remediation
-    command: tsafe exec --ns <scoped-namespace> -- <command>
-    explanation: Scope GITHUB_TOKEN to only the steps that need it
+    type: manual
+    action: "Narrow the provider-native scope of GITHUB_TOKEN so it no longer reaches the flagged sink: tighten the job/workflow `permissions:` block and SHA-pin any untrusted sink action. GITHUB_TOKEN is an ephemeral platform token, so an external secret runtime cannot scope it."
   source: built-in
   confidence_scope: yaml_only
   authority_kinds:
@@ -47,7 +46,7 @@ expression: findings
   recommendation:
     type: tsafe_remediation
     command: tsafe exec --ns <scoped-namespace> -- <command>
-    explanation: Scope PUBLISH_API_KEY to only the steps that need it
+    explanation: "Scope PUBLISH_API_KEY to only the step that needs it — bind it via the step's `env:` block or a scoped secret runtime instead of exposing it to every downstream step."
   source: built-in
   confidence_scope: yaml_only
   authority_kinds:

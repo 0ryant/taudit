@@ -1,6 +1,5 @@
 ---
 source: crates/taudit-cli/tests/snapshot_gha.rs
-assertion_line: 73
 expression: json
 ---
 findings:
@@ -25,7 +24,7 @@ findings:
       source: 9
     recommendation:
       command: tsafe exec --ns <scoped-namespace> -- <command>
-      explanation: Scope DEPLOY_TOKEN to only the steps that need it
+      explanation: "Scope DEPLOY_TOKEN to only the step that needs it — bind it via the step's `env:` block or a scoped secret runtime instead of exposing it to every downstream step."
       type: tsafe_remediation
     rule_id: authority_propagation
     severity: critical
@@ -52,9 +51,8 @@ findings:
       sink: 1
       source: 0
     recommendation:
-      command: tsafe exec --ns <scoped-namespace> -- <command>
-      explanation: Scope GITHUB_TOKEN to only the steps that need it
-      type: tsafe_remediation
+      action: "Narrow the provider-native scope of GITHUB_TOKEN so it no longer reaches the flagged sink: tighten the job/workflow `permissions:` block and SHA-pin any untrusted sink action. GITHUB_TOKEN is an ephemeral platform token, so an external secret runtime cannot scope it."
+      type: manual
     rule_id: authority_propagation
     severity: critical
     source: built-in
