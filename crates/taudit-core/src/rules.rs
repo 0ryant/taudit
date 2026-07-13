@@ -186,8 +186,9 @@ pub fn authority_propagation(graph: &AuthorityGraph, max_hops: usize) -> Vec<Fin
                 // runtime. The actionable fix is provider-native: narrow the
                 // scope so the crossing sink never receives the token.
                 Some(NodeKind::Identity) => Recommendation::Manual {
-                    action: format!(
-                        "Narrow the provider-native scope of {source_name} so it no longer reaches the flagged sink: tighten the job/workflow `permissions:` block (GitHub Actions) or restrict the pipeline / `System.AccessToken` scope (Azure DevOps), and SHA-pin any untrusted sink action. {source_name} is an ephemeral platform token, so an external secret runtime cannot scope it."
+                    action: identity_scope_remediation(
+                        &source_name,
+                        graph.metadata.get(META_PLATFORM).map(String::as_str),
                     ),
                 },
                 // User-managed secrets can be moved behind a scoped runtime
@@ -206,6 +207,40 @@ pub fn authority_propagation(graph: &AuthorityGraph, max_hops: usize) -> Vec<Fin
     }
 
     findings
+}
+
+/// Provider-native remediation for an ephemeral platform identity
+/// (GITHUB_TOKEN, System.AccessToken, CI_JOB_TOKEN, OIDC job tokens).
+/// These tokens are minted by the CI provider per run, so an external
+/// secret runtime cannot scope them — the fix is always on the provider
+/// side, and which knob to turn depends on the platform that produced
+/// the graph (`META_PLATFORM`).
+fn identity_scope_remediation(source_name: &str, platform: Option<&str>) -> String {
+    let native_fix = match platform {
+        Some("github-actions") => {
+            "tighten the job/workflow `permissions:` block and SHA-pin any untrusted sink action"
+        }
+        Some("azure-devops") => {
+            "restrict the pipeline's job authorization scope (limit `System.AccessToken` via \
+             'Protect access to repositories in YAML pipelines' / job authorization scope \
+             settings) and pin any untrusted sink task or template"
+        }
+        Some("gitlab") => {
+            "restrict the job token's reach via the CI/CD job token allowlist \
+             (Settings > CI/CD > Job token permissions) and pin any untrusted sink \
+             image or include to a digest"
+        }
+        Some("bitbucket") => {
+            "narrow the OIDC trust policy at the cloud provider (audience and claim \
+             conditions on the resource server) and pin any untrusted sink pipe or image"
+        }
+        _ => "narrow the token's scope with the provider's native permission controls and pin any untrusted sink",
+    };
+    format!(
+        "Narrow the provider-native scope of {source_name} so it no longer reaches the \
+         flagged sink: {native_fix}. {source_name} is an ephemeral platform token, so an \
+         external secret runtime cannot scope it."
+    )
 }
 
 /// Returns true if any node touched by `path` (source, sink, or any edge
@@ -11989,6 +12024,8 @@ mod tests {
         // remediation must point at the provider-native scope fix, never at
         // `tsafe exec`.
         let mut g = AuthorityGraph::new(source("ci.yml"));
+        g.metadata
+            .insert(META_PLATFORM.into(), "github-actions".into());
         let identity = g.add_node(NodeKind::Identity, "GITHUB_TOKEN", TrustZone::FirstParty);
         let step = g.add_node(NodeKind::Step, "deploy", TrustZone::Untrusted);
         let image = g.add_node(NodeKind::Image, "evil/action@main", TrustZone::Untrusted);
@@ -12013,9 +12050,71 @@ mod tests {
             ),
         }
         assert!(
-            !matches!(finding.recommendation, Recommendation::TsafeRemediation { .. }),
+            !matches!(
+                finding.recommendation,
+                Recommendation::TsafeRemediation { .. }
+            ),
             "identity source must never recommend TsafeRemediation"
         );
+    }
+
+    #[test]
+    fn identity_remediation_is_platform_aware() {
+        // The provider-native scope knob differs per platform; the
+        // remediation must name the right one for the platform that
+        // produced the graph, and stay platform-neutral when the graph
+        // carries no META_PLATFORM (e.g. synthetic or custom graphs).
+        let cases: [(Option<&str>, &str, &str); 5] = [
+            (Some("github-actions"), "GITHUB_TOKEN", "permissions:"),
+            (
+                Some("azure-devops"),
+                "System.AccessToken",
+                "job authorization scope",
+            ),
+            (Some("gitlab"), "CI_JOB_TOKEN", "job token allowlist"),
+            (
+                Some("bitbucket"),
+                "BITBUCKET_STEP_OIDC_TOKEN",
+                "OIDC trust policy",
+            ),
+            (None, "SOME_TOKEN", "provider's native permission controls"),
+        ];
+
+        for (platform, token_name, expected_fragment) in cases {
+            let mut g = AuthorityGraph::new(source("ci.yml"));
+            if let Some(p) = platform {
+                g.metadata.insert(META_PLATFORM.into(), p.into());
+            }
+            let identity = g.add_node(NodeKind::Identity, token_name, TrustZone::FirstParty);
+            let step = g.add_node(NodeKind::Step, "deploy", TrustZone::Untrusted);
+            let image = g.add_node(NodeKind::Image, "evil/thing@main", TrustZone::Untrusted);
+            g.add_edge(step, identity, EdgeKind::HasAccessTo);
+            g.add_edge(step, image, EdgeKind::UsesImage);
+
+            let findings = authority_propagation(&g, 4);
+            let finding = findings
+                .iter()
+                .find(|f| f.nodes_involved.contains(&identity))
+                .unwrap_or_else(|| {
+                    panic!("expected an identity finding for platform {platform:?}")
+                });
+
+            match &finding.recommendation {
+                Recommendation::Manual { action } => {
+                    assert!(
+                        action.contains(expected_fragment),
+                        "platform {platform:?} remediation must mention {expected_fragment:?}, got: {action}"
+                    );
+                    assert!(
+                        !action.contains("tsafe"),
+                        "platform {platform:?} identity remediation must not mention tsafe, got: {action}"
+                    );
+                }
+                other => panic!(
+                    "platform {platform:?}: identity source must get Manual remediation, got {other:?}"
+                ),
+            }
+        }
     }
 
     #[test]
@@ -12036,7 +12135,10 @@ mod tests {
             .expect("expected an authority_propagation finding for the secret source");
 
         assert!(
-            matches!(finding.recommendation, Recommendation::TsafeRemediation { .. }),
+            matches!(
+                finding.recommendation,
+                Recommendation::TsafeRemediation { .. }
+            ),
             "user-managed secret source should keep the scoped-runtime remediation, got: {:?}",
             finding.recommendation
         );
