@@ -20,7 +20,7 @@ message: "API_SECRET_KEY propagated to alpine:latest across trust boundary"
 recommendation:
   type: tsafe_remediation
   command: tsafe exec --ns <scoped-namespace> -- <command>
-  explanation: Scope API_SECRET_KEY to only the steps that need it
+  explanation: "Scope API_SECRET_KEY to only the step that needs it — bind it via the step's `env:` block or a scoped secret runtime instead of exposing it to every downstream step."
 source: built-in
 confidence_scope: yaml_only
 authority_kinds:
