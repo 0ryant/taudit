@@ -17,8 +17,8 @@ SUPPRESSION_KEY_RE = re.compile(r"^sk1_[0-9a-f]{32}$")
 UUID_RE = re.compile(
     r"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
 )
-SHA256_RE = re.compile(r"^sha256:[0-9a-f]{64}$")
-PIPELINE_ID_RE = re.compile(r"^urn:taudit:pipeline:sha256:[0-9a-f]{64}$")
+SHA256_RE = re.compile(r"^(blake3|sha256):[0-9a-f]{64}$")
+PIPELINE_ID_RE = re.compile(r"^urn:taudit:pipeline:(blake3|sha256):[0-9a-f]{64}$")
 RULE_ID_RE = re.compile(r"^[a-z][a-z0-9_]*$")
 SEMVER_1_RE = re.compile(r"^1\.[0-9]+\.[0-9]+$")
 

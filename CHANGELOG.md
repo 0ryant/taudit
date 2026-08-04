@@ -2,7 +2,10 @@
 
 All notable changes to this project will be documented in this file.
 
-## Unreleased
+## v1.3.1 — 2026-08-05
+
+First stable release since v1.1.5. Also ships everything listed under
+v1.2.0-rc.1 below, which was never tagged, released, or published.
 
 ### Detection delta (read first)
 
