@@ -270,12 +270,13 @@ impl Baseline {
         rules_version: &str,
         now: DateTime<Utc>,
     ) -> Self {
-        // BUG-2: baseline init bulk-accepts ALL current findings. For CRITICAL
-        // findings the waiver contract requires a dated expiry ≤ 90 days.
-        // init sets expires_at = now + 90 days automatically so that running
-        // `taudit baseline init` on a fresh repo doesn't leave 100+ critical
-        // findings unwaived and requires 0 per-finding `baseline accept` calls.
-        let critical_expiry = now + chrono::Duration::days(MAX_CRITICAL_WAIVER_DAYS);
+        // Waiver fields stay None for EVERY severity, including Critical.
+        // `init` is a snapshot, not a waiver: stamping the override triple
+        // here would let one subcommand silently bypass the critical-waiver
+        // friction that `accept` enforces (reason ≥10 chars, expiry ≤ 90d,
+        // an accountable human). Criticals captured at init keep failing
+        // `verify` until someone runs `baseline accept` per finding — that
+        // is the council's load-bearing constraint (module doc, item 3).
         let mut baseline_findings: Vec<BaselineFinding> = findings
             .iter()
             .map(|f| BaselineFinding {
@@ -283,24 +284,9 @@ impl Baseline {
                 rule_id: rule_id_for(f),
                 severity: f.severity,
                 first_seen_at: now,
-                // BUG-2: is_valid_critical_waiver requires severity_override,
-                // reason_waived (≥10 chars), and expires_at all set. baseline
-                // init stamps all three for Critical findings automatically.
-                reason_waived: if f.severity == Severity::Critical {
-                    Some("Accepted at baseline init — review before expiry".into())
-                } else {
-                    None
-                },
-                severity_override: if f.severity == Severity::Critical {
-                    Some(Severity::Critical)
-                } else {
-                    None
-                },
-                expires_at: if f.severity == Severity::Critical {
-                    Some(critical_expiry)
-                } else {
-                    None
-                },
+                reason_waived: None,
+                severity_override: None,
+                expires_at: None,
             })
             .collect();
         // Dedup on fingerprint (template instances collapse into one entry).
@@ -910,30 +896,52 @@ mod tests {
         let mut sorted = fps.clone();
         sorted.sort();
         assert_eq!(fps, sorted, "entries must be fingerprint-sorted");
-        // BUG-2: baseline init bulk-accepts all findings. Critical findings get
-        // a full valid waiver (reason_waived + severity_override + expires_at).
-        // Non-critical findings have no waiver fields set.
+        // init is a snapshot: no entry — critical or otherwise — carries
+        // waiver fields. Waiving is `accept`'s job, with its friction intact.
         for entry in &baseline.baseline_findings {
-            if entry.severity == Severity::Critical {
-                assert!(
-                    entry.reason_waived.is_some(),
-                    "critical finding from baseline init must have auto-reason"
-                );
-                assert_eq!(
-                    entry.severity_override,
-                    Some(Severity::Critical),
-                    "critical finding from baseline init must have severity_override"
-                );
-                assert!(
-                    entry.expires_at.is_some(),
-                    "critical finding from baseline init must have auto-expiry"
-                );
-            } else {
-                assert!(entry.reason_waived.is_none());
-                assert!(entry.severity_override.is_none());
-                assert!(entry.expires_at.is_none());
-            }
+            assert!(entry.reason_waived.is_none());
+            assert!(entry.severity_override.is_none());
+            assert!(entry.expires_at.is_none());
         }
+    }
+
+    #[test]
+    fn init_does_not_waive_criticals() {
+        // Regression for the BUG-2 "fix" that inverted the guarantee:
+        // `from_findings` used to stamp the full valid-waiver triple
+        // (reason_waived + severity_override + expires_at) on every Critical
+        // entry, so `baseline init` bulk-waived all criticals with a
+        // machine-written reason and zero operator input. The entry must be
+        // a plain snapshot that is_valid_critical_waiver rejects.
+        let (graph, s) = make_graph("ci.yml");
+        let crit = make_finding(
+            FindingCategory::AuthorityPropagation,
+            Severity::Critical,
+            "AWS_KEY reaches untrusted",
+            vec![s],
+        );
+        let baseline = Baseline::from_findings(
+            "ci.yml",
+            "x",
+            &graph,
+            std::slice::from_ref(&crit),
+            "ryan",
+            "0.10.0",
+            "32-builtin",
+            now(),
+        );
+        let entry = &baseline.baseline_findings[0];
+        assert_eq!(entry.severity, Severity::Critical);
+        assert!(
+            entry.reason_waived.is_none(),
+            "init must not invent a reason"
+        );
+        assert!(entry.severity_override.is_none());
+        assert!(entry.expires_at.is_none());
+        assert!(
+            !entry.is_valid_critical_waiver(now()),
+            "a snapshot entry from init must never count as a valid critical waiver"
+        );
     }
 
     #[test]
@@ -1096,10 +1104,10 @@ mod tests {
     }
 
     #[test]
-    fn critical_preexisting_from_init_is_suppressed() {
-        // BUG-2: baseline init now bulk-accepts Critical findings by setting
-        // a full valid waiver (severity_override + reason_waived + expires_at).
-        // Verify that a critical captured by from_findings is NOT a blocker.
+    fn init_then_verify_still_blocks_on_critical() {
+        // Documented guarantee §1: a critical captured by `baseline init`
+        // (snapshot shape, no waiver fields) still counts toward exit 1.
+        // Only an explicit `accept` waiver may suppress it.
         let (graph, s) = make_graph("ci.yml");
         let crit = make_finding(
             FindingCategory::AuthorityPropagation,
@@ -1119,19 +1127,19 @@ mod tests {
         );
         let diff = diff(&[crit], &baseline, &graph);
         assert_eq!(diff.preexisting.len(), 1);
-        // from_findings now sets a valid waiver — the critical must NOT block.
+        assert_eq!(diff.waived_count, 0, "init must not create waivers");
         let blockers = diff.critical_without_valid_waiver(&baseline, &graph, now());
         assert_eq!(
             blockers.len(),
-            0,
-            "critical from baseline init must be suppressed (valid auto-waiver)"
+            1,
+            "critical from baseline init must keep blocking until explicitly accepted"
         );
     }
 
     #[test]
     fn critical_preexisting_without_waiver_blocks_exit_zero() {
-        // A manually constructed baseline entry with no waiver fields set still
-        // forces a critical to count toward exit 1 (the original constraint).
+        // A baseline entry with no waiver fields set still forces a critical
+        // to count toward exit 1 (the original constraint).
         let (graph, s) = make_graph("ci.yml");
         let crit = make_finding(
             FindingCategory::AuthorityPropagation,
@@ -1139,8 +1147,7 @@ mod tests {
             "AWS_KEY reaches untrusted",
             vec![s],
         );
-        let fp = compute_finding_fingerprint(&crit, &graph);
-        let mut baseline = Baseline::from_findings(
+        let baseline = Baseline::from_findings(
             "ci.yml",
             "x",
             &graph,
@@ -1150,14 +1157,6 @@ mod tests {
             "32-builtin",
             now(),
         );
-        // Strip the auto-waiver fields to simulate a legacy or manually-edited entry.
-        for entry in &mut baseline.baseline_findings {
-            if entry.fingerprint == fp {
-                entry.reason_waived = None;
-                entry.severity_override = None;
-                entry.expires_at = None;
-            }
-        }
         let diff = diff(&[crit], &baseline, &graph);
         assert_eq!(diff.preexisting.len(), 1);
         let blockers = diff.critical_without_valid_waiver(&baseline, &graph, now());

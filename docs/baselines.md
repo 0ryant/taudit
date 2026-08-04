@@ -55,6 +55,12 @@ taudit baseline review  [--root <DIR>]
 4. `taudit baseline accept` upgrades a pre-existing entry into an explicit
    waiver with a `reason_waived` and (for criticals) an `expires_at`.
 
+`init` is a **snapshot, never a waiver**: it sets no `reason_waived`,
+`severity_override`, or `expires_at` on any entry. Critical findings captured
+at `init` keep failing `verify` until each one is explicitly accepted (step 4).
+`init` prints the count of captured-but-unwaived criticals so a snapshot can
+never masquerade as a mass waiver.
+
 The baseline file's name is the SHA-256 of the pipeline's bytes. Renaming
 or moving the pipeline file preserves the baseline; **editing** the pipeline
 changes the hash and requires a fresh `init`. This is intentional: a baseline
@@ -182,8 +188,10 @@ these is enforced by code:
    cannot silently drift. Every output format means the same thing by
    "this finding."
 6. **Bulk-accept friction.** `accept` operates on a single fingerprint at
-   a time. Bulk acceptance requires re-running `init` (which is loud and
-   committed under CODEOWNERS review).
+   a time. Re-running `init` bulk-captures entries as pre-existing (which
+   suppresses non-critical findings, loudly and committed under CODEOWNERS
+   review) but never waives criticals — those always require a per-finding
+   `accept` with a reason and expiry.
 
 ## Workflow
 
