@@ -61,7 +61,14 @@ fn rule_ids_for_fixture(name: &str) -> BTreeSet<String> {
     let p = path.to_string_lossy().to_string();
     let out = taudit()
         .args([
-            "scan", &p, "--platform", "auto", "--quiet", "--format", "json", "--no-color",
+            "scan",
+            &p,
+            "--platform",
+            "auto",
+            "--quiet",
+            "--format",
+            "json",
+            "--no-color",
         ])
         .output()
         .unwrap_or_else(|e| panic!("scan spawn {name}: {e}"));
@@ -120,11 +127,17 @@ fn all_fixture_names() -> Vec<String> {
 /// One representative positive per rule keeps the benchmark legible; the
 /// coverage-floor test below still enforces the full distinct-rule set.
 const KNOWN_POSITIVE: &[(&str, &str)] = &[
-    ("action_major_version_pin_without_sha", "over-privileged.yml"),
+    (
+        "action_major_version_pin_without_sha",
+        "over-privileged.yml",
+    ),
     ("authority_propagation", "over-privileged.yml"),
     ("checkout_self_pr_exposure", "ado-shared-pool.yml"),
     ("cross_workflow_authority_chain", "partial-structural.yml"),
-    ("floating_image", "gha-service-containers-and-credentials.yml"),
+    (
+        "floating_image",
+        "gha-service-containers-and-credentials.yml",
+    ),
     (
         "gha_tool_installer_then_shell_helper_authority",
         "algol-authority-confusion-fixture.yml",
@@ -134,7 +147,10 @@ const KNOWN_POSITIVE: &[(&str, &str)] = &[
         "gitlab-generic-artifacts.yml",
     ),
     ("long_lived_credential", "gitlab-creds.yml"),
-    ("no_workflow_level_permissions_block", "partial-structural.yml"),
+    (
+        "no_workflow_level_permissions_block",
+        "partial-structural.yml",
+    ),
     ("over_privileged_identity", "over-privileged.yml"),
     ("self_hosted_pool_pr_hijack", "ado-shared-pool.yml"),
     ("self_mutating_pipeline", "ado-setvariable.yml"),

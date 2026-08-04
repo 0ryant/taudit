@@ -58,7 +58,11 @@ fn embedded_source_manifest_digest_matches_lockfile() {
         .expect("mcpact.lock must record a source_manifest_sha256 or source_manifest_blake3");
 
     let (actual, expected, algo) = match recorded {
-        RecordedDigest::Blake3(h) => (axiom_hash::blake3_hex(SOURCE_MANIFEST.as_bytes()), h, "blake3"),
+        RecordedDigest::Blake3(h) => (
+            axiom_hash::blake3_hex(SOURCE_MANIFEST.as_bytes()),
+            h,
+            "blake3",
+        ),
         RecordedDigest::Sha256(h) => (sha256_hex(SOURCE_MANIFEST.as_bytes()), h, "sha256"),
     };
 
