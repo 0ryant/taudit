@@ -3433,7 +3433,10 @@ fn emit_conformance_artifacts(
     //     exact sidecar content by BLAKE3. taudit is offline → cost_usd = 0.00,
     //     no llm block.
     let usage_path = receipts_dir.join(format!("{operation}-{}.usage.json", row.seq));
-    let wall_ms: u64 = process_start().elapsed().as_millis().min(u128::from(u64::MAX)) as u64;
+    let wall_ms: u64 = process_start()
+        .elapsed()
+        .as_millis()
+        .min(u128::from(u64::MAX)) as u64;
     let usage = serde_json::json!({
         "schema": "axiom.usage.v1",
         "tool": body.tool.clone(),
