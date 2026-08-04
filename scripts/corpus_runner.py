@@ -36,7 +36,7 @@ LICENSE_BASES = {
     "unknown_pending_review",
 }
 SHA_RE = re.compile(r"^[0-9a-fA-F]{7,64}$")
-DIGEST_RE = re.compile(r"^sha256:[0-9a-f]{64}$")
+DIGEST_RE = re.compile(r"^(blake3|sha256):[0-9a-f]{64}$")
 ID_RE = re.compile(r"^[a-z0-9][a-z0-9._:-]{0,127}$")
 MANIFEST_SCHEMA_VERSION_RE = re.compile(r"^1\.[0-9]+\.[0-9]+$")
 REPORT_KIND = "taudit.corpus.summary"

@@ -1,6 +1,6 @@
 [package]
 name = "taudit-api"
-version = "3.1.0-pre"
+version = "3.1.0"
 description = "Stable wire types for taudit JSON / SARIF / CloudEvents output. Public contract for downstream consumers (tsign, axiom, custom integrations). Versioned in lockstep with the taudit workspace."
 readme = "README.md"
 edition.workspace = true
