@@ -64,6 +64,23 @@ integrity hashes are also BLAKE3 (re-key any stored backups).
 
 ### Fixed
 
+- **SECURITY: `baseline init` no longer auto-waives critical findings.** The
+  earlier BUG-2 change made `Baseline::from_findings` stamp the full
+  valid-waiver triple (`severity_override: critical`, a machine-written
+  `reason_waived`, `expires_at = now + 90d`) on every Critical entry, so a
+  single `taudit baseline init` silently waived unlimited criticals with zero
+  operator input — defeating the documented "critical findings always exit 1
+  unless explicitly waived" guarantee that `baseline accept` enforces with
+  per-finding friction. `init` is now a pure snapshot (no waiver fields on any
+  entry); criticals captured at init keep failing `verify` until each is
+  explicitly accepted. `init` output now flags the count of
+  captured-but-unwaived criticals per baseline and in a closing note.
+  Regression tests: `init_does_not_waive_criticals`,
+  `init_then_verify_still_blocks_on_critical`. **Action required:** baselines
+  captured by an affected build carry entries with
+  `reason_waived: "Accepted at baseline init — review before expiry"` — audit
+  them with `taudit baseline review` and re-issue genuine waivers via
+  `baseline accept` (or re-run `baseline init`).
 - **`taudit --version` restored to the product 1.x line (`1.3.1-pre`).** Two
   reconciliation commits had flattened the CLI onto the library crates'
   independent 3.x semver line (`3.1.0-pre`) on the mistaken theory that

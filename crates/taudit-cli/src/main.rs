@@ -5672,6 +5672,7 @@ fn cmd_baseline_init(
 
     let mut written = 0usize;
     let mut skipped = 0usize;
+    let mut critical_total = 0usize;
 
     for tagged in &resolved {
         let path = tagged.path();
@@ -5721,17 +5722,37 @@ fn cmd_baseline_init(
         baseline
             .save(&target)
             .with_context(|| format!("Failed to write baseline {}", target.display()))?;
+        let critical_count = baseline
+            .baseline_findings
+            .iter()
+            .filter(|e| e.severity == Severity::Critical)
+            .count();
+        critical_total += critical_count;
         try_println!(
-            "wrote {} ({} finding{})",
+            "wrote {} ({} finding{}{})",
             target.display(),
             baseline.baseline_findings.len(),
             if baseline.baseline_findings.len() == 1 {
                 ""
             } else {
                 "s"
+            },
+            if critical_count > 0 {
+                format!(", {critical_count} critical — NOT waived")
+            } else {
+                String::new()
             }
         )?;
         written += 1;
+    }
+
+    if critical_total > 0 {
+        eprintln!(
+            "note: {critical_total} critical finding{} captured as pre-existing but NOT waived; \
+             they still fail `taudit verify` until explicitly accepted \
+             (`taudit baseline accept --severity-override critical --expires-at <ISO-8601> --reason \"...\"`)",
+            if critical_total == 1 { "" } else { "s" }
+        );
     }
 
     try_println!(
