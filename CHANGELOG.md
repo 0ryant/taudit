@@ -2,6 +2,24 @@
 
 All notable changes to this project will be documented in this file.
 
+## Unreleased
+
+### Fixed
+
+- **Intermittent exit-time crash (~5% of runs) in `scan`/`verify` on
+  Windows.** The background crates.io version check spawned for substantive
+  commands was never joined on the scan/verify paths — both exit via
+  `std::process::exit` deep inside their command functions, so the "join
+  after the command finishes" code was unreachable for exactly the commands
+  that spawn the thread. Exiting while that thread was mid-TLS/DNS tore down
+  the CRT under a live thread and intermittently access-violated — after all
+  output, the receipt, and the audit row were already written, so a clean
+  scan could exit 139 instead of 0 (randomly failing CI gates). Every exit
+  now funnels through a helper that first joins the version check (bounded
+  by its 3-second request timeout). Measured: 2–3 crashes per 40–60 runs
+  before; 0 in 200 runs after. Side effect: the update nudge now actually
+  prints after `scan`/`verify`, as originally documented.
+
 ## v1.3.1 — 2026-08-05
 
 First stable release since v1.1.5. Also ships everything listed under

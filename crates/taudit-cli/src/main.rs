@@ -1352,6 +1352,42 @@ struct RuntimeArtifactPaths {
     log_dir: Option<PathBuf>,
 }
 
+/// Background crates.io version-check handle. Spawned in [`run`] for
+/// substantive commands, taken and joined by [`print_version_nudge`] before
+/// any process exit.
+static VERSION_CHECK_HANDLE: std::sync::Mutex<Option<std::thread::JoinHandle<Option<String>>>> =
+    std::sync::Mutex::new(None);
+
+/// Join the background version check (bounded by its 3-second request
+/// timeout), print the update nudge if a newer release was found, then exit.
+///
+/// Every process exit in this binary must funnel through here. Calling
+/// `std::process::exit` while the ureq thread is mid-request tears down the
+/// CRT under a live thread inside system TLS/DNS code, which intermittently
+/// access-violates on Windows — AFTER the command's output, receipt, and
+/// audit row were already written, so a clean scan could exit 139 (~5% of
+/// runs) instead of its real exit code.
+fn exit_with_version_nudge(code: i32) -> ! {
+    print_version_nudge();
+    std::process::exit(code);
+}
+
+/// Take and join the pending version check, printing the one-line nudge if a
+/// newer release is available. Idempotent: the handle is `take`n, so later
+/// calls are no-ops.
+fn print_version_nudge() {
+    let handle = VERSION_CHECK_HANDLE.lock().ok().and_then(|mut g| g.take());
+    if let Some(handle) = handle {
+        if let Ok(Some(latest)) = handle.join() {
+            let current = env!("CARGO_PKG_VERSION");
+            eprintln!(
+                "\n  taudit {latest} is available (you have {current}). \
+                 Run: cargo install taudit --version {latest} --locked"
+            );
+        }
+    }
+}
+
 fn main() {
     // Stamp the operation start for usage telemetry before any work runs.
     process_start();
@@ -1365,7 +1401,7 @@ fn main() {
             // clap surfaces invalid-flag failures with its own exit code (2)
             // before we get here, which already matches this contract.
             eprintln!("error: {err:#}");
-            std::process::exit(2);
+            exit_with_version_nudge(2);
         }
     }
 }
@@ -1374,21 +1410,21 @@ fn run() -> Result<()> {
     let cli = Cli::parse();
 
     // Spawn a background version check for the substantive commands so it
-    // doesn't block startup. The handle is joined after the command finishes.
+    // doesn't block startup. The handle lives in VERSION_CHECK_HANDLE and is
+    // joined by print_version_nudge / exit_with_version_nudge on every exit
+    // path — scan and verify exit via exit_with_version_nudge deep inside
+    // their command functions, so a function-local handle here would leak the
+    // thread into process teardown (the Windows exit-crash this replaces).
     // The check is skipped entirely when TAUDIT_NO_UPDATE_CHECK is set, when
     // CI=true (most CI systems set this), or for quick/read-only commands.
-    let version_check_handle = match &cli {
-        Cli::Scan { .. } | Cli::Verify { .. } | Cli::Version => {
-            if std::env::var_os("TAUDIT_NO_UPDATE_CHECK").is_none()
-                && std::env::var_os("CI").is_none()
-            {
-                Some(std::thread::spawn(check_latest_version))
-            } else {
-                None
-            }
+    if matches!(&cli, Cli::Scan { .. } | Cli::Verify { .. } | Cli::Version)
+        && std::env::var_os("TAUDIT_NO_UPDATE_CHECK").is_none()
+        && std::env::var_os("CI").is_none()
+    {
+        if let Ok(mut guard) = VERSION_CHECK_HANDLE.lock() {
+            *guard = Some(std::thread::spawn(check_latest_version));
         }
-        _ => None,
-    };
+    }
 
     let result = match cli {
         Cli::Scan {
@@ -1668,7 +1704,7 @@ fn run() -> Result<()> {
                          may change its transform set or backup schema in a future release.\n\n\
                          Example: taudit remediate --unstable apply --policy <policy> <paths>"
                     );
-                    std::process::exit(2);
+                    exit_with_version_nudge(2);
                 }
                 remediate::cmd_apply(remediate::ApplyOpts {
                     paths,
@@ -1692,7 +1728,7 @@ fn run() -> Result<()> {
                          may change in a future release.\n\n\
                          Example: taudit remediate --unstable rollback --backup-id <id>"
                     );
-                    std::process::exit(2);
+                    exit_with_version_nudge(2);
                 }
                 remediate::cmd_rollback(remediate::RollbackOpts {
                     backup_id,
@@ -1714,17 +1750,11 @@ fn run() -> Result<()> {
         },
     };
 
-    // After the command finishes, collect the background version check and
-    // print a one-line nudge if a newer release is available.
-    if let Some(handle) = version_check_handle {
-        if let Ok(Some(latest)) = handle.join() {
-            let current = env!("CARGO_PKG_VERSION");
-            eprintln!(
-                "\n  taudit {latest} is available (you have {current}). \
-                 Run: cargo install taudit --version {latest} --locked"
-            );
-        }
-    }
+    // After a command that returns normally, collect the background version
+    // check and print the nudge. Commands that exit directly go through
+    // exit_with_version_nudge instead; the take() inside makes this a no-op
+    // if the handle was already consumed.
+    print_version_nudge();
 
     result
 }
@@ -1907,7 +1937,7 @@ fn cmd_scan(opts: ScanOpts) -> Result<()> {
                     eprintln!("error: {err}");
                 }
                 eprintln!("{INVARIANTS_DIR}");
-                std::process::exit(2);
+                exit_with_version_nudge(2);
             }
         },
         None => Vec::new(),
@@ -2195,7 +2225,7 @@ fn cmd_scan(opts: ScanOpts) -> Result<()> {
                     eprintln!("error: {err}");
                 }
                 eprintln!("{CRITICAL_WAIVER_EXPIRY}");
-                std::process::exit(2);
+                exit_with_version_nudge(2);
             }
             let (waived, warnings, matched_here) = suppression_config.apply(
                 findings,
@@ -2472,7 +2502,7 @@ fn cmd_scan(opts: ScanOpts) -> Result<()> {
     let _ = writer.flush();
     drop(writer);
 
-    std::process::exit(exit_code);
+    exit_with_version_nudge(exit_code);
 }
 
 /// Options for `taudit verify`. Mirrors the `Verify` CLI variant fields.
@@ -2580,7 +2610,7 @@ fn cmd_verify(opts: VerifyOpts) -> Result<()> {
         }
     }
 
-    std::process::exit(exit_code);
+    exit_with_version_nudge(exit_code);
 }
 
 /// Run `verify` against `opts`, writing the report into `writer`. Returns the
@@ -3286,7 +3316,7 @@ fn cmd_audit_verify(repo: &Path) -> ! {
             Exit::Preflight
         }
     };
-    std::process::exit(code.as_i32());
+    exit_with_version_nudge(code.as_i32());
 }
 
 /// `taudit audit verify-receipt <path>`: offline-verify a signed
@@ -3307,7 +3337,7 @@ fn cmd_verify_receipt(path: &Path) -> ! {
                 "DECISION: preflight (could not read receipt at {}: {err})",
                 path.display()
             );
-            std::process::exit(Exit::Preflight.as_i32());
+            exit_with_version_nudge(Exit::Preflight.as_i32());
         }
     };
     let receipt = match Receipt::from_json(&json) {
@@ -3317,7 +3347,7 @@ fn cmd_verify_receipt(path: &Path) -> ! {
                 "DECISION: preflight (could not parse receipt at {}: {err})",
                 path.display()
             );
-            std::process::exit(Exit::Preflight.as_i32());
+            exit_with_version_nudge(Exit::Preflight.as_i32());
         }
     };
 
@@ -3345,7 +3375,7 @@ fn cmd_verify_receipt(path: &Path) -> ! {
             Exit::Preflight
         }
     };
-    std::process::exit(code.as_i32());
+    exit_with_version_nudge(code.as_i32());
 }
 
 /// Emit the doctrine audit + receipt substrate for a completed operation
@@ -4254,7 +4284,7 @@ fn cmd_map(
         if !job_matched_any {
             eprintln!("error: no job named '{name}' found in any scanned file");
             eprintln!("{JOB_NAME_NOT_FOUND}");
-            std::process::exit(2);
+            exit_with_version_nudge(2);
         }
     }
 
@@ -4365,7 +4395,7 @@ fn cmd_graph(
                 eprintln!("error: {err}");
             }
             eprintln!("{INVARIANTS_DIR}");
-            std::process::exit(2);
+            exit_with_version_nudge(2);
         }
     }
 
@@ -4537,7 +4567,7 @@ fn cmd_graph(
         if !job_matched_any {
             eprintln!("error: no job named '{name}' found in any scanned file");
             eprintln!("{JOB_NAME_NOT_FOUND}");
-            std::process::exit(2);
+            exit_with_version_nudge(2);
         }
     }
 
@@ -4695,7 +4725,7 @@ fn cmd_explain(rule: Option<String>) -> Result<()> {
                 for r in rules {
                     eprintln!("  {}", r.id);
                 }
-                std::process::exit(2);
+                exit_with_version_nudge(2);
             };
 
             let sev = severity_label_for_rule(r.security_severity);
