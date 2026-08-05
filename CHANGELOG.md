@@ -2,7 +2,9 @@
 
 All notable changes to this project will be documented in this file.
 
-## Unreleased
+## v1.3.2 — 2026-08-05
+
+CLI-only patch; implementation crates remain at 3.1.0.
 
 ### Fixed
 

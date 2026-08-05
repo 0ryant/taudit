@@ -6,7 +6,7 @@ description = "CI/CD authority graph analyzer: how credentials, tokens, and arti
 # (taudit-core et al. at 3.x) — do NOT "align" this to the workspace libs:
 # `taudit update` compares this against the published crates.io 1.x line,
 # and a 3.x stamp here makes every future 1.x release look older.
-version = "1.3.1"
+version = "1.3.2"
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
