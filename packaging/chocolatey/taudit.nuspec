@@ -1,0 +1,31 @@
+<?xml version="1.0" encoding="utf-8"?>
+<package xmlns="http://schemas.microsoft.com/packaging/2015/06/nuspec.xsd">
+  <metadata>
+    <id>taudit</id>
+    <version>1.3.3</version>
+    <packageSourceUrl>https://github.com/0ryant/taudit/tree/main/packaging/chocolatey</packageSourceUrl>
+    <owners>0ryant</owners>
+    <title>taudit (CI/CD pipeline authority auditor)</title>
+    <authors>Ryan Tilcock</authors>
+    <projectUrl>https://crates.io/crates/taudit</projectUrl>
+    <iconUrl>https://cdn.jsdelivr.net/gh/0ryant/taudit@878daa2fbcf428e3750b4ffeec2216a0ba694975/integrations/vscode-extension/assets/icon.png</iconUrl>
+    <licenseUrl>https://github.com/0ryant/taudit/blob/main/LICENSE</licenseUrl>
+    <requireLicenseAcceptance>false</requireLicenseAcceptance>
+    <projectSourceUrl>https://github.com/0ryant/taudit</projectSourceUrl>
+    <docsUrl>https://github.com/0ryant/taudit/blob/main/USERGUIDE.md</docsUrl>
+    <bugTrackerUrl>https://github.com/0ryant/taudit/issues</bugTrackerUrl>
+    <tags>taudit ci-cd pipeline-security github-actions azure-pipelines gitlab-ci bitbucket-pipelines sarif devsecops supply-chain cli</tags>
+    <summary>Audit CI/CD pipeline authority: GitHub Actions, Azure Pipelines, GitLab CI and Bitbucket Pipelines</summary>
+    <description><![CDATA[
+taudit builds an authority graph from your CI/CD pipeline YAML — who can run what, with which secrets and tokens, from which trigger — and reports where untrusted input, over-scoped identities, or self-mutating steps give a pull request more power than it should have. It parses GitHub Actions, Azure Pipelines, GitLab CI and Bitbucket Pipelines, gates merges with a policy file (`taudit verify`), and emits terminal, JSON, SARIF and CloudEvents output with stable finding fingerprints for baselines and suppressions.
+
+This package installs the `taudit` CLI (x86_64 Windows), downloaded from the GitHub Release for tag `v1.3.3` and verified by SHA-256 at install time. Nothing is bundled in the package itself.
+
+The binary is not code-signed. Release notes and checksums: https://github.com/0ryant/taudit/releases/tag/v1.3.3 — user guide: https://github.com/0ryant/taudit/blob/main/USERGUIDE.md
+]]></description>
+    <releaseNotes>https://github.com/0ryant/taudit/releases/tag/v1.3.3</releaseNotes>
+  </metadata>
+  <files>
+    <file src="tools\**" target="tools" />
+  </files>
+</package>

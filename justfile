@@ -17,6 +17,19 @@ release-standardize tag:
 release-backfill tag:
     python scripts/release_harness.py ensure-github-release --tag {{tag}} --source-ref {{tag}} --skip-publish-metadata
 
+# CI-outage fallback: build + archive one target exactly the way release.yml
+# names it (dist/taudit-<cpu>-<os>.<ext> + .sha256). See docs/release-operations.md.
+release-asset target:
+    python scripts/release_assets.py package --target {{target}}
+
+# Archive an already-built binary (e.g. from the Docker Linux build) under the CI asset name.
+release-asset-from target binary:
+    python scripts/release_assets.py package --target {{target}} --binary {{binary}}
+
+# Stamp the Windows asset checksum + version into packaging/chocolatey and `choco pack`.
+choco-sync:
+    python scripts/release_assets.py chocolatey-sync
+
 versions:
     @echo "crate versions:"
     @find crates -name Cargo.toml -maxdepth 2 | sort | while read -r manifest; do name=$(grep '^name = ' "$manifest" | head -1 | cut -d '"' -f2); version=$(grep '^version = ' "$manifest" | head -1 | cut -d '"' -f2); printf "  %-28s %s\n" "$name" "$version"; done

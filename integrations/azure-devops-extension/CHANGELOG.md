@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.1.10
+
+- Moved the default pinned `version` from taudit 1.1.4 to 1.3.3 so a task
+  without an explicit `version` input downloads the current stable CLI
+  (BLAKE3 fingerprints, signed receipts, platform-native remediations).
+  Pin `version` explicitly if you need to stay on 1.1.4 while re-baselining.
+- Bumped the task contract version to 1.0.6.
+
 ## 0.1.9
 
 - Refreshed the Azure DevOps README and Marketplace overview to match the
