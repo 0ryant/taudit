@@ -82,6 +82,16 @@ task default pin, Homebrew, Chocolatey) stranded on 1.1.x. The drill:
    - macOS x86_64 / aarch64: on a Mac, `just release-asset <triple>` for each
      (the packaging script refuses a binary whose `--version` disagrees with
      the manifest, so a stale `target/` cannot ship).
+   - **No Mac / no arm64 host:** run `azure-pipelines.release-assets.yml` in
+     the Azure DevOps project (org `0ryant`). It builds macOS x86_64 + aarch64
+     and Linux aarch64 from the *published* crates.io tarball for the version
+     you pass, so hosted agents never touch the private git dependencies, and
+     publishes `release-assets-macos` / `release-assets-linux-aarch64`
+     pipeline artifacts with the CI archive names. Requires the crate to be on
+     crates.io first (channel 2). Queue it with
+     `az pipelines run --project taudit --name taudit-release-assets --parameters version=X.Y.Z`
+     (PAT from the vault via `tsafe exec --keys ado/PAT --env AZURE_DEVOPS_EXT_PAT=ado/PAT`),
+     then `az pipelines runs artifact download` and upload with `gh`.
 3. Upload: `gh release upload vX.Y.Z dist/taudit-*.tar.gz dist/taudit-*.zip dist/*.sha256 --clobber`.
 4. Record in the release notes which assets were built locally. Locally built
    assets have **no** SLSA provenance attestation and **no** SBOM; do not claim

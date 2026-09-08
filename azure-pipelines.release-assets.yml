@@ -1,0 +1,163 @@
+# Azure DevOps fallback for release assets that cannot be built on the
+# maintainer's Windows host: macOS x86_64 / aarch64 and Linux aarch64.
+#
+# Builds from the *published* crates.io source tarball for the requested
+# version, not from the git tree. The published crate's Cargo.lock is
+# registry-only, so hosted agents need no access to the private
+# axiom-doctrine-rs git dependency. Archive names and .sha256 sidecar format
+# match .github/workflows/release.yml exactly; the maintainer downloads the
+# `release-assets` pipeline artifact and runs
+# `gh release upload v<version> ... --clobber`.
+#
+# Assets built here carry no GitHub provenance attestation and no SBOM; say so
+# in the release notes (docs/release-operations.md, "CI outage: local asset drill").
+#
+# Setup (org 0ryant, project taudit): Pipelines → New → GitHub YAML →
+# 0ryant/taudit → path /azure-pipelines.release-assets.yml. Run manually:
+#   az pipelines run --name taudit-release-assets --parameters version=1.3.3
+---
+trigger: none
+pr: none
+
+parameters:
+  - name: version
+    displayName: taudit version to package (must exist on crates.io)
+    type: string
+
+variables:
+  RUST_TOOLCHAIN: "1.88"
+  CARGO_TERM_COLOR: always
+  # The free-form parameter is never template-expanded inside a script; each
+  # job receives it as an environment variable and validates it as X.Y.Z first.
+  TAUDIT_VERSION: ${{ parameters.version }}
+
+stages:
+  - stage: build
+    displayName: build release assets (${{ parameters.version }})
+    jobs:
+      - job: macos
+        displayName: macOS x86_64 + aarch64
+        pool:
+          vmImage: macos-latest
+        steps:
+          - checkout: none
+          - bash: |
+              set -euo pipefail
+              case "$TAUDIT_VERSION" in
+                [0-9]*.[0-9]*.[0-9]*) ;;
+                *) echo "##vso[task.logissue type=error]version must be X.Y.Z, got '$TAUDIT_VERSION'"; exit 1 ;;
+              esac
+              printf '%s' "$TAUDIT_VERSION" | grep -Eq '^[0-9]+\.[0-9]+\.[0-9]+$'
+            displayName: Validate version parameter
+            env:
+              TAUDIT_VERSION: $(TAUDIT_VERSION)
+          - bash: |
+              set -euo pipefail
+              curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --default-toolchain "$(RUST_TOOLCHAIN)" --profile minimal
+              echo "##vso[task.prependpath]$HOME/.cargo/bin"
+              . "$HOME/.cargo/env"
+              rustup target add x86_64-apple-darwin aarch64-apple-darwin
+              rustc -Vv
+            displayName: Install Rust
+          - bash: |
+              set -euo pipefail
+              curl -sSfL -o taudit.crate "https://static.crates.io/crates/taudit/taudit-${TAUDIT_VERSION}.crate"
+              tar xzf taudit.crate
+              test -d "taudit-${TAUDIT_VERSION}"
+            displayName: Fetch published crate source
+            env:
+              TAUDIT_VERSION: $(TAUDIT_VERSION)
+          - bash: |
+              set -euo pipefail
+              cd "taudit-${TAUDIT_VERSION}"
+              for target in x86_64-apple-darwin aarch64-apple-darwin; do
+                cargo build --release --locked --target "$target"
+              done
+            displayName: cargo build (both Apple targets)
+            env:
+              TAUDIT_VERSION: $(TAUDIT_VERSION)
+          - bash: |
+              set -euo pipefail
+              mkdir -p "$(Build.ArtifactStagingDirectory)"
+              cd "taudit-${TAUDIT_VERSION}"
+              native="$(uname -m)"
+              for pair in "x86_64-apple-darwin:taudit-x86_64-macos.tar.gz" "aarch64-apple-darwin:taudit-aarch64-macos.tar.gz"; do
+                target="${pair%%:*}"; archive="${pair##*:}"
+                bin="target/$target/release/taudit"
+                # Native (or Rosetta-runnable x86_64 on arm64) binaries must report the requested version.
+                if [ "$native" = "arm64" ] || [ "$target" = "x86_64-apple-darwin" ]; then
+                  reported="$("$bin" --version)"
+                  case "$reported" in *"$TAUDIT_VERSION"*) ;; *) echo "##vso[task.logissue type=error]$bin reports '$reported', expected $TAUDIT_VERSION"; exit 1;; esac
+                fi
+                rm -rf dist && mkdir dist && cp "$bin" dist/taudit
+                tar czf "$archive" -C dist taudit
+                shasum -a 256 "$archive" > "$archive.sha256"
+                cat "$archive.sha256"
+                mv "$archive" "$archive.sha256" "$(Build.ArtifactStagingDirectory)/"
+              done
+            displayName: Package (release.yml naming)
+            env:
+              TAUDIT_VERSION: $(TAUDIT_VERSION)
+          - task: PublishPipelineArtifact@1
+            inputs:
+              targetPath: $(Build.ArtifactStagingDirectory)
+              artifact: release-assets-macos
+            displayName: Publish macOS assets
+
+      - job: linux_aarch64
+        displayName: Linux aarch64 (cross)
+        pool:
+          vmImage: ubuntu-latest
+        steps:
+          - checkout: none
+          - bash: |
+              set -euo pipefail
+              case "$TAUDIT_VERSION" in
+                [0-9]*.[0-9]*.[0-9]*) ;;
+                *) echo "##vso[task.logissue type=error]version must be X.Y.Z, got '$TAUDIT_VERSION'"; exit 1 ;;
+              esac
+              printf '%s' "$TAUDIT_VERSION" | grep -Eq '^[0-9]+\.[0-9]+\.[0-9]+$'
+            displayName: Validate version parameter
+            env:
+              TAUDIT_VERSION: $(TAUDIT_VERSION)
+          - bash: |
+              set -euo pipefail
+              curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --default-toolchain "$(RUST_TOOLCHAIN)" --profile minimal
+              echo "##vso[task.prependpath]$HOME/.cargo/bin"
+              . "$HOME/.cargo/env"
+              cargo install cross --locked
+            displayName: Install Rust + cross
+          - bash: |
+              set -euo pipefail
+              curl -sSfL -o taudit.crate "https://static.crates.io/crates/taudit/taudit-${TAUDIT_VERSION}.crate"
+              tar xzf taudit.crate
+              test -d "taudit-${TAUDIT_VERSION}"
+            displayName: Fetch published crate source
+            env:
+              TAUDIT_VERSION: $(TAUDIT_VERSION)
+          - bash: |
+              set -euo pipefail
+              cd "taudit-${TAUDIT_VERSION}"
+              cross build --release --locked --target aarch64-unknown-linux-gnu
+            displayName: cross build
+            env:
+              TAUDIT_VERSION: $(TAUDIT_VERSION)
+          - bash: |
+              set -euo pipefail
+              mkdir -p "$(Build.ArtifactStagingDirectory)"
+              cd "taudit-${TAUDIT_VERSION}"
+              archive=taudit-aarch64-linux.tar.gz
+              rm -rf dist && mkdir dist && cp target/aarch64-unknown-linux-gnu/release/taudit dist/taudit
+              file dist/taudit | grep -q 'ARM aarch64' || { echo "##vso[task.logissue type=error]not an aarch64 binary"; exit 1; }
+              tar czf "$archive" -C dist taudit
+              sha256sum "$archive" > "$archive.sha256"
+              cat "$archive.sha256"
+              mv "$archive" "$archive.sha256" "$(Build.ArtifactStagingDirectory)/"
+            displayName: Package (release.yml naming)
+            env:
+              TAUDIT_VERSION: $(TAUDIT_VERSION)
+          - task: PublishPipelineArtifact@1
+            inputs:
+              targetPath: $(Build.ArtifactStagingDirectory)
+              artifact: release-assets-linux-aarch64
+            displayName: Publish Linux aarch64 asset
