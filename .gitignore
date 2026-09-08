@@ -117,3 +117,11 @@ vendor/
 
 # Terraform local plugin dir (lock file under infra/ is committed)
 **/.terraform/
+
+# Python bytecode / pytest caches from scripts/, tests/, examples/ (not source).
+__pycache__/
+*.pyc
+.pytest_cache/
+
+# Locally built release assets (scripts/release_assets.py) and packed channel artifacts.
+dist/

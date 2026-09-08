@@ -19,7 +19,7 @@ const ENUMS = {
 function normalizeInputs(raw, env) {
   const normalized = {
     mode: raw.mode || "verify",
-    version: raw.version || "1.1.4",
+    version: raw.version || "1.3.3",
     paths: raw.paths || "azure-pipelines.yml",
     platform: raw.platform || "auto",
     suppressionMode: raw.suppressionMode || "downgrade",

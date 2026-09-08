@@ -5,7 +5,7 @@
 
 rustPlatform.buildRustPackage rec {
   pname = "taudit";
-  version = "0.1.1";
+  version = "1.3.3";
 
   src = fetchFromGitHub {
     owner = "0ryant";

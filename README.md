@@ -145,8 +145,10 @@ The graph is the artifact. Everything else is a view onto it.
 cargo install taudit
 ```
 
+On Windows, a [Chocolatey](https://community.chocolatey.org/packages/taudit) package (`choco install taudit`) is submitted per release; it is installable only once that version clears community moderation, so check the package page for the current approved version. The package downloads the release archive below and verifies its SHA-256 at install time.
+
 Or download a pre-built binary from [GitHub Releases](https://github.com/0ryant/taudit/releases).
-Every release archive and SBOM is attested in CI (**GitHub Artifact Attestations** / [`actions/attest-build-provenance`](https://github.com/actions/attest-build-provenance)). Verify the **local file** after download (GitHub CLI 2.49+; `gh auth login` if needed):
+Release archives and SBOMs built by the tag workflow are attested in CI (**GitHub Artifact Attestations** / [`actions/attest-build-provenance`](https://github.com/actions/attest-build-provenance)); assets uploaded by hand during a CI outage are called out as unattested in that release's notes. Verify the **local file** after download (GitHub CLI 2.49+; `gh auth login` if needed):
 
 ```bash
 curl -fsSL -O "https://github.com/0ryant/taudit/releases/download/<tag>/taudit-x86_64-linux.tar.gz"

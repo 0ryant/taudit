@@ -2,6 +2,52 @@
 
 All notable changes to this project will be documented in this file.
 
+## v1.3.3 — 2026-09-08
+
+CLI-only patch; implementation crates remain at 3.1.0. No detection, output
+contract, fingerprint, or CLI behaviour changes. This release exists to bring
+the distribution channels back in line with the crates.io line: v1.3.1 and
+v1.3.2 were published to crates.io but never received GitHub release assets
+because GitHub Actions was unavailable for this repository, so every channel
+that downloads a release asset (Azure DevOps task, Homebrew, Chocolatey) was
+still pointing at 1.1.x.
+
+### Added
+
+- **Chocolatey package source** under `packaging/chocolatey/` (community
+  package id `taudit`). The install script downloads
+  `taudit-x86_64-windows.zip` from the GitHub release for the matching tag
+  and verifies its SHA-256; nothing is bundled in the package. The package is
+  not installable from the community repository until Chocolatey moderation
+  approves it — do not document `choco install taudit` until then.
+- **`scripts/release_assets.py`** — a local mirror of the release workflow's
+  packaging steps (identical archive names and `.sha256` sidecar format) for
+  building release assets when GitHub Actions is unavailable, plus a
+  `chocolatey-sync` step that stamps the version and checksum into the
+  Chocolatey install script. `just release-asset <target>` and
+  `just choco-sync <version>` wrap it. Locally built assets carry no
+  SLSA/provenance attestation or SBOM; the release notes must say so.
+
+### Changed
+
+- **Azure DevOps task** (`algol.taudit-azure-pipelines` 0.1.10, task contract
+  1.0.6): the default pinned `version` moves from 1.1.4 to 1.3.3. Pin
+  `version` explicitly to stay on 1.1.4 while re-baselining for the BLAKE3
+  fingerprint change introduced in 1.3.1.
+- Homebrew formula and Nix derivation versions bumped 0.1.1 → 1.3.3 (hashes
+  remain placeholders until the tap/derivation is actually published).
+- `docs/release-operations.md` now documents the per-channel cut order
+  (crates.io, GitHub assets, Chocolatey, VS Marketplace ×2) and the CI-outage
+  local drill required by `RELEASE_GATES.md` §2.2.
+
+### Housekeeping
+
+- `.gitignore` now covers Python bytecode and pytest caches produced by
+  `scripts/`, `tests/`, and `examples/`.
+- VS Code extension (`algol.taudit-vscode`) stays at 0.1.6: its source has not
+  changed since the 0.1.6 package was built, so no republish is planned for
+  this cut.
+
 ## v1.3.2 — 2026-08-05
 
 CLI-only patch; implementation crates remain at 3.1.0.
