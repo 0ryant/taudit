@@ -145,6 +145,17 @@ The graph is the artifact. Everything else is a view onto it.
 cargo install taudit
 ```
 
+On Debian and Ubuntu (amd64), install from the taudit apt repository:
+
+```bash
+sudo install -m0755 -d /etc/apt/keyrings
+curl -fsSL https://0ryant.github.io/taudit/apt/taudit-archive-keyring.gpg | sudo tee /etc/apt/keyrings/taudit.gpg >/dev/null
+echo "deb [signed-by=/etc/apt/keyrings/taudit.gpg] https://0ryant.github.io/taudit/apt stable main" | sudo tee /etc/apt/sources.list.d/taudit.list >/dev/null
+sudo apt update && sudo apt install taudit
+```
+
+The repository's `Release` file is signed with a free, self-generated OpenPGP key, because apt refuses an unsigned repository. That is repository-integrity signing, not code signing: the `taudit` binary is unsigned on every platform. A `.deb` is also attached to each release if you prefer `dpkg -i`.
+
 On Windows, a [Chocolatey](https://community.chocolatey.org/packages/taudit) package (`choco install taudit`) is submitted per release; it is installable only once that version clears community moderation, so check the package page for the current approved version. The package downloads the release archive below and verifies its SHA-256 at install time.
 
 Or download a pre-built binary from [GitHub Releases](https://github.com/0ryant/taudit/releases).

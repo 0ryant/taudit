@@ -9,6 +9,9 @@ It exists so packaging metadata can be reviewed and versioned like any other rel
 - `homebrew/` — Homebrew formula for a third-party tap
 - `nix/` — Nix derivation
 - `chocolatey/` — Chocolatey community package source (`taudit.nuspec` + `tools/chocolateyinstall.ps1`)
+- `apt/` — APT repository build/sign script and runbook (`build-apt-repo.sh`, `README.md`)
+- `nfpm/` — nFPM template the `.deb` / `.rpm` are rendered from
+- `RELEASE-CHANNELS.md` — the model every channel here rests on
 
 ## Homebrew
 
@@ -29,6 +32,34 @@ Release maintenance:
 1. bump `version`
 2. update the source hash
 3. update the Cargo dependency hash
+
+## apt (Debian/Ubuntu)
+
+`apt/` holds the repository build script and the full runbook; `nfpm/taudit.yaml`
+is the package template. The `.deb` is built by nFPM from the **already-built**
+release binary, so it ships the same bytes as `taudit-x86_64-linux.tar.gz`.
+
+The built, signed repo is published to this repository's `gh-pages` branch and
+served by GitHub Pages at `https://0ryant.github.io/taudit/apt`. taudit's source
+repo is public, so unlike tsafe there is no separate `-releases` assets repo.
+
+The repo's `Release` file is signed with a free, self-generated OpenPGP key held
+in the vault under `apt/taudit/` — apt refuses an unsigned repo. That is
+repo-integrity signing; the binary inside the `.deb` is unsigned like every other
+channel. Details and the two Windows-specific gpg gotchas: [`apt/README.md`](apt/README.md).
+
+```bash
+just deb && just apt-index      # then sign + install-test per apt/README.md
+```
+
+## Homebrew
+
+`just homebrew-sync` sets the formula's version and all four platform `sha256`
+values from the release sidecars. It fails if any of the four archives is
+missing rather than leaving a placeholder, so the formula is either fully
+truthful for a version or the command errors.
+
+Copy the filled formula to the `homebrew-taudit` tap as `Formula/taudit.rb`.
 
 ## Chocolatey
 

@@ -30,6 +30,25 @@ release-asset-from target binary:
 choco-sync:
     python scripts/release_assets.py chocolatey-sync
 
+# Roll the per-asset .sha256 sidecars up into one SHA256SUMS.
+sha256sums:
+    python scripts/release_assets.py sha256sums
+
+# Fill the Homebrew formula's version + four real sha256 values from the sidecars.
+homebrew-sync:
+    python scripts/release_assets.py homebrew-sync
+
+# Build the .deb from the built Linux release archive (nFPM via Docker).
+deb:
+    python scripts/release_assets.py deb
+
+# Build the apt index from dist/packages (needs a Debian userspace; uses Docker).
+# Signing is a separate, vault-touching step — see packaging/apt/README.md.
+apt-index:
+    MSYS_NO_PATHCONV=1 docker run --rm -v "$PWD:/work" -w /work debian:bookworm-slim bash -c \
+      'apt-get update -qq && apt-get install -y -qq dpkg-dev apt-utils && \
+       bash packaging/apt/build-apt-repo.sh --debs dist/packages --out dist/apt-repo'
+
 versions:
     @echo "crate versions:"
     @find crates -name Cargo.toml -maxdepth 2 | sort | while read -r manifest; do name=$(grep '^name = ' "$manifest" | head -1 | cut -d '"' -f2); version=$(grep '^version = ' "$manifest" | head -1 | cut -d '"' -f2); printf "  %-28s %s\n" "$name" "$version"; done

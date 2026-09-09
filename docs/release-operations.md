@@ -43,6 +43,8 @@ the later ones resolve assets or versions published by the earlier ones.
 | 2 | crates.io (`taudit` + implementation crates) | crate manifests | `release.yml` publish job, or manual `cargo publish` in the workflow's order | tag |
 | 3 | GitHub release assets (5 archives + `.sha256`) | `release.yml` build matrix, or `scripts/release_assets.py` | `release.yml`, or `gh release upload` | release object |
 | 4 | Chocolatey (`taudit`) | `packaging/chocolatey/` | `just choco-sync`, then `choco push` (see `packaging/README.md`) | Windows asset (3) |
+| 4b | apt (`https://0ryant.github.io/taudit/apt`) | `packaging/apt/`, `packaging/nfpm/` | `just deb`, `just apt-index`, sign from the vault, publish to `gh-pages` (see `packaging/apt/README.md`) | Linux x86_64 asset (3) |
+| 4c | Homebrew tap `0ryant/homebrew-taudit` | `packaging/homebrew/taudit.rb` | `just homebrew-sync`, push the formula to the tap | all four tarballs (3) |
 | 5a | VS Marketplace — Azure DevOps task (`algol.taudit-azure-pipelines`) | `integrations/azure-devops-extension/` | `npm run preflight`, then `tfx extension publish` | assets for every platform the task's default `version` pins (3) |
 | 5b | VS Marketplace — VS Code extension (`algol.taudit-vscode`) | `integrations/vscode-extension/` | `azure-pipelines.vscode-extension.yml` publish stage, or `vsce publish` | nothing (it runs a locally installed `taudit`); republish only when the extension source changed |
 

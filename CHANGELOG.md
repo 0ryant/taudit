@@ -2,6 +2,45 @@
 
 All notable changes to this project will be documented in this file.
 
+## Unreleased
+
+Packaging only; no CLI or detection changes. Adds the apt release channel and
+brings the remaining manifests up to the state the tsafe portfolio playbook
+describes.
+
+### Added
+
+- **apt channel** for Debian/Ubuntu amd64, served from this repository's
+  `gh-pages` branch at `https://0ryant.github.io/taudit/apt`. taudit's source
+  repo is public, so unlike tsafe there is no separate `-releases` assets repo;
+  the apt tree lives on a branch of this repo and the release archives stay on
+  this repo's GitHub Releases. `packaging/apt/` holds the repository build and
+  sign script plus the runbook, `packaging/nfpm/taudit.yaml` the package
+  template. The repository `Release` file is signed with a free, self-generated
+  OpenPGP key held in the vault under `apt/taudit/` (its own key, not tsafe's,
+  so each tool is its own trust anchor). That is repo-integrity signing, not
+  code signing: the binary in the `.deb` is unsigned like every other channel.
+- **`.deb` and `SHA256SUMS`** attached to the v1.3.3 GitHub release. The `.deb`
+  is packaged by nFPM from the already-built release binary, so it ships the
+  same bytes as `taudit-x86_64-linux.tar.gz`, plus the man page and licence.
+- **`packaging/RELEASE-CHANNELS.md`** — the taudit adaptation of the portfolio
+  release-channels playbook: what each channel verifies, the signing posture,
+  and the ordering constraint between them.
+- New `release_assets.py` subcommands and `just` recipes: `sha256sums`
+  (roll the per-asset sidecars into one `SHA256SUMS`), `homebrew-sync`, `deb`,
+  and `apt-index`.
+
+### Fixed
+
+- **The Homebrew formula shipped four `YOUR_SHA256_HERE` placeholders and the
+  wrong licence.** It now carries the real checksums for all four v1.3.3
+  tarballs and states `AGPL-3.0-or-later` instead of `MIT OR Apache-2.0`.
+  `homebrew-sync` fails if any archive is missing rather than writing a
+  placeholder, so the formula is either fully truthful or the command errors.
+- The man page's `.TH` line still advertised `taudit 1.1.0-beta.2`; it now
+  matches the shipped version. It is installed by the `.deb`, so the stale
+  string would have been user-visible.
+
 ## v1.3.3 — 2026-09-08
 
 CLI-only patch; implementation crates remain at 3.1.0. No detection, output

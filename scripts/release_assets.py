@@ -43,6 +43,7 @@ TARGETS: dict[str, tuple[str, str]] = {
     "x86_64-pc-windows-msvc": ("taudit-x86_64-windows.zip", "windows"),
 }
 
+HOMEBREW_FORMULA = REPO_ROOT / "packaging" / "homebrew" / "taudit.rb"
 CHOCO_DIR = REPO_ROOT / "packaging" / "chocolatey"
 CHOCO_NUSPEC = CHOCO_DIR / "taudit.nuspec"
 CHOCO_INSTALL = CHOCO_DIR / "tools" / "chocolateyinstall.ps1"
@@ -147,6 +148,152 @@ def cmd_package(args: argparse.Namespace) -> int:
     return 0
 
 
+def load_sidecars(dist: Path) -> dict[str, str]:
+    """Map archive name -> sha256, read from the `<archive>.sha256` sidecars."""
+    sums: dict[str, str] = {}
+    for sidecar in sorted(dist.glob("*.sha256")):
+        name = sidecar.name[: -len(".sha256")]
+        sums[name] = read_sidecar(sidecar, name)
+    return sums
+
+
+def cmd_sha256sums(args: argparse.Namespace) -> int:
+    """Aggregate the per-asset sidecars into one `SHA256SUMS`.
+
+    The sidecars stay the source of truth (release.yml writes them and the Azure
+    DevOps task installer fetches them per asset); this is the roll-up humans and
+    the other channels read.
+    """
+    dist = REPO_ROOT / args.dist
+    sums = load_sidecars(dist)
+    if not sums:
+        raise ReleaseAssetError(f"no *.sha256 sidecars in {dist}")
+    out = dist / "SHA256SUMS"
+    with out.open("w", encoding="ascii", newline="\n") as handle:
+        for name in sorted(sums):
+            handle.write(f"{sums[name]}  {name}\n")
+    print(f"wrote {out.relative_to(REPO_ROOT)} ({len(sums)} entries)")
+    return 0
+
+
+# Homebrew formula url fragment -> the archive it points at.
+FORMULA_ARCHIVES = [
+    "taudit-aarch64-macos.tar.gz",
+    "taudit-x86_64-macos.tar.gz",
+    "taudit-aarch64-linux.tar.gz",
+    "taudit-x86_64-linux.tar.gz",
+]
+
+
+def set_formula(formula: str, version: str, sums: dict[str, str]) -> str:
+    """Set `version` and each platform's `sha256` in a Homebrew formula string.
+
+    Each `url` line names its archive; the `sha256` on the following line is
+    replaced with that archive's real checksum. Raises if any of the four
+    archives has no checksum, so a partial release cannot half-fill the formula.
+    """
+    missing = [a for a in FORMULA_ARCHIVES if a not in sums]
+    if missing:
+        raise ReleaseAssetError(f"no checksum for {', '.join(missing)} — build/download every archive first")
+    out = re.sub(r'(\n\s*version\s+)"[^"]*"', rf'\g<1>"{version}"', formula, count=1)
+    lines = out.splitlines(keepends=True)
+    filled = 0
+    for i, line in enumerate(lines):
+        if "url " not in line:
+            continue
+        archive = next((a for a in FORMULA_ARCHIVES if a in line), None)
+        if archive is None or i + 1 >= len(lines):
+            continue
+        replaced, count = re.subn(r'(sha256\s+)"[^"]*"', rf'\g<1>"{sums[archive]}"', lines[i + 1], count=1)
+        if count:
+            lines[i + 1] = replaced
+            filled += 1
+    if filled != len(FORMULA_ARCHIVES):
+        raise ReleaseAssetError(f"formula: filled {filled} of {len(FORMULA_ARCHIVES)} sha256 lines")
+    return "".join(lines)
+
+
+def cmd_homebrew_sync(args: argparse.Namespace) -> int:
+    version = args.version or cli_version()
+    sums = load_sidecars(REPO_ROOT / args.dist)
+    formula = HOMEBREW_FORMULA.read_text(encoding="utf-8")
+    updated = set_formula(formula, version, sums)
+    with HOMEBREW_FORMULA.open("w", encoding="utf-8", newline="\n") as handle:
+        handle.write(updated)
+    print(f"homebrew: {HOMEBREW_FORMULA.name} set to {version} with {len(FORMULA_ARCHIVES)} real checksums")
+    return 0
+
+
+def cmd_deb(args: argparse.Namespace) -> int:
+    """Build a Debian package from an already-built Linux binary, via nFPM.
+
+    nFPM packages; it does not compile. The binary comes from `--binary`, or from
+    the packaged `taudit-<cpu>-linux.tar.gz` in dist/, so the .deb ships exactly
+    the bytes the release archive ships. nFPM runs in Docker unless `nfpm` is on
+    PATH, which keeps the Windows host free of Go tooling.
+    """
+    version = args.version or cli_version()
+    dist = REPO_ROOT / args.dist
+    staging = dist / "deb-build"
+    shutil.rmtree(staging, ignore_errors=True)
+    staging.mkdir(parents=True)
+
+    if args.binary:
+        shutil.copy2(args.binary, staging / "taudit")
+    else:
+        archive = dist / f"taudit-{args.cpu}-linux.tar.gz"
+        if not archive.is_file():
+            raise ReleaseAssetError(f"{archive} not found — run `package --target ...-linux-gnu` or pass --binary")
+        with tarfile.open(archive, "r:gz") as tf:
+            member = tf.getmember("taudit")
+            extracted = tf.extractfile(member)
+            if extracted is None:
+                raise ReleaseAssetError(f"{archive} has no readable `taudit` member")
+            (staging / "taudit").write_bytes(extracted.read())
+    (staging / "taudit").chmod(0o755)
+    shutil.copy2(REPO_ROOT / "man" / "taudit.1", staging / "taudit.1")
+    shutil.copy2(REPO_ROOT / "LICENSE", staging / "copyright")
+
+    arch = {"x86_64": "amd64", "aarch64": "arm64"}[args.cpu]
+    config = (REPO_ROOT / "packaging" / "nfpm" / "taudit.yaml").read_text(encoding="utf-8")
+    for token, value in {
+        "{{VERSION}}": version,
+        "{{ARCH}}": arch,
+        "{{BINARY}}": "taudit",
+        "{{MANPAGE}}": "taudit.1",
+        "{{LICENSE}}": "copyright",
+    }.items():
+        if token not in config:
+            raise ReleaseAssetError(f"packaging/nfpm/taudit.yaml lost its {token} placeholder")
+        config = config.replace(token, value)
+    with (staging / "nfpm.yaml").open("w", encoding="utf-8", newline="\n") as handle:
+        handle.write(config)
+
+    packages = dist / "packages"
+    packages.mkdir(exist_ok=True)
+    if shutil.which("nfpm"):
+        cmd = ["nfpm", "package", "--config", "nfpm.yaml", "--packager", args.packager, "--target", str(packages)]
+        subprocess.run(cmd, cwd=staging, check=True)
+    else:
+        subprocess.run(
+            [
+                "docker", "run", "--rm",
+                "-v", f"{staging}:/work",
+                "-v", f"{packages}:/out",
+                "-w", "/work",
+                args.nfpm_image,
+                "package", "--config", "nfpm.yaml", "--packager", args.packager, "--target", "/out",
+            ],
+            check=True,
+        )
+    built = sorted(packages.glob(f"*{version}*"))
+    for path in built:
+        print(f"packaged {path.relative_to(REPO_ROOT)}")
+    if not built:
+        raise ReleaseAssetError("nfpm reported success but produced no package")
+    return 0
+
+
 def _stamp(path: Path, replacements: list[tuple[str, str]]) -> None:
     text = path.read_text(encoding="utf-8")
     for pattern, replacement in replacements:
@@ -197,6 +344,21 @@ def main(argv: list[str] | None = None) -> int:
     pkg.add_argument("--binary", help="archive this binary instead of target/<triple>/release/taudit (implies --no-build)")
     pkg.add_argument("--use-cross", action="store_true", help="build with `cross` instead of `cargo` (Linux arm64)")
     pkg.set_defaults(func=cmd_package)
+
+    sums = sub.add_parser("sha256sums", help="roll the per-asset .sha256 sidecars up into one SHA256SUMS")
+    sums.set_defaults(func=cmd_sha256sums)
+
+    brew = sub.add_parser("homebrew-sync", help="set version + the four real sha256 values in the Homebrew formula")
+    brew.add_argument("--version", help="X.Y.Z (default: crates/taudit-cli/Cargo.toml)")
+    brew.set_defaults(func=cmd_homebrew_sync)
+
+    deb = sub.add_parser("deb", help="build a .deb (or .rpm) from a built Linux binary via nFPM")
+    deb.add_argument("--version", help="X.Y.Z (default: crates/taudit-cli/Cargo.toml)")
+    deb.add_argument("--cpu", default="x86_64", choices=["x86_64", "aarch64"])
+    deb.add_argument("--binary", help="binary to package (default: unpack it from the dist/ linux archive)")
+    deb.add_argument("--packager", default="deb", choices=["deb", "rpm"])
+    deb.add_argument("--nfpm-image", default="goreleaser/nfpm:v2.43.1", help="used only when nfpm is not on PATH")
+    deb.set_defaults(func=cmd_deb)
 
     choco = sub.add_parser("chocolatey-sync", help="stamp version + checksum into packaging/chocolatey and `choco pack`")
     choco.add_argument("--version", help="X.Y.Z (default: crates/taudit-cli/Cargo.toml)")

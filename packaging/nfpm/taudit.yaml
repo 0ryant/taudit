@@ -1,0 +1,38 @@
+# nFPM config template for taudit Linux packages (.deb / .rpm).
+# Rendered by `python scripts/release_assets.py deb` — {{PLACEHOLDERS}} are
+# substituted there, and the rendered copy is written to a temp dir, never here.
+#
+# nFPM builds a package from an already-built binary; it does not compile.
+# https://nfpm.goreleaser.com/docs/configuration/
+
+name: taudit
+arch: "{{ARCH}}"
+platform: linux
+version: "{{VERSION}}"
+version_schema: semver
+release: 1
+section: devel
+priority: optional
+maintainer: Ryan Tilcock <rytilcock@gmail.com>
+vendor: Ryan Tilcock
+homepage: https://github.com/0ryant/taudit
+license: AGPL-3.0-or-later
+description: |-
+  CI/CD pipeline authority auditor.
+  Builds an authority graph from GitHub Actions, Azure Pipelines, GitLab CI and
+  Bitbucket Pipelines definitions and reports where untrusted input, over-scoped
+  identities or self-mutating steps grant more power than intended. Emits
+  terminal, JSON, SARIF and CloudEvents output with stable finding fingerprints.
+contents:
+  - src: "{{BINARY}}"
+    dst: /usr/bin/taudit
+    file_info:
+      mode: 0755
+  - src: "{{MANPAGE}}"
+    dst: /usr/share/man/man1/taudit.1
+    file_info:
+      mode: 0644
+  - src: "{{LICENSE}}"
+    dst: /usr/share/doc/taudit/copyright
+    file_info:
+      mode: 0644
