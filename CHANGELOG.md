@@ -4,8 +4,54 @@ All notable changes to this project will be documented in this file.
 
 ## Unreleased
 
-No CLI or detection changes: packaging, dependency security fixes, and the
-local quality gate.
+### Detection delta (read first)
+
+**Finding count moves up slightly, on every platform.** The remote-script rules
+now treat a fetched script as mutable unless its URL pins itself to a commit
+SHA, a `refs/tags/` ref, or a version-bearing path segment. Previously only
+branch-pinned URLs (`raw.githubusercontent.com/<owner>/<repo>/main/x.sh`) were
+flagged, so the far more common shape — a bare vendor install endpoint such as
+`https://sh.rustup.rs`, `https://get.docker.com` or
+`https://install.python-poetry.org` piped into a shell — was missed everywhere.
+
+Three rules change behaviour: `runtime_script_fetched_from_floating_url`,
+`gha_remote_script_in_authority_job` and
+`gha_floating_remote_script_before_publish_sink`. No rule IDs, severities,
+fingerprints, schemas or output shapes change, so no re-baseline is required,
+but pipelines that install toolchains this way will report findings they did not
+report before. taudit's own Azure Pipelines files produce nine such findings that
+were previously invisible.
+
+Measured against a corpus of 1088 public GitHub Actions workflows: 4 files
+contain a curl-or-wget-piped-to-shell pattern, and the new matcher flags all 4
+with no false positives. The previous matcher flagged 1. Total findings across
+the corpus move from 10,415 to 10,418.
+
+Because `runtime_script_fetched_from_floating_url` is not platform-gated and all
+four parsers populate step script bodies, this single matcher change also closes
+the coverage gap on Azure Pipelines, GitLab CI and Bitbucket Pipelines, which
+previously reported nothing for this pattern.
+
+**Credential-bearing git remote URLs are now detected in `$(VAR)` and
+colon-less form.** `url_authority_has_embedded_credential_var` required a `:`
+in the URL userinfo and a SCREAMING_SNAKE variable name, so it saw only
+`https://user:$TOKEN@host`. Azure Pipelines' canonical push URL,
+`https://$(System.AccessToken)@dev.azure.com/…`, has no colon and uses the
+`$(…)` macro syntax, and camelCase names such as `$(GitHubPat)` are the ADO
+convention. All were invisible. The matcher now accepts `$VAR`, `${VAR}`,
+`$(VAR)` and `%VAR%`, any case, dotted names included, and treats the whole
+userinfo as the credential when there is no colon.
+
+Measured across the 4142-file corpus: findings rise from 88 to 103. Azure goes
+from 0 to 3 (all genuine, e.g. `https://$(UserName):$(GitHubPat)@github.com`),
+Bitbucket from 26 to 35 (mostly `${BB_AUTH_STRING}`, Bitbucket's documented
+credential variable), GitLab from 40 to 43, and GitHub Actions is unchanged at
+22, so there is no regression on the platform that already worked.
+
+### Other changes
+
+No CLI changes: packaging, dependency security fixes, and the local quality
+gate.
 
 ### Security
 
