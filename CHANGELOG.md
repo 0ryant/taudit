@@ -32,6 +32,22 @@ four parsers populate step script bodies, this single matcher change also closes
 the coverage gap on Azure Pipelines, GitLab CI and Bitbucket Pipelines, which
 previously reported nothing for this pattern.
 
+**Credential-bearing git remote URLs are now detected in `$(VAR)` and
+colon-less form.** `url_authority_has_embedded_credential_var` required a `:`
+in the URL userinfo and a SCREAMING_SNAKE variable name, so it saw only
+`https://user:$TOKEN@host`. Azure Pipelines' canonical push URL,
+`https://$(System.AccessToken)@dev.azure.com/…`, has no colon and uses the
+`$(…)` macro syntax, and camelCase names such as `$(GitHubPat)` are the ADO
+convention. All were invisible. The matcher now accepts `$VAR`, `${VAR}`,
+`$(VAR)` and `%VAR%`, any case, dotted names included, and treats the whole
+userinfo as the credential when there is no colon.
+
+Measured across the 4142-file corpus: findings rise from 88 to 103. Azure goes
+from 0 to 3 (all genuine, e.g. `https://$(UserName):$(GitHubPat)@github.com`),
+Bitbucket from 26 to 35 (mostly `${BB_AUTH_STRING}`, Bitbucket's documented
+credential variable), GitLab from 40 to 43, and GitHub Actions is unchanged at
+22, so there is no regression on the platform that already worked.
+
 ### Other changes
 
 No CLI changes: packaging, dependency security fixes, and the local quality

@@ -10603,38 +10603,53 @@ fn find_credential_embedded_git_urls(body: &str) -> Vec<String> {
 /// and before the path) contains a credential-shaped variable reference of
 /// the form `user:$TOKEN_NAME@host` or `user:${TOKEN_NAME}@host`.
 fn url_authority_has_embedded_credential_var(authority: &str) -> bool {
-    // Must contain both ':' and '@' with ':' before '@'.
     let at = match authority.find('@') {
         Some(p) => p,
         None => return false,
     };
     let userinfo = &authority[..at];
-    let colon = match userinfo.find(':') {
-        Some(p) => p,
-        None => return false,
+    if userinfo.is_empty() {
+        return false;
+    }
+    // The credential is whatever follows the LAST ':' in the userinfo, or the
+    // whole userinfo when there is no ':'. A colon is not required: Azure
+    // DevOps' canonical push URL is `https://$(System.AccessToken)@dev.azure.com/…`,
+    // which carries the token as the entire userinfo.
+    let pw_part = match userinfo.rfind(':') {
+        Some(colon) => &userinfo[colon + 1..],
+        None => userinfo,
     };
-    let pw_part = &userinfo[colon + 1..];
     if pw_part.is_empty() {
         return false;
     }
-    // Strip optional `${...}` braces so we can inspect the variable name.
-    let pw_inner = pw_part.trim_start_matches('$');
-    let pw_inner = pw_inner.trim_start_matches('{').trim_end_matches('}');
-    // Variable name must look like an env var (uppercase, digits, underscores)
-    // and contain a credential-shaped fragment.
+    // Unwrap every interpolation syntax we care about:
+    //   $VAR            plain shell
+    //   ${VAR}          braced shell
+    //   $(VAR)          Azure Pipelines macro, and Bitbucket/GitLab scripts
+    //   %VAR%           cmd.exe
+    let pw_inner = pw_part
+        .trim_start_matches('$')
+        .trim_start_matches(['{', '('])
+        .trim_end_matches(['}', ')'])
+        .trim_matches('%');
     if pw_inner.is_empty() {
         return false;
     }
+    // Accept dotted names (`System.AccessToken`) and any case. The previous
+    // implementation required SCREAMING_SNAKE, which rejected both the Azure
+    // macro form and the camelCase names that are conventional on that
+    // platform, so `$(GitHubPat)` and `$(System.AccessToken)` were invisible.
     let looks_like_var = pw_inner
         .chars()
-        .all(|c| c.is_ascii_uppercase() || c.is_ascii_digit() || c == '_');
+        .all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '.' || c == '-');
     if !looks_like_var {
         return false;
     }
     const CRED_FRAGMENTS: &[&str] = &[
-        "TOKEN", "PAT", "PASSWORD", "PASSWD", "KEY", "SECRET", "CRED",
+        "TOKEN", "PAT", "PASSWORD", "PASSWD", "KEY", "SECRET", "CRED", "AUTH",
     ];
-    CRED_FRAGMENTS.iter().any(|frag| pw_inner.contains(frag))
+    let upper = pw_inner.to_ascii_uppercase();
+    CRED_FRAGMENTS.iter().any(|frag| upper.contains(frag))
 }
 
 /// Rule: a CI script triggers a different project's pipeline via the GitLab
