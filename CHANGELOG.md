@@ -4,11 +4,58 @@ All notable changes to this project will be documented in this file.
 
 ## Unreleased
 
-Packaging only; no CLI or detection changes. Adds the apt release channel and
-brings the remaining manifests up to the state the tsafe portfolio playbook
-describes.
+No CLI or detection changes: packaging, dependency security fixes, and the
+local quality gate.
+
+### Security
+
+- **Four advisories cleared from the Rust dependency tree** by an in-range
+  lockfile update: `quinn-proto` 0.11.14 -> 0.11.17 (RUSTSEC-2026-0185, remote
+  memory exhaustion, 7.5 high), `h2` 0.4.14 -> 0.4.19 (RUSTSEC-2026-0258,
+  unbounded empty DATA frames), `crossbeam-epoch` 0.9.18 -> 0.9.21
+  (RUSTSEC-2026-0204) and `anyhow` 1.0.102 -> 1.0.104 (RUSTSEC-2026-0190,
+  `Error::downcast_mut` unsoundness). All are transitive; no direct dependency
+  version changed and the full workspace test suite passes.
+- **Five advisories cleared from the Azure DevOps task's bundled runtime**,
+  which the published 0.1.10 VSIX shipped: `azure-pipelines-task-lib`
+  5.2.1 -> 5.279.0 pulls `adm-zip` 0.6.0 in place of 0.5.17, clearing two HIGH
+  advisories (crafted-ZIP memory exhaustion; symlink-following extraction
+  allowing arbitrary file overwrite), and `brace-expansion` 1.1.14 -> 1.1.18
+  clears three denial-of-service advisories. The extension is bumped to 0.1.11
+  and needs republishing for users to receive the fix.
 
 ### Added
+
+- **`just local-ci` / `just local-ci-strict`** — the full local gate. GitHub
+  Actions is unavailable for this repository, so the local run is the gate;
+  these execute the union of `quality.yml`, `security.yml` and `governance.yml`
+  (21 checks) and print a PASS / FAIL / SKIP summary. A missing tool skips one
+  check rather than aborting the run, and every skip is listed with its install
+  command; `--strict` turns any skip into a failure so a release cannot be cut
+  from a partial run.
+- **`scripts/install-local-ci-tools.sh`** — installs those tools on Windows,
+  macOS or Linux using only per-user package managers. The existing installers
+  hard-require Linux x86_64, apt and sudo, which is why the gate could not run
+  on the maintainer's host at all.
+
+### Fixed
+
+- **`cargo deny check sources` had been failing since v1.3.1** and nobody saw
+  it, because the last successful CI run predates the change: `deny.toml` sets
+  `unknown-git = "deny"` with an empty `allow-git`, and v1.3.1 added five
+  rev-pinned `axiom-doctrine-rs` git dependencies. The pinned repository is now
+  allow-listed with the rationale recorded inline.
+- **The golden-paths gate step assumed `./target/debug/taudit`**, so it silently
+  skipped on any host with `CARGO_TARGET_DIR` set or a shared target directory,
+  and on Windows where the binary has an `.exe` suffix. It now resolves the
+  path from `cargo metadata`.
+
+### Packaging
+
+Adds the apt release channel and brings the remaining manifests up to the state
+the tsafe portfolio playbook describes.
+
+#### Release channels
 
 - **apt channel** for Debian/Ubuntu amd64, served from this repository's
   `gh-pages` branch at `https://0ryant.github.io/taudit/apt`. taudit's source
@@ -30,7 +77,7 @@ describes.
   (roll the per-asset sidecars into one `SHA256SUMS`), `homebrew-sync`, `deb`,
   and `apt-index`.
 
-### Fixed
+#### Manifest corrections
 
 - **The Homebrew formula shipped four `YOUR_SHA256_HERE` placeholders and the
   wrong licence.** It now carries the real checksums for all four v1.3.3
