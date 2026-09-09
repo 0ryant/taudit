@@ -1,11 +1,17 @@
 # Homebrew formula for taudit (third-party tap).
 # https://docs.brew.sh/How-to-Create-and-Maintain-a-Tap
 #
-# 1. Create a repo named homebrew-taudit (or homebrew-tap) on GitHub.
-# 2. Copy this file into that repo as Formula/taudit.rb.
-# 3. Cut a GitHub release that uploads the archives referenced below.
-# 4. Replace each YOUR_SHA256_HERE value with the real archive hash.
-# 5. Users install with: brew tap YOUR_GITHUB/taudit && brew install taudit
+# Do NOT hand-edit the version or the sha256 values: run `just homebrew-sync`
+# after the release archives exist, and it fills both from the published
+# `<archive>.sha256` sidecars. It errors rather than writing a placeholder if an
+# archive is missing, so this file is either fully truthful for a version or the
+# command fails.
+#
+# To publish: create a public repo named homebrew-taudit, copy this file into it
+# as Formula/taudit.rb, and push. Users then install with:
+#   brew tap 0ryant/taudit && brew install taudit
+# That tap repo does not exist yet, so no brew install path is documented in the
+# README. See ../RELEASE-CHANNELS.md.
 
 class Taudit < Formula
   desc "CI/CD authority scanner for secrets, identities, and trust boundaries"
