@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.1.11
+
+- Updated the bundled task runtime: `azure-pipelines-task-lib` 5.2.1 -> 5.279.0,
+  which moves `adm-zip` to 0.6.0 and clears two HIGH advisories (crafted-ZIP
+  memory exhaustion, and symlink-following extraction allowing arbitrary file
+  overwrite) that were bundled inside the published 0.1.10 VSIX.
+  `brace-expansion` 1.1.14 -> 1.1.18 clears three more. Both were in-range
+  updates; the task's 16 unit tests pass unchanged.
+- Bumped the task contract version to 1.0.7.
+
 ## 0.1.10
 
 - Moved the default pinned `version` from taudit 1.1.4 to 1.3.3 so a task

@@ -56,6 +56,18 @@ versions:
 check: fmt clippy test deny
     @echo "just check: OK"
 
+# GitHub Actions is unavailable for this repo (billing), so a local run IS the
+# gate. These two run the union of quality.yml, security.yml and governance.yml;
+# a missing tool skips one check and is always reported, never silently dropped.
+
+# Full local CI (skips are reported, not fatal).
+local-ci:
+    bash scripts/quality-gate.sh local-ci
+
+# Same, but any skipped check fails the run — use this to gate a release.
+local-ci-strict:
+    bash scripts/quality-gate.sh local-ci --strict
+
 contracts:
     cargo test -p taudit-report-json
     cargo test -p taudit-sink-cloudevents

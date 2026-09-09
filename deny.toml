@@ -43,7 +43,14 @@ skip-tree = []
 unknown-registry = "deny"
 unknown-git = "deny"
 allow-registry = ["https://github.com/rust-lang/crates.io-index"]
-allow-git = []
+# The shared Algol/AXIOM doctrine crates are consumed from git, pinned to an
+# exact rev in the workspace manifest so the on-disk audit/receipt bytes are
+# identical across the cohort. They are also published to crates.io, and the
+# manifest carries `version = "0.1.0"` alongside the git source, so a published
+# taudit resolves the registry copy — the git source only applies to builds from
+# this source tree. Without this entry `cargo deny check sources` fails, which
+# it has done since those deps landed in v1.3.1.
+allow-git = ["https://github.com/0ryant/axiom-doctrine-rs"]
 
 [licenses]
 version = 2

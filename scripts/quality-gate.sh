@@ -33,9 +33,29 @@ run_rust_full_gate() {
   cargo audit
 }
 
+# Resolve the built debug binary. CARGO_TARGET_DIR or .cargo/config.toml can move
+# it out of ./target (this workspace shares ~/.cargo/shared-target) and Windows
+# adds .exe, so ask cargo instead of assuming ./target/debug/taudit.
+taudit_debug_bin() {
+  local dir
+  dir="$(cargo metadata --format-version 1 --no-deps 2>/dev/null |
+         sed -n 's/.*"target_directory":"\([^"]*\)".*/\1/p')"
+  [ -n "$dir" ] || dir="target"
+  local candidate
+  for candidate in "$dir/debug/taudit" "$dir/debug/taudit.exe"; do
+    if [ -x "$candidate" ]; then printf '%s' "$candidate"; return 0; fi
+  done
+  return 1
+}
+
 run_golden_paths() {
   echo "quality-gate: golden-paths smoke (docs/golden-paths.md)"
-  TAUDIT_BIN=target/debug/taudit bash scripts/golden-paths.sh
+  local bin
+  bin="$(taudit_debug_bin)" || {
+    echo "quality-gate: no debug taudit binary — run 'cargo build -p taudit' first"
+    return 1
+  }
+  TAUDIT_BIN="$bin" bash scripts/golden-paths.sh
 }
 
 run_taudit_gate() {
@@ -149,6 +169,168 @@ run_yamllint() {
   yamllint -c .yamllint "${paths[@]}"
 }
 
+# --- local CI ---------------------------------------------------------------
+# GitHub Actions is not available for this repository (billing), so the local
+# run IS the gate. `local-ci` executes the union of what quality.yml,
+# security.yml and governance.yml run, and — unlike the other stages — a
+# missing tool SKIPS one check instead of aborting the whole run, so one absent
+# linter cannot silently reduce the gate to nothing.
+#
+# Skips are never silent: they are counted, listed with an install command, and
+# reported in the summary. `--strict` turns any skip into a failure; that is
+# what a release cut must use, because a gate that "passed" while skipping the
+# security scanners is not a gate.
+LOCAL_CI_PASSED=()
+LOCAL_CI_FAILED=()
+LOCAL_CI_SKIPPED=()
+
+PY_BIN=""
+pick_python() {
+  if [[ -n "$PY_BIN" ]]; then return 0; fi
+  for candidate in python3 python; do
+    if command -v "$candidate" >/dev/null 2>&1; then PY_BIN="$candidate"; return 0; fi
+  done
+  return 1
+}
+
+install_hint() {
+  case "$1" in
+    cargo-insta)  echo "cargo install cargo-insta --locked" ;;
+    cargo-deny)   echo "cargo install cargo-deny --locked" ;;
+    cargo-audit)  echo "cargo install cargo-audit --locked" ;;
+    checkov)      echo "python -m pip install checkov" ;;
+    yamllint)     echo "python -m pip install yamllint" ;;
+    zizmor)       echo "python -m pip install zizmor" ;;
+    actionlint)   echo "go install github.com/rhysd/actionlint/cmd/actionlint@v1.7.12" ;;
+    gitleaks)     echo "https://github.com/gitleaks/gitleaks/releases" ;;
+    trivy)        echo "https://github.com/aquasecurity/trivy/releases" ;;
+    python3|python) echo "install Python 3.12+" ;;
+    *)            echo "install '$1'" ;;
+  esac
+}
+
+# step "<label>" "<required tool, or empty>" <command...>
+step() {
+  local label="$1" tool="$2"
+  shift 2
+  if [[ -n "$tool" ]] && ! command -v "$tool" >/dev/null 2>&1; then
+    LOCAL_CI_SKIPPED+=("${label} — needs '${tool}': $(install_hint "$tool")")
+    printf 'SKIP  %s (no %s)\n' "$label" "$tool"
+    return 0
+  fi
+  printf '\n=== %s\n' "$label"
+  if "$@"; then
+    LOCAL_CI_PASSED+=("$label")
+    printf 'PASS  %s\n' "$label"
+  else
+    LOCAL_CI_FAILED+=("$label")
+    printf 'FAIL  %s\n' "$label"
+  fi
+}
+
+py_step() {
+  local label="$1"
+  shift
+  if ! pick_python; then
+    LOCAL_CI_SKIPPED+=("${label} — needs 'python3': $(install_hint python3)")
+    printf 'SKIP  %s (no python)\n' "$label"
+    return 0
+  fi
+  step "$label" "" "$PY_BIN" "$@"
+}
+
+run_conformance_harness() {
+  # The harness exits 0 on an `incomplete` result too, so assert full
+  # conformance rather than trusting the exit code (RELEASE_GATES.md §2.1
+  # treats `incomplete` as a blocker even when it is deliberate scaffolding).
+  local out
+  out="$("$PY_BIN" scripts/conformance_harness.py --root . --format json)" || return 1
+  printf '%s\n' "$out" | tail -12
+  printf '%s' "$out" | grep -q '"full_conformance": true' || {
+    echo "conformance harness did not report full_conformance"
+    return 1
+  }
+}
+
+run_local_ci() {
+  local strict="${1:-}"
+
+  echo "quality-gate: local-ci — the union of quality.yml, security.yml and governance.yml"
+
+  # --- Rust (quality.yml) ---
+  step "cargo fmt"        cargo cargo fmt --all -- --check
+  step "cargo clippy"     cargo cargo clippy --workspace --all-targets -- -D warnings
+  step "cargo test"       cargo cargo test --workspace
+  step "rule-firing benchmark" cargo cargo test -p taudit --test rule_firing_benchmark -- --nocapture
+  step "cargo insta (unreferenced reject)" cargo-insta cargo insta test --workspace --unreferenced reject
+  # advisories included: security.yml checks them even though quality.yml does not.
+  step "cargo deny"       cargo-deny cargo deny check advisories bans licenses sources
+  step "cargo audit"      cargo-audit cargo audit
+
+  # --- Contracts, schemas, docs ---
+  py_step "authority invariant schema drift" scripts/generate-authority-invariant-schema.py --check
+  py_step "starter invariant YAML validation" scripts/validate-authority-invariant-yaml.py invariants/starter
+  if pick_python; then
+    step "output conformance harness" "" run_conformance_harness
+  else
+    LOCAL_CI_SKIPPED+=("output conformance harness — needs 'python3'")
+    printf 'SKIP  output conformance harness (no python)\n'
+  fi
+  py_step "doc truth scan" scripts/doc_truth_scan.py
+
+  # --- Smoke (needs a built binary) ---
+  step "build taudit (debug, for smoke)" cargo cargo build -p taudit
+  if taudit_debug_bin >/dev/null; then
+    step "golden paths" "" run_golden_paths
+  else
+    LOCAL_CI_SKIPPED+=("golden paths — no debug taudit binary (cargo build -p taudit)")
+    printf 'SKIP  golden paths (no debug binary)\n'
+  fi
+  step "taudit scans taudit" "" run_taudit_gate
+
+  # --- Security + governance (security.yml, governance.yml) ---
+  step "gitleaks"    gitleaks   run_gitleaks_repo
+  step "trivy fs"    trivy      run_trivy_fs
+  step "checkov"     checkov    run_checkov
+  step "zizmor"      zizmor     run_zizmor
+  step "actionlint"  actionlint run_actionlint
+  step "yamllint"    yamllint   run_yamllint
+  step "ecosystem CI integrations" "" run_ecosystem_integrations
+
+  # --- Summary ---
+  echo
+  echo "──────────────────────────────────────────────────────────"
+  printf 'local-ci: %d passed, %d failed, %d skipped\n' \
+    "${#LOCAL_CI_PASSED[@]}" "${#LOCAL_CI_FAILED[@]}" "${#LOCAL_CI_SKIPPED[@]}"
+  if [[ "${#LOCAL_CI_FAILED[@]}" -gt 0 ]]; then
+    echo
+    echo "FAILED:"
+    printf '  - %s\n' "${LOCAL_CI_FAILED[@]}"
+  fi
+  if [[ "${#LOCAL_CI_SKIPPED[@]}" -gt 0 ]]; then
+    echo
+    echo "SKIPPED (this run is NOT full CI parity):"
+    printf '  - %s\n' "${LOCAL_CI_SKIPPED[@]}"
+  fi
+  echo "──────────────────────────────────────────────────────────"
+
+  if [[ "${#LOCAL_CI_FAILED[@]}" -gt 0 ]]; then
+    echo "local-ci: FAILED"
+    return 1
+  fi
+  if [[ "${#LOCAL_CI_SKIPPED[@]}" -gt 0 ]]; then
+    if [[ "$strict" == "--strict" ]]; then
+      echo "local-ci: INCOMPLETE and --strict was requested — treating skips as failure"
+      return 1
+    fi
+    echo "local-ci: passed everything it ran, but ${#LOCAL_CI_SKIPPED[@]} check(s) were skipped."
+    echo "local-ci: install the tools above before using this run to gate a release (or run --strict)."
+    return 0
+  fi
+  echo "local-ci: full parity — every check ran and passed"
+  return 0
+}
+
 case "$STAGE" in
   pre-commit)
     require_cmd cargo
@@ -186,6 +368,12 @@ case "$STAGE" in
     run_taudit_gate
     ;;
 
+  local-ci)
+    # Full CI parity locally. Missing tools skip (and are reported) rather than
+    # aborting; `--strict` makes any skip a failure. See run_local_ci above.
+    run_local_ci "${2:-}"
+    ;;
+
   ci-governance)
     require_cmd gitleaks
     require_cmd trivy
@@ -206,9 +394,11 @@ case "$STAGE" in
 
   *)
     echo "quality-gate: unknown stage '$STAGE'"
-    echo "quality-gate: expected one of pre-commit | pre-push | quality-gate | ci-governance"
+    echo "quality-gate: expected one of local-ci | pre-commit | pre-push | quality-gate | ci-governance"
     exit 2
     ;;
 esac
 
-echo "quality-gate: ${STAGE} passed"
+if [[ "$STAGE" != "local-ci" ]]; then
+  echo "quality-gate: ${STAGE} passed"
+fi

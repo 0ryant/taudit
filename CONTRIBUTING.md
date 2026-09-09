@@ -8,13 +8,41 @@ Ecosystem CI / governance norms for this repo (and peers **tsafe**, **CellOS**):
 
 ## Local quality gate
 
-The canonical local gate is:
+**GitHub Actions is not available for this repository, so the local run *is* the
+gate.** The canonical command is:
 
 ```bash
-just quality-gate
+just local-ci
 ```
 
-That runs Rust quality checks plus governance/security tooling:
+That executes the union of what `quality.yml`, `security.yml` and
+`governance.yml` would run — 21 checks — and prints a PASS / FAIL / SKIP summary.
+
+Two properties matter:
+
+- **A missing tool skips one check instead of aborting the run.** The older
+  stages call `require_cmd`, which exits on the first tool it cannot find, so a
+  single absent linter reduced the whole gate to nothing. Skips here are counted,
+  listed with the exact install command, and reported in the summary.
+- **Skips are never silent.** `just local-ci-strict` fails on any skip. Use it
+  to gate a release: a run that "passed" while skipping the security scanners is
+  not a gate.
+
+Install everything it needs, on Windows, macOS or Linux, without root:
+
+```bash
+bash scripts/install-local-ci-tools.sh
+```
+
+(The older `install-governance-tools.sh` and `install-ci-linters.sh` are
+CI-image specific — they require Linux x86_64, apt and sudo.)
+
+`gitleaks` and `trivy` ship as single per-platform binaries; install those from
+their releases pages, or via `brew` / `choco` / `winget`.
+
+### The narrower stages
+
+`just quality-gate` remains the strict Rust-plus-governance subset:
 
 - `cargo fmt --all -- --check`
 - `cargo clippy --workspace --all-targets -- -D warnings`
