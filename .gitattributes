@@ -1,0 +1,2 @@
+# Signed apt metadata is byte-significant: never translate line endings.
+* -text
