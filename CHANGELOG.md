@@ -9,6 +9,14 @@ local quality gate.
 
 ### Security
 
+- **Fixed four critical script-injection findings in our own
+  `taudit-pr-diff.yml`**, found by scanning the repository with taudit 1.3.3 for
+  the dogfood report. Two steps interpolated `github.event.pull_request.*` context
+  directly into a privileged `run` block instead of passing it through `env:`.
+  Both fields are commit SHAs, so this was **not exploitable** — an attacker
+  cannot put shell metacharacters in a 40-hex SHA — but the pattern is the one
+  GitHub's hardening guidance rules out, and the same file already used `env:`
+  correctly for another value. Criticals on `.github/workflows/` drop from 9 to 5.
 - **Four advisories cleared from the Rust dependency tree** by an in-range
   lockfile update: `quinn-proto` 0.11.14 -> 0.11.17 (RUSTSEC-2026-0185, remote
   memory exhaustion, 7.5 high), `h2` 0.4.14 -> 0.4.19 (RUSTSEC-2026-0258,
@@ -37,6 +45,13 @@ local quality gate.
   macOS or Linux using only per-user package managers. The existing installers
   hard-require Linux x86_64, apt and sudo, which is why the gate could not run
   on the maintainer's host at all.
+- **`docs/dogfood/v1.3.3.md`** — the maintainer self-attestation required by
+  `RELEASE_GATES.md` §2.2. taudit 1.3.3 scanned its own estate across all four
+  supported platforms (18 files) plus four sibling projects (49 files), with no
+  crashes, hangs or schema-invalid output. The report leads with the two cases
+  where a finding changed code, states which findings were deliberately not
+  fixed and why, and quotes the signal-to-noise ratio rather than only the
+  totals. The public-corpus clause of §2.2 remains outstanding.
 
 ### Fixed
 

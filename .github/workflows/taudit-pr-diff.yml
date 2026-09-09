@@ -28,10 +28,16 @@ jobs:
 
       - name: Detect changed pipeline files
         id: changed
+        # Context values reach the shell through env, never through `${{ }}`
+        # inside the script. These two are commit SHAs and so are not
+        # attacker-controllable today, but the safety of that argument depends on
+        # knowing which context fields are attacker-controlled, and that list
+        # changes. taudit flags the shape, not the field — see docs/dogfood/v1.3.3.md.
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
         run: |
-          BASE=${{ github.event.pull_request.base.sha }}
-          HEAD=${{ github.event.pull_request.head.sha }}
-          FILES=$(git diff --name-only "$BASE" "$HEAD" | grep -E '\.(yml|yaml)$' | head -20 || true)
+          FILES=$(git diff --name-only "$BASE_SHA" "$HEAD_SHA" | grep -E '\.(yml|yaml)$' | head -20 || true)
           {
             echo "files<<EOF"
             echo "$FILES"
@@ -42,12 +48,11 @@ jobs:
         id: diff
         if: steps.changed.outputs.files != ''
         run: |
-          BASE=${{ github.event.pull_request.base.sha }}
           REPORT=""
           while IFS= read -r FILE; do
             [ -n "$FILE" ] || continue
             # Get base version of file (empty string if new)
-            BASE_CONTENT=$(git show "${BASE}:${FILE}" 2>/dev/null || true)
+            BASE_CONTENT=$(git show "${BASE_SHA}:${FILE}" 2>/dev/null || true)
             if [ -n "$BASE_CONTENT" ] && [ -f "$FILE" ]; then
               DIFF=$(echo "$BASE_CONTENT" | taudit diff - "$FILE" --no-color 2>&1 || true)
               if [ -n "$DIFF" ]; then
@@ -64,6 +69,7 @@ jobs:
           fi
         env:
           FILES: ${{ steps.changed.outputs.files }}
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
 
       - name: Post PR comment
         if: steps.diff.outputs.report != ''
