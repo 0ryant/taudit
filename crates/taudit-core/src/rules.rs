@@ -3413,8 +3413,55 @@ fn body_runs_privileged_container(body: &str) -> bool {
             && (lower.contains(" --privileged ") || lower.contains(" --privileged\n"))
 }
 
+/// Pull the first `http(s)://…` token out of a line, trimmed of shell noise.
+fn extract_fetch_url(line: &str) -> Option<String> {
+    let start = line.find("http://").or_else(|| line.find("https://"))?;
+    let rest = &line[start..];
+    let end = rest
+        .find(|c: char| c.is_whitespace() || matches!(c, '|' | '"' | '\'' | '`' | ')' | '>' | ';'))
+        .unwrap_or(rest.len());
+    let url = rest[..end].trim_end_matches(['/', ',', '.']);
+    if url.len() > 8 {
+        Some(url.to_string())
+    } else {
+        None
+    }
+}
+
+/// Does this URL pin itself to something the publisher cannot silently change?
+///
+/// Only three things count: a full commit SHA, an explicit tag ref, or a
+/// version-bearing path segment (`v1.2.3`, `1.2.3`). Anything else can be
+/// re-pointed at new bytes without the URL changing.
+fn url_is_pinned(url: &str) -> bool {
+    let lower = url.to_ascii_lowercase();
+    if lower.contains("refs/tags/") {
+        return true;
+    }
+    for segment in lower.split(['/', '@', '?', '=', '&']) {
+        // 40- or 64-hex commit / digest.
+        if (segment.len() == 40 || segment.len() == 64)
+            && segment.chars().all(|c| c.is_ascii_hexdigit())
+        {
+            return true;
+        }
+        // Version-like: v1.2.3 / 1.2.3 / 1.2 — at least one dot between digits.
+        let candidate = segment.strip_prefix('v').unwrap_or(segment);
+        if !candidate.is_empty()
+            && candidate.contains('.')
+            && candidate.starts_with(|c: char| c.is_ascii_digit())
+            && candidate
+                .chars()
+                .all(|c| c.is_ascii_digit() || c == '.' || c == '-' || c == '_')
+        {
+            return true;
+        }
+    }
+    false
+}
+
 fn line_url_is_mutable(line: &str) -> bool {
-    // Mutable URL markers.
+    // Explicit mutable-branch markers: always mutable.
     const MUTABLE_PATHS: &[&str] = &[
         "refs/heads/",
         "/head/",
@@ -3429,11 +3476,22 @@ fn line_url_is_mutable(line: &str) -> bool {
             return true;
         }
     }
-    // Bare `raw.githubusercontent.com/<owner>/<repo>/<ref>/...` where <ref>
-    // is the literal `main`/`master` segment was caught above. We could be
-    // looser and flag any URL with no version-like segment, but that
-    // sacrifices precision — the marker list above is the conservative core.
-    false
+    // Otherwise a fetched script is mutable unless its URL pins itself.
+    //
+    // The previous implementation returned false here, so it only caught
+    // branch-pinned URLs such as `raw.githubusercontent.com/o/r/main/x.sh`.
+    // That missed the far more common shape: a bare vendor install endpoint
+    // (`https://sh.rustup.rs`, `https://get.docker.com`,
+    // `https://install.python-poetry.org`) piped straight into a shell. Those
+    // carry no version at all, so the publisher can change the executed bytes
+    // at any time, and a single compromise reaches every pipeline that trusts
+    // them. Default-mutable, immutable only on evidence, matches the
+    // recommendation these rules already emit: pin to an immutable
+    // commit/release or verify a checksum before executing.
+    match extract_fetch_url(line) {
+        Some(url) => !url_is_pinned(&url),
+        None => false,
+    }
 }
 
 /// Rule: a `run:` step pipes a remotely-fetched script into a shell, where
