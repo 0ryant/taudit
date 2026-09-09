@@ -1,0 +1,20 @@
+Package: taudit
+Version: 1.3.3-1
+Architecture: amd64
+Maintainer: Ryan Tilcock <rytilcock@gmail.com>
+Installed-Size: 7247
+Filename: pool/main/t/taudit/taudit_1.3.3-1_amd64.deb
+Size: 3352302
+MD5sum: 723893e9c709cc59120531011b59741d
+SHA1: d5f37d20ffd8dd3c1b9a48d6e97b6f286f0ec012
+SHA256: 4d6d94ff03091db6386f3153065c427f8b339043d0b440ab6606b4ce72214383
+Section: devel
+Priority: optional
+Homepage: https://github.com/0ryant/taudit
+Description: CI/CD pipeline authority auditor.
+ Builds an authority graph from GitHub Actions, Azure Pipelines, GitLab CI and
+ Bitbucket Pipelines definitions and reports where untrusted input, over-scoped
+ identities or self-mutating steps grant more power than intended. Emits
+ terminal, JSON, SARIF and CloudEvents output with stable finding fingerprints.
+License: AGPL-3.0-or-later
+

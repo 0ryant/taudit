@@ -1,0 +1,34 @@
+-----BEGIN PGP SIGNED MESSAGE-----
+Hash: SHA512
+
+Architectures: amd64
+Codename: stable
+Components: main
+Date: Wed, 09 Sep 2026 01:28:01 +0000
+Label: taudit
+Origin: taudit
+Suite: stable
+MD5Sum:
+ b326ebb131390ce28bbe9fd466e8379d              136 Release
+ 1b44eca49e9e9f7a50a51809ef4b8111              814 main/binary-amd64/Packages
+ acc9064e042e29375fb241070cb7b13d              581 main/binary-amd64/Packages.gz
+SHA1:
+ af5bcc51acff27576ece918f7482aad6d2afb953              136 Release
+ 52d4a99601922572048036f49f093063ffde1677              814 main/binary-amd64/Packages
+ b2d9bf1c233e3dd16d1c11d3c4fbec0f164bb2e8              581 main/binary-amd64/Packages.gz
+SHA256:
+ 47001de7652a432ef5efceabe28a3e277c2037683b499282e972a024d75cd624              136 Release
+ cc25c8957628be201c54b18d1e199d38227697a111cb294009aac5ee7f7a01a4              814 main/binary-amd64/Packages
+ 8ae95c7abd880dd869ab7e2013b8b41ec250352e38dd53ee042ae869883446a5              581 main/binary-amd64/Packages.gz
+SHA512:
+ 72f49971eb1238b9aae9fb26cf003afe8d31c0ba43b787dcbc4d4f5ad6c5ab25d68a5e6429fb75181fbd5284156021e4f2df0d0240d381876b9d9bd2497db6fd              136 Release
+ 46d8d9012850c04c87bfdf5c464035ba39d7c6caff24d6eaece89423e4c98e071ce324c7fa2eb237379a4fe01ee8fec996d6ceb53a90135c4cf56e0542040403              814 main/binary-amd64/Packages
+ c393e0f7b480de7d5b59a0860961d3f85203604f481db97f337007fdf96359f5900d91555bf4db5542865ffbab51911cbb2f930595f2d35ee89cad4c0b77a5d6              581 main/binary-amd64/Packages.gz
+
+-----BEGIN PGP SIGNATURE-----
+
+iHUEARYKAB0WIQSE2s3rOCEOaVliN0g7QWt9MyWMkgUCaqC3bwAKCRA7QWt9MyWM
+kiVwAP0SeQ3R/GNV0/iKAm0izYbGMaWK3uZ2e8uTnsBtlXVk8QEAkpDGdL80pOo8
+X8KUl/QUbQ6grVlnLkTHLvoOzbQwEwo=
+=nb/h
+-----END PGP SIGNATURE-----

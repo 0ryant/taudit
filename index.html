@@ -1,0 +1,27 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>taudit package channels</title>
+<style>body{font:15px/1.6 system-ui,sans-serif;max-width:46rem;margin:3rem auto;padding:0 1rem}code,pre{background:#f4f4f5;border-radius:4px}pre{padding:.8rem;overflow-x:auto}code{padding:.1rem .3rem}</style>
+<h1>taudit package channels</h1>
+<p><a href="https://github.com/0ryant/taudit">taudit</a> audits CI/CD pipeline authority for GitHub Actions,
+Azure Pipelines, GitLab CI and Bitbucket Pipelines. This site hosts its APT repository.</p>
+
+<h2>APT (Debian/Ubuntu, amd64)</h2>
+<pre><code>sudo install -m0755 -d /etc/apt/keyrings
+curl -fsSL https://0ryant.github.io/taudit/apt/taudit-archive-keyring.gpg \
+  | sudo tee /etc/apt/keyrings/taudit.gpg >/dev/null
+echo "deb [signed-by=/etc/apt/keyrings/taudit.gpg] https://0ryant.github.io/taudit/apt stable main" \
+  | sudo tee /etc/apt/sources.list.d/taudit.list >/dev/null
+sudo apt update &amp;&amp; sudo apt install taudit</code></pre>
+
+<h2>Other channels</h2>
+<pre><code>cargo install taudit                # any platform with Rust
+choco install taudit                # Windows (pending community moderation)</code></pre>
+<p>Archives, checksums and the <code>.deb</code> for each version are attached to the
+<a href="https://github.com/0ryant/taudit/releases">GitHub releases</a>.</p>
+
+<h2>Signing</h2>
+<p>The APT <code>Release</code> file is signed with a free, self-generated OpenPGP key so apt will
+accept the repository. That is repository-integrity signing, <em>not</em> code signing: the
+<code>taudit</code> binary is unsigned on every platform. Every archive additionally carries a
+SHA-256 sidecar, and the package manifests pin those hashes.</p>
