@@ -48,6 +48,20 @@ Bitbucket from 26 to 35 (mostly `${BB_AUTH_STRING}`, Bitbucket's documented
 credential variable), GitLab from 40 to 43, and GitHub Actions is unchanged at
 22, so there is no regression on the platform that already worked.
 
+### Licence
+
+**taudit is MIT-licensed from this release.** Releases v1.3.0 to v1.3.3 remain
+AGPL-3.0-or-later and earlier ones remain MIT OR Apache-2.0; the superseded
+texts are kept as `LICENSE-AGPL.old`, `LICENSE-MIT.old` and
+`LICENSE-APACHE.old`. Every workspace crate, the nfpm package and both editor
+and Azure DevOps extensions now declare `MIT`.
+
+- A compiled `taudit-mcp` is still distributed under AGPL terms, because it
+  links the AGPL-3.0-or-later `mcpact-*` crates. `deny.toml` keeps AGPL on its
+  allow-list for those crates only.
+- The Homebrew formula and Nix derivation still describe v1.3.3, so their
+  licence fields change when they are synced to the first MIT release.
+
 ### Other changes
 
 No CLI changes: packaging, dependency security fixes, and the local quality
