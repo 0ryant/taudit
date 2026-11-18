@@ -2,7 +2,7 @@
 name = "taudit-mcp"
 version = "3.1.0"
 edition = "2021"
-license = "AGPL-3.0-or-later"
+license = "MIT"
 description = "MCP adapter for taudit — pipeline authority-graph scan / verify / graph / map / diff / baseline / remediate / invariants surface"
 
 # mcpact deps resolve from crates.io (published 0.2.0, 2026-06-07) — no longer

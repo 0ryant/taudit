@@ -16,7 +16,7 @@ priority: optional
 maintainer: Ryan Tilcock <rytilcock@gmail.com>
 vendor: Ryan Tilcock
 homepage: https://github.com/0ryant/taudit
-license: AGPL-3.0-or-later
+license: MIT
 description: |-
   CI/CD pipeline authority auditor.
   Builds an authority graph from GitHub Actions, Azure Pipelines, GitLab CI and

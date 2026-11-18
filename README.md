@@ -586,11 +586,17 @@ taudit models a finite set of authority primitives. When every primitive is capt
 
 ## License
 
-This repository is licensed under **AGPL-3.0-or-later** (see [LICENSE](LICENSE)). You may use, copy, modify, and redistribute the code **subject to the license** — including the AGPL network-use / source-disclosure obligations if you make a modified version available to users over a network. This is not legal advice; confirm with your counsel for regulated or commercial deployments.
+This repository is licensed under the **MIT License** (see [LICENSE](LICENSE)). You may use, copy, modify, embed and redistribute the code, including in proprietary products, provided the copyright notice and licence text are kept.
 
-**Why AGPL-3.0-or-later:** taudit is the OSS wedge of a larger ecosystem (see council D6 / `release-surfaces/public-vs-gated.md`). AGPL keeps the analyzer genuinely open and copyleft-protected: improvements made by downstream redistributors stay accessible to the community, while permissive embed in proprietary CI gateways requires a separate commercial arrangement.
+**The `taudit-mcp` binary is the exception.** Its source is MIT, but it links the `mcpact-*` crates, which are AGPL-3.0-or-later, so a compiled `taudit-mcp` is distributed under AGPL terms. The `taudit` CLI and every other crate in this workspace have no AGPL dependency.
 
-**Pre-v0.5.0 (taudit-api) / pre-v3.1.0 (engines) / pre-v1.3.0 (CLI) caveat:** Versions of this repository released before the relicense were under their original license (MIT OR Apache-2.0; preserved as [LICENSE-MIT.old](LICENSE-MIT.old) and [LICENSE-APACHE.old](LICENSE-APACHE.old)). The AGPL-3.0-or-later relicense applies from the next minor of each published crate forward. Pre-relicense versions remain available under their original terms.
+**Earlier releases keep the licence they shipped with.** MIT applies from the first release after CLI v1.3.3, along with the library crates published with it.
+
+| Releases | Licence |
+| --- | --- |
+| Before CLI v1.3.0 | MIT OR Apache-2.0 ([LICENSE-MIT.old](LICENSE-MIT.old), [LICENSE-APACHE.old](LICENSE-APACHE.old)) |
+| CLI v1.3.0 to v1.3.3 | AGPL-3.0-or-later ([LICENSE-AGPL.old](LICENSE-AGPL.old)) |
+| Later releases | MIT ([LICENSE](LICENSE)) |
 
 ## Release trust
 
