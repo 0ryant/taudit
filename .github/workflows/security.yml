@@ -6,12 +6,6 @@ name: security
 # transitive dep doesn't block unrelated work without surfacing as its
 # own clearly-named failure.
 on:
-  push:
-    branches: [main]
-  pull_request:
-  schedule:
-    # Mondays 09:00 UTC — pick up a week's worth of advisory-db churn.
-    - cron: '0 9 * * 1'
   workflow_dispatch:
 
 permissions:

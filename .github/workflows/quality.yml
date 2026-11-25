@@ -1,21 +1,7 @@
 name: quality
 
 on:
-  push:
-    branches: [main]
-    paths-ignore:
-      - '*.md'
-      - 'docs/**'
-      - '*.txt'
-      - 'CHANGELOG*'
-      - '.github/ISSUE_TEMPLATE/**'
-  pull_request:
-    paths-ignore:
-      - '*.md'
-      - 'docs/**'
-      - '*.txt'
-      - 'CHANGELOG*'
-      - '.github/ISSUE_TEMPLATE/**'
+  workflow_dispatch:
 
 # One active quality run per ref — superseded runs cancel so we do not burn
 # runners on obsolete commits (especially on rapid pushes to main).

@@ -4,18 +4,7 @@
 name: finops
 
 on:
-  push:
-    branches: [main]
-    paths:
-      - "infra/finops-smoke/**"
-      - ".github/workflows/finops.yml"
-  pull_request:
-    paths:
-      - "infra/finops-smoke/**"
-      - ".github/workflows/finops.yml"
   workflow_dispatch:
-  schedule:
-    - cron: "37 14 * * 1"
 
 concurrency:
   group: finops-${{ github.workflow }}-${{ github.ref }}

@@ -11,11 +11,6 @@ name: publish-cellos-ghcr
 # inputs when the workflow is also push-triggered).
 on:
   workflow_dispatch:
-  push:
-    branches: [main]
-    paths:
-      - 'packaging/docker/cellos-supervisor/**'
-      - '.github/workflows/publish-cellos-ghcr.yml'
 
 permissions:
   contents: read

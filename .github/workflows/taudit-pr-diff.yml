@@ -1,11 +1,7 @@
 name: taudit PR authority diff
 
 on:
-  pull_request:
-    paths:
-      - ".github/workflows/**"
-      - "azure-pipelines*.yml"
-      - "**/.pipelines/**"
+  workflow_dispatch:
 
 permissions:
   contents: read

@@ -7,8 +7,6 @@
 name: mutation-coverage
 
 on:
-  schedule:
-    - cron: "25 10 * * 1" # Mondays 10:25 UTC — ecosystem standard (weekly mutation)
   workflow_dispatch:
 
 permissions:

@@ -1,10 +1,7 @@
 name: release
 
 on:
-  push:
-    tags:
-      - 'v[0-9]+.[0-9]+.[0-9]+'        # stable: v1.1.0
-      - 'v[0-9]+.[0-9]+.[0-9]+-*'      # prerelease: v1.1.0-beta.1, v1.1.0-rc.2 (ADR 0004)
+  workflow_dispatch:
 
 # Minimal workflow-level permissions; jobs that need more declare it themselves.
 permissions:
